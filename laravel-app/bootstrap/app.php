@@ -12,7 +12,9 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware) {
         $middleware->alias([
-            'bi.auth' => \App\Http\Middleware\RequireAppLogin::class,
+            'bi.auth'        => \App\Http\Middleware\RequireAppLogin::class,
+            'tenant.resolve' => \App\Http\Middleware\ResolveTenant::class,
+            'module'         => \App\Http\Middleware\EnsureModuleEnabled::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {

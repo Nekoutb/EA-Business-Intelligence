@@ -30,7 +30,7 @@
               </div>
             @endif
 
-            <form method="POST" action="/login" class="space-y-4">
+            <form method="POST" action="{{ $tenantSlug ? '/t/'.$tenantSlug.'/login' : '/login' }}" class="space-y-4">
                 @csrf
                 <div>
                     <label class="block text-xs font-medium text-slate-600 mb-1">Username</label>

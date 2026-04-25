@@ -2,6 +2,7 @@
 
 namespace App\Providers;
 
+use App\Tenancy\TenantContext;
 use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
@@ -11,7 +12,8 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        //
+        // One TenantContext per request; populated by ResolveTenant middleware.
+        $this->app->singleton(TenantContext::class, fn () => new TenantContext());
     }
 
     /**

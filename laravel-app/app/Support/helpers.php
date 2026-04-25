@@ -14,11 +14,12 @@ if (!function_exists('config_env')) {
      * Backwards-compatible shim for the old Config::get() calls embedded in
      * the ported Odoo services.
      *
-     * Priority order:
-     *   1. Session overrides (written by the Settings page for live tweaks)
-     *   2. Laravel config('bi.*') — seeded from .env at boot
-     *   3. Raw env() fallback
-     *   4. Supplied default
+     * Priority order (multi-tenant aware):
+     *   1. Active tenant's tenant_settings row (when in tenant context)
+     *   2. Session overrides (Settings page live tweaks; legacy single-tenant path)
+     *   3. Laravel config('bi.*') — seeded from .env at boot
+     *   4. Raw env() fallback
+     *   5. Supplied default
      */
     function config_env(string $key, $default = null)
     {
@@ -37,7 +38,18 @@ if (!function_exists('config_env')) {
             'CURRENCY'       => 'bi.currency',
         ];
 
-        // Session overrides (runtime settings changes).
+        // 1. Tenant settings take precedence whenever a tenant is in scope.
+        if (function_exists('app') && app()->bound(\App\Tenancy\TenantContext::class)) {
+            $ctx = app(\App\Tenancy\TenantContext::class);
+            if ($ctx->has()) {
+                $v = $ctx->setting($key);
+                if ($v !== null && $v !== '') {
+                    return $v;
+                }
+            }
+        }
+
+        // 2. Session overrides (legacy path).
         $overrides = session('bi_overrides', []);
         if (array_key_exists($key, $overrides) && $overrides[$key] !== '' && $overrides[$key] !== null) {
             return $overrides[$key];
@@ -52,6 +64,36 @@ if (!function_exists('config_env')) {
 
         $e = env($key);
         return ($e !== null && $e !== '') ? $e : $default;
+    }
+}
+
+if (!function_exists('tenant')) {
+    /**
+     * Convenience accessor for the active tenant model (or null).
+     */
+    function tenant(): ?\App\Models\Tenant
+    {
+        if (!function_exists('app') || !app()->bound(\App\Tenancy\TenantContext::class)) {
+            return null;
+        }
+        return app(\App\Tenancy\TenantContext::class)->tenant();
+    }
+}
+
+if (!function_exists('tenant_url')) {
+    /**
+     * Build a URL scoped to the current tenant (path-prefix scheme /t/{slug}).
+     * Returns the input unchanged when no tenant is in scope.
+     */
+    function tenant_url(string $path): string
+    {
+        $t = tenant();
+        if (!$t) return $path;
+        $clean = '/' . ltrim($path, '/');
+        if ($clean === '/') {
+            return '/t/' . $t->slug;
+        }
+        return '/t/' . $t->slug . $clean;
     }
 }
 
@@ -88,27 +130,46 @@ if (!function_exists('ea_resolve_period')) {
 
 if (!function_exists('ea_cached')) {
     /**
-     * Session-scoped cache used by services.  Kept identical in semantics to
-     * the old helper: first caller within TTL wins, subsequent callers reuse.
+     * Session-scoped cache used by services. Keys are namespaced by the active
+     * tenant id so caches never bleed across workspaces. First caller within
+     * TTL wins, subsequent callers reuse.
      */
     function ea_cached(string $key, callable $producer)
     {
         $ttl    = (int) config('bi.cache_ttl', 300);
+        $tid    = optional(tenant())->id;
+        $scoped = ($tid ? 't' . $tid . ':' : 'g:') . $key;
         $bucket = session('bi_cache', []);
-        if (isset($bucket[$key]) && (time() - (int) $bucket[$key]['at']) < $ttl) {
-            return $bucket[$key]['data'];
+        if (isset($bucket[$scoped]) && (time() - (int) $bucket[$scoped]['at']) < $ttl) {
+            return $bucket[$scoped]['data'];
         }
-        $data          = $producer();
-        $bucket[$key]  = ['at' => time(), 'data' => $data];
+        $data            = $producer();
+        $bucket[$scoped] = ['at' => time(), 'data' => $data];
         session(['bi_cache' => $bucket, 'bi_last_sync' => time()]);
         return $data;
     }
 }
 
 if (!function_exists('ea_cache_clear')) {
+    /**
+     * Clear cache. When a tenant is in context only that tenant's keys are
+     * dropped; otherwise the entire bucket is wiped.
+     */
     function ea_cache_clear(): void
     {
-        session()->forget('bi_cache');
+        $tid = optional(tenant())->id;
+        if (!$tid) {
+            session()->forget('bi_cache');
+        } else {
+            $bucket = session('bi_cache', []);
+            $prefix = 't' . $tid . ':';
+            foreach (array_keys($bucket) as $k) {
+                if (str_starts_with((string) $k, $prefix)) {
+                    unset($bucket[$k]);
+                }
+            }
+            session(['bi_cache' => $bucket]);
+        }
         session(['bi_last_sync' => time()]);
     }
 }

@@ -10,9 +10,9 @@
             </div>
             <h1 class="text-2xl font-bold text-[#1e3d44]">Executive Overview</h1>
         </div>
-        <form method="POST" action="/sync" class="flex items-center gap-2">
+        <form method="POST" action="{{ tenant_url('/sync') }}" class="flex items-center gap-2">
             @csrf
-            <a href="/treasury" class="text-[11px] font-medium text-[#5a6a70] px-3 py-1.5 rounded-lg border border-[#e8e4de] bg-white hover:bg-[#faf8f5] transition">Treasury →</a>
+            <a href="{{ tenant_url('/treasury') }}" class="text-[11px] font-medium text-[#5a6a70] px-3 py-1.5 rounded-lg border border-[#e8e4de] bg-white hover:bg-[#faf8f5] transition">Treasury →</a>
             <button class="inline-flex items-center gap-1.5 text-[11px] font-semibold text-white bg-brand-600 hover:bg-brand-700 rounded-lg px-3 py-1.5 shadow-sm transition">
                 <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
                 Refresh
@@ -26,7 +26,7 @@
     @if ($error)
         <div class="bg-coral-50 border border-coral-200 text-coral-800 rounded-xl p-4 text-sm mb-6">
             <strong>Error:</strong> {{ $error }}
-            <div class="text-xs mt-1 text-coral-600">Check your Odoo credentials in <a href="/settings" class="underline">Settings</a>.</div>
+            <div class="text-xs mt-1 text-coral-600">Check your Odoo credentials in <a href="{{ tenant_url('/settings') }}" class="underline">Settings</a>.</div>
         </div>
     @elseif (!$data)
         <div class="bg-warm-50 border border-warm-200 text-warm-800 rounded-xl p-5 text-sm">Loading data…</div>
@@ -297,7 +297,7 @@
                             <p class="text-[11px] text-[#8a8578]">Receivables quality feeds liquidity planning</p>
                         </div>
                     </div>
-                    <a href="/treasury" class="text-[10px] font-medium text-brand-600 hover:text-brand-800 transition">Open treasury →</a>
+                    <a href="{{ tenant_url('/treasury') }}" class="text-[10px] font-medium text-brand-600 hover:text-brand-800 transition">Open treasury →</a>
                 </div>
                 <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
                     @foreach ($treasuryCards as $card)
@@ -316,14 +316,14 @@
 
         {{-- ── Quick Links ────────────────────────────────────────────────── --}}
         <div class="grid md:grid-cols-3 gap-3">
-            <a href="/revenue" class="section-card p-4 hover:shadow-md transition group">
+            <a href="{{ tenant_url('/revenue') }}" class="section-card p-4 hover:shadow-md transition group">
                 <div class="flex items-center justify-between mb-1.5">
                     <p class="text-[11px] uppercase tracking-wider text-[#8a8578] font-medium">Revenue</p>
                     <span class="text-[10px] text-brand-600 group-hover:translate-x-0.5 transition">View →</span>
                 </div>
                 <p class="text-[11px] text-[#8a8578] leading-relaxed">CY vs PY trends, daily run rate and customer mix.</p>
             </a>
-            <a href="/customer-insights" class="section-card p-4 hover:shadow-md transition group">
+            <a href="{{ tenant_url('/customer-insights') }}" class="section-card p-4 hover:shadow-md transition group">
                 <div class="flex items-center justify-between mb-1.5">
                     <p class="text-[11px] uppercase tracking-wider text-[#8a8578] font-medium">Customer Insights</p>
                     <span class="text-[10px] text-brand-600 group-hover:translate-x-0.5 transition">Explore →</span>
@@ -331,14 +331,14 @@
                 <p class="text-[13px] font-semibold text-[#1e3d44]">Customer growth & loyalty</p>
                 <p class="text-[11px] text-[#8a8578] mt-1">Identify profitable, repeat, and at-risk accounts.</p>
             </a>
-            <a href="/profit-loss" class="section-card p-4 hover:shadow-md transition group">
+            <a href="{{ tenant_url('/profit-loss') }}" class="section-card p-4 hover:shadow-md transition group">
                 <div class="flex items-center justify-between mb-1.5">
                     <h3 class="text-[13px] font-semibold text-[#1e3d44]">Profit &amp; Loss</h3>
                     <svg class="w-3.5 h-3.5 text-[#cdc7bc] group-hover:translate-x-0.5 group-hover:text-brand-500 transition" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
                 </div>
                 <p class="text-[11px] text-[#8a8578] leading-relaxed">Waterfall from revenue → gross → EBITDA → net.</p>
             </a>
-            <a href="/receivables" class="section-card p-4 hover:shadow-md transition group">
+            <a href="{{ tenant_url('/receivables') }}" class="section-card p-4 hover:shadow-md transition group">
                 <div class="flex items-center justify-between mb-1.5">
                     <p class="text-[11px] uppercase tracking-wider text-[#8a8578] font-medium">Receivables</p>
                     <span class="text-[10px] text-brand-600 group-hover:translate-x-0.5 transition">Open →</span>

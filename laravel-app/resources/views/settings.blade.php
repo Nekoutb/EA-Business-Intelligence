@@ -8,7 +8,7 @@
 
 @section('content')
 <div class="max-w-3xl">
-    <form method="POST" action="/settings" class="space-y-6">
+    <form method="POST" action="{{ tenant_url('/settings') }}" class="space-y-6">
         @csrf
 
         {{-- ── Odoo connection ────────────────────────────────────────── --}}

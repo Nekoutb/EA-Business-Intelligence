@@ -90,8 +90,19 @@
                   ->filter(fn ($m) => !empty($m['url']));
               $active = $active ?? '';
             @endphp
+            @php
+              // Hide modules disabled for the current tenant. Core modules
+              // always show. Items without a tenant in scope (e.g. admin
+              // backend) skip filtering altogether.
+              $tenantInScope = function_exists('tenant') ? tenant() : null;
+              $modules = $modules->filter(function ($m) use ($tenantInScope) {
+                  if (!empty($m['core'])) return true;
+                  if (!$tenantInScope) return true;
+                  return $tenantInScope->moduleEnabled($m['key']);
+              });
+            @endphp
             @foreach ($modules as $module)
-              <a href="{{ $module['url'] }}"
+              <a href="{{ tenant_url($module['url']) }}"
                  class="flex items-center gap-2.5 px-3 py-2 rounded-lg transition text-[13px]
                         {{ $active === $module['active'] ? 'bg-brand-600/90 text-white shadow-sm shadow-brand-900/30' : 'text-slate-400 hover:bg-white/5 hover:text-white' }}">
                   <svg class="w-[15px] h-[15px] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -104,11 +115,11 @@
 
         <div class="px-3 pb-4 space-y-0.5 text-[13px]">
             <div class="mx-1 h-px bg-slate-700/50 mb-3"></div>
-            <a href="/settings" class="flex items-center gap-2.5 px-3 py-2 rounded-lg text-slate-400 hover:bg-white/5 hover:text-white transition">
+            <a href="{{ tenant_url('/settings') }}" class="flex items-center gap-2.5 px-3 py-2 rounded-lg text-slate-400 hover:bg-white/5 hover:text-white transition">
                 <svg class="w-[15px] h-[15px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
                 Settings
             </a>
-            <a href="/logout" class="flex items-center gap-2.5 px-3 py-2 rounded-lg text-slate-400 hover:bg-white/5 hover:text-coral-400 transition">
+            <a href="{{ tenant_url('/logout') }}" class="flex items-center gap-2.5 px-3 py-2 rounded-lg text-slate-400 hover:bg-white/5 hover:text-coral-400 transition">
                 <svg class="w-[15px] h-[15px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
                 Logout
             </a>
