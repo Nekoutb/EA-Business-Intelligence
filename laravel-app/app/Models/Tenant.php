@@ -24,11 +24,12 @@ class Tenant extends Model
 
     protected $fillable = [
         'slug', 'name', 'brand', 'logo_path',
-        'status', 'plan', 'trial_ends_at',
+        'status', 'plan', 'trial_ends_at', 'onboarded_at',
     ];
 
     protected $casts = [
         'trial_ends_at' => 'datetime',
+        'onboarded_at' => 'datetime',
     ];
 
     public function users(): HasMany
