@@ -82,26 +82,22 @@
 
         <nav class="flex-1 px-3 py-4 space-y-0.5 text-[13px]">
             @php
-              $nav = [
-                ['Dashboard',     '/',             'dashboard',    'M3 12l9-9 9 9M5 10v10h14V10'],
-                ['Revenue',       '/revenue',      'revenue',      'M3 3v18h18M7 14l4-4 3 3 5-5'],
-                ['Customer Insights', '/customer-insights', 'customers', 'M4 6h16M4 12h16M4 18h10M14 18l6-6-6-6'],
-                ['Receivables',   '/receivables',  'receivables',  'M12 2v20M5 9h14M5 15h14'],
-                ['Treasury',      '/treasury',     'treasury',     'M12 1v22M2 12h20M4 5h4M4 19h4M16 5h4M16 19h4'],
-                ['Profit & Loss', '/profit-loss',  'pl',           'M4 4v16h16M8 14l3-4 3 3 4-6'],
-                ['Payables',      '/payables',     'payables',     'M4 6h16M4 12h16M4 18h16'],
-                ['Fixed Assets',  '/fixed-assets', 'fixed_assets', 'M3 21h18M5 21V7l7-4 7 4v14M9 21v-6h6v6'],
-              ];
+              // Sidebar items are sourced from config/modules.php so adding a new
+              // module is one config entry. Items without a URL (e.g. AI Insights
+              // rail) are skipped here. Tenant-aware filtering will be plugged in
+              // by the EnsureModuleEnabled middleware in Phase 2.
+              $modules = collect(config('modules.modules', []))
+                  ->filter(fn ($m) => !empty($m['url']));
               $active = $active ?? '';
             @endphp
-            @foreach ($nav as [$label, $url, $slug, $path])
-              <a href="{{ $url }}"
+            @foreach ($modules as $module)
+              <a href="{{ $module['url'] }}"
                  class="flex items-center gap-2.5 px-3 py-2 rounded-lg transition text-[13px]
-                        {{ $active === $slug ? 'bg-brand-600/90 text-white shadow-sm shadow-brand-900/30' : 'text-slate-400 hover:bg-white/5 hover:text-white' }}">
+                        {{ $active === $module['active'] ? 'bg-brand-600/90 text-white shadow-sm shadow-brand-900/30' : 'text-slate-400 hover:bg-white/5 hover:text-white' }}">
                   <svg class="w-[15px] h-[15px] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="{{ $path }}"/>
+                    <path d="{{ $module['icon'] }}"/>
                   </svg>
-                  <span class="truncate">{{ $label }}</span>
+                  <span class="truncate">{{ $module['label'] }}</span>
               </a>
             @endforeach
         </nav>
