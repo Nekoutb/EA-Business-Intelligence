@@ -43,37 +43,80 @@
 @section('content')
 <div class="grid lg:grid-cols-3 gap-4">
 
-    {{-- ── Modules ─────────────────────────────────────────────────── --}}
+    {{-- ── Services & Modules ──────────────────────────────────────── --}}
     <div class="panel p-5 lg:col-span-2">
-        <h2 class="text-sm font-semibold text-slate-900 mb-1">Modules</h2>
-        <p class="text-xs text-slate-500 mb-4">Toggle availability for this workspace. Core modules cannot be disabled.</p>
+        <h2 class="text-sm font-semibold text-slate-900 mb-1">Services & Modules</h2>
+        <p class="text-xs text-slate-500 mb-4">
+            Toggle entire <strong>services</strong> on/off, or fine-tune individual modules.
+            Disabling a service hides every module it owns. Core modules can never be disabled.
+        </p>
 
-        <div class="space-y-1.5">
-            @foreach ($modules->groupBy('group') as $group => $items)
-                <div class="text-[10px] uppercase tracking-wider text-slate-400 mt-3 mb-1">{{ $group }}</div>
-                @foreach ($items as $m)
-                    <div class="flex items-center justify-between gap-3 py-1.5 border-b border-slate-50">
-                        <div class="flex items-center gap-2">
-                            <span class="text-sm text-slate-800">{{ $m['label'] }}</span>
-                            @if (!empty($m['core']))
-                                <span class="text-[9px] text-amber-600 font-semibold">CORE</span>
-                            @endif
-                            <span class="text-[10px] text-slate-400 font-mono">{{ $m['key'] }}</span>
+        <div class="space-y-5">
+            @foreach ($services as $service)
+                @php
+                    $serviceOn = (bool) $service['enabled'];
+                    $sModules  = $modules->where('service', $service['key'])->values();
+                    $serviceSoon = ($service['status'] ?? 'live') === 'coming_soon';
+                @endphp
+                <div class="border border-slate-200 rounded-xl overflow-hidden">
+                    {{-- Service header + master toggle --}}
+                    <div class="flex items-center justify-between gap-3 px-4 py-3 bg-slate-50 border-b border-slate-200">
+                        <div class="flex items-center gap-2 min-w-0">
+                            <svg class="w-4 h-4 text-slate-600 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="{{ $service['icon'] }}"/></svg>
+                            <div class="min-w-0">
+                                <div class="flex items-center gap-2">
+                                    <span class="text-sm font-semibold text-slate-900 truncate">{{ $service['label'] }}</span>
+                                    @if ($serviceSoon)
+                                        <span class="text-[9px] uppercase tracking-wider rounded px-1.5 py-0.5 bg-amber-100 text-amber-700">Coming soon</span>
+                                    @endif
+                                </div>
+                                <div class="text-[11px] text-slate-500 truncate">{{ $service['description'] ?? '' }}</div>
+                            </div>
                         </div>
-                        <form method="POST" action="/admin/tenants/{{ $tenant->id }}/modules/{{ $m['key'] }}/toggle">
+                        <form method="POST" action="/admin/tenants/{{ $tenant->id }}/services/{{ $service['key'] }}/toggle">
                             @csrf
-                            @php $isOn = (bool) $m['enabled']; @endphp
                             <button type="submit"
-                                    @disabled(!empty($m['core']))
                                     class="relative inline-flex h-6 w-11 items-center rounded-full transition
-                                           {{ $isOn ? 'bg-emerald-500' : 'bg-slate-300' }}
-                                           {{ !empty($m['core']) ? 'opacity-50 cursor-not-allowed' : '' }}">
+                                           {{ $serviceOn ? 'bg-emerald-500' : 'bg-slate-300' }}">
                                 <span class="inline-block h-4 w-4 transform bg-white rounded-full shadow transition
-                                             {{ $isOn ? 'translate-x-6' : 'translate-x-1' }}"></span>
+                                             {{ $serviceOn ? 'translate-x-6' : 'translate-x-1' }}"></span>
                             </button>
                         </form>
                     </div>
-                @endforeach
+
+                    {{-- Module rows --}}
+                    <div class="divide-y divide-slate-100 {{ $serviceOn ? '' : 'opacity-50' }}">
+                        @forelse ($sModules as $m)
+                            <div class="flex items-center justify-between gap-3 px-4 py-2.5">
+                                <div class="flex items-center gap-2 min-w-0">
+                                    <svg class="w-3.5 h-3.5 text-slate-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="{{ $m['icon'] }}"/></svg>
+                                    <span class="text-sm text-slate-800 truncate">{{ $m['label'] }}</span>
+                                    @if (!empty($m['core']))
+                                        <span class="text-[9px] text-amber-600 font-semibold">CORE</span>
+                                    @endif
+                                    @if (($m['status'] ?? 'live') === 'coming_soon')
+                                        <span class="text-[9px] uppercase tracking-wider rounded px-1.5 py-0.5 bg-amber-100 text-amber-700">soon</span>
+                                    @endif
+                                    <span class="text-[10px] text-slate-400 font-mono ml-auto">{{ $m['key'] }}</span>
+                                </div>
+                                <form method="POST" action="/admin/tenants/{{ $tenant->id }}/modules/{{ $m['key'] }}/toggle">
+                                    @csrf
+                                    @php $isOn = (bool) $m['enabled']; @endphp
+                                    <button type="submit"
+                                            @disabled(!empty($m['core']))
+                                            class="relative inline-flex h-6 w-11 items-center rounded-full transition
+                                                   {{ $isOn ? 'bg-emerald-500' : 'bg-slate-300' }}
+                                                   {{ !empty($m['core']) ? 'opacity-50 cursor-not-allowed' : '' }}">
+                                        <span class="inline-block h-4 w-4 transform bg-white rounded-full shadow transition
+                                                     {{ $isOn ? 'translate-x-6' : 'translate-x-1' }}"></span>
+                                    </button>
+                                </form>
+                            </div>
+                        @empty
+                            <div class="px-4 py-3 text-xs text-slate-400 italic">No modules in this service yet.</div>
+                        @endforelse
+                    </div>
+                </div>
             @endforeach
         </div>
     </div>

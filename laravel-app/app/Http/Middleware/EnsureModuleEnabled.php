@@ -39,6 +39,18 @@ class EnsureModuleEnabled
             return $next($request);
         }
 
+        // The parent service must also be enabled. Disabling a service
+        // (e.g. Tax Compliance) cascades to every module beneath it.
+        $serviceKey = $module['service'] ?? null;
+        if ($serviceKey && !$this->context->serviceEnabled($serviceKey)) {
+            $service = collect(config('modules.services', []))
+                ->firstWhere('key', $serviceKey);
+            throw new HttpException(403, sprintf(
+                'The "%s" service is not activated for this workspace. Contact your administrator.',
+                $service['label'] ?? $serviceKey
+            ));
+        }
+
         if ($this->context->moduleEnabled($moduleKey)) {
             return $next($request);
         }

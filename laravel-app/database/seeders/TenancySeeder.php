@@ -4,6 +4,7 @@ namespace Database\Seeders;
 
 use App\Models\Tenant;
 use App\Models\TenantModule;
+use App\Models\TenantService;
 use App\Models\User;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\Hash;
@@ -36,13 +37,22 @@ class TenancySeeder extends Seeder
             ['slug' => 'demo'],
             [
                 'name'   => 'Demo Tenant',
-                'brand'  => 'EA Business Intelligence',
+                'brand'  => 'Elite Advisors Management Suite',
                 'status' => Tenant::STATUS_ACTIVE,
                 'plan'   => 'standard',
             ]
         );
 
-        // 3. Default modules from registry.
+        // 3. Default services from registry (top-level offerings).
+        foreach (config('modules.services', []) as $service) {
+            $enabled = (bool) ($service['default'] ?? false);
+            TenantService::updateOrCreate(
+                ['tenant_id' => $demo->id, 'service_key' => $service['key']],
+                ['enabled' => $enabled, 'enabled_at' => $enabled ? now() : null]
+            );
+        }
+
+        // 4. Default modules from registry.
         foreach (config('modules.modules', []) as $module) {
             $enabled = (bool) ($module['default'] ?? false) || (bool) ($module['core'] ?? false);
             TenantModule::updateOrCreate(

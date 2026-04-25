@@ -48,6 +48,8 @@ Route::prefix('admin')->group(function () {
         Route::get('/tenants/create',                [AdminTenantController::class, 'create']);
         Route::post('/tenants',                      [AdminTenantController::class, 'store']);
         Route::get('/tenants/{tenant}',              [AdminTenantController::class, 'show']);
+        Route::post('/tenants/{tenant}/services/{serviceKey}/toggle',
+                                                     [AdminTenantController::class, 'toggleService']);
         Route::post('/tenants/{tenant}/modules/{moduleKey}/toggle',
                                                      [AdminTenantController::class, 'toggleModule']);
         Route::get('/tenants/{tenant}/settings',     [AdminTenantController::class, 'showSettings']);

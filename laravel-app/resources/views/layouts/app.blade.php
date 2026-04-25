@@ -73,43 +73,75 @@
                 {{ strtoupper(substr(config('bi.brand'), 0, 1)) }}
             </div>
             <div class="min-w-0">
-                <div class="text-[13px] font-semibold text-white truncate leading-tight">{{ config('bi.brand') }}</div>
-                <div class="text-[10px] text-slate-500 uppercase tracking-wider">Intelligence</div>
+                <div class="text-[13px] font-semibold text-white truncate leading-tight">{{ config('bi.brand', 'Elite Advisors Management Suite') }}</div>
+                <div class="text-[10px] text-slate-500 uppercase tracking-wider">Management Suite</div>
             </div>
         </div>
 
         <div class="mx-4 h-px bg-slate-700/50"></div>
 
-        <nav class="flex-1 px-3 py-4 space-y-0.5 text-[13px]">
+        <nav class="flex-1 px-3 py-4 space-y-3 text-[13px] overflow-y-auto scrollbar-thin">
             @php
-              // Sidebar items are sourced from config/modules.php so adding a new
-              // module is one config entry. Items without a URL (e.g. AI Insights
-              // rail) are skipped here. Tenant-aware filtering will be plugged in
-              // by the EnsureModuleEnabled middleware in Phase 2.
-              $modules = collect(config('modules.modules', []))
+              // Pull the service catalogue and module list from config/modules.php.
+              // Sidebar groups modules by service so the suite's offerings (BI,
+              // Tax Compliance, etc.) are visually distinct.
+              $services = collect(config('modules.services', []))->sortBy('order');
+              $allModules = collect(config('modules.modules', []))
                   ->filter(fn ($m) => !empty($m['url']));
               $active = $active ?? '';
-            @endphp
-            @php
-              // Hide modules disabled for the current tenant. Core modules
-              // always show. Items without a tenant in scope (e.g. admin
-              // backend) skip filtering altogether.
+
+              // Tenant-aware filtering: hide modules whose service or module
+              // flag is off for the active tenant. Core modules always show.
               $tenantInScope = function_exists('tenant') ? tenant() : null;
-              $modules = $modules->filter(function ($m) use ($tenantInScope) {
-                  if (!empty($m['core'])) return true;
+              $isVisible = function ($module) use ($tenantInScope) {
+                  if (!empty($module['core'])) return true;
                   if (!$tenantInScope) return true;
-                  return $tenantInScope->moduleEnabled($m['key']);
-              });
+                  // Service must be enabled, AND module must be enabled.
+                  if (method_exists($tenantInScope, 'serviceEnabled')
+                      && !$tenantInScope->serviceEnabled($module['service'] ?? null)) {
+                      return false;
+                  }
+                  return $tenantInScope->moduleEnabled($module['key']);
+              };
             @endphp
-            @foreach ($modules as $module)
-              <a href="{{ tenant_url($module['url']) }}"
-                 class="flex items-center gap-2.5 px-3 py-2 rounded-lg transition text-[13px]
-                        {{ $active === $module['active'] ? 'bg-brand-600/90 text-white shadow-sm shadow-brand-900/30' : 'text-slate-400 hover:bg-white/5 hover:text-white' }}">
-                  <svg class="w-[15px] h-[15px] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="{{ $module['icon'] }}"/>
-                  </svg>
-                  <span class="truncate">{{ $module['label'] }}</span>
-              </a>
+
+            @foreach ($services as $service)
+              @php
+                $sModules = $allModules
+                    ->where('service', $service['key'])
+                    ->filter($isVisible)
+                    ->values();
+                $serviceComingSoon = ($service['status'] ?? 'live') === 'coming_soon';
+              @endphp
+              @if ($sModules->isEmpty() && !$serviceComingSoon) @continue @endif
+
+              <div>
+                <div class="flex items-center gap-2 px-3 pt-1 pb-1.5 text-[10px] uppercase tracking-[0.12em] text-slate-500 font-semibold">
+                    <svg class="w-[12px] h-[12px] opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="{{ $service['icon'] }}"/></svg>
+                    <span class="truncate">{{ $service['label'] }}</span>
+                    @if ($serviceComingSoon)
+                      <span class="ml-auto text-[8px] px-1.5 py-0.5 rounded bg-warm-700/30 text-warm-300 tracking-wider">SOON</span>
+                    @endif
+                </div>
+
+                <div class="space-y-0.5">
+                  @foreach ($sModules as $module)
+                    @php $moduleSoon = ($module['status'] ?? 'live') === 'coming_soon'; @endphp
+                    <a href="{{ $moduleSoon ? '#' : tenant_url($module['url']) }}"
+                       @if($moduleSoon) onclick="return false" @endif
+                       class="flex items-center gap-2.5 px-3 py-2 rounded-lg transition text-[13px]
+                              {{ $active === $module['active'] ? 'bg-brand-600/90 text-white shadow-sm shadow-brand-900/30' : ($moduleSoon ? 'text-slate-600 cursor-not-allowed' : 'text-slate-400 hover:bg-white/5 hover:text-white') }}">
+                        <svg class="w-[15px] h-[15px] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <path d="{{ $module['icon'] }}"/>
+                        </svg>
+                        <span class="truncate">{{ $module['label'] }}</span>
+                        @if ($moduleSoon)
+                          <span class="ml-auto text-[8px] px-1 py-0.5 rounded bg-slate-700/60 text-slate-400 tracking-wider">SOON</span>
+                        @endif
+                    </a>
+                  @endforeach
+                </div>
+              </div>
             @endforeach
         </nav>
 

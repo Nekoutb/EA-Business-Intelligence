@@ -61,4 +61,11 @@ class TenantContext
     {
         return $this->tenant ? $this->tenant->moduleEnabled($key) : false;
     }
+
+    /** Whether a top-level service is enabled for the active tenant. */
+    public function serviceEnabled(?string $serviceKey): bool
+    {
+        if (!$this->tenant) return false;
+        return $this->tenant->serviceEnabled($serviceKey);
+    }
 }

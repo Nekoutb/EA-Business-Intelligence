@@ -46,6 +46,11 @@ class Tenant extends Model
         return $this->hasMany(TenantModule::class);
     }
 
+    public function services(): HasMany
+    {
+        return $this->hasMany(TenantService::class);
+    }
+
     /** Convenience accessor for an active tenant in the request context. */
     public function isActive(): bool
     {
@@ -59,7 +64,24 @@ class Tenant extends Model
         return $row?->value ?? $default;
     }
 
-    /** Whether a module is enabled for this tenant. */
+    /**
+     * Whether a top-level service is enabled for this tenant.
+     * A service must be enabled for any of its modules to be reachable.
+     */
+    public function serviceEnabled(?string $serviceKey): bool
+    {
+        if (!$serviceKey) return true; // No service tag = ungated.
+        return (bool) $this->services()
+            ->where('service_key', $serviceKey)
+            ->where('enabled', true)
+            ->exists();
+    }
+
+    /**
+     * Whether a module is enabled for this tenant.
+     * Note: this does NOT check the parent service flag; callers that need
+     * combined gating (sidebar, middleware) should also call serviceEnabled().
+     */
     public function moduleEnabled(string $key): bool
     {
         return (bool) $this->modules()

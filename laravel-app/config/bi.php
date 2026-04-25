@@ -1,10 +1,16 @@
 <?php
 /**
- * EA Business Intelligence — app-specific config.
+ * Elite Advisors Management Suite (EAMS) — app-specific config.
  * Accessed via config('bi.odoo.url') etc.
+ *
+ * The 'bi.*' key is kept for backward-compat with existing helpers; the
+ * brand metadata now reflects the parent suite, while individual services
+ * (Business Intelligence, Tax Compliance, etc.) are described in
+ * config/modules.php under the 'services' array.
  */
 return [
-    'brand' => env('APP_BRAND', 'EA Business Intelligence'),
+    'suite_name' => env('APP_SUITE_NAME', 'Elite Advisors Management Suite'),
+    'brand' => env('APP_BRAND', 'Elite Advisors Management Suite'),
     'logo'  => env('APP_LOGO', ''),
 
     'auth' => [

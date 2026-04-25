@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\AuditLog;
 use App\Models\Tenant;
 use App\Models\TenantModule;
+use App\Models\TenantService;
 use App\Models\TenantSetting;
 use App\Models\User;
 use Illuminate\Http\Request;
@@ -116,21 +117,54 @@ class TenantController extends Controller
 
     public function show(Tenant $tenant)
     {
-        // Build a map of (module_key => enabled bool) merged with the registry.
-        $stored = $tenant->modules()->pluck('enabled', 'module_key');
-        $modules = collect(config('modules.modules', []))->map(function ($m) use ($stored) {
-            return $m + ['enabled' => (bool) ($stored[$m['key']] ?? false)];
-        });
+        // Merge registry + tenant flags for both services and modules.
+        $storedModules  = $tenant->modules()->pluck('enabled', 'module_key');
+        $storedServices = $tenant->services()->pluck('enabled', 'service_key');
+
+        $services = collect(config('modules.services', []))
+            ->sortBy('order')
+            ->map(fn ($s) => $s + ['enabled' => (bool) ($storedServices[$s['key']] ?? false)])
+            ->values();
+
+        $modules = collect(config('modules.modules', []))
+            ->map(fn ($m) => $m + ['enabled' => (bool) ($storedModules[$m['key']] ?? false)]);
 
         $users = $tenant->users()->orderBy('id')->get();
         $audit = AuditLog::where('tenant_id', $tenant->id)->latest()->limit(20)->get();
 
         return view('admin.tenants.show', [
-            'tenant'  => $tenant,
-            'modules' => $modules,
-            'users'   => $users,
-            'audit'   => $audit,
-            'active'  => 'tenants',
+            'tenant'   => $tenant,
+            'services' => $services,
+            'modules'  => $modules,
+            'users'    => $users,
+            'audit'    => $audit,
+            'active'   => 'tenants',
+        ]);
+    }
+
+    public function toggleService(Request $request, Tenant $tenant, string $serviceKey)
+    {
+        $service = collect(config('modules.services', []))->firstWhere('key', $serviceKey);
+        if (!$service) {
+            return back()->with('flash', ['type' => 'error', 'msg' => 'Unknown service.']);
+        }
+
+        $row = TenantService::firstOrNew(['tenant_id' => $tenant->id, 'service_key' => $serviceKey]);
+        $was = (bool) $row->enabled;
+        $row->enabled    = !$was;
+        $row->enabled_at = $row->enabled ? now() : null;
+        $row->enabled_by = $request->attributes->get('admin_user')?->id;
+        $row->save();
+
+        AuditLog::record('service.toggle', [
+            'tenant_id' => $tenant->id,
+            'target'    => $serviceKey,
+            'payload'   => ['from' => $was, 'to' => !$was],
+        ]);
+
+        return back()->with('flash', [
+            'type' => 'success',
+            'msg'  => sprintf('Service "%s" is now %s.', $service['label'], $row->enabled ? 'ENABLED' : 'DISABLED'),
         ]);
     }
 

@@ -1,7 +1,22 @@
-# EA Business Intelligence
+# Elite Advisors Management Suite (EAMS)
 
-A PHP-powered SaaS dashboard that pulls data from **Odoo** via API and turns it into
-real-time business intelligence insights for management decision-making.
+A multi-tenant Laravel + Odoo platform that bundles four advisory services
+into a single workspace, switchable per tenant from a super-admin backend.
+
+## Services & modules
+
+| Service                  | Status        | Modules                                                                                                |
+| ------------------------ | ------------- | ------------------------------------------------------------------------------------------------------ |
+| **Business Intelligence**| ✅ Live       | Dashboard · Revenue · Customer Insights · Receivables · Treasury · Profit & Loss · Payables · Fixed Assets · AI Insights |
+| **Tax Compliance**       | ✅ Live       | VAT Compliance · Invoice Compliance · Tax Calendar                                                     |
+| **Financial Reporting**  | 🚧 Coming soon| Trial Balance · Balance Sheet · Income Statement · Cash Flow                                           |
+| **Financial Planning**   | 🚧 Coming soon| Budgeting · Forecasting · Scenario Modeling                                                            |
+
+The single source of truth is `laravel-app/config/modules.php` — every
+service header in the sidebar, every module gating decision, and every
+super-admin toggle is driven from that file.
+
+Originally launched as **EA Business Intelligence**.
 
 First analysis shipped: **Revenue**
 - Total revenue, current year (YTD) vs prior year (same window)
