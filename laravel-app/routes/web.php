@@ -10,6 +10,9 @@ use App\Http\Controllers\TreasuryController;
 use App\Http\Controllers\FixedAssetsController;
 use App\Http\Controllers\CustomerInsightsController;
 use App\Http\Controllers\SettingsController;
+use App\Http\Controllers\Admin\AdminAuthController;
+use App\Http\Controllers\Admin\AdminDashboardController;
+use App\Http\Controllers\Admin\TenantController as AdminTenantController;
 use App\Models\Tenant;
 use Illuminate\Support\Facades\Route;
 
@@ -30,6 +33,28 @@ Route::get('/login', function () {
     $slug = session('bi_tenant_slug')
         ?: Tenant::where('status', '!=', Tenant::STATUS_SUSPENDED)->orderBy('id')->value('slug');
     return $slug ? redirect("/t/{$slug}/login") : abort(404);
+});
+
+/* ── Super Admin backend ─────────────────────────────────────────────── */
+Route::prefix('admin')->group(function () {
+    Route::get('/login',  [AdminAuthController::class, 'showLogin']);
+    Route::post('/login', [AdminAuthController::class, 'login']);
+    Route::get('/logout', [AdminAuthController::class, 'logout']);
+
+    Route::middleware('admin.auth')->group(function () {
+        Route::get('/', [AdminDashboardController::class, 'index']);
+
+        Route::get('/tenants',                       [AdminTenantController::class, 'index']);
+        Route::get('/tenants/create',                [AdminTenantController::class, 'create']);
+        Route::post('/tenants',                      [AdminTenantController::class, 'store']);
+        Route::get('/tenants/{tenant}',              [AdminTenantController::class, 'show']);
+        Route::post('/tenants/{tenant}/modules/{moduleKey}/toggle',
+                                                     [AdminTenantController::class, 'toggleModule']);
+        Route::get('/tenants/{tenant}/settings',     [AdminTenantController::class, 'showSettings']);
+        Route::post('/tenants/{tenant}/settings',    [AdminTenantController::class, 'saveSettings']);
+        Route::post('/tenants/{tenant}/suspend',     [AdminTenantController::class, 'suspend']);
+        Route::post('/tenants/{tenant}/activate',    [AdminTenantController::class, 'activate']);
+    });
 });
 
 /* ── Tenant scope ─────────────────────────────────────────────────────── */
