@@ -10,6 +10,8 @@ use App\Services\PayablesService;
 use App\Services\ProfitLossService;
 use App\Services\ReceivablesService;
 use App\Services\RevenueService;
+use App\Services\Tax\VATComplianceService;
+use App\Services\Tax\VATInvoiceComplianceService;
 use Livewire\Attributes\On;
 use Livewire\Component;
 
@@ -168,6 +170,10 @@ class AiInsights extends Component
             }),
             'fixed_assets' => ea_cached('fa',
                 fn() => (new FixedAssetsService($client))->analyze()),
+            'vat_compliance' => ea_cached('vat_compliance',
+                fn() => (new VATComplianceService($client))->analyze()),
+            'vat_invoice_compliance' => ea_cached('vat_invoice_compliance_default',
+                fn() => (new VATInvoiceComplianceService($client))->analyze()),
             default => (function () use ($client, $source) {
                 $rev = ea_cached('revenue_ytd',
                     fn() => (new RevenueService($client, $source))->analyze());

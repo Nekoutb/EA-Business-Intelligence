@@ -10,6 +10,8 @@ use App\Http\Controllers\TreasuryController;
 use App\Http\Controllers\FixedAssetsController;
 use App\Http\Controllers\CustomerInsightsController;
 use App\Http\Controllers\SettingsController;
+use App\Http\Controllers\Tax\VATComplianceController;
+use App\Http\Controllers\Tax\VATInvoiceComplianceController;
 use App\Http\Controllers\Admin\AdminAuthController;
 use App\Http\Controllers\Admin\AdminDashboardController;
 use App\Http\Controllers\Admin\TenantController as AdminTenantController;
@@ -82,6 +84,11 @@ Route::prefix('t/{tenant}')
             Route::get('/profit-loss',       [ProfitLossController::class, 'index'])->middleware('module:profit_loss');
             Route::get('/payables',          [PayablesController::class, 'index'])->middleware('module:payables');
             Route::get('/fixed-assets',      [FixedAssetsController::class, 'index'])->middleware('module:fixed_assets');
+
+            // ── Tax Compliance service ────────────────────────────────────
+            Route::get('/vat-compliance',         [VATComplianceController::class, 'index'])->middleware('module:vat_compliance');
+            Route::get('/vat-invoice-compliance', [VATInvoiceComplianceController::class, 'index'])->middleware('module:vat_invoice_compliance');
+            Route::get('/tax-calendar',           [VATComplianceController::class, 'calendar'])->middleware('module:tax_calendar');
 
             Route::get('/settings',          [SettingsController::class, 'show']);
             Route::post('/settings',         [SettingsController::class, 'save']);

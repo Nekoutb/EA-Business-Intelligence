@@ -177,7 +177,6 @@ return [
         ],
 
         // ── Tax Compliance (ported from EA Tax Compliance) ───────────────
-        // Status flips to 'live' in Phase B once controllers/routes land.
         [
             'key'     => 'vat_compliance',
             'service' => 'tax_compliance',
@@ -187,7 +186,7 @@ return [
             'icon'    => 'M9 12l2 2 4-4M5 4h14a2 2 0 012 2v14l-4-2-3 2-3-2-4 2V6a2 2 0 012-2z',
             'default' => true,
             'core'    => false,
-            'status'  => 'coming_soon',
+            'status'  => 'live',
         ],
         [
             'key'     => 'vat_invoice_compliance',
@@ -198,7 +197,7 @@ return [
             'icon'    => 'M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8zM14 2v6h6M9 13h6M9 17h6',
             'default' => true,
             'core'    => false,
-            'status'  => 'coming_soon',
+            'status'  => 'live',
         ],
         [
             'key'     => 'tax_calendar',
@@ -209,7 +208,7 @@ return [
             'icon'    => 'M8 2v4M16 2v4M3 10h18M5 6h14a2 2 0 012 2v12a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2z',
             'default' => true,
             'core'    => false,
-            'status'  => 'coming_soon',
+            'status'  => 'live',
         ],
 
         // ── Financial Reporting (coming soon) ────────────────────────────
