@@ -2,12 +2,15 @@
 
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\OnboardingController;
 use App\Http\Controllers\RevenueController;
 use App\Http\Controllers\ReceivablesController;
 use App\Http\Controllers\ProfitLossController;
 use App\Http\Controllers\PayablesController;
 use App\Http\Controllers\TreasuryController;
 use App\Http\Controllers\FixedAssetsController;
+use App\Http\Controllers\InventoryController;
+use App\Http\Controllers\GLQualityController;
 use App\Http\Controllers\CustomerInsightsController;
 use App\Http\Controllers\SettingsController;
 use App\Http\Controllers\Tax\VATComplianceController;
@@ -48,6 +51,7 @@ Route::prefix('admin')->group(function () {
 
         Route::get('/tenants',                       [AdminTenantController::class, 'index']);
         Route::get('/tenants/create',                [AdminTenantController::class, 'create']);
+        Route::post('/tenants/wizard-step',          [AdminTenantController::class, 'wizardStep']);
         Route::post('/tenants',                      [AdminTenantController::class, 'store']);
         Route::get('/tenants/{tenant}',              [AdminTenantController::class, 'show']);
         Route::post('/tenants/{tenant}/services/{serviceKey}/toggle',
@@ -74,23 +78,44 @@ Route::prefix('t/{tenant}')
 
         // Authenticated tenant area
         Route::middleware('bi.auth')->group(function () {
-            Route::get('/',                  [DashboardController::class, 'index'])->middleware('module:dashboard');
-            Route::post('/sync',             [DashboardController::class, 'sync']);
+            // Onboarding wizard (shown if tenant not yet onboarded)
+            Route::get('/onboarding',                [OnboardingController::class, 'show']);
+            Route::post('/onboarding/step',          [OnboardingController::class, 'step']);
+            Route::post('/onboarding/complete',      [OnboardingController::class, 'complete']);
 
-            Route::get('/revenue',           [RevenueController::class, 'index'])->middleware('module:revenue');
-            Route::get('/customer-insights', [CustomerInsightsController::class, 'index'])->middleware('module:customer_insights');
-            Route::get('/receivables',       [ReceivablesController::class, 'index'])->middleware('module:receivables');
-            Route::get('/treasury',          [TreasuryController::class, 'index'])->middleware('module:treasury');
-            Route::get('/profit-loss',       [ProfitLossController::class, 'index'])->middleware('module:profit_loss');
-            Route::get('/payables',          [PayablesController::class, 'index'])->middleware('module:payables');
-            Route::get('/fixed-assets',      [FixedAssetsController::class, 'index'])->middleware('module:fixed_assets');
+            // Apply onboarding redirect middleware to all other routes
+            Route::middleware('redirect.if.not.onboarded')->group(function () {
+                Route::get('/',                  [DashboardController::class, 'index'])->middleware('module:dashboard');
+                Route::post('/sync',             [DashboardController::class, 'sync']);
 
-            // ── Tax Compliance service ────────────────────────────────────
-            Route::get('/vat-compliance',         [VATComplianceController::class, 'index'])->middleware('module:vat_compliance');
-            Route::get('/vat-invoice-compliance', [VATInvoiceComplianceController::class, 'index'])->middleware('module:vat_invoice_compliance');
-            Route::get('/tax-calendar',           [VATComplianceController::class, 'calendar'])->middleware('module:tax_calendar');
+                Route::get('/revenue',           [RevenueController::class, 'index'])->middleware('module:revenue');
+                Route::get('/customer-insights', [CustomerInsightsController::class, 'index'])->middleware('module:customer_insights');
+                Route::get('/receivables',       [ReceivablesController::class, 'index'])->middleware('module:receivables');
+                Route::get('/treasury',          [TreasuryController::class, 'index'])->middleware('module:treasury');
+                Route::get('/profit-loss',       [ProfitLossController::class, 'index'])->middleware('module:profit_loss');
+                Route::get('/payables',          [PayablesController::class, 'index'])->middleware('module:payables');
+                Route::get('/fixed-assets',      [FixedAssetsController::class, 'index'])->middleware('module:fixed_assets');
+                Route::get('/inventory',         [InventoryController::class, 'index'])->middleware('module:inventory');
 
-            Route::get('/settings',          [SettingsController::class, 'show']);
-            Route::post('/settings',         [SettingsController::class, 'save']);
+                // ── Financial Reporting service ───────────────────────────────
+                Route::get('/general-ledger-quality', [GLQualityController::class, 'index'])->middleware('module:gl_quality');
+                // Avoid a dotted extension in the URL — PHP's built-in dev server
+                // treats anything with a "." as a static file and serves a 404
+                // before Laravel's router sees the request.
+                Route::get('/general-ledger-quality/description-report',
+                    [GLQualityController::class, 'descriptionReport'])->middleware('module:gl_quality');
+                Route::get('/general-ledger-quality/manual-entry-report',
+                    [GLQualityController::class, 'manualEntryReport'])->middleware('module:gl_quality');
+                Route::get('/general-ledger-quality/timing-report',
+                    [GLQualityController::class, 'timingReport'])->middleware('module:gl_quality');
+
+                // ── Tax Compliance service ────────────────────────────────────
+                Route::get('/vat-compliance',         [VATComplianceController::class, 'index'])->middleware('module:vat_compliance');
+                Route::get('/vat-invoice-compliance', [VATInvoiceComplianceController::class, 'index'])->middleware('module:vat_invoice_compliance');
+                Route::get('/tax-calendar',           [VATComplianceController::class, 'calendar'])->middleware('module:tax_calendar');
+
+                Route::get('/settings',          [SettingsController::class, 'show']);
+                Route::post('/settings',         [SettingsController::class, 'save']);
+            });
         });
     });

@@ -53,25 +53,158 @@ class TenantController extends Controller
 
     public function create()
     {
-        return view('admin.tenants.create', [
-            'modules' => config('modules.modules', []),
-            'active'  => 'tenants',
-        ]);
+        $step = request('step', 1);
+        $wizardData = session('wizard_data', []);
+        $services = config('modules.services', []);
+        $modules = config('modules.modules', []);
+
+        if ($step === 1) {
+            return view('admin.tenants.create-wizard.step-1-workspace', [
+                'data'   => $wizardData['workspace'] ?? [],
+                'active' => 'tenants',
+            ]);
+        } elseif ($step === 2) {
+            return view('admin.tenants.create-wizard.step-2-owner', [
+                'data'   => $wizardData['owner'] ?? [],
+                'active' => 'tenants',
+            ]);
+        } elseif ($step === 3) {
+            return view('admin.tenants.create-wizard.step-3-services', [
+                'services' => $services,
+                'modules'  => $modules,
+                'data'     => $wizardData['services'] ?? [],
+                'active'   => 'tenants',
+            ]);
+        } elseif ($step === 4) {
+            $selectedServices = collect($wizardData['services'] ?? [])->flip();
+            $needsOdoo = $selectedServices->has('business_intelligence') || $selectedServices->has('tax_compliance');
+            return view('admin.tenants.create-wizard.step-4-integration', [
+                'needsOdoo' => $needsOdoo,
+                'data'      => $wizardData['integration'] ?? [],
+                'active'    => 'tenants',
+            ]);
+        } elseif ($step === 5) {
+            return view('admin.tenants.create-wizard.step-5-review', [
+                'workspace'   => $wizardData['workspace'] ?? [],
+                'owner'       => $wizardData['owner'] ?? [],
+                'services'    => $wizardData['services'] ?? [],
+                'integration' => $wizardData['integration'] ?? [],
+                'allServices' => $services,
+                'allModules'  => $modules,
+                'active'      => 'tenants',
+            ]);
+        }
+
+        return redirect('/admin/tenants/create?step=1');
+    }
+
+    public function wizardStep(Request $request)
+    {
+        $step = (int) $request->input('step', 1);
+        $action = (string) $request->input('action', 'next');
+
+        if ($action === 'cancel') {
+            $request->session()->forget('wizard_data');
+            return redirect('/admin/tenants')->with('flash', ['type' => 'info', 'msg' => 'Tenant creation cancelled.']);
+        }
+
+        if ($action === 'prev') {
+            return redirect("/admin/tenants/create?step=" . max(1, $step - 1));
+        }
+
+        if ($action === 'next') {
+            // Validate current step and save to session
+            if ($step === 1) {
+                $data = $request->validate([
+                    'slug'  => ['required', 'string', 'max:64', 'alpha_dash', 'unique:tenants,slug'],
+                    'name'  => ['required', 'string', 'max:191'],
+                    'brand' => ['nullable', 'string', 'max:191'],
+                    'plan'  => ['nullable', 'string', 'max:32'],
+                ]);
+                $wizardData = $request->session()->get('wizard_data', []);
+                $wizardData['workspace'] = $data;
+                $request->session()->put('wizard_data', $wizardData);
+            } elseif ($step === 2) {
+                $data = $request->validate([
+                    'owner_name'                => ['required', 'string', 'max:191'],
+                    'owner_email'               => ['required', 'email'],
+                    'owner_password'            => ['required', 'string', 'min:8'],
+                    'owner_password_confirm'    => ['required', 'string', 'same:owner_password'],
+                ]);
+                $wizardData = $request->session()->get('wizard_data', []);
+                $wizardData['owner'] = [
+                    'owner_name'     => $data['owner_name'],
+                    'owner_email'    => $data['owner_email'],
+                    'owner_password' => $data['owner_password'],
+                ];
+                $request->session()->put('wizard_data', $wizardData);
+            } elseif ($step === 3) {
+                $data = $request->validate([
+                    'services'   => ['array'],
+                    'services.*' => ['string'],
+                ]);
+                $wizardData = $request->session()->get('wizard_data', []);
+                $wizardData['services'] = $data['services'] ?? [];
+                $request->session()->put('wizard_data', $wizardData);
+            } elseif ($step === 4) {
+                $selectedServices = collect(session('wizard_data.services', []))->flip();
+                $needsOdoo = $selectedServices->has('business_intelligence') || $selectedServices->has('tax_compliance');
+
+                $rules = ['skip_integration' => ['nullable', 'boolean']];
+                if ($needsOdoo && !$request->has('skip_integration')) {
+                    $rules = [
+                        'ODOO_URL'      => ['required', 'url'],
+                        'ODOO_DB'       => ['required', 'string'],
+                        'ODOO_USERNAME' => ['required', 'string'],
+                        'ODOO_API_KEY'  => ['required', 'string'],
+                        'ODOO_PROTOCOL' => ['required', 'in:json2,jsonrpc,xmlrpc'],
+                    ];
+                }
+
+                $data = $request->validate($rules);
+                $wizardData = $request->session()->get('wizard_data', []);
+                $wizardData['integration'] = $data;
+                $request->session()->put('wizard_data', $wizardData);
+            }
+
+            $nextStep = min(5, $step + 1);
+            return redirect("/admin/tenants/create?step={$nextStep}");
+        }
+
+        return back();
     }
 
     public function store(Request $request)
     {
-        $data = $request->validate([
-            'slug'           => ['required', 'string', 'max:64', 'alpha_dash', 'unique:tenants,slug'],
-            'name'           => ['required', 'string', 'max:191'],
-            'brand'          => ['nullable', 'string', 'max:191'],
-            'plan'           => ['nullable', 'string', 'max:32'],
-            'owner_email'    => ['required', 'email'],
-            'owner_password' => ['required', 'string', 'min:8'],
-            'owner_name'     => ['required', 'string', 'max:191'],
-            'modules'        => ['array'],
-            'modules.*'      => ['string'],
-        ]);
+        // Check if coming from wizard or legacy form
+        $wizardData = session('wizard_data');
+
+        if ($wizardData) {
+            // Wizard flow - validate final submission
+            $request->validate(['confirm' => ['required', 'accepted']]);
+
+            $workspace = $wizardData['workspace'] ?? [];
+            $owner = $wizardData['owner'] ?? [];
+            $services = $wizardData['services'] ?? [];
+            $integration = $wizardData['integration'] ?? [];
+
+            $data = array_merge($workspace, $owner);
+        } else {
+            // Legacy form flow (backward compatibility)
+            $data = $request->validate([
+                'slug'           => ['required', 'string', 'max:64', 'alpha_dash', 'unique:tenants,slug'],
+                'name'           => ['required', 'string', 'max:191'],
+                'brand'          => ['nullable', 'string', 'max:191'],
+                'plan'           => ['nullable', 'string', 'max:32'],
+                'owner_email'    => ['required', 'email'],
+                'owner_password' => ['required', 'string', 'min:8'],
+                'owner_name'     => ['required', 'string', 'max:191'],
+                'modules'        => ['array'],
+                'modules.*'      => ['string'],
+            ]);
+            $services = [];
+            $integration = [];
+        }
 
         $tenant = Tenant::create([
             'slug'   => Str::lower($data['slug']),
@@ -81,9 +214,28 @@ class TenantController extends Controller
             'status' => Tenant::STATUS_ACTIVE,
         ]);
 
-        $selected = collect($data['modules'] ?? [])->flip();
+        // Handle services - enable all modules in selected services
+        $selectedServiceKeys = collect($services)->flip();
+        foreach (config('modules.services', []) as $s) {
+            if ($selectedServiceKeys->has($s['key'])) {
+                TenantService::create([
+                    'tenant_id'  => $tenant->id,
+                    'service_key' => $s['key'],
+                    'enabled'    => true,
+                    'enabled_at' => now(),
+                    'enabled_by' => $request->attributes->get('admin_user')?->id,
+                ]);
+            }
+        }
+
+        // Create module records: enable if service selected or core module
+        $selectedModules = collect($data['modules'] ?? [])->flip();
+        $serviceModules = collect(config('modules.modules', []))
+            ->filter(fn ($m) => $selectedServiceKeys->has($m['service'] ?? null))
+            ->pluck('key');
+
         foreach (config('modules.modules', []) as $m) {
-            $enabled = $selected->has($m['key']) || !empty($m['core']);
+            $enabled = $serviceModules->contains($m['key']) || !empty($m['core']) || $selectedModules->has($m['key']);
             TenantModule::create([
                 'tenant_id'  => $tenant->id,
                 'module_key' => $m['key'],
@@ -93,7 +245,7 @@ class TenantController extends Controller
             ]);
         }
 
-        // Bootstrap an owner user.
+        // Bootstrap an owner user
         User::create([
             'tenant_id' => $tenant->id,
             'name'      => $data['owner_name'],
@@ -103,10 +255,25 @@ class TenantController extends Controller
             'status'    => User::STATUS_ACTIVE,
         ]);
 
+        // Save integration settings if provided
+        if (!empty($integration) && !$integration['skip_integration'] ?? false) {
+            foreach (['ODOO_URL', 'ODOO_DB', 'ODOO_USERNAME', 'ODOO_API_KEY', 'ODOO_PROTOCOL'] as $key) {
+                if (!empty($integration[$key])) {
+                    TenantSetting::create([
+                        'tenant_id' => $tenant->id,
+                        'key'       => $key,
+                        'value'     => $integration[$key],
+                    ]);
+                }
+            }
+        }
+
+        $request->session()->forget('wizard_data');
+
         AuditLog::record('tenant.create', [
             'tenant_id' => $tenant->id,
             'target'    => $tenant->slug,
-            'payload'   => ['modules' => array_values((array) ($data['modules'] ?? []))],
+            'payload'   => ['services' => $services],
         ]);
 
         return redirect("/admin/tenants/{$tenant->id}")->with('flash', [
