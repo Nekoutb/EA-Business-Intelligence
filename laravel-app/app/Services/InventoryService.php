@@ -14,9 +14,12 @@ use DateTimeImmutable;
  *    (excluding 39X impairment). Both sides snapshotted at the SAME date
  *    so the comparison is like-for-like with Odoo's Trial Balance report.
  *
- * 2. Inventory Days (P&L-aligned, YTD-rate, not annualised):
+ * 2. Inventory Days (textbook two-point avg, P&L-aligned COGS, YTD-rate):
  *        days = (avg_inventory × period_days_ytd) / cogs_ytd
- *      avg_inventory  = mean of month-end snapshots from the trend
+ *      avg_inventory  = (beginning + ending) / 2
+ *                       beginning = Σ stock.valuation.layer.value WHERE
+ *                                   create_date < 1 Jan  (opening balance)
+ *                       ending    = Σ all layers up to today
  *      cogs_ytd       = Σ account.move.line.balance for 60X accounts in YTD
  *                       (matches what the income statement shows as COGS)
  *      period_days_ytd= calendar days elapsed from 1 January
@@ -42,9 +45,6 @@ class InventoryService
     public function __construct(private OdooClient $odoo) {}
 
     /**
-     * @param array $period ['type' => 'ytd'|'mtd'|'month'|'yoy', 'year' => int, 'month' => int]
-     */
-    /**
      * YTD inventory analysis. Period parameter is ignored — by design the
      * inventory page always shows year-to-date so reconciliation, days
      * calculation, and trend line all share one consistent window.
@@ -59,14 +59,20 @@ class InventoryService
         $asOfDate = $today;
         $label    = 'YTD ' . $today->format('Y');
 
-        $current     = $this->safe(fn() => $this->getInventoryValueAt($asOfDate),       $errors, 'inventory_value') ?? $this->emptyCurrent();
-        $glInventory = $this->safe(fn() => $this->getGLInventoryAccounts($asOfDate),    $errors, 'gl_inventory')    ?? $this->emptyGLInventory();
-        $trend       = $this->safe(fn() => $this->getInventoryTrend($from, $to),         $errors, 'trend')           ?? ['by_month' => []];
-        $cogsYtd     = $this->safe(fn() => $this->getCogsYtd($from, $to),                $errors, 'cogs')            ?? 0.0;
-        $currency    = $this->safe(fn() => $this->detectCurrency(),                      $errors, 'currency')        ?? 'USD';
+        // Fetch the inventory valuation ledger ONCE — both the trend chart and
+        // the inventory-days calculation derive their numbers from the same
+        // chronological cumulative sum of layer values, so we only round-trip
+        // to Odoo a single time for it.
+        $layers = $this->safe(fn() => $this->fetchValuationLayers($to), $errors, 'valuation_layers') ?? [];
+
+        $current     = $this->safe(fn() => $this->getInventoryValueAt($asOfDate),    $errors, 'inventory_value') ?? $this->emptyCurrent();
+        $glInventory = $this->safe(fn() => $this->getGLInventoryAccounts($asOfDate), $errors, 'gl_inventory')    ?? $this->emptyGLInventory();
+        $trend       = $this->buildTrend($layers, $from, $to);
+        $cogsYtd     = $this->safe(fn() => $this->getCogsYtd($from, $to),            $errors, 'cogs')            ?? 0.0;
+        $currency    = $this->safe(fn() => $this->detectCurrency(),                  $errors, 'currency')        ?? 'USD';
 
         $reconciliation  = $this->reconcile($current, $glInventory);
-        $inventoryDays   = $this->computeInventoryDays($trend, $cogsYtd, $from, $to);
+        $inventoryDays   = $this->computeInventoryDays($layers, $cogsYtd, $from, $to);
 
         return [
             'current'         => $current,
@@ -81,6 +87,27 @@ class InventoryService
             'as_of'           => $asOfDate->format('Y-m-d'),
             'error'           => empty($errors) ? null : implode(' | ', $errors),
         ];
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Shared valuation layer fetch (used by trend + days)
+    // ─────────────────────────────────────────────────────────────────
+
+    /**
+     * Fetch all stock.valuation.layer rows up to $to, ordered chronologically.
+     * One round-trip; consumed by buildTrend() and computeInventoryDays().
+     */
+    private function fetchValuationLayers(DateTimeImmutable $to): array
+    {
+        return $this->odoo->searchRead(
+            'stock.valuation.layer',
+            [
+                ['company_id', '=', $this->getCompanyId()],
+                ['create_date', '<=', $to->format('Y-m-d') . ' 23:59:59'],
+            ],
+            ['value', 'create_date'],
+            ['limit' => 200000, 'order' => 'create_date asc']
+        );
     }
 
     // ─────────────────────────────────────────────────────────────────
@@ -151,39 +178,59 @@ class InventoryService
     }
 
     /**
-     * Days of inventory outstanding, YTD basis.
+     * Days of inventory outstanding, YTD basis (textbook two-point average).
      *
-     *   days_outstanding = avg_inventory / (cogs_ytd / period_days_ytd)
-     *                    = (avg_inventory * period_days_ytd) / cogs_ytd
+     *   avg_inventory    = (beginning_inventory + ending_inventory) / 2
+     *     beginning      = inventory value as of period start (1 January)
+     *                      = Σ stock.valuation.layer.value WHERE create_date < $from
+     *                      → opening balance for the year (= prior-year close)
+     *     ending         = inventory value as of period end (today)
+     *                      = Σ all layer values up to $to
      *
-     * This answers "how many days of stock am I holding at the current
-     * YTD consumption rate?" — not annualized, so the figure remains
-     * stable as the year progresses (provided consumption stays steady).
+     *   days_outstanding = (avg_inventory × period_days) / cogs_ytd
+     *
+     * This is the standard accounting/audit formula, aligned with US GAAP,
+     * IFRS and OHADA practice. Not annualised — the figure remains stable
+     * through the year if consumption stays steady.
      */
-    private function computeInventoryDays(array $trend, float $cogs, DateTimeImmutable $from, DateTimeImmutable $to): array
+    private function computeInventoryDays(array $layers, float $cogs, DateTimeImmutable $from, DateTimeImmutable $to): array
     {
-        // Avg inventory: mean of month-end snapshots in the trend
-        $points = $trend['by_month'] ?? [];
-        $sum = 0.0;
-        $n   = 0;
-        foreach ($points as $p) {
-            $sum += (float)($p['value'] ?? 0);
-            $n++;
+        // Cutoff: anything strictly BEFORE 1 Jan 00:00:00 is opening inventory.
+        $beginningCutoff = $from->format('Y-m-d') . ' 00:00:00';
+
+        $beginning = 0.0;
+        $ending    = 0.0;
+        foreach ($layers as $l) {
+            $v = (float)($l['value']       ?? 0);
+            $d = (string)($l['create_date'] ?? '');
+            // Layers list is already filtered to `create_date <= $to` upstream,
+            // so summing the whole list gives the ending balance.
+            $ending += $v;
+            // Beginning = subset of layers that existed before YTD started.
+            if ($d !== '' && $d < $beginningCutoff) {
+                $beginning += $v;
+            }
         }
-        $avgInventory = $n > 0 ? $sum / $n : 0.0;
 
-        $periodDays = max(1, (int)$from->diff($to)->days + 1);
+        // Cumulative inventory cannot be negative in the real world.
+        // (A negative cumulative sum would imply more outflows than inflows
+        // ever recorded, which only happens with seed-data anomalies.)
+        $beginning = max(0.0, $beginning);
+        $ending    = max(0.0, $ending);
 
-        $days = ($cogs > 0.01)
+        $avgInventory = ($beginning + $ending) / 2.0;
+        $periodDays   = max(1, (int)$from->diff($to)->days + 1);
+        $days         = ($cogs > 0.01)
             ? ($avgInventory * $periodDays) / $cogs
             : 0.0;
 
         return [
-            'avg_inventory'    => round($avgInventory, 2),
-            'cogs_ytd'         => round($cogs, 2),
-            'period_days'      => $periodDays,
-            'days_outstanding' => round($days, 1),
-            'sample_size'      => $n,
+            'beginning_inventory' => round($beginning,   2),
+            'ending_inventory'    => round($ending,      2),
+            'avg_inventory'       => round($avgInventory, 2),
+            'cogs_ytd'            => round($cogs,        2),
+            'period_days'         => $periodDays,
+            'days_outstanding'    => round($days,        1),
         ];
     }
 
@@ -530,35 +577,16 @@ class InventoryService
     // ─────────────────────────────────────────────────────────────────
 
     /**
-     * Month-end inventory value series for the YTD chart.
+     * Build month-end value series from already-fetched valuation layers.
+     * Cumulative running sum walks the layers chronologically once,
+     * snapshotting at each month-end within [$from, $to]. O(N+B).
      *
-     * Single search_read on stock.valuation.layer ordered chronologically;
-     * cumulative running sum is snapshotted at each month-end bucket within
-     * [$from, $to]. O(N+B) — one round-trip total regardless of bucket count.
-     *
-     * The cumulative sum starts from the beginning of the layers (not from
-     * $from) because layers BEFORE January 1 represent opening inventory —
-     * we need that base for January's value to be correct.
+     * The cumulative sum starts from the very first layer (which is
+     * pre-YTD) because layers from prior years represent the opening
+     * inventory. We need that base for January's value to be correct.
      */
-    private function getInventoryTrend(DateTimeImmutable $from, DateTimeImmutable $to): array
+    private function buildTrend(array $layers, DateTimeImmutable $from, DateTimeImmutable $to): array
     {
-        $companyId = $this->getCompanyId();
-
-        $layers = [];
-        try {
-            $layers = $this->odoo->searchRead(
-                'stock.valuation.layer',
-                [
-                    ['company_id', '=', $companyId],
-                    ['create_date', '<=', $to->format('Y-m-d') . ' 23:59:59'],
-                ],
-                ['value', 'create_date'],
-                ['limit' => 200000, 'order' => 'create_date asc']
-            );
-        } catch (\Throwable $e) {
-            return ['by_month' => [], 'error' => 'stock.valuation.layer not available: ' . $e->getMessage()];
-        }
-
         if (empty($layers)) {
             return ['by_month' => []];
         }

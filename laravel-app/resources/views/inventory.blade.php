@@ -96,15 +96,15 @@
             <dl class="px-5 py-4 space-y-3 flex-1">
                 <div class="flex items-baseline justify-between border-b border-slate-100 pb-2">
                     <dt class="text-sm text-slate-600">Stock ledger (inventory)</dt>
-                    <dd class="text-base font-semibold font-mono text-slate-900">{{ ea_money_short($stockValue, $data['currency']) }}</dd>
+                    <dd class="text-base font-semibold text-slate-900">{{ ea_money_short($stockValue, $data['currency']) }}</dd>
                 </div>
                 <div class="flex items-baseline justify-between border-b border-slate-100 pb-2">
                     <dt class="text-sm text-slate-600">General ledger</dt>
-                    <dd class="text-base font-semibold font-mono text-slate-900">{{ ea_money_short($glBalance, $data['currency']) }}</dd>
+                    <dd class="text-base font-semibold text-slate-900">{{ ea_money_short($glBalance, $data['currency']) }}</dd>
                 </div>
                 <div class="flex items-baseline justify-between border-b border-slate-100 pb-2">
                     <dt class="text-sm text-slate-600">Variance <span class="text-[11px] text-slate-400">(GL − Stock)</span></dt>
-                    <dd class="text-base font-semibold font-mono {{ $varianceColor }}">{{ ea_money_short($variance, $data['currency']) }}</dd>
+                    <dd class="text-base font-semibold {{ $varianceColor }}">{{ ea_money_short($variance, $data['currency']) }}</dd>
                 </div>
                 <div class="flex items-baseline justify-between">
                     <dt class="text-sm text-slate-600">Reconciliation</dt>
@@ -134,15 +134,15 @@
                             @else
                                 @foreach ($glAccounts as $account)
                                     <tr class="border-t border-slate-100 hover:bg-slate-50">
-                                        <td class="py-2 px-5 font-mono text-slate-700">{{ $account['code'] ?? '—' }}</td>
+                                        <td class="py-2 px-5 text-slate-700">{{ $account['code'] ?? '—' }}</td>
                                         <td class="py-2 px-3 text-slate-900">{{ $account['name'] ?? 'Unknown' }}</td>
-                                        <td class="text-right py-2 px-5 font-mono text-slate-700">{{ ea_money_short($account['balance'] ?? 0, $data['currency']) }}</td>
+                                        <td class="text-right py-2 px-5 text-slate-700">{{ ea_money_short($account['balance'] ?? 0, $data['currency']) }}</td>
                                     </tr>
                                 @endforeach
                                 <tr class="border-t-2 border-slate-300 bg-slate-50 font-semibold">
                                     <td class="py-2 px-5"></td>
                                     <td class="py-2 px-3 text-slate-900">Total</td>
-                                    <td class="text-right py-2 px-5 font-mono text-slate-900">{{ ea_money_short($glBalance, $data['currency']) }}</td>
+                                    <td class="text-right py-2 px-5 text-slate-900">{{ ea_money_short($glBalance, $data['currency']) }}</td>
                                 </tr>
                             @endif
                         </tbody>
@@ -164,18 +164,26 @@
                 </p>
             </header>
 
+            @php
+                $beginningInv = $invDays['beginning_inventory'] ?? 0;
+                $endingInv    = $invDays['ending_inventory']    ?? 0;
+            @endphp
+
             <dl class="px-5 py-4 space-y-3 flex-1">
                 <div class="flex items-baseline justify-between border-b border-slate-100 pb-2">
-                    <dt class="text-sm text-slate-600">Average inventory <span class="text-[11px] text-slate-400">(month-end mean)</span></dt>
-                    <dd class="text-base font-semibold font-mono text-slate-900">{{ ea_money_short($avgInventory, $data['currency']) }}</dd>
+                    <dt class="text-sm text-slate-600">
+                        Average inventory
+                        <span class="block text-[11px] text-slate-400 font-normal mt-0.5">(beginning {{ ea_money_short($beginningInv, $data['currency']) }} + ending {{ ea_money_short($endingInv, $data['currency']) }}) ÷ 2</span>
+                    </dt>
+                    <dd class="text-base font-semibold text-slate-900">{{ ea_money_short($avgInventory, $data['currency']) }}</dd>
                 </div>
                 <div class="flex items-baseline justify-between border-b border-slate-100 pb-2">
                     <dt class="text-sm text-slate-600">COGS YTD <span class="text-[11px] text-slate-400">(60X accounts)</span></dt>
-                    <dd class="text-base font-semibold font-mono text-slate-900">{{ ea_money_short($cogsYtd, $data['currency']) }}</dd>
+                    <dd class="text-base font-semibold text-slate-900">{{ ea_money_short($cogsYtd, $data['currency']) }}</dd>
                 </div>
                 <div class="flex items-baseline justify-between border-b border-slate-100 pb-2">
                     <dt class="text-sm text-slate-600">Period days elapsed</dt>
-                    <dd class="text-base font-semibold font-mono text-slate-900">{{ $invDays['period_days'] ?? 0 }}</dd>
+                    <dd class="text-base font-semibold text-slate-900">{{ $invDays['period_days'] ?? 0 }}</dd>
                 </div>
                 <div class="flex items-baseline justify-between">
                     <dt class="text-sm text-slate-600">Days outstanding</dt>
@@ -183,7 +191,7 @@
                 </div>
             </dl>
 
-            <p class="px-5 pb-3 text-[11px] text-slate-400 font-mono">
+            <p class="px-5 pb-3 text-[11px] text-slate-400">
                 = (avg inventory × period days) ÷ COGS
             </p>
         </section>
