@@ -165,6 +165,17 @@ return [
             'status'  => 'live',
         ],
         [
+            'key'     => 'inventory',
+            'service' => 'business_intelligence',
+            'label'   => 'Inventory',
+            'url'     => '/inventory',
+            'active'  => 'inventory',
+            'icon'    => 'M3 3v18h18V3H3m3 2h12v2H6V5m0 6h12v2H6v-2m0 6h12v2H6v-2',
+            'default' => true,
+            'core'    => false,
+            'status'  => 'live',
+        ],
+        [
             'key'     => 'ai_insights',
             'service' => 'business_intelligence',
             'label'   => 'AI Insights',
