@@ -273,17 +273,32 @@ class InventoryService
      */
     private function getGLInventoryAccounts(DateTimeImmutable $asOfDate): array
     {
-        // Step 1: find inventory accounts (code starts with 3, not 39)
+        // Step 1: find inventory accounts (code starts with 3, excluding 39X impairment).
+        //
+        // Note: `account.account.company_id` was REMOVED in Odoo 17 — the chart of
+        // accounts is now shared across companies via the `company_ids` m2m. Filtering
+        // by company here would crash. We rely on the `company_id` filter on
+        // account.move.line (which still has it) to scope balances per company.
+        //
+        // Note: we don't combine `=like '3%'` with `not like '39%'` in the domain,
+        // because Odoo's `like` operator auto-wraps the value with %s — making
+        // `not like '39%'` equivalent to `NOT LIKE '%39%%'`, which is unreliable
+        // for "doesn't start with 39". Instead we fetch all 3X accounts and
+        // exclude 39X client-side.
         $accounts = $this->odoo->searchRead(
             'account.account',
             [
-                ['company_id', '=', $this->getCompanyId()],
                 ['code', '=like', '3%'],
-                ['code', 'not like', '39%'],
             ],
             ['code', 'name'],
-            ['limit' => 500, 'order' => 'code asc']
+            ['limit' => 1000, 'order' => 'code asc']
         );
+
+        // Client-side: keep only accounts whose code starts with 3 but not 39
+        $accounts = array_values(array_filter($accounts, function ($a) {
+            $code = (string)($a['code'] ?? '');
+            return str_starts_with($code, '3') && !str_starts_with($code, '39');
+        }));
 
         if (empty($accounts)) {
             return $this->emptyGLInventory();
