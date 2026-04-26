@@ -6,16 +6,14 @@
     <div class="flex items-center justify-between">
         <div>
             <h2 class="text-2xl font-bold text-slate-900">Inventory</h2>
-            @if ($data['period_label'])
-                <p class="text-xs text-slate-500 mt-1">
-                    {{ $data['period_label'] }}
-                    @if ($data['error'])
-                        — Last sync failed
-                    @else
-                        — Last synced just now
-                    @endif
-                </p>
-            @endif
+            <p class="text-xs text-slate-500 mt-1">
+                {{ $data['period_label'] ?? 'YTD' }}
+                @if ($data['error'] ?? null)
+                    — Last sync failed
+                @else
+                    — Last synced just now
+                @endif
+            </p>
         </div>
         <form method="POST" action="{{ url('/sync') }}" class="inline">
             @csrf
@@ -27,27 +25,32 @@
 @endsection
 
 @section('content')
-    {{-- Period Filter --}}
-    <x-period-filter />
-
     {{-- Error Display --}}
-    @if ($data['error'])
+    @if ($data['error'] ?? null)
         <div class="mb-6 px-4 py-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-sm">
             <strong>Error:</strong> {{ $data['error'] }}
         </div>
     @endif
 
-    {{-- ───────────────── Consolidated Reconciliation Box ───────────────── --}}
+    {{-- Pre-compute view state --}}
     @php
         $reconciliation = $data['reconciliation'] ?? [];
-        $stockValue   = $reconciliation['stock_value']      ?? 0;
-        $glBalance    = $reconciliation['gl_balance']       ?? 0;
-        $variance     = $reconciliation['variance']         ?? 0;
-        $accuracy     = $reconciliation['accuracy_percent'] ?? 0;
-        $interpretation = $reconciliation['interpretation'] ?? '';
-        $glAccounts   = $data['gl_inventory']['by_account'] ?? [];
+        $stockValue     = $reconciliation['stock_value']      ?? 0;
+        $glBalance      = $reconciliation['gl_balance']       ?? 0;
+        $variance       = $reconciliation['variance']         ?? 0;
+        $accuracy       = $reconciliation['accuracy_percent'] ?? 0;
+        $interpretation = $reconciliation['interpretation']   ?? '';
+        $glAccounts     = $data['gl_inventory']['by_account'] ?? [];
 
-        // Pill + status message colour, driven entirely by accuracy %.
+        $invDays        = $data['inventory_days'] ?? [];
+        $avgInventory   = $invDays['avg_inventory']    ?? 0;
+        $cogsYtd        = $invDays['cogs_ytd']         ?? 0;
+        $daysOutstanding= $invDays['days_outstanding'] ?? 0;
+
+        $asOfDate  = $data['as_of'] ?? null;
+        $asOfLabel = $asOfDate ? \DateTime::createFromFormat('Y-m-d', $asOfDate)->format('j M Y') : '';
+
+        // Pill + status colour, driven by accuracy %.
         if ($accuracy >= 99.99) {
             $tone = ['pill' => 'bg-emerald-100 text-emerald-700 ring-emerald-200',
                      'msg'  => 'text-emerald-700',
@@ -73,14 +76,8 @@
         $varianceColor = abs($variance) < 0.01 ? 'text-slate-700' : 'text-amber-700';
     @endphp
 
-    @php
-        $asOfDate    = $data['as_of'] ?? null;
-        $isHistorical = !empty($data['historical']);
-        $asOfLabel   = $asOfDate ? \DateTime::createFromFormat('Y-m-d', $asOfDate)->format('j M Y') : '';
-    @endphp
-
-    <section class="mb-8 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-        {{-- Header bar --}}
+    {{-- ───────────────── Box 1: Reconciliation ───────────────── --}}
+    <section class="mb-6 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
         <header class="flex items-center justify-between px-6 py-4 border-b border-slate-200 bg-gradient-to-r from-slate-50 to-white">
             <div>
                 <h3 class="text-lg font-semibold text-slate-900">Inventory Reconciliation</h3>
@@ -88,7 +85,7 @@
                     Stock ledger value vs. trial balance — accounts <code class="font-mono bg-slate-100 px-1 rounded">3%</code> (excl. <code class="font-mono bg-slate-100 px-1 rounded">39%</code> impairment)
                     @if ($asOfLabel)
                         <span class="ml-1">·</span>
-                        <span class="font-medium text-slate-700">as of {{ $asOfLabel }}</span>
+                        <span class="font-medium text-slate-700">YTD as of {{ $asOfLabel }}</span>
                     @endif
                 </p>
             </div>
@@ -102,25 +99,16 @@
             </span>
         </header>
 
-        {{-- 4-column metric grid --}}
-        <div class="grid grid-cols-2 md:grid-cols-4 divide-x divide-y md:divide-y-0 divide-slate-200">
-            {{-- Inventory Value --}}
+        {{-- 3-column metric grid --}}
+        <div class="grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-slate-200">
+            {{-- Inventory Value (with stock vs GL sub-comparison) --}}
             <div class="p-5">
                 <p class="text-[11px] uppercase tracking-wide text-slate-500 font-semibold">Inventory Value</p>
                 <p class="text-2xl font-bold text-slate-900 mt-1">{{ ea_money_short($stockValue, $data['currency']) }}</p>
-                <p class="text-[11px] text-slate-400 mt-1">
-                    @if ($isHistorical)
-                        <code class="font-mono">stock.valuation.layer</code> · {{ $asOfLabel }}
-                    @else
-                        <code class="font-mono">stock.quant</code> · live
-                    @endif
-                </p>
-            </div>
-            {{-- GL Balance --}}
-            <div class="p-5">
-                <p class="text-[11px] uppercase tracking-wide text-slate-500 font-semibold">GL Balance</p>
-                <p class="text-2xl font-bold text-slate-900 mt-1">{{ ea_money_short($glBalance, $data['currency']) }}</p>
-                <p class="text-[11px] text-slate-400 mt-1">trial balance end · {{ $asOfLabel }}</p>
+                <div class="mt-2 space-y-0.5 text-[11px]">
+                    <p class="text-slate-500">Stock ledger: <span class="font-mono text-slate-700">{{ ea_money_short($stockValue, $data['currency']) }}</span></p>
+                    <p class="text-slate-500">GL balance:&nbsp;&nbsp;&nbsp;<span class="font-mono text-slate-700">{{ ea_money_short($glBalance, $data['currency']) }}</span></p>
+                </div>
             </div>
             {{-- Variance --}}
             <div class="p-5">
@@ -179,7 +167,6 @@
                                     <td class="text-right py-2.5 px-6 font-mono text-slate-700">{{ ea_money_short($account['balance'] ?? 0, $data['currency']) }}</td>
                                 </tr>
                             @endforeach
-                            {{-- Total row --}}
                             <tr class="border-t-2 border-slate-300 bg-slate-50 font-semibold">
                                 <td class="py-2.5 px-6"></td>
                                 <td class="py-2.5 px-4 text-slate-900">Total inventory accounts</td>
@@ -192,65 +179,56 @@
         </details>
     </section>
 
-    {{-- YTD Inventory Value Trend Chart --}}
-    <div class="mb-8 p-6 bg-white rounded-lg border border-slate-200 shadow-sm">
-        <div class="flex items-center justify-between mb-4">
+    {{-- ───────────────── Box 2: Inventory Days (YTD) ───────────────── --}}
+    <section class="mb-6 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+        <header class="flex items-center justify-between px-6 py-4 border-b border-slate-200 bg-gradient-to-r from-slate-50 to-white">
+            <div>
+                <h3 class="text-lg font-semibold text-slate-900">Inventory Days</h3>
+                <p class="text-xs text-slate-500 mt-0.5">
+                    Days of stock-on-hand at YTD consumption rate
+                    @if ($asOfLabel)
+                        <span class="ml-1">·</span>
+                        <span class="font-medium text-slate-700">YTD as of {{ $asOfLabel }}</span>
+                    @endif
+                </p>
+            </div>
+            <span class="text-[11px] text-slate-400 font-mono">
+                avg inv × {{ $invDays['period_days'] ?? 0 }} days ÷ COGS
+            </span>
+        </header>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-slate-200">
+            {{-- Average Inventory --}}
+            <div class="p-5">
+                <p class="text-[11px] uppercase tracking-wide text-slate-500 font-semibold">Average Inventory</p>
+                <p class="text-2xl font-bold text-slate-900 mt-1">{{ ea_money_short($avgInventory, $data['currency']) }}</p>
+                <p class="text-[11px] text-slate-400 mt-1">mean of month-end values</p>
+            </div>
+            {{-- COGS YTD --}}
+            <div class="p-5">
+                <p class="text-[11px] uppercase tracking-wide text-slate-500 font-semibold">COGS YTD</p>
+                <p class="text-2xl font-bold text-slate-900 mt-1">{{ ea_money_short($cogsYtd, $data['currency']) }}</p>
+                <p class="text-[11px] text-slate-400 mt-1">stock outflows at cost</p>
+            </div>
+            {{-- Days Outstanding --}}
+            <div class="p-5">
+                <p class="text-[11px] uppercase tracking-wide text-slate-500 font-semibold">Days Outstanding</p>
+                <p class="text-2xl font-bold text-indigo-700 mt-1">{{ number_format($daysOutstanding, 1) }} days</p>
+                <p class="text-[11px] text-slate-400 mt-1">at current consumption rate</p>
+            </div>
+        </div>
+    </section>
+
+    {{-- ───────────────── Box 3: Inventory Value Trend ───────────────── --}}
+    <section class="mb-6 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+        <header class="px-6 py-4 border-b border-slate-200 bg-gradient-to-r from-slate-50 to-white">
             <h3 class="text-lg font-semibold text-slate-900">Inventory Value Trend</h3>
-            <div class="flex gap-2">
-                <button type="button" id="trendByMonth" class="px-3 py-1 text-xs font-medium rounded bg-indigo-100 text-indigo-700 hover:bg-indigo-200 transition">
-                    By Month
-                </button>
-                <button type="button" id="trendByWeek" class="px-3 py-1 text-xs font-medium rounded bg-slate-100 text-slate-600 hover:bg-slate-200 transition">
-                    By Week
-                </button>
-            </div>
+            <p class="text-xs text-slate-500 mt-0.5">Month-end inventory value · January {{ now()->year }} to date</p>
+        </header>
+        <div class="p-6">
+            <canvas id="inventoryChart" height="60"></canvas>
         </div>
-
-        <canvas id="inventoryChart" height="60"></canvas>
-    </div>
-
-    {{-- Inventory Breakdown --}}
-    @php
-        $byProduct = $data['current']['by_product'] ?? [];
-    @endphp
-
-    @if (!empty($byProduct))
-        <div class="p-6 bg-white rounded-lg border border-slate-200 shadow-sm">
-            <h3 class="text-lg font-semibold text-slate-900 mb-4">Inventory by Product</h3>
-
-            <div class="overflow-x-auto">
-                <table class="w-full text-sm">
-                    <thead>
-                        <tr class="border-b border-slate-200">
-                            <th class="text-left py-3 px-4 font-semibold text-slate-600">Product</th>
-                            <th class="text-right py-3 px-4 font-semibold text-slate-600">Quantity</th>
-                            <th class="text-right py-3 px-4 font-semibold text-slate-600">Unit Cost</th>
-                            <th class="text-right py-3 px-4 font-semibold text-slate-600">Total Value</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        @foreach ($byProduct as $product => $data)
-                            <tr class="border-b border-slate-100 hover:bg-slate-50">
-                                <td class="py-3 px-4">
-                                    <div class="font-medium text-slate-900">{{ $product }}</div>
-                                    <div class="text-xs text-slate-500 mt-1">{{ $data['code'] ?? '' }}</div>
-                                </td>
-                                <td class="text-right py-3 px-4 font-mono text-slate-600">
-                                    {{ number_format($data['qty'], 2) }}
-                                </td>
-                                <td class="text-right py-3 px-4 font-mono text-slate-600">
-                                    {{ ea_money_short($data['cost'], '') }}
-                                </td>
-                                <td class="text-right py-3 px-4 font-mono text-slate-900 font-semibold">
-                                    {{ ea_money_short($data['value'], '') }}
-                                </td>
-                            </tr>
-                        @endforeach
-                    </tbody>
-                </table>
-            </div>
-        </div>
-    @endif
+    </section>
 
 @endsection
 
@@ -259,114 +237,69 @@
 
 <script>
 document.addEventListener('DOMContentLoaded', function() {
-    const trendData = @json($data['trend'] ?? []);
-    const currency = @json($data['currency'] ?? 'USD');
+    const trendData = @json($data['trend'] ?? ['by_month' => []]);
+    const currency  = @json($data['currency'] ?? 'USD');
 
-    let currentMode = 'month'; // 'month' or 'week'
-    let chart = null;
+    const points = trendData.by_month || [];
+    const canvas = document.getElementById('inventoryChart');
 
-    function initChart(mode) {
-        const data = mode === 'month' ? trendData.by_month : trendData.by_week;
-
-        if (!data || data.length === 0) {
-            document.getElementById('inventoryChart').parentElement.innerHTML =
-                '<p class="text-center text-slate-500 py-6">No trend data available</p>';
-            return;
-        }
-
-        const labels = data.map(d => mode === 'month' ? d.month : d.date);
-        const values = data.map(d => d.value);
-
-        const ctx = document.getElementById('inventoryChart').getContext('2d');
-
-        if (chart) {
-            chart.destroy();
-        }
-
-        chart = new Chart(ctx, {
-            type: 'line',
-            data: {
-                labels: labels,
-                datasets: [{
-                    label: 'Inventory Value (' + currency + ')',
-                    data: values,
-                    borderColor: 'rgb(79, 70, 229)',
-                    backgroundColor: 'rgba(79, 70, 229, 0.1)',
-                    borderWidth: 2,
-                    fill: true,
-                    tension: 0.4,
-                    pointBackgroundColor: 'rgb(79, 70, 229)',
-                    pointBorderColor: 'white',
-                    pointBorderWidth: 2,
-                    pointRadius: 4,
-                    pointHoverRadius: 6,
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: true,
-                plugins: {
-                    legend: {
-                        display: true,
-                        position: 'top',
-                    },
-                    tooltip: {
-                        backgroundColor: 'rgba(0, 0, 0, 0.8)',
-                        padding: 12,
-                        titleFont: { size: 13, weight: 'bold' },
-                        bodyFont: { size: 12 },
-                        callbacks: {
-                            label: function(context) {
-                                const value = context.parsed.y;
-                                return 'Value: ' + new Intl.NumberFormat('en-US', {
-                                    style: 'currency',
-                                    currency: currency,
-                                    minimumFractionDigits: 0,
-                                    maximumFractionDigits: 0
-                                }).format(value);
-                            }
-                        }
-                    }
-                },
-                scales: {
-                    y: {
-                        beginAtZero: true,
-                        ticks: {
-                            callback: function(value) {
-                                return new Intl.NumberFormat('en-US', {
-                                    style: 'currency',
-                                    currency: currency,
-                                    minimumFractionDigits: 0,
-                                    maximumFractionDigits: 0
-                                }).format(value);
-                            }
-                        }
-                    }
-                }
-            }
-        });
+    if (!points.length) {
+        canvas.parentElement.innerHTML =
+            '<p class="text-center text-slate-500 py-6 text-sm">No trend data available — stock.valuation.layer is empty for the current year.</p>';
+        return;
     }
 
-    // Initialize with month view
-    initChart('month');
+    const labels = points.map(d => d.month);
+    const values = points.map(d => d.value);
 
-    // Tab switching
-    document.getElementById('trendByMonth').addEventListener('click', function() {
-        currentMode = 'month';
-        document.getElementById('trendByMonth').classList.add('bg-indigo-100', 'text-indigo-700');
-        document.getElementById('trendByMonth').classList.remove('bg-slate-100', 'text-slate-600');
-        document.getElementById('trendByWeek').classList.remove('bg-indigo-100', 'text-indigo-700');
-        document.getElementById('trendByWeek').classList.add('bg-slate-100', 'text-slate-600');
-        initChart('month');
-    });
+    const fmt = v => new Intl.NumberFormat('en-US', {
+        style: 'currency',
+        currency: currency,
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 0
+    }).format(v);
 
-    document.getElementById('trendByWeek').addEventListener('click', function() {
-        currentMode = 'week';
-        document.getElementById('trendByWeek').classList.add('bg-indigo-100', 'text-indigo-700');
-        document.getElementById('trendByWeek').classList.remove('bg-slate-100', 'text-slate-600');
-        document.getElementById('trendByMonth').classList.remove('bg-indigo-100', 'text-indigo-700');
-        document.getElementById('trendByMonth').classList.add('bg-slate-100', 'text-slate-600');
-        initChart('week');
+    new Chart(canvas.getContext('2d'), {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'Inventory value (' + currency + ')',
+                data: values,
+                borderColor: 'rgb(79, 70, 229)',
+                backgroundColor: 'rgba(79, 70, 229, 0.1)',
+                borderWidth: 2,
+                fill: true,
+                tension: 0.3,
+                pointBackgroundColor: 'rgb(79, 70, 229)',
+                pointBorderColor: 'white',
+                pointBorderWidth: 2,
+                pointRadius: 4,
+                pointHoverRadius: 6,
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            plugins: {
+                legend: { display: true, position: 'top' },
+                tooltip: {
+                    backgroundColor: 'rgba(0, 0, 0, 0.85)',
+                    padding: 12,
+                    titleFont: { size: 13, weight: 'bold' },
+                    bodyFont: { size: 12 },
+                    callbacks: {
+                        label: ctx => 'Value: ' + fmt(ctx.parsed.y)
+                    }
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    ticks: { callback: fmt }
+                }
+            }
+        }
     });
 });
 </script>

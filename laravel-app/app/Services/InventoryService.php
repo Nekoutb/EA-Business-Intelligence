@@ -36,48 +36,116 @@ class InventoryService
     /**
      * @param array $period ['type' => 'ytd'|'mtd'|'month'|'yoy', 'year' => int, 'month' => int]
      */
-    public function analyze(DateTimeImmutable $today, array $period): array
+    /**
+     * YTD inventory analysis. Period parameter is ignored — by design the
+     * inventory page always shows year-to-date so reconciliation, days
+     * calculation, and trend line all share one consistent window.
+     */
+    public function analyze(DateTimeImmutable $today, array $period = []): array
     {
         $errors = [];
 
-        try {
-            [$from, $to, $label] = ea_resolve_period($today, $period);
-        } catch (\Throwable $e) {
-            $from  = $today->modify('first day of January this year');
-            $to    = $today;
-            $label = 'YTD';
-            $errors[] = 'Period resolution failed: ' . $e->getMessage();
-        }
+        // Always YTD: 1 January of current year → today.
+        $from     = $today->modify('first day of January')->setTime(0, 0, 0);
+        $to       = $today->setTime(23, 59, 59);
+        $asOfDate = $today;
+        $label    = 'YTD ' . $today->format('Y');
 
-        // As-of date drives both sides of the reconciliation. Clamp to today
-        // so we never query for tomorrow's data. `historical` flag lets the
-        // view distinguish a live snapshot from a reconstructed past one.
-        $asOfDate   = ($to > $today) ? $today : $to;
-        $historical = $asOfDate->format('Y-m-d') < $today->format('Y-m-d');
-
-        // Defensive: each section returns an empty/default shape on failure
-        // so the view never sees missing keys AND reconcile() never gets null.
-        // Coalesce BEFORE passing to reconcile (which is type-hinted `array`).
         $current     = $this->safe(fn() => $this->getInventoryValueAt($asOfDate),       $errors, 'inventory_value') ?? $this->emptyCurrent();
         $glInventory = $this->safe(fn() => $this->getGLInventoryAccounts($asOfDate),    $errors, 'gl_inventory')    ?? $this->emptyGLInventory();
-        $trend       = $this->safe(fn() => $this->getInventoryTrend($from, $to),         $errors, 'trend')           ?? ['by_month' => [], 'by_week' => []];
+        $trend       = $this->safe(fn() => $this->getInventoryTrend($from, $to),         $errors, 'trend')           ?? ['by_month' => []];
+        $cogsYtd     = $this->safe(fn() => $this->getCogsYtd($from, $to),                $errors, 'cogs')            ?? 0.0;
         $currency    = $this->safe(fn() => $this->detectCurrency(),                      $errors, 'currency')        ?? 'USD';
 
-        $reconciliation = $this->reconcile($current, $glInventory);
+        $reconciliation  = $this->reconcile($current, $glInventory);
+        $inventoryDays   = $this->computeInventoryDays($trend, $cogsYtd, $from, $to);
 
         return [
-            'current'        => $current,
-            'gl_inventory'   => $glInventory,
-            'reconciliation' => $reconciliation,
-            'trend'          => $trend,
-            'currency'       => $currency,
-            'period'         => $period,
-            'period_label'   => $label,
-            'from'           => $from->format('Y-m-d'),
-            'to'             => $to->format('Y-m-d'),
-            'as_of'          => $asOfDate->format('Y-m-d'),
-            'historical'     => $historical,
-            'error'          => empty($errors) ? null : implode(' | ', $errors),
+            'current'         => $current,
+            'gl_inventory'    => $glInventory,
+            'reconciliation'  => $reconciliation,
+            'inventory_days'  => $inventoryDays,
+            'trend'           => $trend,
+            'currency'        => $currency,
+            'period_label'    => $label,
+            'from'            => $from->format('Y-m-d'),
+            'to'              => $to->format('Y-m-d'),
+            'as_of'           => $asOfDate->format('Y-m-d'),
+            'error'           => empty($errors) ? null : implode(' | ', $errors),
+        ];
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Inventory Days (YTD)
+    // ─────────────────────────────────────────────────────────────────
+
+    /**
+     * COGS YTD inferred from inventory outflows.
+     *
+     * Sum of negative values on stock.valuation.layer between $from and $to.
+     * A negative layer value represents stock leaving the warehouse at cost
+     * (sale, scrap, internal-transfer-to-customer-location). This matches
+     * the 'consumption' side of the inventory days ratio better than a
+     * GL-based COGS reconstruction, because it's measured at the ledger
+     * Odoo itself uses for inventory valuation.
+     */
+    private function getCogsYtd(DateTimeImmutable $from, DateTimeImmutable $to): float
+    {
+        $layers = $this->odoo->searchRead(
+            'stock.valuation.layer',
+            [
+                ['company_id', '=', $this->getCompanyId()],
+                ['create_date', '>=', $from->format('Y-m-d')],
+                ['create_date', '<=', $to->format('Y-m-d') . ' 23:59:59'],
+            ],
+            ['value'],
+            ['limit' => 200000]
+        );
+
+        $cogs = 0.0;
+        foreach ($layers as $l) {
+            $v = (float)($l['value'] ?? 0);
+            if ($v < 0) {
+                $cogs += -$v;   // accumulate as positive
+            }
+        }
+        return round($cogs, 2);
+    }
+
+    /**
+     * Days of inventory outstanding, YTD basis.
+     *
+     *   days_outstanding = avg_inventory / (cogs_ytd / period_days_ytd)
+     *                    = (avg_inventory * period_days_ytd) / cogs_ytd
+     *
+     * This answers "how many days of stock am I holding at the current
+     * YTD consumption rate?" — not annualized, so the figure remains
+     * stable as the year progresses (provided consumption stays steady).
+     */
+    private function computeInventoryDays(array $trend, float $cogs, DateTimeImmutable $from, DateTimeImmutable $to): array
+    {
+        // Avg inventory: mean of month-end snapshots in the trend
+        $points = $trend['by_month'] ?? [];
+        $sum = 0.0;
+        $n   = 0;
+        foreach ($points as $p) {
+            $sum += (float)($p['value'] ?? 0);
+            $n++;
+        }
+        $avgInventory = $n > 0 ? $sum / $n : 0.0;
+
+        $periodDays = max(1, (int)$from->diff($to)->days + 1);
+
+        $days = ($cogs > 0.01)
+            ? ($avgInventory * $periodDays) / $cogs
+            : 0.0;
+
+        return [
+            'avg_inventory'    => round($avgInventory, 2),
+            'cogs_ytd'         => round($cogs, 2),
+            'period_days'      => $periodDays,
+            'days_outstanding' => round($days, 1),
+            'sample_size'      => $n,
         ];
     }
 
@@ -424,19 +492,20 @@ class InventoryService
     // ─────────────────────────────────────────────────────────────────
 
     /**
-     * Build month-end and week-end inventory value series using
-     * stock.valuation.layer (signed value column). Cumulative sum at each
-     * bucket end gives the inventory value as of that date.
+     * Month-end inventory value series for the YTD chart.
      *
-     * If stock.valuation.layer is not available (rare on modern Odoo),
-     * falls back to the current snapshot replicated across the period.
+     * Single search_read on stock.valuation.layer ordered chronologically;
+     * cumulative running sum is snapshotted at each month-end bucket within
+     * [$from, $to]. O(N+B) — one round-trip total regardless of bucket count.
+     *
+     * The cumulative sum starts from the beginning of the layers (not from
+     * $from) because layers BEFORE January 1 represent opening inventory —
+     * we need that base for January's value to be correct.
      */
     private function getInventoryTrend(DateTimeImmutable $from, DateTimeImmutable $to): array
     {
         $companyId = $this->getCompanyId();
 
-        // Query ALL valuation layers up to $to (we need pre-period balances for cumulative sum)
-        // ordered ascending so cumulative sums work as we iterate
         $layers = [];
         try {
             $layers = $this->odoo->searchRead(
@@ -446,25 +515,18 @@ class InventoryService
                     ['create_date', '<=', $to->format('Y-m-d') . ' 23:59:59'],
                 ],
                 ['value', 'create_date'],
-                ['limit' => 100000, 'order' => 'create_date asc']
+                ['limit' => 200000, 'order' => 'create_date asc']
             );
         } catch (\Throwable $e) {
-            // Model not available — return empty trend rather than failing the whole page
-            return ['by_month' => [], 'by_week' => [], 'error' => 'stock.valuation.layer not available: ' . $e->getMessage()];
+            return ['by_month' => [], 'error' => 'stock.valuation.layer not available: ' . $e->getMessage()];
         }
 
         if (empty($layers)) {
-            return ['by_month' => [], 'by_week' => []];
+            return ['by_month' => []];
         }
 
-        // Build month/week bucket boundaries within [from, to]
         $monthBuckets = $this->generateMonthEnds($from, $to);
-        $weekBuckets  = $this->generateWeekEnds($from, $to);
-
-        // Pre-compute cumulative running total of signed layer values
-        // by walking layers chronologically once.
-        $monthSeries = $this->bucketize($layers, $monthBuckets);
-        $weekSeries  = $this->bucketize($layers, $weekBuckets);
+        $monthSeries  = $this->bucketize($layers, $monthBuckets);
 
         $byMonth = [];
         foreach ($monthSeries as $row) {
@@ -475,16 +537,7 @@ class InventoryService
             ];
         }
 
-        $byWeek = [];
-        foreach ($weekSeries as $row) {
-            $byWeek[] = [
-                'date'  => $row['date']->format('Y-m-d'),
-                'week'  => 'W' . $row['date']->format('W') . ' ' . $row['date']->format('Y'),
-                'value' => round($row['value'], 2),
-            ];
-        }
-
-        return ['by_month' => $byMonth, 'by_week' => $byWeek];
+        return ['by_month' => $byMonth];
     }
 
     /**

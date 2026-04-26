@@ -10,18 +10,13 @@ class InventoryController extends Controller
 {
     public function index(Request $request)
     {
-        // IMPORTANT: must be DateTimeImmutable, not Carbon (which extends DateTime, not DateTimeImmutable)
-        $today  = new \DateTimeImmutable();
-        $period = [
-            'type'  => $request->query('period', 'ytd'),
-            'year'  => (int) $request->query('year',  $today->format('Y')),
-            'month' => (int) $request->query('month', $today->format('m')),
-        ];
+        // Inventory page is YTD-only by design — no period parameter is read.
+        // The cache key reflects that scope (per-tenant via ea_cached helper).
+        $today = new \DateTimeImmutable();
 
-        $cacheKey = 'inventory_' . md5(json_encode($period));
-        $data = ea_cached($cacheKey, function () use ($today, $period) {
+        $data = ea_cached('inventory_ytd', function () use ($today) {
             $svc = new InventoryService(OdooFactory::fromConfig());
-            return $svc->analyze($today, $period);
+            return $svc->analyze($today);
         });
 
         return view('inventory', [
