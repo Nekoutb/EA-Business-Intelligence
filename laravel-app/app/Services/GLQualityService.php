@@ -88,6 +88,12 @@ class GLQualityService
             'manual_entry_review'
         ) ?? null;
 
+        $journalTiming = $this->safe(
+            fn() => (new JournalTimingService($this->odoo))->analyze($today),
+            $errors,
+            'journal_timing'
+        ) ?? null;
+
         return [
             'receivables'           => $receivables,
             'payables'              => $payables,
@@ -96,6 +102,7 @@ class GLQualityService
             'fixed_assets_book'     => $faBook,
             'description_quality'   => $descriptionQuality,
             'manual_entry_review'   => $manualEntryReview,
+            'journal_timing'        => $journalTiming,
             'currency'              => $currency,
             'as_of'                 => $asOfDate->format('Y-m-d'),
             'period_label'          => 'YTD ' . $today->format('Y'),

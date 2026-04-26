@@ -57,6 +57,19 @@ class GLQualityController extends Controller
     }
 
     /**
+     * Streaming CSV download of every GL line flagged by either of the
+     * two journal-timing checks (late posting / weekend posting).
+     */
+    public function timingReport(Request $request): StreamedResponse
+    {
+        return $this->streamReport(
+            $request,
+            'journal_timing',
+            'gl-journal-timing'
+        );
+    }
+
+    /**
      * Shared CSV streamer — both audit reports use the same row shape
      * (Date | Move | Account | Partner | Move type | Amount | Ref |
      *  Narration | Failed checks).
@@ -77,13 +90,17 @@ class GLQualityController extends Controller
 
         $filename = $filenameStem . '_' . $asOf . '.csv';
 
-        return response()->streamDownload(function () use ($rows, $currency) {
+        // The timing report includes the system create_date so the user
+        // can see the delay vs the accounting date side-by-side.
+        $includeCreateDate = ($reportKey === 'journal_timing');
+
+        return response()->streamDownload(function () use ($rows, $currency, $includeCreateDate) {
             $out = fopen('php://output', 'w');
             // UTF-8 BOM so Excel opens accents correctly
             fwrite($out, "\xEF\xBB\xBF");
 
-            fputcsv($out, [
-                'Date',
+            $header = [
+                'Effective date',
                 'Move',
                 'Account',
                 'Partner',
@@ -91,12 +108,17 @@ class GLQualityController extends Controller
                 'Amount (' . $currency . ')',
                 'Reference',
                 'Narration',
-                'Failed checks',
-            ]);
+            ];
+            if ($includeCreateDate) {
+                $header[] = 'Recorded on';
+                $header[] = 'Delay (days)';
+            }
+            $header[] = 'Failed checks';
+            fputcsv($out, $header);
 
             foreach ($rows as $row) {
                 $line = $row['line'] ?? [];
-                fputcsv($out, [
+                $values = [
                     $line['date']         ?? '',
                     $line['move_name']    ?? '',
                     $line['account_code'] ?? '',
@@ -105,8 +127,24 @@ class GLQualityController extends Controller
                     number_format((float)($line['amount'] ?? 0), 2, '.', ''),
                     $line['ref']          ?? '',
                     $line['name']         ?? '',
-                    implode(' | ', $row['failed_checks'] ?? []),
-                ]);
+                ];
+                if ($includeCreateDate) {
+                    $created = $line['create_date'] ?? '';
+                    $values[] = $created;
+                    // Compute delay days for the user
+                    $eff = $line['date'] ?? '';
+                    $delay = '';
+                    if ($eff !== '' && $created !== '') {
+                        $effTs = strtotime($eff);
+                        $recTs = strtotime(substr($created, 0, 10));
+                        if ($effTs !== false && $recTs !== false) {
+                            $delay = (string) round(($recTs - $effTs) / 86400);
+                        }
+                    }
+                    $values[] = $delay;
+                }
+                $values[] = implode(' | ', $row['failed_checks'] ?? []);
+                fputcsv($out, $values);
             }
             fclose($out);
         }, $filename, [

@@ -640,4 +640,121 @@
         </details>
     @endif
 
+    {{-- ───────── Journal Entry Timing (full width) ───────── --}}
+    @php
+        $jt = $data['journal_timing'] ?? null;
+    @endphp
+
+    @if ($jt)
+        @php
+            $jtScore   = (float)($jt['overall_score']  ?? 0);
+            $jtPassed  = (int)($jt['checks_passed']    ?? 0);
+            $jtTotal   = (int)($jt['checks_total']     ?? 0);
+            $jtLines   = (int)($jt['lines_reviewed']   ?? 0);
+            $jtCapped  = (bool)($jt['lines_capped']    ?? false);
+            $jtLimit   = (int)($jt['fetch_limit']      ?? 100000);
+            $jtChecks  = $jt['checks']                 ?? [];
+            $jtReport  = $jt['report']                 ?? [];
+            $jtReportN = count($jtReport);
+            $jtReportCapped = (bool)($jt['report_capped'] ?? false);
+            $jtError   = $jt['error']                  ?? null;
+
+            if ($jtScore >= 99.99) $jtColor = 'text-emerald-700';
+            elseif ($jtScore >= 80) $jtColor = 'text-yellow-800';
+            elseif ($jtScore >= 50) $jtColor = 'text-amber-800';
+            else                    $jtColor = 'text-rose-800';
+        @endphp
+
+        <details class="group/jt bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-6">
+            <summary class="px-5 py-4 cursor-pointer list-none flex items-center justify-between gap-4 hover:bg-slate-50 transition [&::-webkit-details-marker]:hidden">
+                <div class="flex-1 min-w-0">
+                    <h3 class="text-base font-semibold text-slate-900">Journal Entry Timing</h3>
+                    <p class="text-xs text-slate-500 mt-0.5">
+                        @if ($asOfLabel)
+                            <span class="font-medium text-slate-700">YTD as of {{ $asOfLabel }}</span> ·
+                        @endif
+                        {{ number_format($jtLines) }} {{ $jtLines === 1 ? 'line' : 'lines' }} reviewed
+                        @if ($jtCapped)
+                            <span class="ml-1 text-amber-700">(capped at {{ number_format($jtLimit) }})</span>
+                        @endif
+                    </p>
+                </div>
+                <div class="flex items-center gap-3 flex-shrink-0">
+                    @if ($jtReportN > 0)
+                        <a href="{{ tenant_url('/general-ledger-quality/timing-report') }}"
+                           onclick="event.stopPropagation();"
+                           class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium transition border border-slate-200"
+                           title="Download CSV report of all flagged lines{{ $jtReportCapped ? ' (capped)' : '' }} — includes the recorded date and delay in days">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3"/>
+                            </svg>
+                            Download report ({{ number_format($jtReportN) }}{{ $jtReportCapped ? '+' : '' }})
+                        </a>
+                    @endif
+                    <div class="text-right">
+                        <div class="text-2xl font-bold {{ $jtColor }} leading-none">{{ number_format($jtScore, 1) }}%</div>
+                        <div class="text-[11px] text-slate-500 mt-0.5">{{ $jtPassed }} / {{ $jtTotal }} checks passed</div>
+                    </div>
+                    <svg class="w-4 h-4 text-slate-400 transition-transform group-open/jt:rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                    </svg>
+                </div>
+            </summary>
+
+            <div class="border-t border-slate-200">
+                <p class="text-xs text-slate-500 px-5 pt-3">
+                    Compares each posted line's system <code class="font-mono bg-slate-100 px-1 rounded">create_date</code>
+                    (when it was actually entered into Odoo) against its accounting <code class="font-mono bg-slate-100 px-1 rounded">date</code>
+                    (the effective period). Flags entries recorded long after the period they relate to, and entries recorded on weekends or fixed Cameroon/OHADA public holidays.
+                </p>
+
+                @if ($jtError)
+                    <div class="mx-5 mt-3 px-3 py-2 rounded bg-rose-50 border border-rose-200 text-rose-700 text-xs">
+                        Partial error: {{ $jtError }}
+                    </div>
+                @endif
+
+                <ul class="px-5 py-4 space-y-2">
+                    @foreach ($jtChecks as $chk)
+                        @php
+                            $passed = (bool)($chk['passed'] ?? false);
+                            $count  = (int)($chk['count']  ?? 0);
+                        @endphp
+                        <li class="flex items-start gap-3 text-sm border-b border-slate-100 pb-2 last:border-b-0">
+                            @if ($passed)
+                                <svg class="w-5 h-5 mt-0.5 flex-shrink-0 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/>
+                                </svg>
+                            @else
+                                <svg class="w-5 h-5 mt-0.5 flex-shrink-0 text-rose-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12"/>
+                                </svg>
+                            @endif
+                            <div class="flex-1 min-w-0">
+                                <div class="flex items-baseline justify-between gap-3">
+                                    <span class="text-slate-900">
+                                        <span class="text-slate-400 font-mono text-xs mr-1">{{ $chk['no'] ?? '' }}.</span>
+                                        {{ $chk['name'] ?? '' }}
+                                    </span>
+                                    <span class="text-xs whitespace-nowrap {{ $passed ? 'text-slate-500' : 'text-rose-700 font-medium' }}">
+                                        {{ number_format($count) }} {{ $count === 1 ? 'line' : 'lines' }}
+                                    </span>
+                                </div>
+                                <p class="text-[11px] text-slate-500 mt-0.5">{{ $chk['description'] ?? '' }}</p>
+                            </div>
+                        </li>
+                    @endforeach
+                </ul>
+
+                <div class="px-5 py-3 border-t border-slate-200 bg-slate-50/50">
+                    <p class="text-xs text-slate-600 text-center">
+                        Score:
+                        <span class="font-semibold {{ $jtColor }}">{{ $jtPassed }} of {{ $jtTotal }} checks passed</span>
+                        ({{ number_format($jtScore, 1) }}%)
+                    </p>
+                </div>
+            </div>
+        </details>
+    @endif
+
 @endsection

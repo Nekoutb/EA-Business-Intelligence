@@ -106,6 +106,8 @@ Route::prefix('t/{tenant}')
                     [GLQualityController::class, 'descriptionReport'])->middleware('module:gl_quality');
                 Route::get('/general-ledger-quality/manual-entry-report',
                     [GLQualityController::class, 'manualEntryReport'])->middleware('module:gl_quality');
+                Route::get('/general-ledger-quality/timing-report',
+                    [GLQualityController::class, 'timingReport'])->middleware('module:gl_quality');
 
                 // ── Tax Compliance service ────────────────────────────────────
                 Route::get('/vat-compliance',         [VATComplianceController::class, 'index'])->middleware('module:vat_compliance');
