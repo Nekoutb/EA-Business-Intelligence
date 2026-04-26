@@ -5,6 +5,10 @@ on:
     branches:
       - main
 
+env:
+  DOMAIN: bms.cm-ea.com
+  APP_DIR: /var/www/html
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -18,34 +22,68 @@ jobs:
           password: ${{ secrets.SERVER_PASSWORD }}
           port: 22
           script: |
-            # Install MySQL if not already installed
+            DOMAIN="${{ env.DOMAIN }}"
+            APP_DIR="${{ env.APP_DIR }}"
+            DB_NAME="${{ secrets.DB_NAME }}"
+            DB_USER="${{ secrets.DB_USER }}"
+            DB_PASS="${{ secrets.DB_PASSWORD }}"
+
+            echo "🚀 Starting deployment..."
+
+            # Update system packages
+            apt-get update -y
+
+            # ==================== INSTALL APACHE & PHP ====================
+            echo "📦 Installing Apache & PHP..."
+            if ! command -v apache2 &> /dev/null; then
+              apt-get install -y apache2 apache2-utils libapache2-mod-php php php-mysql php-xml php-curl php-gd php-mbstring php-zip php-bcmath
+              a2enmod rewrite
+              a2enmod ssl
+              systemctl enable apache2
+            fi
+
+            # ==================== INSTALL MYSQL ====================
+            echo "🗄️  Installing MySQL 8.0..."
             if ! command -v mysql &> /dev/null; then
-              echo "Installing MySQL 8.0..."
-              apt-get update
               apt-get install -y mysql-server
               systemctl start mysql
               systemctl enable mysql
             fi
 
-            # Create database and user if they don't exist
-            DB_NAME="${{ secrets.DB_NAME }}"
-            DB_USER="${{ secrets.DB_USER }}"
-            DB_PASS="${{ secrets.DB_PASSWORD }}"
-
+            # ==================== CREATE DATABASE & USER ====================
+            echo "🔐 Setting up database..."
             mysql -u root -e "CREATE DATABASE IF NOT EXISTS $DB_NAME;"
             mysql -u root -e "CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS';"
             mysql -u root -e "GRANT ALL PRIVILEGES ON $DB_NAME.* TO '$DB_USER'@'localhost';"
             mysql -u root -e "FLUSH PRIVILEGES;"
 
-            # Deploy Laravel app
-            cd /var/www/html
-            git pull origin main
+            # ==================== SETUP APPLICATION DIRECTORY ====================
+            echo "📁 Setting up application directory..."
+            mkdir -p $APP_DIR
+            cd $APP_DIR
 
-            # Install PHP dependencies
+            # ==================== CLONE/PULL APPLICATION ====================
+            echo "📥 Pulling latest code..."
+            if [ -d .git ]; then
+              git pull origin main
+            else
+              git clone https://github.com/Nekoutb/EA-Business-Intelligence.git .
+            fi
+
+            # ==================== INSTALL COMPOSER DEPENDENCIES ====================
+            echo "📚 Installing composer dependencies..."
+            if ! command -v composer &> /dev/null; then
+              apt-get install -y curl
+              curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
+            fi
             composer install --no-dev --optimize-autoloader
 
-            # Set environment variables
+            # ==================== SETUP .ENV FILE ====================
+            echo "⚙️  Configuring environment..."
             cat > .env << EOF
+            APP_NAME=EAMS
+            APP_ENV=production
+            APP_DEBUG=false
             DB_CONNECTION=mysql
             DB_HOST=127.0.0.1
             DB_PORT=3306
@@ -54,15 +92,115 @@ jobs:
             DB_PASSWORD=$DB_PASS
             EOF
 
-            # Run migrations
+            # ==================== RUN MIGRATIONS ====================
+            echo "🔄 Running database migrations..."
             php artisan migrate --force
 
-            # Set proper permissions
-            chown -R www-data:www-data /var/www/html
-            chmod -R 755 /var/www/html
-            chmod -R 775 /var/www/html/storage
+            # ==================== SET PERMISSIONS ====================
+            echo "🔒 Setting file permissions..."
+            chown -R www-data:www-data $APP_DIR
+            chmod -R 755 $APP_DIR
+            chmod -R 775 $APP_DIR/storage
+            chmod -R 775 $APP_DIR/bootstrap/cache
 
-            # Restart web server
+            # ==================== APACHE VIRTUAL HOST SETUP ====================
+            echo "🌐 Configuring Apache virtual host..."
+            cat > /etc/apache2/sites-available/$DOMAIN.conf << EOF
+            <VirtualHost *:80>
+                ServerName $DOMAIN
+                ServerAlias www.$DOMAIN
+                DocumentRoot $APP_DIR/public
+
+                <Directory $APP_DIR/public>
+                    Options Indexes FollowSymLinks
+                    AllowOverride All
+                    Require all granted
+                </Directory>
+
+                <Directory $APP_DIR>
+                    Options Indexes FollowSymLinks
+                    AllowOverride All
+                    Require all granted
+                </Directory>
+
+                <IfModule mod_dir.c>
+                    DirectoryIndex index.php index.html
+                </IfModule>
+
+                ErrorLog \${APACHE_LOG_DIR}/${DOMAIN}_error.log
+                CustomLog \${APACHE_LOG_DIR}/${DOMAIN}_access.log combined
+            </VirtualHost>
+            EOF
+
+            # Enable site and disable default
+            a2dissite 000-default.conf 2>/dev/null || true
+            if ! a2ensite $DOMAIN.conf 2>&1 | grep -q "already enabled"; then
+              a2ensite $DOMAIN.conf
+            fi
+
+            # Test Apache config
+            apache2ctl configtest
+
+            # ==================== SETUP LET'S ENCRYPT SSL ====================
+            echo "🔒 Setting up Let's Encrypt SSL..."
+            if ! command -v certbot &> /dev/null; then
+              apt-get install -y certbot python3-certbot-apache
+            fi
+
+            # Check if cert already exists
+            if [ ! -d /etc/letsencrypt/live/$DOMAIN ]; then
+              echo "Requesting Let's Encrypt certificate for $DOMAIN..."
+              certbot certonly --apache --non-interactive --agree-tos --email admin@$DOMAIN -d $DOMAIN -d www.$DOMAIN
+            else
+              echo "Certificate already exists, skipping..."
+            fi
+
+            # ==================== APACHE HTTPS REDIRECT ====================
+            echo "🔐 Configuring HTTPS..."
+            cat > /etc/apache2/sites-available/$DOMAIN-ssl.conf << EOF
+            <VirtualHost *:443>
+                ServerName $DOMAIN
+                ServerAlias www.$DOMAIN
+                DocumentRoot $APP_DIR/public
+
+                SSLEngine on
+                SSLCertificateFile /etc/letsencrypt/live/$DOMAIN/fullchain.pem
+                SSLCertificateKeyFile /etc/letsencrypt/live/$DOMAIN/privkey.pem
+
+                <Directory $APP_DIR/public>
+                    Options Indexes FollowSymLinks
+                    AllowOverride All
+                    Require all granted
+                </Directory>
+
+                <Directory $APP_DIR>
+                    Options Indexes FollowSymLinks
+                    AllowOverride All
+                    Require all granted
+                </Directory>
+
+                <IfModule mod_dir.c>
+                    DirectoryIndex index.php index.html
+                </IfModule>
+
+                ErrorLog \${APACHE_LOG_DIR}/${DOMAIN}_error.log
+                CustomLog \${APACHE_LOG_DIR}/${DOMAIN}_access.log combined
+            </VirtualHost>
+            EOF
+
+            # Enable HTTPS site
+            if ! a2ensite $DOMAIN-ssl.conf 2>&1 | grep -q "already enabled"; then
+              a2ensite $DOMAIN-ssl.conf
+            fi
+
+            # Setup auto-renewal
+            certbot renew --quiet --no-self-upgrade
+
+            # ==================== RESTART APACHE ====================
+            echo "🔄 Restarting Apache..."
             systemctl restart apache2
 
-            echo "✅ Deployment completed successfully"
+            echo ""
+            echo "✅ Deployment completed successfully!"
+            echo "🌐 Access your app at: https://$DOMAIN"
+            echo "📊 Database: $DB_NAME"
