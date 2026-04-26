@@ -36,7 +36,7 @@ class TreasuryController extends Controller
                 fn() => (new RevenueService($client, $source))->analyze());
             $pl = ea_cached('pl', fn() => (new ProfitLossService($client))->analyze());
 
-            $currency   = (string) ($revenue['currency'] ?? $pl['currency'] ?? 'USD');
+            $currency   = (string) ($cashflowDirect['currency'] ?? $revenue['currency'] ?? $pl['currency'] ?? 'XAF');
             $daysInYtd  = max(1, (int) ($revenue['period']['days'] ?? 1));
             $revenueYtd = (float) ($revenue['current']['total'] ?? 0);
 

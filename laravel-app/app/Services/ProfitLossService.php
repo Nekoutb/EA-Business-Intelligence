@@ -199,7 +199,7 @@ final class ProfitLossService
                 if (isset($c[0]['name'])) return (string) $c[0]['name'];
             }
         } catch (\Throwable $e) { /* fall through */ }
-        return 'USD';
+        return 'XAF';
     }
 
     private function pct(float $cur, float $prev): ?float

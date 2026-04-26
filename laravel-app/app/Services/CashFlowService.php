@@ -26,10 +26,10 @@ use App\Odoo\OdooClient;
  *   bank from settlement of receivables.)
  *
  * Categorised cash outflows:
- *   For each named expense category, sum the debit amounts on the expense
- *   account lines, but ONLY where the same posted move also contains a
- *   credit to a 52* / 57* account in the YTD window. (i.e. true cash
- *   payments — accruals booked against AP are excluded.)
+ *   For each named expense category, sum the debit amounts on the
+ *   category's account lines, but ONLY where the same posted move also
+ *   contains a credit to a 52* / 57* account in the YTD window. (i.e. true
+ *   cash payments — accruals booked against AP are excluded.)
  *
  *   Categories (account-code prefix → label):
  *     60*     → Cost of Goods Sold
@@ -37,10 +37,12 @@ use App\Odoo\OdooClient;
  *     622*    → Rents
  *     6248*   → Maintenance & Repairs
  *     643400  → External Consultants
- *     66*     → Wages & Salaries
+ *     42*,43* → Wages & Salaries  (cash settlement of employees + social)
+ *     44*     → Taxes             (cash settlement of state/tax payables)
  *     632700  → Subcontractors
  *
- *   Longest-prefix match wins (so 6248* is captured before 62* would be).
+ *   Longest-prefix match wins (so 6248* is captured before 62* would be,
+ *   and 632700 is captured before any future 6* category).
  *
  * Other (balancing figure):
  *   Other = Opening + Collections − Σ(categorised outflows) − Closing
@@ -75,7 +77,8 @@ final class CashFlowService
         ['key' => 'rents',        'label' => 'Rents',                  'prefixes' => ['622']],
         ['key' => 'maintenance',  'label' => 'Maintenance & Repairs',  'prefixes' => ['6248']],
         ['key' => 'consultants',  'label' => 'External Consultants',   'prefixes' => ['643400']],
-        ['key' => 'wages',        'label' => 'Wages & Salaries',       'prefixes' => ['66']],
+        ['key' => 'wages',        'label' => 'Wages & Salaries',       'prefixes' => ['42', '43']],
+        ['key' => 'taxes',        'label' => 'Taxes',                  'prefixes' => ['44']],
         ['key' => 'subcontract',  'label' => 'Subcontractors',         'prefixes' => ['632700']],
     ];
 

@@ -183,6 +183,6 @@ final class FixedAssetsService
                 if (isset($c[0]['name'])) return (string) $c[0]['name'];
             }
         } catch (\Throwable $e) { /* fall through */ }
-        return 'USD';
+        return 'XAF';
     }
 }

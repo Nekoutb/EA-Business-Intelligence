@@ -183,13 +183,6 @@
 
                 @yield('content')
             </main>
-
-            {{-- Sticky AI advisor rail — only shown when a $aiPage is defined by the view --}}
-            @isset($aiPage)
-              <aside class="hidden xl:block w-80 shrink-0 border-l border-[#e8e4de] bg-[#faf8f5]/80 backdrop-blur sticky top-0 max-h-screen overflow-y-auto scrollbar-thin">
-                  @livewire('ai-insights', ['page' => $aiPage], key('ai-'.$aiPage))
-              </aside>
-            @endisset
         </div>
     </div>
 </div>

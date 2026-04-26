@@ -191,7 +191,7 @@ return [
         [
             'key'     => 'vat_compliance',
             'service' => 'tax_compliance',
-            'label'   => 'VAT Compliance',
+            'label'   => 'Tax Console',
             'url'     => '/vat-compliance',
             'active'  => 'vat_compliance',
             'icon'    => 'M9 12l2 2 4-4M5 4h14a2 2 0 012 2v14l-4-2-3 2-3-2-4 2V6a2 2 0 012-2z',
