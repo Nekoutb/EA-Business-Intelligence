@@ -430,6 +430,21 @@
                     @endif
                 </div>
                 <div class="flex items-center gap-3 flex-shrink-0">
+                    @php
+                        $dqReportCount = (int)($dq['report'] ? count($dq['report']) : 0);
+                        $dqReportCap   = (bool)($dq['report_capped'] ?? false);
+                    @endphp
+                    @if ($dqReportCount > 0)
+                        <a href="{{ tenant_url('/general-ledger-quality/description-report') }}"
+                           onclick="event.stopPropagation();"
+                           class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium transition border border-slate-200"
+                           title="Download CSV report of all flagged lines{{ $dqReportCap ? ' (capped at ' . number_format($dq['report_limit'] ?? 5000) . ')' : '' }}">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3"/>
+                            </svg>
+                            Download report ({{ number_format($dqReportCount) }}{{ $dqReportCap ? '+' : '' }})
+                        </a>
+                    @endif
                     <div class="text-right">
                         <div class="text-2xl font-bold {{ $dqColor }} leading-none">{{ number_format($dqScore, 1) }}%</div>
                         <div class="text-[11px] text-slate-500 mt-0.5">{{ $dqPassed }} / {{ $dqTotal }} checks passed</div>

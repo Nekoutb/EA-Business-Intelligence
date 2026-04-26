@@ -24,7 +24,8 @@ use DateTimeImmutable;
  */
 class DescriptionQualityService
 {
-    private const FETCH_LIMIT = 50000;
+    private const FETCH_LIMIT  = 50000;
+    private const REPORT_LIMIT = 5000;   // max rows in the downloadable report
 
     private ?int $companyId = null;
 
@@ -53,19 +54,19 @@ class DescriptionQualityService
                     $this->checkPerLine('2', 'Default / system placeholders',
                         'Generic system-generated narrations (e.g. "Posting", "Transaction", "Écriture comptable").',
                         fn($l) => $this->isDefaultPlaceholder($l['name']), $lines),
-                    $this->checkPerLine('3', 'Short descriptions (< 5 chars)',
-                        'Single-character, numeric-only, or fewer than 5 characters.',
+                    $this->checkPerLine('3', 'Short descriptions (< 10 chars)',
+                        'Single-character, numeric-only, or fewer than 10 characters — typically incomplete or abbreviated to the point of losing audit value.',
                         fn($l) => $this->isShort($l['name']), $lines),
                 ],
             ],
             'identification' => [
                 'label'  => 'Identification',
                 'checks' => [
-                    $this->checkPerLine('4', 'Missing counterparty name (40X / 41X)',
-                        'Lines on supplier (40X) or customer (41X) accounts whose narration does not include the partner name.',
+                    $this->checkPerLine('4', 'Missing partner tag on 40X / 41X line',
+                        'Lines on supplier (40X) or customer (41X) accounts that do not have a partner (customer/vendor) tagged on the journal-entry line.',
                         fn($l) => $this->missingCounterparty($l), $lines),
-                    $this->checkPerLine('5', 'Missing document reference',
-                        'Narration contains no alphanumeric document identifier (e.g. invoice no, voucher).',
+                    $this->checkPerLine('5', 'Missing document reference (manual entries)',
+                        'Manual journal entries (move_type = entry) without an alphanumeric document identifier in their narration or ref field.',
                         fn($l) => $this->missingDocRef($l), $lines),
                     $this->checkPerLine('6', 'Date / period mismatch',
                         'Narration mentions a year that differs from the posting year.',
@@ -131,6 +132,19 @@ class DescriptionQualityService
         $total  = count($allChecks);
         $score  = $total > 0 ? round($passed / $total * 100, 1) : 100.0;
 
+        // Build the downloadable report BEFORE stripping the internal
+        // _flagged_ids accumulators.
+        $report = $this->buildReport($lines, $allChecks);
+
+        // Drop _flagged_ids from the public payload — the view only needs counts.
+        foreach ($categories as &$cat) {
+            foreach ($cat['checks'] as &$c) {
+                unset($c['_flagged_ids']);
+            }
+            unset($c);
+        }
+        unset($cat);
+
         return [
             'overall_score'   => $score,
             'checks_passed'   => $passed,
@@ -140,6 +154,9 @@ class DescriptionQualityService
             'fetch_limit'     => self::FETCH_LIMIT,
             'exclusions'      => $exclusions,
             'categories'      => $categories,
+            'report'          => $report,
+            'report_capped'   => count($report) >= self::REPORT_LIMIT,
+            'report_limit'    => self::REPORT_LIMIT,
             'error'           => empty($errors) ? null : implode(' | ', $errors),
         ];
     }
@@ -213,6 +230,31 @@ class DescriptionQualityService
             }
         }
 
+        // Resolve move types and names (for the "manual entries" filter on
+        // check #5 and for nicer report output).
+        $moveIds = [];
+        foreach ($rows as $r) {
+            if (is_array($r['move_id'] ?? null) && !empty($r['move_id'][0])) {
+                $moveIds[$r['move_id'][0]] = true;
+            }
+        }
+        $moveInfo = [];
+        if (!empty($moveIds)) {
+            foreach (array_chunk(array_keys($moveIds), 500) as $chunk) {
+                try {
+                    foreach ($this->odoo->read('account.move', $chunk, ['move_type', 'name']) as $m) {
+                        $moveInfo[$m['id']] = [
+                            'type' => (string)($m['move_type'] ?? ''),
+                            'name' => (string)($m['name']      ?? ''),
+                        ];
+                    }
+                } catch (\Throwable $e) {
+                    // Older Odoo without move_type — leave moveInfo empty;
+                    // check #5 will simply find no manual entries to flag.
+                }
+            }
+        }
+
         $lines = [];
         foreach ($rows as $r) {
             $accId   = is_array($r['account_id']  ?? null) ? ($r['account_id'][0]  ?? null) : null;
@@ -232,6 +274,8 @@ class DescriptionQualityService
                 'month'        => $date !== '' ? (int)substr($date, 5, 2) : 0,
                 'amount'       => abs((float)($r['debit'] ?? 0) - (float)($r['credit'] ?? 0)),
                 'move_id'      => $moveId,
+                'move_type'    => $moveId !== null ? ($moveInfo[$moveId]['type'] ?? '') : '',
+                'move_name'    => $moveId !== null ? ($moveInfo[$moveId]['name'] ?? '') : '',
             ];
         }
         return $lines;
@@ -244,15 +288,20 @@ class DescriptionQualityService
     private function checkPerLine(string $no, string $name, string $description, callable $predicate, array $lines): array
     {
         $count = 0;
+        $flagged = [];
         foreach ($lines as $l) {
-            if ($predicate($l)) $count++;
+            if ($predicate($l)) {
+                $count++;
+                $flagged[] = (int)$l['id'];
+            }
         }
         return [
-            'no'          => $no,
-            'name'        => $name,
-            'description' => $description,
-            'passed'      => $count === 0,
-            'count'       => $count,
+            'no'           => $no,
+            'name'         => $name,
+            'description'  => $description,
+            'passed'       => $count === 0,
+            'count'        => $count,
+            '_flagged_ids' => $flagged,   // internal — stripped before view payload
         ];
     }
 
@@ -269,22 +318,57 @@ class DescriptionQualityService
             if (!str_starts_with($code, '40') && !str_starts_with($code, '41')) continue;
             $norm = strtolower(preg_replace('/[^\p{L}0-9]+/u', ' ', trim($l['name'] ?? '')));
             if ($norm === '') continue;
-            $byPartner[$p][$norm] = ($byPartner[$p][$norm] ?? 0) + 1;
+            if (!isset($byPartner[$p])) $byPartner[$p] = ['variants' => [], 'line_ids' => []];
+            $byPartner[$p]['variants'][$norm] = true;
+            $byPartner[$p]['line_ids'][]      = (int)$l['id'];
         }
-        $offendingLines = 0;
-        foreach ($byPartner as $p => $variants) {
-            // > 3 distinct narration variants for the same partner = noisy
-            if (count($variants) > 3) {
-                $offendingLines += array_sum($variants);
+        $count = 0;
+        $flagged = [];
+        foreach ($byPartner as $partner) {
+            if (count($partner['variants']) > 3) {
+                $count   += count($partner['line_ids']);
+                $flagged  = array_merge($flagged, $partner['line_ids']);
             }
         }
         return [
-            'no'          => '7',
-            'name'        => 'Inconsistent counterparty naming',
-            'description' => 'Same supplier/customer appearing with > 3 distinct narration variants across the GL.',
-            'passed'      => $offendingLines === 0,
-            'count'       => $offendingLines,
+            'no'           => '7',
+            'name'         => 'Inconsistent counterparty naming',
+            'description'  => 'Same supplier/customer appearing with > 3 distinct narration variants across the GL.',
+            'passed'       => $count === 0,
+            'count'        => $count,
+            '_flagged_ids' => $flagged,
         ];
+    }
+
+    /**
+     * Build a flat report of every flagged line, capped at REPORT_LIMIT.
+     * Each entry includes the full line data plus the list of check
+     * numbers/names that flagged it. Used by the CSV download endpoint.
+     */
+    private function buildReport(array $lines, array $allChecks): array
+    {
+        $byId = [];
+        foreach ($lines as $l) $byId[(int)$l['id']] = $l;
+
+        $flagged = [];
+        foreach ($allChecks as $chk) {
+            $label = $chk['no'] . '. ' . $chk['name'];
+            foreach (($chk['_flagged_ids'] ?? []) as $id) {
+                if (!isset($flagged[$id])) {
+                    $flagged[$id] = [
+                        'line'           => $byId[$id] ?? null,
+                        'failed_checks'  => [],
+                    ];
+                }
+                $flagged[$id]['failed_checks'][] = $label;
+            }
+        }
+        // Sort by date descending (newest first)
+        $list = array_values($flagged);
+        usort($list, function ($a, $b) {
+            return strcmp(($b['line']['date'] ?? ''), ($a['line']['date'] ?? ''));
+        });
+        return array_slice($list, 0, self::REPORT_LIMIT);
     }
 
     // ─────────────────────────────────────────────────────────────────
@@ -325,28 +409,38 @@ class DescriptionQualityService
     {
         $t = trim($s);
         if ($t === '') return false; // covered by check #1
-        if (mb_strlen($t) < 5) return true;
+        if (mb_strlen($t) < 10) return true;
         // Numeric-only of any length is also low-value
         if (preg_match('/^\d+$/', $t)) return true;
         return false;
     }
 
+    /**
+     * Check #4 — the journal entry LINE itself must carry a partner_id
+     * (the supplier/customer field on the line). We don't inspect the
+     * narration text — Odoo's Aged Receivable / Aged Payable reports
+     * rely on partner_id, and that's the field that drives our AR/AP
+     * sub-ledger reconciliations.
+     */
     private function missingCounterparty(array $l): bool
     {
         $code = $l['account_code'];
         if (!(str_starts_with($code, '40') || str_starts_with($code, '41'))) return false;
-        $partnerName = trim($l['partner_name']);
-        if ($partnerName === '') return true;            // posting on AP/AR with no partner = orphan
-        // Does the narration mention the partner name? (case-insensitive, first 4+ chars)
-        $key = mb_strtolower(mb_substr($partnerName, 0, 4));
-        if (mb_strlen($key) < 3) return false;            // too short to test
-        return mb_stripos($l['name'], $key) === false;
+        return $l['partner_id'] === null;
     }
 
+    /**
+     * Check #5 — narrowed to MANUAL journal entries (move_type = 'entry').
+     * Invoices, bills, payments, and POS entries have a system-generated
+     * ref/name, so their description being short or non-numeric is normal.
+     * Manual entries are where humans type narrations and where missing
+     * document references are most informative.
+     */
     private function missingDocRef(array $l): bool
     {
+        if (($l['move_type'] ?? '') !== 'entry') return false;
         $hay = $l['name'] . ' ' . $l['ref'];
-        // Looking for an alphanumeric token of 4+ chars containing at least one digit.
+        // Need an alphanumeric token of 4+ chars containing at least one digit.
         // Matches "INV/2026/0001", "FA-202503-12", "BNK-20250415-001", "12345", "A1234".
         return !preg_match('/[A-Za-z0-9][A-Za-z0-9\-\/_]{3,}/u', $hay)
             || !preg_match('/\d/', $hay);
@@ -392,21 +486,80 @@ class DescriptionQualityService
         $hay  = mb_strtolower($l['name']);
         if (trim($hay) === '') return false;
 
-        // Keyword → required account-code prefix
+        // Keyword → required account-code prefix (OHADA chart of accounts).
+        // Covers the most common manual-posting categories so that obvious
+        // narration↔account-class mismatches are caught (salary on a fuel
+        // account, fuel on a rent account, sales narration on a 6X expense
+        // account, etc.).
         static $rules = [
-            'salary'        => '66',
-            'salaire'       => '66',
-            'salaires'      => '66',
-            'payroll'       => '66',
-            'fuel'          => '624',
-            'carburant'     => '624',
-            'rent'          => '622',
-            'loyer'         => '622',
-            'depreciation'  => '68',
-            'amortissement' => '68',
+            // Personnel costs → 66 (Personnel charges)
+            'salary'                => '66', 'salaire'         => '66',
+            'salaires'              => '66', 'wages'           => '66',
+            'payroll'               => '66', 'paie'            => '66',
+            'bonus'                 => '66', 'prime'           => '66',
+            'social security'       => '66', 'sécurité sociale'=> '66',
+            'cnps'                  => '66', 'cnss'            => '66',
+            'allowance'             => '66', 'indemnité'       => '66',
+
+            // Transport / fuel → 624 (Transport)
+            'fuel'                  => '624', 'carburant'       => '624',
+            'gasoline'              => '624', 'essence'         => '624',
+            'diesel'                => '624', 'gazole'          => '624',
+            'transport'             => '624', 'transit'         => '624',
+            'mileage'               => '624', 'kilométrique'    => '624',
+
+            // Rent → 622 (Rents)
+            'rent'                  => '622', 'loyer'           => '622',
+            'location bureau'       => '622', 'location'        => '622',
+            'leasing immobilier'    => '622',
+
+            // Utilities & telecom → 618 (External services)
+            'electricity bill'      => '618', 'électricité'     => '618',
+            'electricite'           => '618', 'eneo'            => '618',
+            'water bill'            => '618', 'facture eau'     => '618',
+            'internet'              => '618', 'téléphone'       => '618',
+            'telephone'             => '618', 'communication'   => '618',
+            'subscription'          => '618', 'abonnement'      => '618',
+
+            // Office supplies & consumables → 605 / 606
+            'office supplies'       => '60', 'fournitures de bureau' => '60',
+            'stationery'            => '60', 'papeterie'        => '60',
+            'consumable'            => '60',
+
+            // Bank charges, interest, financial → 67 (Financial charges)
+            'bank fee'              => '67', 'frais bancaire'   => '67',
+            'frais bancaires'       => '67', 'agios'            => '67',
+            'interest expense'      => '67', 'intérêt'          => '67',
+            'commissions bancaires' => '67',
+
+            // Depreciation / amortisation → 68 (Provisions for depreciation)
+            'depreciation'          => '68', 'amortissement'    => '68',
+            'dotation'              => '68', 'dotation aux amort' => '68',
+
+            // Sales / revenue → 70 (Sales / Income)
+            'sales revenue'         => '70', 'service revenue'  => '70',
+            'invoice to customer'   => '70', "chiffre d'affaires"=> '70',
+            'prestation de service' => '70', 'vente de marchandises' => '70',
+
+            // Inventory purchases → 60 (Purchases)
+            'purchase of goods'     => '60', 'achat de marchandises' => '60',
+            'raw materials'         => '60', 'matières premières'   => '60',
+            'matieres premieres'    => '60',
+
+            // Tax (TVA / withholding) → 44 (Taxes payable / receivable)
+            ' tva '                 => '44', ' vat '             => '44',
+            'withholding'           => '44', ' ras '             => '44',
+            'irpp'                  => '44', 'taxe sur'          => '44',
+
+            // Insurance → 625
+            'insurance premium'     => '625', 'prime d\'assurance' => '625',
+            'assurance'             => '625',
         ];
         foreach ($rules as $kw => $expectedPrefix) {
-            if (mb_stripos($hay, $kw) !== false && !str_starts_with($code, $expectedPrefix)) {
+            // For multi-word keywords, do a substring match; for single
+            // tokens, the same substring check is fine.
+            if (mb_stripos($hay, trim($kw)) !== false
+                && !str_starts_with($code, $expectedPrefix)) {
                 return true;
             }
         }

@@ -99,6 +99,11 @@ Route::prefix('t/{tenant}')
 
                 // ── Financial Reporting service ───────────────────────────────
                 Route::get('/general-ledger-quality', [GLQualityController::class, 'index'])->middleware('module:gl_quality');
+                // Avoid a dotted extension in the URL — PHP's built-in dev server
+                // treats anything with a "." as a static file and serves a 404
+                // before Laravel's router sees the request.
+                Route::get('/general-ledger-quality/description-report',
+                    [GLQualityController::class, 'descriptionReport'])->middleware('module:gl_quality');
 
                 // ── Tax Compliance service ────────────────────────────────────
                 Route::get('/vat-compliance',         [VATComplianceController::class, 'index'])->middleware('module:vat_compliance');
