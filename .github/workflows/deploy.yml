@@ -11,7 +11,6 @@ env:
   DOMAIN: bms.cm-ea.com
   REPO_DIR: /var/www/eams
   APP_SUBDIR: laravel-app
-  REPO_URL: https://github.com/Nekoutb/EA-Business-Intelligence.git
   ADMIN_EMAIL: admin@cm-ea.com
 
 jobs:
@@ -19,7 +18,47 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Deploy Laravel App via SSH
+      # Check out the repo on the runner. Uses the built-in GITHUB_TOKEN, so
+      # private repos work without us having to put a PAT or deploy key on the
+      # server. The server never talks to GitHub directly — we ship code over
+      # SSH below.
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          # Skip _archive/ via post-checkout cleanup; it's huge and unused.
+          fetch-depth: 1
+
+      - name: Strip files we don't ship to production
+        run: |
+          rm -rf _archive .github
+          ls -la
+
+      - name: Ensure target directory exists on server
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.SERVER_IP }}
+          username: ${{ secrets.SERVER_USER }}
+          password: ${{ secrets.SERVER_PASSWORD }}
+          port: 22
+          script: |
+            mkdir -p ${{ env.REPO_DIR }}
+
+      - name: Upload source to server
+        uses: appleboy/scp-action@master
+        with:
+          host: ${{ secrets.SERVER_IP }}
+          username: ${{ secrets.SERVER_USER }}
+          password: ${{ secrets.SERVER_PASSWORD }}
+          port: 22
+          source: "."
+          target: ${{ env.REPO_DIR }}
+          # rm:true would wipe /var/www/eams between deploys, blowing away the
+          # .env (which holds APP_KEY). We let scp overwrite changed files and
+          # leave anything else alone.
+          rm: false
+          overwrite: true
+
+      - name: Provision & deploy
         uses: appleboy/ssh-action@master
         with:
           host: ${{ secrets.SERVER_IP }}
@@ -33,7 +72,6 @@ jobs:
             DOMAIN="${{ env.DOMAIN }}"
             REPO_DIR="${{ env.REPO_DIR }}"
             APP_DIR="${{ env.REPO_DIR }}/${{ env.APP_SUBDIR }}"
-            REPO_URL="${{ env.REPO_URL }}"
             ADMIN_EMAIL="${{ env.ADMIN_EMAIL }}"
             DB_NAME="${{ secrets.DB_NAME }}"
             DB_USER="${{ secrets.DB_USER }}"
@@ -41,12 +79,12 @@ jobs:
 
             export DEBIAN_FRONTEND=noninteractive
 
-            echo "🚀 Starting deployment to $DOMAIN"
-            echo "    Repo:     $REPO_DIR"
-            echo "    Laravel:  $APP_DIR"
+            echo "🚀 Deploying $DOMAIN"
+            echo "    Repo:    $REPO_DIR"
+            echo "    Laravel: $APP_DIR"
 
             # ==================== INSTALL APACHE & PHP ====================
-            echo "📦 Installing Apache & PHP..."
+            echo "📦 Apache & PHP..."
             apt-get update -y
             if ! command -v apache2 >/dev/null; then
               apt-get install -y apache2 apache2-utils
@@ -58,61 +96,48 @@ jobs:
             a2enmod rewrite ssl headers >/dev/null 2>&1 || true
 
             # ==================== INSTALL MYSQL ====================
-            echo "🗄️  Installing MySQL..."
+            echo "🗄️  MySQL..."
             if ! command -v mysql >/dev/null; then
               apt-get install -y mysql-server
               systemctl start mysql
               systemctl enable mysql
             fi
 
-            # ==================== CREATE DATABASE & USER ====================
-            echo "🔐 Setting up database '$DB_NAME'..."
+            # ==================== DB & USER ====================
+            echo "🔐 Database '$DB_NAME'..."
             mysql -u root -e "CREATE DATABASE IF NOT EXISTS \`$DB_NAME\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
             mysql -u root -e "CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS';"
             mysql -u root -e "ALTER USER '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS';"
             mysql -u root -e "GRANT ALL PRIVILEGES ON \`$DB_NAME\`.* TO '$DB_USER'@'localhost';"
             mysql -u root -e "FLUSH PRIVILEGES;"
 
-            # ==================== INSTALL COMPOSER & NODE ====================
+            # ==================== COMPOSER & NODE ====================
             if ! command -v composer >/dev/null; then
-              echo "📚 Installing Composer..."
+              echo "📚 Composer..."
               apt-get install -y curl unzip
               curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
             fi
             if ! command -v node >/dev/null; then
-              echo "📦 Installing Node.js 20..."
+              echo "📦 Node.js 20..."
               curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
               apt-get install -y nodejs
-            fi
-
-            # ==================== CLONE / PULL APPLICATION ====================
-            echo "📥 Syncing repo at $REPO_DIR..."
-            mkdir -p "$REPO_DIR"
-            cd "$REPO_DIR"
-            if [ -d .git ]; then
-              git fetch origin
-              DEFAULT_BRANCH=$(git remote show origin | sed -n 's/.*HEAD branch: //p')
-              git checkout "$DEFAULT_BRANCH"
-              git reset --hard "origin/$DEFAULT_BRANCH"
-            else
-              git clone "$REPO_URL" .
             fi
 
             cd "$APP_DIR"
 
             # ==================== COMPOSER INSTALL ====================
-            echo "📚 Installing PHP dependencies..."
+            echo "📚 PHP dependencies..."
             composer install --no-dev --optimize-autoloader --no-interaction --prefer-dist
 
             # ==================== BUILD FRONTEND ASSETS ====================
             if [ -f package.json ]; then
-              echo "🎨 Building frontend assets (Vite)..."
+              echo "🎨 Frontend (Vite)..."
               npm ci --no-audit --no-fund
               npm run build
             fi
 
-            # ==================== ENV FILE (preserve APP_KEY across deploys) ====================
-            echo "⚙️  Writing .env..."
+            # ==================== ENV FILE (preserve APP_KEY) ====================
+            echo "⚙️  .env..."
             EXISTING_APP_KEY=""
             if [ -f .env ]; then
               EXISTING_APP_KEY=$(grep -E '^APP_KEY=' .env | head -n1 | cut -d= -f2- || true)
@@ -145,30 +170,28 @@ jobs:
             EOF
 
             if [ -z "$EXISTING_APP_KEY" ]; then
-              echo "🔑 Generating new APP_KEY..."
+              echo "🔑 Generating APP_KEY..."
               php artisan key:generate --force
             fi
 
-            # ==================== MIGRATIONS ====================
-            echo "🔄 Running migrations..."
+            # ==================== MIGRATIONS + CACHE ====================
+            echo "🔄 Migrations..."
             php artisan migrate --force
 
-            # ==================== STORAGE LINK + CACHES ====================
             php artisan storage:link || true
             php artisan config:cache
             php artisan route:cache
             php artisan view:cache
 
             # ==================== PERMISSIONS ====================
-            echo "🔒 Setting file permissions..."
+            echo "🔒 Permissions..."
             chown -R www-data:www-data "$REPO_DIR"
             find "$REPO_DIR" -type d -exec chmod 755 {} \;
             find "$REPO_DIR" -type f -exec chmod 644 {} \;
             chmod -R 775 "$APP_DIR/storage" "$APP_DIR/bootstrap/cache"
-            chown -R www-data:www-data "$APP_DIR/storage" "$APP_DIR/bootstrap/cache"
 
             # ==================== APACHE VHOST (HTTP) ====================
-            echo "🌐 Configuring Apache vhost..."
+            echo "🌐 Apache vhost..."
             cat > /etc/apache2/sites-available/$DOMAIN.conf << EOF
             <VirtualHost *:80>
                 ServerName $DOMAIN
@@ -192,34 +215,31 @@ jobs:
             systemctl reload apache2
 
             # ==================== LET'S ENCRYPT ====================
-            echo "🔒 Ensuring Let's Encrypt certificate..."
+            echo "🔒 Let's Encrypt..."
             if ! command -v certbot >/dev/null; then
               apt-get install -y certbot python3-certbot-apache
             fi
 
             if [ ! -d /etc/letsencrypt/live/$DOMAIN ]; then
               echo "    Requesting cert for $DOMAIN..."
-              # --apache plugin handles HTTPS vhost generation automatically.
-              # If DNS isn't pointing here yet, this will fail loudly and the
-              # rest of the HTTP-only deployment still works.
               certbot --apache --non-interactive --agree-tos --redirect \
                 --email "$ADMIN_EMAIL" -d "$DOMAIN" -d "www.$DOMAIN" || \
                 echo "⚠️  Certbot failed (DNS not pointing here yet?). HTTP deployment still active."
             else
-              echo "    Existing cert found — skipping issuance."
+              echo "    Cert exists — running renew check."
               certbot renew --quiet --no-self-upgrade || true
             fi
 
             systemctl reload apache2
 
             # ==================== HEALTH CHECK ====================
-            echo "🩺 Running health check..."
+            echo "🩺 Health check..."
             sleep 2
             HTTP_CODE=$(curl -sk -o /dev/null -w "%{http_code}" "http://$DOMAIN" || echo "000")
             echo "    HTTP $HTTP_CODE from http://$DOMAIN"
 
             echo ""
             echo "✅ Deployment completed."
-            echo "🌐 App URL:    https://$DOMAIN  (or http:// before DNS/cert is in place)"
-            echo "📊 Database:   $DB_NAME"
-            echo "📁 App path:   $APP_DIR"
+            echo "🌐 App URL:   https://$DOMAIN  (or http:// before DNS/cert is in place)"
+            echo "📊 Database:  $DB_NAME"
+            echo "📁 App path:  $APP_DIR"
