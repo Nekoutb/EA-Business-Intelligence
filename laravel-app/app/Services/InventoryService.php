@@ -6,19 +6,13 @@ use App\Odoo\OdooClient;
 use DateTimeImmutable;
 
 /**
- * InventoryService — Inventory reconciliation, days, and trend (YTD).
+ * InventoryService — Inventory days and value trend (YTD).
  *
- * Three blocks of analytics, all sharing one YTD window (1 January → today)
- * and ALL deriving inventory value from the GL trial balance — Odoo's
- * stock.valuation.layer is Enterprise-only and absent on Community editions
- * or instances configured with manual_periodic valuation. The trial balance
- * is the lowest-common-denominator data source that's always present.
+ * The reconciliation (stock vs trial balance) lives in GLQualityService,
+ * surfaced under Financial Reporting → GL Quality. This service powers
+ * just the operational metrics on the Inventory page.
  *
- * 1. Reconciliation — physical stock vs trial balance, OHADA 3XX accounts
- *    (excluding 39X impairment). Stock side from stock.quant; GL side from
- *    account.move.line. Both snapshotted at the SAME date.
- *
- * 2. Inventory Days (textbook two-point avg, P&L-aligned COGS, YTD-rate):
+ * 1. Inventory Days (textbook two-point avg, P&L-aligned COGS, YTD-rate):
  *        days = (avg_inventory × period_days_ytd) / cogs_ytd
  *      avg_inventory  = (beginning + ending) / 2
  *                       beginning = trial balance End Balance ≤ 31 Dec prior
@@ -27,23 +21,18 @@ use DateTimeImmutable;
  *      cogs_ytd       = Σ account.move.line.balance for 60X accounts in YTD
  *      period_days_ytd= calendar days elapsed from 1 January
  *
- * 3. Trend — month-end inventory value, January through today, computed by
+ * 2. Trend — month-end inventory value, January through today, computed by
  *    walking posted move lines for inventory accounts in chronological order
  *    starting from the opening balance, snapshotting at each month-end.
  *
- * Data sources (everything in the GL):
- *   - Stock value:        stock.quant × product.standard_price (live only)
- *   - GL trial balance:   account.move.line, accounts code =like '3%' (not 39%)
- *   - COGS YTD:           account.move.line, accounts code =like '60%'
- *   - Trend chart:        same 3% accounts, walked forward from opening balance
+ * All inventory values come from the GL trial balance (3X accounts excluding
+ * 39X impairment). stock.valuation.layer was avoided because it's
+ * Enterprise-only and absent on Community editions.
  */
 class InventoryService
 {
     /** Cached company id to avoid repeated authenticate() calls. */
     private ?int $companyId = null;
-
-    /** Cached internal location ids. */
-    private ?array $internalLocationIds = null;
 
     /** Cached OHADA inventory account list (3% excluding 39%). */
     private ?array $inventoryAccountsCache = null;
@@ -52,8 +41,8 @@ class InventoryService
 
     /**
      * YTD inventory analysis. Period parameter is ignored — by design the
-     * inventory page always shows year-to-date so reconciliation, days
-     * calculation, and trend line all share one consistent window.
+     * inventory page always shows year-to-date so days calculation and trend
+     * line share one consistent window.
      */
     public function analyze(DateTimeImmutable $today, array $period = []): array
     {
@@ -65,30 +54,19 @@ class InventoryService
         $asOfDate = $today;
         $label    = 'YTD ' . $today->format('Y');
 
-        $current     = $this->safe(fn() => $this->getInventoryValueAt($asOfDate),    $errors, 'inventory_value') ?? $this->emptyCurrent();
-        $glInventory = $this->safe(fn() => $this->getGLInventoryAccounts($asOfDate), $errors, 'gl_inventory')    ?? $this->emptyGLInventory();
-
-        // Beginning inventory = trial balance just before YTD started
-        // (i.e. closing balance of the prior accounting year). We feed this
-        // back through getGLInventoryAccounts() which already implements the
-        // correct domain — date <= asOfDate — using the same accounts list
-        // (cached so we don't refetch the 3X account list).
+        // Beginning inventory = trial balance End Balance ≤ 31 Dec prior year
+        // Ending inventory    = trial balance End Balance ≤ today
         $priorYearEnd     = $from->modify('-1 day');
-        $beginningGL      = $this->safe(fn() => $this->getGLInventoryAccounts($priorYearEnd), $errors, 'beginning_balance') ?? $this->emptyGLInventory();
-        $beginningBalance = (float)($beginningGL['total_balance'] ?? 0);
-        $endingBalance    = (float)($glInventory['total_balance']  ?? 0);
+        $beginningBalance = $this->safe(fn() => $this->sumInventoryGL($priorYearEnd), $errors, 'beginning_balance') ?? 0.0;
+        $endingBalance    = $this->safe(fn() => $this->sumInventoryGL($asOfDate),     $errors, 'ending_balance')    ?? 0.0;
 
         $trend    = $this->safe(fn() => $this->buildGLTrend($from, $to), $errors, 'trend')    ?? ['by_month' => []];
         $cogsYtd  = $this->safe(fn() => $this->getCogsYtd($from, $to),    $errors, 'cogs')     ?? 0.0;
         $currency = $this->safe(fn() => $this->detectCurrency(),          $errors, 'currency') ?? 'USD';
 
-        $reconciliation = $this->reconcile($current, $glInventory);
-        $inventoryDays  = $this->computeInventoryDays($beginningBalance, $endingBalance, $cogsYtd, $from, $to);
+        $inventoryDays = $this->computeInventoryDays($beginningBalance, $endingBalance, $cogsYtd, $from, $to);
 
         return [
-            'current'         => $current,
-            'gl_inventory'    => $glInventory,
-            'reconciliation'  => $reconciliation,
             'inventory_days'  => $inventoryDays,
             'trend'           => $trend,
             'currency'        => $currency,
@@ -239,126 +217,23 @@ class InventoryService
     }
 
     // ─────────────────────────────────────────────────────────────────
-    // Inventory value at as-of date — live snapshot from stock.quant
-    // ─────────────────────────────────────────────────────────────────
-
-    /**
-     * In YTD-only mode the as-of date is always today, so this just
-     * returns the live snapshot. Kept as a thin wrapper for clarity
-     * and to leave the door open for historical reconstructions
-     * (would have to rely on GL move lines now that
-     * stock.valuation.layer is no longer assumed to exist).
-     */
-    private function getInventoryValueAt(DateTimeImmutable $asOfDate): array
-    {
-        return $this->getCurrentInventory();
-    }
-
-    // ─────────────────────────────────────────────────────────────────
-    // Current inventory (live snapshot from stock.quant)
-    // ─────────────────────────────────────────────────────────────────
-
-    private function getCurrentInventory(): array
-    {
-        $companyId = $this->getCompanyId();
-
-        // Filter to internal locations only (skip vendor/customer/transit/inventory adjustment).
-        $locationIds = $this->getInternalLocationIds();
-        $domain = [['company_id', '=', $companyId]];
-        if (!empty($locationIds)) {
-            $domain[] = ['location_id', 'in', $locationIds];
-        }
-
-        $quants = $this->odoo->searchRead(
-            'stock.quant',
-            $domain,
-            ['product_id', 'quantity'],
-            ['limit' => 10000]
-        );
-
-        // Aggregate qty by product
-        $qtyByProduct = [];
-        foreach ($quants as $q) {
-            $pid = is_array($q['product_id'] ?? null) ? ($q['product_id'][0] ?? null) : null;
-            if (!$pid) continue;
-            $qtyByProduct[$pid] = ($qtyByProduct[$pid] ?? 0) + (float)($q['quantity'] ?? 0);
-        }
-
-        // Batch fetch product info
-        $productIds = array_keys($qtyByProduct);
-        $productInfo = [];
-        if (!empty($productIds)) {
-            // Read in chunks of 500 to avoid huge URLs
-            foreach (array_chunk($productIds, 500) as $chunk) {
-                $rows = $this->odoo->read('product.product', $chunk, ['name', 'standard_price', 'default_code']);
-                foreach ($rows as $r) {
-                    $productInfo[$r['id']] = $r;
-                }
-            }
-        }
-
-        $totalValue = 0.0;
-        $totalQty   = 0.0;
-        $byProduct  = [];
-
-        foreach ($qtyByProduct as $pid => $qty) {
-            $info = $productInfo[$pid] ?? null;
-            $name = $info['name']           ?? ('Product #' . $pid);
-            $cost = (float)($info['standard_price'] ?? 0);
-            $code = $info['default_code']   ?? '';
-            $value = $qty * $cost;
-
-            $totalQty   += $qty;
-            $totalValue += $value;
-
-            // Group by product name (different products may share name; using id as key safer)
-            $byProduct[$name] = [
-                'qty'   => round($qty, 2),
-                'cost'  => round($cost, 2),
-                'value' => round($value, 2),
-                'code'  => $code,
-            ];
-        }
-
-        // Sort by value descending, keep top 50 in the table to avoid massive HTML
-        uasort($byProduct, fn($a, $b) => $b['value'] <=> $a['value']);
-        $byProduct = array_slice($byProduct, 0, 50, true);
-
-        return [
-            'total_value'  => round($totalValue, 2),
-            'total_qty'    => round($totalQty,   2),
-            'by_product'   => $byProduct,
-            'record_count' => count($quants),
-        ];
-    }
-
-    // ─────────────────────────────────────────────────────────────────
     // GL inventory accounts (OHADA 3XX, excluding 39X impairment)
     // ─────────────────────────────────────────────────────────────────
 
     /**
-     * Compute trial balance "End Balance" for inventory accounts as of a date.
-     * Domain mirrors what Odoo's Trial Balance report uses when end_date = $asOfDate.
+     * Sum of trial-balance End Balance for inventory accounts as of a date.
+     * Used for both the YTD beginning balance and the YTD ending balance
+     * fed into computeInventoryDays(). Mirrors Odoo's Trial Balance report
+     * domain (parent_state='posted', date <= asOf, scoped by company).
      */
-    private function getGLInventoryAccounts(DateTimeImmutable $asOfDate): array
+    private function sumInventoryGL(DateTimeImmutable $asOfDate): float
     {
         $accounts = $this->findInventoryAccounts();
         if (empty($accounts)) {
-            return $this->emptyGLInventory();
+            return 0.0;
         }
-
         $accountIds = array_column($accounts, 'id');
-        $accountMap = [];
-        foreach ($accounts as $a) {
-            $accountMap[$a['id']] = [
-                'name'    => $a['name'] ?? '',
-                'code'    => $a['code'] ?? '',
-                'balance' => 0.0,
-            ];
-        }
 
-        // Domain shared by both query strategies — `date <= as-of` is the
-        // critical filter that aligns this with Odoo's Trial Balance report.
         $domain = [
             ['parent_state', '=', 'posted'],
             ['account_id',   'in', $accountIds],
@@ -366,104 +241,27 @@ class InventoryService
             ['date',         '<=', $asOfDate->format('Y-m-d')],
         ];
 
-        // Step 2: aggregate balance from posted move lines.
-        // Use callModel(read_group) for efficient server-side aggregation.
+        $total = 0.0;
         try {
-            $groups = $this->odoo->callModel('account.move.line', 'read_group', [
+            $g = $this->odoo->callModel('account.move.line', 'read_group', [
                 'domain'  => $domain,
-                'fields'  => ['account_id', 'balance:sum'],
-                'groupby' => ['account_id'],
+                'fields'  => ['balance:sum'],
+                'groupby' => [],
             ]);
-
-            foreach ($groups as $g) {
-                $aid = is_array($g['account_id'] ?? null) ? ($g['account_id'][0] ?? null) : null;
-                if ($aid && isset($accountMap[$aid])) {
-                    $accountMap[$aid]['balance'] = round((float)($g['balance'] ?? 0), 2);
-                }
-            }
+            $total = (float)($g[0]['balance'] ?? 0);
         } catch (\Throwable $e) {
-            // Fallback: searchRead and aggregate client-side
-            $lines = $this->odoo->searchRead(
-                'account.move.line',
-                $domain,
-                ['account_id', 'balance'],
-                ['limit' => 100000]
+            $rows = $this->odoo->searchRead(
+                'account.move.line', $domain, ['balance'], ['limit' => 200000]
             );
-            foreach ($lines as $line) {
-                $aid = is_array($line['account_id'] ?? null) ? ($line['account_id'][0] ?? null) : null;
-                if ($aid && isset($accountMap[$aid])) {
-                    $accountMap[$aid]['balance'] += (float)($line['balance'] ?? 0);
-                }
+            foreach ($rows as $r) {
+                $total += (float)($r['balance'] ?? 0);
             }
-            foreach ($accountMap as &$row) {
-                $row['balance'] = round($row['balance'], 2);
-            }
-            unset($row);
         }
-
-        // Drop accounts with zero balance to keep table compact
-        $accountsList = array_filter(array_values($accountMap), fn($a) => abs($a['balance']) > 0.005);
-        // Re-sort by code for readable display
-        usort($accountsList, fn($a, $b) => strcmp($a['code'], $b['code']));
-
-        $totalBalance = array_sum(array_column($accountsList, 'balance'));
-
-        return [
-            'total_balance' => round($totalBalance, 2),
-            'by_account'    => $accountsList,
-            'account_count' => count($accountsList),
-        ];
+        return round($total, 2);
     }
 
     // ─────────────────────────────────────────────────────────────────
-    // Reconciliation
-    // ─────────────────────────────────────────────────────────────────
-
-    private function reconcile(array $current, array $glInventory): array
-    {
-        $stockValue = (float)($current['total_value']       ?? 0);
-        $glBalance  = (float)($glInventory['total_balance'] ?? 0);
-        $variance   = $glBalance - $stockValue;
-        $variancePct = $stockValue > 0 ? round(($variance / $stockValue) * 100, 2) : 0.0;
-
-        // Accuracy %: 100 when stock == GL, drops as the gap widens.
-        // Symmetric: uses max(|stock|, |GL|) as denominator so over- and
-        // under-statement of GL are treated identically. Floor at 0.
-        // Edge case: both zero → degenerate match (100%).
-        $denominator = max(abs($stockValue), abs($glBalance));
-        if ($denominator < 0.01) {
-            $accuracyPct = 100.0; // both effectively zero
-        } else {
-            $gapPct      = min(100.0, abs($variance) / $denominator * 100);
-            $accuracyPct = round(max(0.0, 100.0 - $gapPct), 2);
-        }
-
-        return [
-            'stock_value'      => round($stockValue, 2),
-            'gl_balance'       => round($glBalance,  2),
-            'variance'         => round($variance,   2),
-            'variance_percent' => $variancePct,
-            'accuracy_percent' => $accuracyPct,
-            'reconciled'       => abs($variance) < 0.01,
-            'interpretation'   => $this->interpretVariance($variance, $stockValue, $accuracyPct),
-        ];
-    }
-
-    private function interpretVariance(float $variance, float $stockValue, float $accuracyPct): string
-    {
-        if (abs($variance) < 0.01) {
-            return 'Inventory perfectly reconciled with the general ledger.';
-        }
-        $accStr = number_format($accuracyPct, 1) . '%';
-
-        if ($variance > 0) {
-            return "GL balance exceeds stock value ({$accStr} accuracy) — possible unrecorded outflows or impairments not captured in stock.quant.";
-        }
-        return "Stock value exceeds GL balance ({$accStr} accuracy) — possible missing cost-of-goods entries or in-transit movements not yet posted.";
-    }
-
-    // ─────────────────────────────────────────────────────────────────
-    // Trend (YTD inventory value evolution) — single Odoo call
+    // Trend (YTD inventory value evolution) — month-end snapshots
     // ─────────────────────────────────────────────────────────────────
 
     /**
@@ -612,26 +410,6 @@ class InventoryService
         return $this->companyId;
     }
 
-    /** Lazy-loaded internal location ids (`usage = 'internal'`). */
-    private function getInternalLocationIds(): array
-    {
-        if ($this->internalLocationIds !== null) {
-            return $this->internalLocationIds;
-        }
-        try {
-            $rows = $this->odoo->searchRead(
-                'stock.location',
-                [['usage', '=', 'internal']],
-                ['id'],
-                ['limit' => 500]
-            );
-            $this->internalLocationIds = array_column($rows, 'id');
-        } catch (\Throwable $e) {
-            $this->internalLocationIds = [];
-        }
-        return $this->internalLocationIds;
-    }
-
     /**
      * Run a callable, capture exceptions into the $errors bag, return null on failure.
      * Each section of analyze() uses this so a single failing call doesn't blow up the page.
@@ -644,24 +422,5 @@ class InventoryService
             $errors[] = "{$tag}: " . $e->getMessage();
             return null;
         }
-    }
-
-    private function emptyCurrent(): array
-    {
-        return [
-            'total_value'  => 0,
-            'total_qty'    => 0,
-            'by_product'   => [],
-            'record_count' => 0,
-        ];
-    }
-
-    private function emptyGLInventory(): array
-    {
-        return [
-            'total_balance' => 0,
-            'by_account'    => [],
-            'account_count' => 0,
-        ];
     }
 }

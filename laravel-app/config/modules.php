@@ -48,11 +48,11 @@ return [
         [
             'key'         => 'financial_reporting',
             'label'       => 'Financial Reporting',
-            'description' => 'Statutory and management reports — trial balance, balance sheet, income statement, cash flow.',
+            'description' => 'Statutory and management reports — trial balance, balance sheet, income statement, cash flow, plus GL-quality reconciliation.',
             'icon'        => 'M9 2h6l5 5v15H4V2zM9 2v6h6',
             'order'       => 20,
-            'default'     => false,
-            'status'      => 'coming_soon',
+            'default'     => true,
+            'status'      => 'live',
         ],
         [
             'key'         => 'financial_planning',
@@ -222,7 +222,18 @@ return [
             'status'  => 'live',
         ],
 
-        // ── Financial Reporting (coming soon) ────────────────────────────
+        // ── Financial Reporting ───────────────────────────────────────────
+        [
+            'key'     => 'gl_quality',
+            'service' => 'financial_reporting',
+            'label'   => 'GL Quality',
+            'url'     => '/general-ledger-quality',
+            'active'  => 'gl_quality',
+            'icon'    => 'M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z',
+            'default' => true,
+            'core'    => false,
+            'status'  => 'live',
+        ],
         [
             'key'     => 'trial_balance',
             'service' => 'financial_reporting',

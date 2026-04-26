@@ -10,6 +10,7 @@ use App\Http\Controllers\PayablesController;
 use App\Http\Controllers\TreasuryController;
 use App\Http\Controllers\FixedAssetsController;
 use App\Http\Controllers\InventoryController;
+use App\Http\Controllers\GLQualityController;
 use App\Http\Controllers\CustomerInsightsController;
 use App\Http\Controllers\SettingsController;
 use App\Http\Controllers\Tax\VATComplianceController;
@@ -95,6 +96,9 @@ Route::prefix('t/{tenant}')
                 Route::get('/payables',          [PayablesController::class, 'index'])->middleware('module:payables');
                 Route::get('/fixed-assets',      [FixedAssetsController::class, 'index'])->middleware('module:fixed_assets');
                 Route::get('/inventory',         [InventoryController::class, 'index'])->middleware('module:inventory');
+
+                // ── Financial Reporting service ───────────────────────────────
+                Route::get('/general-ledger-quality', [GLQualityController::class, 'index'])->middleware('module:gl_quality');
 
                 // ── Tax Compliance service ────────────────────────────────────
                 Route::get('/vat-compliance',         [VATComplianceController::class, 'index'])->middleware('module:vat_compliance');
