@@ -187,9 +187,17 @@ jobs:
               php artisan key:generate --force
             fi
 
-            # ==================== MIGRATIONS + CACHE ====================
+            # ==================== MIGRATIONS + SEED + CACHE ====================
             echo "🔄 Migrations..."
             php artisan migrate --force
+
+            echo "👤 Seeding super admin + demo tenant (idempotent)..."
+            # TenancySeeder uses firstOrCreate, so re-running is safe and
+            # never duplicates rows. First-time deploys get:
+            #   super admin: super@local / changeme
+            #   demo tenant: owner@demo.local / changeme
+            # The operator should change both passwords after first login.
+            php artisan db:seed --force --no-interaction
 
             php artisan storage:link || true
             php artisan config:cache
@@ -227,6 +235,22 @@ jobs:
             apache2ctl configtest
             systemctl reload apache2
 
+            # ==================== FIREWALL (ufw) ====================
+            # Open the web ports BEFORE certbot so the HTTP-01 challenge can
+            # actually reach Apache. Allow SSH first to avoid locking ourselves
+            # out of the running session when ufw transitions to enabled.
+            echo "🔥 Configuring firewall (ufw)..."
+            if ! command -v ufw >/dev/null; then
+              apt-get install -y ufw
+            fi
+            ufw allow 22/tcp   >/dev/null
+            ufw allow 80/tcp   >/dev/null
+            ufw allow 443/tcp  >/dev/null
+            # --force avoids the interactive y/N prompt; existing SSH session
+            # is preserved, only NEW connections are filtered against rules.
+            ufw --force enable >/dev/null
+            ufw status verbose | head -20
+
             # ==================== LET'S ENCRYPT ====================
             echo "🔒 Let's Encrypt..."
             if ! command -v certbot >/dev/null; then
@@ -245,14 +269,76 @@ jobs:
 
             systemctl reload apache2
 
-            # ==================== HEALTH CHECK ====================
-            echo "🩺 Health check..."
+            # ==================== INTERNAL HEALTH CHECK ====================
+            # Quick sanity check from inside the box — does Apache answer locally?
+            echo "🩺 Local health check..."
             sleep 2
-            HTTP_CODE=$(curl -sk -o /dev/null -w "%{http_code}" "http://$DOMAIN" || echo "000")
-            echo "    HTTP $HTTP_CODE from http://$DOMAIN"
+            LOCAL_CODE=$(curl -sk -o /dev/null -w "%{http_code}" --max-time 10 -H "Host: $DOMAIN" "http://127.0.0.1" || echo "000")
+            echo "    Local HTTP $LOCAL_CODE"
+            if [ "$LOCAL_CODE" = "000" ]; then
+              echo "❌ Apache is not responding on localhost — deployment failed."
+              exit 1
+            fi
+
+            # Mark whether HTTPS is meant to be live so the runner-side check
+            # knows whether to require port 443.
+            if [ -d "/etc/letsencrypt/live/$DOMAIN" ]; then
+              echo "https" > /tmp/eams_deploy_scheme
+            else
+              echo "http" > /tmp/eams_deploy_scheme
+            fi
 
             echo ""
-            echo "✅ Deployment completed."
+            echo "✅ Server-side deployment completed."
             echo "🌐 App URL:   https://$DOMAIN  (or http:// before DNS/cert is in place)"
             echo "📊 Database:  $DB_NAME"
             echo "📁 App path:  $APP_DIR"
+
+      # =========================================================================
+      # External reachability test — run from the GitHub Actions runner so we
+      # validate the public network path (DNS + cloud firewall + ufw + Apache).
+      # The deployment is only deemed successful if port 80 is reachable AND
+      # the domain serves a non-zero HTTP response.
+      # =========================================================================
+      - name: Verify external reachability
+        env:
+          DOMAIN: ${{ env.DOMAIN }}
+          IP: ${{ secrets.SERVER_IP }}
+        run: |
+          set -e
+
+          echo "==> TCP connect to $IP:80 (mandatory)"
+          if ! timeout 10 bash -c "</dev/tcp/$IP/80" 2>/dev/null; then
+            echo "❌ Port 80 NOT reachable on $IP from the public internet."
+            echo "   ufw is configured on the server, so the block is upstream."
+            echo "   → Check your cloud provider firewall (Vultr/DO/AWS panel)."
+            exit 1
+          fi
+          echo "✅ Port 80 reachable on $IP."
+
+          echo "==> HTTP request to http://$DOMAIN (mandatory)"
+          HTTP_CODE=$(curl -skL -o /dev/null -w "%{http_code}" \
+            --max-time 15 --connect-timeout 5 "http://$DOMAIN" || echo "000")
+          if [ "$HTTP_CODE" = "000" ]; then
+            echo "❌ http://$DOMAIN returned no response."
+            echo "   DNS may not point to $IP yet, or the path is blocked between"
+            echo "   the resolver and the server."
+            exit 1
+          fi
+          # Laravel returns 4xx/5xx is fine — what matters is *something* answered.
+          echo "✅ http://$DOMAIN → HTTP $HTTP_CODE."
+
+          echo "==> TCP connect to $IP:443 (best-effort)"
+          if timeout 10 bash -c "</dev/tcp/$IP/443" 2>/dev/null; then
+            echo "✅ Port 443 reachable on $IP."
+            HTTPS_CODE=$(curl -skL -o /dev/null -w "%{http_code}" \
+              --max-time 15 --connect-timeout 5 "https://$DOMAIN" || echo "000")
+            echo "    https://$DOMAIN → HTTP $HTTPS_CODE."
+          else
+            echo "⚠️  Port 443 not reachable yet — Let's Encrypt cert was likely"
+            echo "   skipped on this run (DNS or firewall). Re-run this workflow"
+            echo "   once http:// is propagated and certbot will issue the cert."
+          fi
+
+          echo ""
+          echo "✅ External reachability check passed."
