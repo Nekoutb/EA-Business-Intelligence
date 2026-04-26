@@ -48,18 +48,20 @@ class InventoryService
         }
 
         // Defensive: each section returns an empty/default shape on failure
-        // so the view never sees missing keys.
-        $current        = $this->safe(fn() => $this->getCurrentInventory(),       $errors, 'current_inventory');
-        $glInventory    = $this->safe(fn() => $this->getGLInventoryAccounts(),    $errors, 'gl_inventory');
+        // so the view never sees missing keys AND reconcile() never gets null.
+        // Coalesce BEFORE passing to reconcile (which is type-hinted `array`).
+        $current     = $this->safe(fn() => $this->getCurrentInventory(),       $errors, 'current_inventory') ?? $this->emptyCurrent();
+        $glInventory = $this->safe(fn() => $this->getGLInventoryAccounts(),    $errors, 'gl_inventory')      ?? $this->emptyGLInventory();
+        $trend       = $this->safe(fn() => $this->getInventoryTrend($from, $to), $errors, 'trend')           ?? ['by_month' => [], 'by_week' => []];
+        $currency    = $this->safe(fn() => $this->detectCurrency(),            $errors, 'currency')          ?? 'USD';
+
         $reconciliation = $this->reconcile($current, $glInventory);
-        $trend          = $this->safe(fn() => $this->getInventoryTrend($from, $to), $errors, 'trend');
-        $currency       = $this->safe(fn() => $this->detectCurrency(),            $errors, 'currency') ?: 'USD';
 
         return [
-            'current'        => $current        ?: $this->emptyCurrent(),
-            'gl_inventory'   => $glInventory    ?: $this->emptyGLInventory(),
+            'current'        => $current,
+            'gl_inventory'   => $glInventory,
             'reconciliation' => $reconciliation,
-            'trend'          => $trend          ?: ['by_month' => [], 'by_week' => []],
+            'trend'          => $trend,
             'currency'       => $currency,
             'period'         => $period,
             'period_label'   => $label,
