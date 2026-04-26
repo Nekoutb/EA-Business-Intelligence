@@ -6,22 +6,30 @@ use App\Odoo\OdooClient;
 use DateTimeImmutable;
 
 /**
- * InventoryService — Inventory reconciliation and trend analysis.
+ * InventoryService — Inventory reconciliation, days, and trend (YTD).
  *
- * Reconciles stock value to the GL trial balance for OHADA 3XX accounts
- * (excluding 39X impairment). Both sides are snapshotted at the SAME date
- * (the period end, clamped to today) so the comparison is like-for-like.
+ * Three blocks of analytics, all sharing one YTD window (1 January → today):
+ *
+ * 1. Reconciliation — stock vs trial balance for OHADA 3XX accounts
+ *    (excluding 39X impairment). Both sides snapshotted at the SAME date
+ *    so the comparison is like-for-like with Odoo's Trial Balance report.
+ *
+ * 2. Inventory Days (P&L-aligned, YTD-rate, not annualised):
+ *        days = (avg_inventory × period_days_ytd) / cogs_ytd
+ *      avg_inventory  = mean of month-end snapshots from the trend
+ *      cogs_ytd       = Σ account.move.line.balance for 60X accounts in YTD
+ *                       (matches what the income statement shows as COGS)
+ *      period_days_ytd= calendar days elapsed from 1 January
+ *
+ * 3. Trend — month-end inventory value, January through today, from the
+ *    cumulative sum of stock.valuation.layer.
  *
  * Data sources:
- *   - Stock value at as-of date:
- *       * as-of >= today  → stock.quant × product.standard_price (live)
- *       * as-of <  today  → stock.valuation.layer cumulative sum (historical)
- *   - GL trial balance at as-of date:
- *       sum(account.move.line.balance) WHERE account.code =like '3%' AND
- *       NOT '39%' AND parent_state='posted' AND date <= as-of
- *       → matches Odoo's Trial Balance "End Balance" column for the same range
- *   - Trend chart: one search_read on stock.valuation.layer, bucketized
- *     client-side into month/week ends (O(N+B) instead of O(N*B)).
+ *   - Stock value:        stock.quant × product.standard_price
+ *   - GL trial balance:   account.move.line, accounts code =like '3%' (not 39%)
+ *   - COGS YTD:           account.move.line, accounts code =like '60%'
+ *   - Trend chart:        stock.valuation.layer cumulative sum, bucketized
+ *                         into month-ends (O(N+B), one round-trip).
  */
 class InventoryService
 {
@@ -80,36 +88,66 @@ class InventoryService
     // ─────────────────────────────────────────────────────────────────
 
     /**
-     * COGS YTD inferred from inventory outflows.
+     * COGS YTD from the GL — OHADA accounts starting with '60'
+     * (purchases of goods, raw materials, consumed supplies, and the 603
+     * stock-variation accounts that adjust purchases to actual consumption).
      *
-     * Sum of negative values on stock.valuation.layer between $from and $to.
-     * A negative layer value represents stock leaving the warehouse at cost
-     * (sale, scrap, internal-transfer-to-customer-location). This matches
-     * the 'consumption' side of the inventory days ratio better than a
-     * GL-based COGS reconstruction, because it's measured at the ledger
-     * Odoo itself uses for inventory valuation.
+     * Sum( account.move.line.balance ) WHERE
+     *     account.code =like '60%'
+     *     AND parent_state = 'posted'
+     *     AND company_id = X
+     *     AND date BETWEEN $from AND $to
+     *
+     * This is the same number the income statement reports for COGS, so the
+     * inventory-days ratio aligns with what the CFO sees in the P&L.
      */
     private function getCogsYtd(DateTimeImmutable $from, DateTimeImmutable $to): float
     {
-        $layers = $this->odoo->searchRead(
-            'stock.valuation.layer',
-            [
-                ['company_id', '=', $this->getCompanyId()],
-                ['create_date', '>=', $from->format('Y-m-d')],
-                ['create_date', '<=', $to->format('Y-m-d') . ' 23:59:59'],
-            ],
-            ['value'],
-            ['limit' => 200000]
+        // Step 1: find COGS accounts (OHADA 60X family).
+        // No company_id filter on account.account — that field was removed in
+        // Odoo 17+; companies are scoped via account.move.line.company_id.
+        $accounts = $this->odoo->searchRead(
+            'account.account',
+            [['code', '=like', '60%']],
+            ['code'],
+            ['limit' => 1000]
         );
+        if (empty($accounts)) {
+            return 0.0;
+        }
+        $accountIds = array_column($accounts, 'id');
 
-        $cogs = 0.0;
-        foreach ($layers as $l) {
-            $v = (float)($l['value'] ?? 0);
-            if ($v < 0) {
-                $cogs += -$v;   // accumulate as positive
+        // Step 2: sum YTD postings against those accounts.
+        $domain = [
+            ['parent_state', '=', 'posted'],
+            ['account_id',   'in', $accountIds],
+            ['company_id',   '=', $this->getCompanyId()],
+            ['date',         '>=', $from->format('Y-m-d')],
+            ['date',         '<=', $to->format('Y-m-d')],
+        ];
+
+        $total = 0.0;
+        try {
+            $groups = $this->odoo->callModel('account.move.line', 'read_group', [
+                'domain'  => $domain,
+                'fields'  => ['balance:sum'],
+                'groupby' => [],
+            ]);
+            $total = (float)($groups[0]['balance'] ?? 0);
+        } catch (\Throwable $e) {
+            // Fallback: client-side aggregation
+            $lines = $this->odoo->searchRead(
+                'account.move.line', $domain, ['balance'], ['limit' => 200000]
+            );
+            foreach ($lines as $l) {
+                $total += (float)($l['balance'] ?? 0);
             }
         }
-        return round($cogs, 2);
+
+        // 60X are debit-natural; balance = debit − credit ≥ 0 for COGS.
+        // Returns to vendor / refunds reduce balance correctly.
+        // abs() guards against unexpected sign reversal in edge configurations.
+        return round(abs($total), 2);
     }
 
     /**
