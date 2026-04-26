@@ -9,27 +9,35 @@ use DateTimeImmutable;
 /**
  * GLQualityService — sub-ledger vs trial balance reconciliations.
  *
- * Three reconciliations, all at the same as-of date (today, YTD scope),
+ * Five reconciliations, all at the same as-of date (today, YTD scope),
  * all reading from account.move.line on the same companyId.
  *
  * 1. Accounts Receivable (debit-natural, account codes 41X)
  *    sub-ledger    = Σ balance for 41X accounts WHERE partner_id IS NOT NULL
  *    trial balance = same query without the partner_id filter
- *    variance      = orphan postings (no partner attached). Healthy AR
- *                    books have variance == 0.
  *
  * 2. Accounts Payable (credit-natural, account codes 40X)
- *    Same logic as AR, but raw GL balances are negative because the
- *    accounts are credit-natural. We take abs() on both sides before
- *    presenting so the user sees the amount owed as a positive figure
- *    (matching Odoo's Aged Payable report).
+ *    Same logic as AR; abs() applied on both sides so the user sees
+ *    positive figures matching Odoo's Aged Payable report.
  *
  * 3. Inventory
  *    stock side    = stock.quant × product.standard_price (live snapshot)
  *    trial balance = Σ balance for 3X accounts excluding 39X impairment
- *    variance      = unrecorded outflows / impairments
  *
- * All three use the same accuracy formula:
+ * 4. Fixed Assets — Original Value (gross cost basis)
+ *    sub-ledger    = Σ account.asset.original_value WHERE state='open'
+ *    trial balance = Σ balance for 2X accounts EXCLUDING 25/26/27/28/29
+ *                    (excludes accumulated depreciation and impairments
+ *                    so we land on gross cost only).
+ *
+ * 5. Fixed Assets — Net Book Value
+ *    sub-ledger    = Σ account.asset.book_value WHERE state='open'
+ *    trial balance = Σ balance for 2X accounts EXCLUDING 25/26/27/29
+ *                    (INCLUDES 28 — accumulated depreciation is credit-
+ *                    natural, so adding its negative balance subtracts
+ *                    depreciation from gross cost, giving NBV).
+ *
+ * All five use the same accuracy formula:
  *   accuracy_% = 100 − min(100, |variance| / max(|left|, |right|, 0.01) × 100)
  */
 class GLQualityService
@@ -41,6 +49,9 @@ class GLQualityService
     private ?array $receivableAccountsCache = null;
     private ?array $payableAccountsCache    = null;
     private ?array $inventoryAccountsCache  = null;
+    private ?array $all2xAccountsCache      = null;
+    private array  $fixedAssetAccountsCache = []; // keyed by exclusion-list string
+    private ?array $fixedAssetSubLedgerCache = null;
     private ?array $internalLocationIds     = null;
 
     public function __construct(private OdooClient $odoo) {}
@@ -53,19 +64,23 @@ class GLQualityService
         $errors = [];
         $asOfDate = $today;
 
-        $receivables = $this->safe(fn() => $this->reconcileReceivables($asOfDate), $errors, 'receivables') ?? $this->emptyReconciliation();
-        $payables    = $this->safe(fn() => $this->reconcilePayables($asOfDate),    $errors, 'payables')    ?? $this->emptyReconciliation();
-        $inventory   = $this->safe(fn() => $this->reconcileInventory($asOfDate),   $errors, 'inventory')   ?? $this->emptyReconciliation();
-        $currency    = $this->safe(fn() => $this->detectCurrency(),                $errors, 'currency')   ?? 'USD';
+        $receivables   = $this->safe(fn() => $this->reconcileReceivables($asOfDate),       $errors, 'receivables')      ?? $this->emptyReconciliation();
+        $payables      = $this->safe(fn() => $this->reconcilePayables($asOfDate),          $errors, 'payables')         ?? $this->emptyReconciliation();
+        $inventory     = $this->safe(fn() => $this->reconcileInventory($asOfDate),         $errors, 'inventory')        ?? $this->emptyReconciliation();
+        $faOriginal    = $this->safe(fn() => $this->reconcileFixedAssetsOriginal($asOfDate), $errors, 'fixed_assets_original') ?? $this->emptyReconciliation();
+        $faBook        = $this->safe(fn() => $this->reconcileFixedAssetsBook($asOfDate),    $errors, 'fixed_assets_book')      ?? $this->emptyReconciliation();
+        $currency      = $this->safe(fn() => $this->detectCurrency(),                      $errors, 'currency')         ?? 'USD';
 
         return [
-            'receivables' => $receivables,
-            'payables'    => $payables,
-            'inventory'   => $inventory,
-            'currency'    => $currency,
-            'as_of'       => $asOfDate->format('Y-m-d'),
-            'period_label'=> 'YTD ' . $today->format('Y'),
-            'error'       => empty($errors) ? null : implode(' | ', $errors),
+            'receivables'           => $receivables,
+            'payables'              => $payables,
+            'inventory'             => $inventory,
+            'fixed_assets_original' => $faOriginal,
+            'fixed_assets_book'     => $faBook,
+            'currency'              => $currency,
+            'as_of'                 => $asOfDate->format('Y-m-d'),
+            'period_label'          => 'YTD ' . $today->format('Y'),
+            'error'                 => empty($errors) ? null : implode(' | ', $errors),
         ];
     }
 
@@ -262,6 +277,171 @@ class GLQualityService
             }
         }
         return round($total, 2);
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Fixed Assets reconciliations (Original Value + Net Book Value)
+    // ─────────────────────────────────────────────────────────────────
+
+    /**
+     * Sub-ledger fetch — single round-trip on account.asset, results
+     * cached so both reconciliations share the read.
+     */
+    private function getFixedAssetSubLedger(): array
+    {
+        if ($this->fixedAssetSubLedgerCache !== null) {
+            return $this->fixedAssetSubLedgerCache;
+        }
+
+        // Try the modern model name first; fall back to the legacy one.
+        $modelTried = ['account.asset', 'account.asset.asset'];
+        $assets = null;
+        $modelUsed = null;
+        $lastError = null;
+
+        foreach ($modelTried as $model) {
+            try {
+                $assets = $this->odoo->searchRead(
+                    $model,
+                    [
+                        ['company_id', '=', $this->getCompanyId()],
+                        ['state',      '=', 'open'],
+                    ],
+                    ['original_value', 'book_value', 'value_residual'],
+                    ['limit' => 10000]
+                );
+                $modelUsed = $model;
+                break;
+            } catch (\Throwable $e) {
+                $lastError = $e->getMessage();
+            }
+        }
+
+        if ($assets === null) {
+            return $this->fixedAssetSubLedgerCache = [
+                'available'      => false,
+                'count'          => 0,
+                'original_value' => 0.0,
+                'book_value'     => 0.0,
+                'error'          => $lastError ?: 'account.asset model not found',
+            ];
+        }
+
+        $original = 0.0;
+        $book     = 0.0;
+        foreach ($assets as $a) {
+            $original += (float)($a['original_value'] ?? 0);
+            // Prefer book_value; fall back to value_residual on older Odoo
+            $bv = $a['book_value'] ?? $a['value_residual'] ?? 0;
+            $book += (float)$bv;
+        }
+
+        return $this->fixedAssetSubLedgerCache = [
+            'available'      => true,
+            'count'          => count($assets),
+            'original_value' => round($original, 2),
+            'book_value'     => round($book, 2),
+            'model'          => $modelUsed,
+        ];
+    }
+
+    private function reconcileFixedAssetsOriginal(DateTimeImmutable $asOfDate): array
+    {
+        $sub = $this->getFixedAssetSubLedger();
+        if (!($sub['available'] ?? false)) {
+            return $this->emptyReconciliation('account.asset model not available — fixed assets sub-ledger requires the Odoo Accounting Assets module.');
+        }
+        $subLedger = (float)$sub['original_value'];
+
+        // Trial balance: 2X accounts EXCLUDING 25, 26, 27, 28, 29 → gross cost basis only.
+        $accounts = $this->findFixedAssetAccounts(['25', '26', '27', '28', '29']);
+        if (empty($accounts)) {
+            return $this->emptyReconciliation('No matching 2X fixed-asset accounts found in the chart of accounts.');
+        }
+        $accountIds = array_column($accounts, 'id');
+
+        $trialBalance = $this->sumGLBalance($accountIds, $asOfDate, withPartnerOnly: false);
+        $byAccount    = $this->balancesByAccount($accountIds, $accounts, $asOfDate);
+
+        return [
+            'left_label'      => 'Sub-ledger (Assets table — Original Value)',
+            'left_value'      => $subLedger,
+            'right_label'     => 'Trial balance (2X, excl. 25/26/27/28/29)',
+            'right_value'     => $trialBalance,
+            'variance'        => round($trialBalance - $subLedger, 2),
+            'accuracy_pct'    => $this->accuracyPercent($subLedger, $trialBalance),
+            'subtitle'        => 'Original asset value · sub-ledger from Accounting → Assets · trial balance excludes accumulated depreciation (28) and impairments (29) so it represents gross cost only.',
+            'by_account'      => $byAccount,
+            'breakdown_total' => $trialBalance,
+        ];
+    }
+
+    private function reconcileFixedAssetsBook(DateTimeImmutable $asOfDate): array
+    {
+        $sub = $this->getFixedAssetSubLedger();
+        if (!($sub['available'] ?? false)) {
+            return $this->emptyReconciliation('account.asset model not available — fixed assets sub-ledger requires the Odoo Accounting Assets module.');
+        }
+        $subLedger = (float)$sub['book_value'];
+
+        // Trial balance: 2X EXCLUDING 25/26/27/29 — INCLUDES 28 (accumulated
+        // depreciation, credit-natural, negative). Adding 28 to gross 2X
+        // gives NBV: gross_cost + (− accum_depreciation) = NBV.
+        $accounts = $this->findFixedAssetAccounts(['25', '26', '27', '29']);
+        if (empty($accounts)) {
+            return $this->emptyReconciliation('No matching 2X fixed-asset accounts found in the chart of accounts.');
+        }
+        $accountIds = array_column($accounts, 'id');
+
+        $trialBalance = $this->sumGLBalance($accountIds, $asOfDate, withPartnerOnly: false);
+        $byAccount    = $this->balancesByAccount($accountIds, $accounts, $asOfDate);
+
+        return [
+            'left_label'      => 'Sub-ledger (Assets table — Net Book Value)',
+            'left_value'      => $subLedger,
+            'right_label'     => 'Trial balance (2X, excl. 25/26/27/29)',
+            'right_value'     => $trialBalance,
+            'variance'        => round($trialBalance - $subLedger, 2),
+            'accuracy_pct'    => $this->accuracyPercent($subLedger, $trialBalance),
+            'subtitle'        => 'Net book value · sub-ledger from Accounting → Assets · trial balance includes 28 (accumulated depreciation, credit-natural) so the total reflects gross cost net of depreciation.',
+            'by_account'      => $byAccount,
+            'breakdown_total' => $trialBalance,
+        ];
+    }
+
+    /**
+     * Resolve 2X chart-of-accounts entries excluding the prefixes given.
+     * Caches the underlying 2X fetch so each variant is cheap.
+     */
+    private function findFixedAssetAccounts(array $excludePrefixes): array
+    {
+        $key = implode(',', $excludePrefixes);
+        if (isset($this->fixedAssetAccountsCache[$key])) {
+            return $this->fixedAssetAccountsCache[$key];
+        }
+
+        if ($this->all2xAccountsCache === null) {
+            $rows = $this->odoo->searchRead(
+                'account.account',
+                [['code', '=like', '2%']],
+                ['code', 'name'],
+                ['limit' => 1000, 'order' => 'code asc']
+            );
+            $this->all2xAccountsCache = array_values(array_filter(
+                $rows,
+                fn($a) => str_starts_with((string)($a['code'] ?? ''), '2')
+            ));
+        }
+
+        $filtered = array_values(array_filter($this->all2xAccountsCache, function ($a) use ($excludePrefixes) {
+            $code = (string)($a['code'] ?? '');
+            foreach ($excludePrefixes as $excl) {
+                if (str_starts_with($code, $excl)) return false;
+            }
+            return true;
+        }));
+
+        return $this->fixedAssetAccountsCache[$key] = $filtered;
     }
 
     // ─────────────────────────────────────────────────────────────────

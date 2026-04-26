@@ -44,9 +44,11 @@
             return 'text-rose-800';
         };
 
-        $ar  = $data['receivables'] ?? [];
-        $ap  = $data['payables']    ?? [];
-        $inv = $data['inventory']   ?? [];
+        $ar       = $data['receivables']            ?? [];
+        $ap       = $data['payables']               ?? [];
+        $inv      = $data['inventory']              ?? [];
+        $faOrig   = $data['fixed_assets_original']  ?? [];
+        $faBook   = $data['fixed_assets_book']      ?? [];
     @endphp
 
     <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
@@ -98,7 +100,7 @@
                         <dd class="text-base font-semibold {{ $varColor }}">{{ ea_money_short($variance, $currency) }}</dd>
                     </div>
                     <div class="flex items-baseline justify-between">
-                        <dt class="text-sm text-slate-600">Reconciliation</dt>
+                        <dt class="text-sm text-slate-600">Reconciliation accuracy</dt>
                         <dd class="text-lg font-bold {{ $msgColor }}">{{ number_format($accuracy, 1) }}%</dd>
                     </div>
                 </dl>
@@ -163,7 +165,7 @@
                         <dd class="text-base font-semibold {{ $varColor }}">{{ ea_money_short($variance, $currency) }}</dd>
                     </div>
                     <div class="flex items-baseline justify-between">
-                        <dt class="text-sm text-slate-600">Reconciliation</dt>
+                        <dt class="text-sm text-slate-600">Reconciliation accuracy</dt>
                         <dd class="text-lg font-bold {{ $msgColor }}">{{ number_format($accuracy, 1) }}%</dd>
                     </div>
                 </dl>
@@ -228,7 +230,7 @@
                         <dd class="text-base font-semibold {{ $varColor }}">{{ ea_money_short($variance, $currency) }}</dd>
                     </div>
                     <div class="flex items-baseline justify-between">
-                        <dt class="text-sm text-slate-600">Reconciliation</dt>
+                        <dt class="text-sm text-slate-600">Reconciliation accuracy</dt>
                         <dd class="text-lg font-bold {{ $msgColor }}">{{ number_format($accuracy, 1) }}%</dd>
                     </div>
                 </dl>
@@ -236,6 +238,136 @@
                 <details class="border-t border-slate-200 group/inv-breakdown">
                     <summary class="px-5 py-2.5 text-xs font-medium text-slate-600 cursor-pointer hover:bg-slate-50 flex items-center gap-2 select-none [&::-webkit-details-marker]:hidden">
                         <svg class="w-3.5 h-3.5 transition-transform group-open/inv-breakdown:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                        Trial balance breakdown
+                        <span class="text-[11px] text-slate-400 font-normal">({{ count($byAcc) }} {{ count($byAcc) === 1 ? 'account' : 'accounts' }})</span>
+                    </summary>
+                    <div class="overflow-x-auto border-t border-slate-200">
+                        @include('partials.gl-quality-account-breakdown', ['rows' => $byAcc, 'total' => $brkTotal, 'currency' => $currency])
+                    </div>
+                </details>
+            </div>
+        </details>
+
+        {{-- ───────── Box 4: Fixed Assets — Original Value ───────── --}}
+        @php
+            $left     = (float)($faOrig['left_value']      ?? 0);
+            $right    = (float)($faOrig['right_value']     ?? 0);
+            $variance = (float)($faOrig['variance']        ?? 0);
+            $accuracy = (float)($faOrig['accuracy_pct']    ?? 0);
+            $byAcc    = $faOrig['by_account']              ?? [];
+            $brkTotal = (float)($faOrig['breakdown_total'] ?? $right);
+            $subtitle = $faOrig['subtitle']                ?? '';
+            $varColor = abs($variance) < 0.01 ? 'text-slate-700' : 'text-amber-700';
+            $msgColor = $tone($accuracy);
+        @endphp
+        <details class="group/faorig bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+            <summary class="px-5 py-4 cursor-pointer list-none flex items-center justify-between gap-4 hover:bg-slate-50 transition [&::-webkit-details-marker]:hidden">
+                <div class="flex-1 min-w-0">
+                    <h3 class="text-base font-semibold text-slate-900">Fixed Assets — Original Value</h3>
+                    @if ($asOfLabel)
+                        <p class="text-xs text-slate-500 mt-0.5">
+                            <span class="font-medium text-slate-700">YTD as of {{ $asOfLabel }}</span>
+                        </p>
+                    @endif
+                </div>
+                <div class="flex items-center gap-3 flex-shrink-0">
+                    <span class="text-2xl font-bold {{ $msgColor }}">{{ number_format($accuracy, 1) }}%</span>
+                    <svg class="w-4 h-4 text-slate-400 transition-transform group-open/faorig:rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                    </svg>
+                </div>
+            </summary>
+
+            <div class="border-t border-slate-200">
+                <p class="text-xs text-slate-500 px-5 pt-3">{{ $subtitle }}</p>
+
+                <dl class="px-5 py-4 space-y-3">
+                    <div class="flex items-baseline justify-between border-b border-slate-100 pb-2">
+                        <dt class="text-sm text-slate-600">{{ $faOrig['left_label'] ?? '—' }}</dt>
+                        <dd class="text-base font-semibold text-slate-900">{{ ea_money_short($left, $currency) }}</dd>
+                    </div>
+                    <div class="flex items-baseline justify-between border-b border-slate-100 pb-2">
+                        <dt class="text-sm text-slate-600">{{ $faOrig['right_label'] ?? '—' }}</dt>
+                        <dd class="text-base font-semibold text-slate-900">{{ ea_money_short($right, $currency) }}</dd>
+                    </div>
+                    <div class="flex items-baseline justify-between border-b border-slate-100 pb-2">
+                        <dt class="text-sm text-slate-600">Variance <span class="text-[11px] text-slate-400">(right − left)</span></dt>
+                        <dd class="text-base font-semibold {{ $varColor }}">{{ ea_money_short($variance, $currency) }}</dd>
+                    </div>
+                    <div class="flex items-baseline justify-between">
+                        <dt class="text-sm text-slate-600">Reconciliation accuracy</dt>
+                        <dd class="text-lg font-bold {{ $msgColor }}">{{ number_format($accuracy, 1) }}%</dd>
+                    </div>
+                </dl>
+
+                <details class="border-t border-slate-200 group/faorig-breakdown">
+                    <summary class="px-5 py-2.5 text-xs font-medium text-slate-600 cursor-pointer hover:bg-slate-50 flex items-center gap-2 select-none [&::-webkit-details-marker]:hidden">
+                        <svg class="w-3.5 h-3.5 transition-transform group-open/faorig-breakdown:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                        Trial balance breakdown
+                        <span class="text-[11px] text-slate-400 font-normal">({{ count($byAcc) }} {{ count($byAcc) === 1 ? 'account' : 'accounts' }})</span>
+                    </summary>
+                    <div class="overflow-x-auto border-t border-slate-200">
+                        @include('partials.gl-quality-account-breakdown', ['rows' => $byAcc, 'total' => $brkTotal, 'currency' => $currency])
+                    </div>
+                </details>
+            </div>
+        </details>
+
+        {{-- ───────── Box 5: Fixed Assets — Net Book Value ───────── --}}
+        @php
+            $left     = (float)($faBook['left_value']      ?? 0);
+            $right    = (float)($faBook['right_value']     ?? 0);
+            $variance = (float)($faBook['variance']        ?? 0);
+            $accuracy = (float)($faBook['accuracy_pct']    ?? 0);
+            $byAcc    = $faBook['by_account']              ?? [];
+            $brkTotal = (float)($faBook['breakdown_total'] ?? $right);
+            $subtitle = $faBook['subtitle']                ?? '';
+            $varColor = abs($variance) < 0.01 ? 'text-slate-700' : 'text-amber-700';
+            $msgColor = $tone($accuracy);
+        @endphp
+        <details class="group/fanbv bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+            <summary class="px-5 py-4 cursor-pointer list-none flex items-center justify-between gap-4 hover:bg-slate-50 transition [&::-webkit-details-marker]:hidden">
+                <div class="flex-1 min-w-0">
+                    <h3 class="text-base font-semibold text-slate-900">Fixed Assets — Net Book Value</h3>
+                    @if ($asOfLabel)
+                        <p class="text-xs text-slate-500 mt-0.5">
+                            <span class="font-medium text-slate-700">YTD as of {{ $asOfLabel }}</span>
+                        </p>
+                    @endif
+                </div>
+                <div class="flex items-center gap-3 flex-shrink-0">
+                    <span class="text-2xl font-bold {{ $msgColor }}">{{ number_format($accuracy, 1) }}%</span>
+                    <svg class="w-4 h-4 text-slate-400 transition-transform group-open/fanbv:rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                    </svg>
+                </div>
+            </summary>
+
+            <div class="border-t border-slate-200">
+                <p class="text-xs text-slate-500 px-5 pt-3">{{ $subtitle }}</p>
+
+                <dl class="px-5 py-4 space-y-3">
+                    <div class="flex items-baseline justify-between border-b border-slate-100 pb-2">
+                        <dt class="text-sm text-slate-600">{{ $faBook['left_label'] ?? '—' }}</dt>
+                        <dd class="text-base font-semibold text-slate-900">{{ ea_money_short($left, $currency) }}</dd>
+                    </div>
+                    <div class="flex items-baseline justify-between border-b border-slate-100 pb-2">
+                        <dt class="text-sm text-slate-600">{{ $faBook['right_label'] ?? '—' }}</dt>
+                        <dd class="text-base font-semibold text-slate-900">{{ ea_money_short($right, $currency) }}</dd>
+                    </div>
+                    <div class="flex items-baseline justify-between border-b border-slate-100 pb-2">
+                        <dt class="text-sm text-slate-600">Variance <span class="text-[11px] text-slate-400">(right − left)</span></dt>
+                        <dd class="text-base font-semibold {{ $varColor }}">{{ ea_money_short($variance, $currency) }}</dd>
+                    </div>
+                    <div class="flex items-baseline justify-between">
+                        <dt class="text-sm text-slate-600">Reconciliation accuracy</dt>
+                        <dd class="text-lg font-bold {{ $msgColor }}">{{ number_format($accuracy, 1) }}%</dd>
+                    </div>
+                </dl>
+
+                <details class="border-t border-slate-200 group/fanbv-breakdown">
+                    <summary class="px-5 py-2.5 text-xs font-medium text-slate-600 cursor-pointer hover:bg-slate-50 flex items-center gap-2 select-none [&::-webkit-details-marker]:hidden">
+                        <svg class="w-3.5 h-3.5 transition-transform group-open/fanbv-breakdown:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
                         Trial balance breakdown
                         <span class="text-[11px] text-slate-400 font-normal">({{ count($byAcc) }} {{ count($byAcc) === 1 ? 'account' : 'accounts' }})</span>
                     </summary>
