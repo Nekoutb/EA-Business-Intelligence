@@ -10,10 +10,11 @@ class InventoryController extends Controller
 {
     public function index(Request $request)
     {
-        $today = now();
+        // IMPORTANT: must be DateTimeImmutable, not Carbon (which extends DateTime, not DateTimeImmutable)
+        $today  = new \DateTimeImmutable();
         $period = [
             'type'  => $request->query('period', 'ytd'),
-            'year'  => (int) $request->query('year', $today->format('Y')),
+            'year'  => (int) $request->query('year',  $today->format('Y')),
             'month' => (int) $request->query('month', $today->format('m')),
         ];
 

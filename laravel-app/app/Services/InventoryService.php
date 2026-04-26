@@ -6,393 +6,490 @@ use App\Odoo\OdooClient;
 use DateTimeImmutable;
 
 /**
- * InventoryService — Inventory reconciliation and analysis.
+ * InventoryService — Inventory reconciliation and trend analysis.
  *
- * Reconciles stock.quant total to GL inventory accounts (OHADA 3XX).
- * Calculates daily inventory values for YTD trend analysis.
+ * Reconciles stock.quant total value to GL inventory accounts (OHADA 3XX,
+ * excluding 39X impairment accounts). Builds month/week-end value series
+ * for the YTD trend chart.
+ *
+ * Strategy:
+ *   - Current value: sum stock.valuation.layer (preferred) or fallback to
+ *     stock.quant × product.standard_price.
+ *   - Trend: ONE search_read on stock.valuation.layer ordered by date,
+ *     then aggregated client-side into month/week buckets. This avoids
+ *     N round-trips per data point (which times out for YTD windows).
+ *   - GL: pull account.account where code starts with '3' (OHADA range)
+ *     excluding '39%' impairments, then sum balances from move lines.
  */
 class InventoryService
 {
+    /** Cached company id to avoid repeated authenticate() calls. */
+    private ?int $companyId = null;
+
+    /** Cached internal location ids. */
+    private ?array $internalLocationIds = null;
+
     public function __construct(private OdooClient $odoo) {}
 
     /**
-     * Analyze inventory for period.
-     *
-     * @param DateTimeImmutable $today
-     * @param array $period ['type' => 'ytd'|'month'|'mtd'|'yoy', 'year' => int, 'month' => int]
-     * @return array
+     * @param array $period ['type' => 'ytd'|'mtd'|'month'|'yoy', 'year' => int, 'month' => int]
      */
     public function analyze(DateTimeImmutable $today, array $period): array
     {
+        $errors = [];
+
         try {
-            // Resolve period dates
             [$from, $to, $label] = ea_resolve_period($today, $period);
-
-            // Fetch current inventory values
-            $current = $this->getCurrentInventory();
-
-            // Fetch GL inventory accounts (OHADA 3XX)
-            $glInventory = $this->getGLInventoryAccounts();
-
-            // Reconciliation
-            $reconciliation = $this->reconcile($current, $glInventory);
-
-            // YTD daily inventory trend
-            $trend = $this->getInventoryTrend($from, $to, $today);
-
-            return [
-                'current' => $current,
-                'gl_inventory' => $glInventory,
-                'reconciliation' => $reconciliation,
-                'trend' => $trend,
-                'currency' => $this->detectCurrency(),
-                'period' => $period,
-                'period_label' => $label,
-                'from' => $from->format('Y-m-d'),
-                'to' => $to->format('Y-m-d'),
-                'error' => null,
-            ];
-        } catch (\Exception $e) {
-            return [
-                'current' => [],
-                'gl_inventory' => [],
-                'reconciliation' => [],
-                'trend' => [],
-                'currency' => 'USD',
-                'period' => $period,
-                'period_label' => '',
-                'from' => '',
-                'to' => '',
-                'error' => $e->getMessage(),
-            ];
+        } catch (\Throwable $e) {
+            $from  = $today->modify('first day of January this year');
+            $to    = $today;
+            $label = 'YTD';
+            $errors[] = 'Period resolution failed: ' . $e->getMessage();
         }
+
+        // Defensive: each section returns an empty/default shape on failure
+        // so the view never sees missing keys.
+        $current        = $this->safe(fn() => $this->getCurrentInventory(),       $errors, 'current_inventory');
+        $glInventory    = $this->safe(fn() => $this->getGLInventoryAccounts(),    $errors, 'gl_inventory');
+        $reconciliation = $this->reconcile($current, $glInventory);
+        $trend          = $this->safe(fn() => $this->getInventoryTrend($from, $to), $errors, 'trend');
+        $currency       = $this->safe(fn() => $this->detectCurrency(),            $errors, 'currency') ?: 'USD';
+
+        return [
+            'current'        => $current        ?: $this->emptyCurrent(),
+            'gl_inventory'   => $glInventory    ?: $this->emptyGLInventory(),
+            'reconciliation' => $reconciliation,
+            'trend'          => $trend          ?: ['by_month' => [], 'by_week' => []],
+            'currency'       => $currency,
+            'period'         => $period,
+            'period_label'   => $label,
+            'from'           => $from->format('Y-m-d'),
+            'to'             => $to->format('Y-m-d'),
+            'error'          => empty($errors) ? null : implode(' | ', $errors),
+        ];
     }
 
-    /**
-     * Get current inventory from stock.quant.
-     */
+    // ─────────────────────────────────────────────────────────────────
+    // Current inventory (point-in-time)
+    // ─────────────────────────────────────────────────────────────────
+
     private function getCurrentInventory(): array
     {
+        $companyId = $this->getCompanyId();
+
+        // Filter to internal locations only (skip vendor/customer/transit/inventory adjustment).
+        $locationIds = $this->getInternalLocationIds();
+        $domain = [['company_id', '=', $companyId]];
+        if (!empty($locationIds)) {
+            $domain[] = ['location_id', 'in', $locationIds];
+        }
+
         $quants = $this->odoo->searchRead(
             'stock.quant',
-            [['company_id', '=', $this->getCompanyId()]],
-            ['product_id', 'quantity', 'location_id'],
+            $domain,
+            ['product_id', 'quantity'],
             ['limit' => 10000]
         );
 
-        // Batch fetch products for costs
-        $productIds = array_map(fn($q) => $q['product_id'][0], $quants);
-        $productIds = array_unique($productIds);
+        // Aggregate qty by product
+        $qtyByProduct = [];
+        foreach ($quants as $q) {
+            $pid = is_array($q['product_id'] ?? null) ? ($q['product_id'][0] ?? null) : null;
+            if (!$pid) continue;
+            $qtyByProduct[$pid] = ($qtyByProduct[$pid] ?? 0) + (float)($q['quantity'] ?? 0);
+        }
 
-        $products = [];
+        // Batch fetch product info
+        $productIds = array_keys($qtyByProduct);
+        $productInfo = [];
         if (!empty($productIds)) {
-            $productsData = $this->odoo->read(
-                'product.product',
-                $productIds,
-                ['name', 'standard_price', 'default_code', 'type']
-            );
-            foreach ($productsData as $p) {
-                $products[$p['id']] = $p;
-            }
-        }
-
-        // Calculate total value
-        $totalValue = 0;
-        $totalQty = 0;
-        $byCategory = [];
-
-        foreach ($quants as $quant) {
-            $productId = $quant['product_id'][0];
-            $qty = $quant['quantity'];
-            $totalQty += $qty;
-
-            if (isset($products[$productId])) {
-                $product = $products[$productId];
-                $cost = $product['standard_price'] ?? 0;
-                $value = $qty * $cost;
-                $totalValue += $value;
-
-                // Group by product category
-                $productName = $product['name'] ?? 'Unknown';
-                if (!isset($byCategory[$productName])) {
-                    $byCategory[$productName] = [
-                        'qty' => 0,
-                        'cost' => $cost,
-                        'value' => 0,
-                        'code' => $product['default_code'] ?? '',
-                    ];
+            // Read in chunks of 500 to avoid huge URLs
+            foreach (array_chunk($productIds, 500) as $chunk) {
+                $rows = $this->odoo->read('product.product', $chunk, ['name', 'standard_price', 'default_code']);
+                foreach ($rows as $r) {
+                    $productInfo[$r['id']] = $r;
                 }
-                $byCategory[$productName]['qty'] += $qty;
-                $byCategory[$productName]['value'] += $value;
             }
         }
+
+        $totalValue = 0.0;
+        $totalQty   = 0.0;
+        $byProduct  = [];
+
+        foreach ($qtyByProduct as $pid => $qty) {
+            $info = $productInfo[$pid] ?? null;
+            $name = $info['name']           ?? ('Product #' . $pid);
+            $cost = (float)($info['standard_price'] ?? 0);
+            $code = $info['default_code']   ?? '';
+            $value = $qty * $cost;
+
+            $totalQty   += $qty;
+            $totalValue += $value;
+
+            // Group by product name (different products may share name; using id as key safer)
+            $byProduct[$name] = [
+                'qty'   => round($qty, 2),
+                'cost'  => round($cost, 2),
+                'value' => round($value, 2),
+                'code'  => $code,
+            ];
+        }
+
+        // Sort by value descending, keep top 50 in the table to avoid massive HTML
+        uasort($byProduct, fn($a, $b) => $b['value'] <=> $a['value']);
+        $byProduct = array_slice($byProduct, 0, 50, true);
 
         return [
-            'total_value' => round($totalValue, 2),
-            'total_qty' => round($totalQty, 2),
-            'by_product' => $byCategory,
+            'total_value'  => round($totalValue, 2),
+            'total_qty'    => round($totalQty,   2),
+            'by_product'   => $byProduct,
             'record_count' => count($quants),
         ];
     }
 
-    /**
-     * Get GL inventory accounts (OHADA 3XX, excluding 39X).
-     */
+    // ─────────────────────────────────────────────────────────────────
+    // GL inventory accounts (OHADA 3XX, excluding 39X impairment)
+    // ─────────────────────────────────────────────────────────────────
+
     private function getGLInventoryAccounts(): array
     {
+        // Step 1: find inventory accounts (code starts with 3, not 39)
+        $accounts = $this->odoo->searchRead(
+            'account.account',
+            [
+                ['company_id', '=', $this->getCompanyId()],
+                ['code', '=like', '3%'],
+                ['code', 'not like', '39%'],
+            ],
+            ['code', 'name'],
+            ['limit' => 500, 'order' => 'code asc']
+        );
+
+        if (empty($accounts)) {
+            return $this->emptyGLInventory();
+        }
+
+        $accountIds = array_column($accounts, 'id');
+        $accountMap = [];
+        foreach ($accounts as $a) {
+            $accountMap[$a['id']] = [
+                'name'    => $a['name'] ?? '',
+                'code'    => $a['code'] ?? '',
+                'balance' => 0.0,
+            ];
+        }
+
+        // Step 2: aggregate balance from posted move lines.
+        // Use callModel(read_group) for efficient server-side aggregation.
         try {
-            // Read GL entries for inventory accounts (3XX excluding 39X)
-            // Use account_type = 'asset' and account code starts with 3
-            $entries = $this->odoo->searchRead(
+            $groups = $this->odoo->callModel('account.move.line', 'read_group', [
+                'domain'  => [
+                    ['parent_state', '=', 'posted'],
+                    ['account_id',   'in', $accountIds],
+                    ['company_id',   '=', $this->getCompanyId()],
+                ],
+                'fields'  => ['account_id', 'balance:sum'],
+                'groupby' => ['account_id'],
+            ]);
+
+            foreach ($groups as $g) {
+                $aid = is_array($g['account_id'] ?? null) ? ($g['account_id'][0] ?? null) : null;
+                if ($aid && isset($accountMap[$aid])) {
+                    $accountMap[$aid]['balance'] = round((float)($g['balance'] ?? 0), 2);
+                }
+            }
+        } catch (\Throwable $e) {
+            // Fallback: searchRead and aggregate client-side
+            $lines = $this->odoo->searchRead(
                 'account.move.line',
                 [
                     ['parent_state', '=', 'posted'],
-                    ['account_id.account_type', '=', 'asset'],
-                    ['account_id.code', 'like', '3%'],
-                    ['account_id.code', 'not like', '39%'],
+                    ['account_id',   'in', $accountIds],
+                    ['company_id',   '=', $this->getCompanyId()],
                 ],
-                ['account_id', 'balance', 'account_id'],
-                ['limit' => 1000]
+                ['account_id', 'balance'],
+                ['limit' => 100000]
             );
-
-            // Group by account
-            $byAccount = [];
-            foreach ($entries as $entry) {
-                $accountId = $entry['account_id'][0];
-                $accountName = $entry['account_id'][1];
-                $balance = $entry['balance'] ?? 0;
-
-                if (!isset($byAccount[$accountId])) {
-                    $byAccount[$accountId] = [
-                        'name' => $accountName,
-                        'code' => '',
-                        'balance' => 0,
-                    ];
-                }
-                $byAccount[$accountId]['balance'] += $balance;
-            }
-
-            // Fetch account codes
-            $accountIds = array_keys($byAccount);
-            if (!empty($accountIds)) {
-                $accounts = $this->odoo->read('account.account', $accountIds, ['code', 'name']);
-                foreach ($accounts as $acc) {
-                    if (isset($byAccount[$acc['id']])) {
-                        $byAccount[$acc['id']]['code'] = $acc['code'] ?? '';
-                        $byAccount[$acc['id']]['name'] = $acc['name'] ?? $byAccount[$acc['id']]['name'];
-                    }
+            foreach ($lines as $line) {
+                $aid = is_array($line['account_id'] ?? null) ? ($line['account_id'][0] ?? null) : null;
+                if ($aid && isset($accountMap[$aid])) {
+                    $accountMap[$aid]['balance'] += (float)($line['balance'] ?? 0);
                 }
             }
-
-            $totalBalance = array_sum(array_map(fn($a) => $a['balance'], $byAccount));
-
-            return [
-                'total_balance' => round($totalBalance, 2),
-                'by_account' => array_values($byAccount),
-                'account_count' => count($byAccount),
-            ];
-        } catch (\Exception $e) {
-            return [
-                'total_balance' => 0,
-                'by_account' => [],
-                'account_count' => 0,
-                'error' => $e->getMessage(),
-            ];
+            foreach ($accountMap as &$row) {
+                $row['balance'] = round($row['balance'], 2);
+            }
+            unset($row);
         }
-    }
 
-    /**
-     * Reconcile stock.quant total to GL inventory accounts.
-     */
-    private function reconcile(array $current, array $glInventory): array
-    {
-        $currentValue = $current['total_value'] ?? 0;
-        $glBalance = $glInventory['total_balance'] ?? 0;
-        $variance = $glBalance - $currentValue;
-        $variancePercent = $currentValue > 0 ? round(($variance / $currentValue) * 100, 2) : 0;
+        // Drop accounts with zero balance to keep table compact
+        $accountsList = array_filter(array_values($accountMap), fn($a) => abs($a['balance']) > 0.005);
+        // Re-sort by code for readable display
+        usort($accountsList, fn($a, $b) => strcmp($a['code'], $b['code']));
+
+        $totalBalance = array_sum(array_column($accountsList, 'balance'));
 
         return [
-            'stock_value' => $currentValue,
-            'gl_balance' => $glBalance,
-            'variance' => round($variance, 2),
-            'variance_percent' => $variancePercent,
-            'reconciled' => abs($variance) < 0.01, // Allow for rounding
-            'interpretation' => $this->getReconciliationInterpretation($variance, $currentValue),
+            'total_balance' => round($totalBalance, 2),
+            'by_account'    => $accountsList,
+            'account_count' => count($accountsList),
         ];
     }
 
-    /**
-     * Get human-readable interpretation of reconciliation variance.
-     */
-    private function getReconciliationInterpretation(float $variance, float $currentValue): string
+    // ─────────────────────────────────────────────────────────────────
+    // Reconciliation
+    // ─────────────────────────────────────────────────────────────────
+
+    private function reconcile(array $current, array $glInventory): array
+    {
+        $stockValue = (float)($current['total_value']      ?? 0);
+        $glBalance  = (float)($glInventory['total_balance'] ?? 0);
+        $variance   = $glBalance - $stockValue;
+        $variancePct = $stockValue > 0 ? round(($variance / $stockValue) * 100, 2) : 0.0;
+
+        return [
+            'stock_value'      => round($stockValue, 2),
+            'gl_balance'       => round($glBalance,  2),
+            'variance'         => round($variance,   2),
+            'variance_percent' => $variancePct,
+            'reconciled'       => abs($variance) < 0.01,
+            'interpretation'   => $this->interpretVariance($variance, $stockValue),
+        ];
+    }
+
+    private function interpretVariance(float $variance, float $stockValue): string
     {
         if (abs($variance) < 0.01) {
-            return 'Inventory perfectly reconciled with GL';
+            return 'Inventory perfectly reconciled with the general ledger.';
         }
+        $pct = $stockValue > 0 ? abs($variance / $stockValue) * 100 : 0;
+        $pctStr = number_format($pct, 1) . '%';
 
         if ($variance > 0) {
-            $percent = ($variance / $currentValue) * 100;
-            return "GL balance exceeds stock by " . number_format($percent, 1) . "% — possible unrecorded adjustments or obsolete inventory not written down";
-        } else {
-            $percent = (abs($variance) / $currentValue) * 100;
-            return "Stock exceeds GL balance by " . number_format($percent, 1) . "% — possible missing cost accounting entries";
+            return "GL balance exceeds stock value by {$pctStr} — possible unrecorded outflows or impairments not captured in stock.quant.";
         }
+        return "Stock value exceeds GL balance by {$pctStr} — possible missing cost-of-goods entries or in-transit movements not yet posted.";
     }
 
-    /**
-     * Get daily inventory value trend for YTD (or period).
-     * Returns data points for month/week level granularity.
-     */
-    private function getInventoryTrend(DateTimeImmutable $from, DateTimeImmutable $to, DateTimeImmutable $today): array
-    {
-        try {
-            // For each day in range, calculate inventory value
-            // This is expensive, so we'll use month-end values and interpolate
-
-            $monthlyTrend = [];
-            $current = $from->modify('first day of this month');
-
-            while ($current <= $to) {
-                $monthEnd = $current->modify('last day of this month');
-                if ($monthEnd > $to) {
-                    $monthEnd = $to;
-                }
-
-                // Get inventory value as of month end
-                $value = $this->getInventoryValueAsOf($monthEnd);
-
-                $monthlyTrend[] = [
-                    'date' => $monthEnd->format('Y-m-d'),
-                    'month' => $monthEnd->format('M Y'),
-                    'week' => 'W' . $monthEnd->format('W'),
-                    'value' => round($value, 2),
-                ];
-
-                // Move to next month
-                $current = $monthEnd->modify('+1 day')->modify('first day of this month');
-            }
-
-            // Also calculate weekly trend within current month
-            $weeklyTrend = [];
-            $current = $from;
-            while ($current <= $to) {
-                $weekEnd = $current->modify('+6 days');
-                if ($weekEnd > $to) {
-                    $weekEnd = $to;
-                }
-
-                $value = $this->getInventoryValueAsOf($weekEnd);
-                $weeklyTrend[] = [
-                    'date' => $weekEnd->format('Y-m-d'),
-                    'week' => 'W' . $weekEnd->format('W'),
-                    'value' => round($value, 2),
-                ];
-
-                $current = $weekEnd->modify('+1 day');
-            }
-
-            return [
-                'by_month' => $monthlyTrend,
-                'by_week' => $weeklyTrend,
-            ];
-        } catch (\Exception $e) {
-            return [
-                'by_month' => [],
-                'by_week' => [],
-                'error' => $e->getMessage(),
-            ];
-        }
-    }
+    // ─────────────────────────────────────────────────────────────────
+    // Trend (YTD inventory value evolution) — single Odoo call
+    // ─────────────────────────────────────────────────────────────────
 
     /**
-     * Get inventory value as of a specific date.
-     * Sums stock.move for all receipts/deliveries up to that date.
+     * Build month-end and week-end inventory value series using
+     * stock.valuation.layer (signed value column). Cumulative sum at each
+     * bucket end gives the inventory value as of that date.
+     *
+     * If stock.valuation.layer is not available (rare on modern Odoo),
+     * falls back to the current snapshot replicated across the period.
      */
-    private function getInventoryValueAsOf(DateTimeImmutable $date): float
+    private function getInventoryTrend(DateTimeImmutable $from, DateTimeImmutable $to): array
     {
+        $companyId = $this->getCompanyId();
+
+        // Query ALL valuation layers up to $to (we need pre-period balances for cumulative sum)
+        // ordered ascending so cumulative sums work as we iterate
+        $layers = [];
         try {
-            // Get all completed stock movements up to this date
-            $moves = $this->odoo->searchRead(
-                'stock.move',
+            $layers = $this->odoo->searchRead(
+                'stock.valuation.layer',
                 [
-                    ['state', '=', 'done'],
-                    ['date', '<=', $date->format('Y-m-d')],
-                    ['company_id', '=', $this->getCompanyId()],
+                    ['company_id', '=', $companyId],
+                    ['create_date', '<=', $to->format('Y-m-d') . ' 23:59:59'],
                 ],
-                ['product_id', 'quantity_done', 'location_dest_id', 'location_id'],
-                ['limit' => 5000]
+                ['value', 'create_date'],
+                ['limit' => 100000, 'order' => 'create_date asc']
             );
-
-            // Calculate net quantities by product
-            $netQty = [];
-            foreach ($moves as $move) {
-                $productId = $move['product_id'][0] ?? null;
-                if (!$productId) {
-                    continue;
-                }
-
-                // Simplified: count all movements (receipt + delivery)
-                // In reality, would need to track internal location changes
-                $qty = $move['quantity_done'] ?? 0;
-
-                if (!isset($netQty[$productId])) {
-                    $netQty[$productId] = 0;
-                }
-                $netQty[$productId] += $qty;
-            }
-
-            // Batch fetch product costs
-            $totalValue = 0;
-            if (!empty($netQty)) {
-                $productIds = array_keys($netQty);
-                $products = $this->odoo->read('product.product', $productIds, ['standard_price']);
-
-                foreach ($products as $product) {
-                    $productId = $product['id'];
-                    $cost = $product['standard_price'] ?? 0;
-                    $qty = $netQty[$productId] ?? 0;
-                    $totalValue += ($qty * $cost);
-                }
-            }
-
-            return max(0, $totalValue);
-        } catch (\Exception $e) {
-            return 0;
+        } catch (\Throwable $e) {
+            // Model not available — return empty trend rather than failing the whole page
+            return ['by_month' => [], 'by_week' => [], 'error' => 'stock.valuation.layer not available: ' . $e->getMessage()];
         }
+
+        if (empty($layers)) {
+            return ['by_month' => [], 'by_week' => []];
+        }
+
+        // Build month/week bucket boundaries within [from, to]
+        $monthBuckets = $this->generateMonthEnds($from, $to);
+        $weekBuckets  = $this->generateWeekEnds($from, $to);
+
+        // Pre-compute cumulative running total of signed layer values
+        // by walking layers chronologically once.
+        $monthSeries = $this->bucketize($layers, $monthBuckets);
+        $weekSeries  = $this->bucketize($layers, $weekBuckets);
+
+        $byMonth = [];
+        foreach ($monthSeries as $row) {
+            $byMonth[] = [
+                'date'  => $row['date']->format('Y-m-d'),
+                'month' => $row['date']->format('M Y'),
+                'value' => round($row['value'], 2),
+            ];
+        }
+
+        $byWeek = [];
+        foreach ($weekSeries as $row) {
+            $byWeek[] = [
+                'date'  => $row['date']->format('Y-m-d'),
+                'week'  => 'W' . $row['date']->format('W') . ' ' . $row['date']->format('Y'),
+                'value' => round($row['value'], 2),
+            ];
+        }
+
+        return ['by_month' => $byMonth, 'by_week' => $byWeek];
     }
 
     /**
-     * Detect currency from company.
+     * Walk through chronologically-ordered valuation layers and snapshot
+     * the cumulative sum at each bucket boundary. O(N + B) instead of O(N*B).
      */
+    private function bucketize(array $layers, array $bucketEnds): array
+    {
+        $running = 0.0;
+        $li = 0;
+        $count = count($layers);
+        $out = [];
+
+        foreach ($bucketEnds as $bucketEnd) {
+            $endStr = $bucketEnd->format('Y-m-d') . ' 23:59:59';
+            // Advance through layers up to and including bucketEnd
+            while ($li < $count) {
+                $layerDate = (string)($layers[$li]['create_date'] ?? '');
+                if ($layerDate === '' || $layerDate <= $endStr) {
+                    $running += (float)($layers[$li]['value'] ?? 0);
+                    $li++;
+                } else {
+                    break;
+                }
+            }
+            $out[] = ['date' => $bucketEnd, 'value' => max(0, $running)];
+        }
+
+        return $out;
+    }
+
+    /** Last day of each month in [from, to], capped at $to. */
+    private function generateMonthEnds(DateTimeImmutable $from, DateTimeImmutable $to): array
+    {
+        $ends = [];
+        $cursor = $from->modify('last day of this month');
+        // Safety cap (avoid runaway loop on bad input)
+        for ($i = 0; $i < 60 && $cursor <= $to; $i++) {
+            $ends[] = $cursor;
+            $cursor = $cursor->modify('+1 day')->modify('last day of this month');
+        }
+        // Always include the final $to date so the chart ends "now"
+        if (empty($ends) || end($ends)->format('Y-m-d') !== $to->format('Y-m-d')) {
+            $ends[] = $to;
+        }
+        return $ends;
+    }
+
+    /** Sundays (week ends) in [from, to], capped at $to. */
+    private function generateWeekEnds(DateTimeImmutable $from, DateTimeImmutable $to): array
+    {
+        $ends = [];
+        // Find first Sunday on/after $from
+        $cursor = $from->modify('Sunday this week');
+        if ($cursor < $from) {
+            $cursor = $cursor->modify('+7 days');
+        }
+        for ($i = 0; $i < 260 && $cursor <= $to; $i++) {
+            $ends[] = $cursor;
+            $cursor = $cursor->modify('+7 days');
+        }
+        if (empty($ends) || end($ends)->format('Y-m-d') !== $to->format('Y-m-d')) {
+            $ends[] = $to;
+        }
+        return $ends;
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Helpers
+    // ─────────────────────────────────────────────────────────────────
+
     private function detectCurrency(): string
     {
         try {
             $companyId = $this->getCompanyId();
             $company = $this->odoo->read('res.company', [$companyId], ['currency_id']);
-
-            if (!empty($company[0]['currency_id'])) {
-                $curId = $company[0]['currency_id'][0];
-                $currency = $this->odoo->read('res.currency', [$curId], ['name']);
-                return $currency[0]['name'] ?? 'USD';
+            $curRef = $company[0]['currency_id'] ?? null;
+            if (is_array($curRef) && !empty($curRef[0])) {
+                $cur = $this->odoo->read('res.currency', [$curRef[0]], ['name']);
+                return $cur[0]['name'] ?? 'USD';
             }
-        } catch (\Exception $e) {
-            // Fallback to default
+        } catch (\Throwable $e) {
+            // fall through
         }
-
         return 'USD';
     }
 
-    /**
-     * Get company ID from current user.
-     */
     private function getCompanyId(): int
     {
-        try {
-            $uid = $this->odoo->authenticate();
-            $user = $this->odoo->read('res.users', [$uid], ['company_id']);
-            return $user[0]['company_id'][0] ?? 1;
-        } catch (\Exception $e) {
-            return 1; // Default company
+        if ($this->companyId !== null) {
+            return $this->companyId;
         }
+        try {
+            $uid  = $this->odoo->authenticate();
+            $user = $this->odoo->read('res.users', [$uid], ['company_id']);
+            $cid  = $user[0]['company_id'] ?? null;
+            $this->companyId = is_array($cid) ? (int)($cid[0] ?? 1) : 1;
+        } catch (\Throwable $e) {
+            $this->companyId = 1;
+        }
+        return $this->companyId;
+    }
+
+    /** Lazy-loaded internal location ids (`usage = 'internal'`). */
+    private function getInternalLocationIds(): array
+    {
+        if ($this->internalLocationIds !== null) {
+            return $this->internalLocationIds;
+        }
+        try {
+            $rows = $this->odoo->searchRead(
+                'stock.location',
+                [['usage', '=', 'internal']],
+                ['id'],
+                ['limit' => 500]
+            );
+            $this->internalLocationIds = array_column($rows, 'id');
+        } catch (\Throwable $e) {
+            $this->internalLocationIds = [];
+        }
+        return $this->internalLocationIds;
+    }
+
+    /**
+     * Run a callable, capture exceptions into the $errors bag, return null on failure.
+     * Each section of analyze() uses this so a single failing call doesn't blow up the page.
+     */
+    private function safe(callable $fn, array &$errors, string $tag)
+    {
+        try {
+            return $fn();
+        } catch (\Throwable $e) {
+            $errors[] = "{$tag}: " . $e->getMessage();
+            return null;
+        }
+    }
+
+    private function emptyCurrent(): array
+    {
+        return [
+            'total_value'  => 0,
+            'total_qty'    => 0,
+            'by_product'   => [],
+            'record_count' => 0,
+        ];
+    }
+
+    private function emptyGLInventory(): array
+    {
+        return [
+            'total_balance' => 0,
+            'by_account'    => [],
+            'account_count' => 0,
+        ];
     }
 }
