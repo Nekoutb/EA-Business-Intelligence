@@ -123,6 +123,12 @@ jobs:
               apt-get install -y nodejs
             fi
 
+            # We may have inherited a stray .git dir from an earlier deploy
+            # attempt. Mark the path safe so composer/git stop complaining
+            # about dubious ownership when running as root.
+            git config --global --add safe.directory "$REPO_DIR" 2>/dev/null || true
+            git config --global --add safe.directory "$APP_DIR" 2>/dev/null || true
+
             cd "$APP_DIR"
 
             # ==================== COMPOSER INSTALL ====================
@@ -132,7 +138,14 @@ jobs:
             # ==================== BUILD FRONTEND ASSETS ====================
             if [ -f package.json ]; then
               echo "🎨 Frontend (Vite)..."
-              npm ci --no-audit --no-fund
+              # Prefer 'npm ci' when a lock file is present (deterministic),
+              # fall back to 'npm install' otherwise — the project doesn't yet
+              # commit package-lock.json.
+              if [ -f package-lock.json ]; then
+                npm ci --no-audit --no-fund
+              else
+                npm install --no-audit --no-fund
+              fi
               npm run build
             fi
 
