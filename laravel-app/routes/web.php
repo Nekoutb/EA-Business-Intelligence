@@ -18,6 +18,7 @@ use App\Http\Controllers\Tax\VATInvoiceComplianceController;
 use App\Http\Controllers\Admin\AdminAuthController;
 use App\Http\Controllers\Admin\AdminDashboardController;
 use App\Http\Controllers\Admin\AiSettingsController as AdminAiSettingsController;
+use App\Http\Controllers\Admin\IndustryController as AdminIndustryController;
 use App\Http\Controllers\Admin\TenantController as AdminTenantController;
 use App\Models\Tenant;
 use Illuminate\Support\Facades\Route;
@@ -49,6 +50,16 @@ Route::prefix('admin')->group(function () {
 
     Route::middleware('admin.auth')->group(function () {
         Route::get('/', [AdminDashboardController::class, 'index']);
+
+        // Industries (configuration)
+        Route::get('/industries',                          [AdminIndustryController::class, 'index']);
+        Route::get('/industries/create',                   [AdminIndustryController::class, 'create']);
+        Route::post('/industries',                         [AdminIndustryController::class, 'store']);
+        Route::get('/industries/{industry}/edit',          [AdminIndustryController::class, 'edit']);
+        Route::patch('/industries/{industry}',             [AdminIndustryController::class, 'update']);
+        Route::get('/industries/{industry}/edit-modules',  [AdminIndustryController::class, 'editModules']);
+        Route::patch('/industries/{industry}/edit-modules',[AdminIndustryController::class, 'updateModules']);
+        Route::delete('/industries/{industry}',            [AdminIndustryController::class, 'destroy']);
 
         Route::get('/tenants',                       [AdminTenantController::class, 'index']);
         Route::get('/tenants/create',                [AdminTenantController::class, 'create']);

@@ -2,6 +2,7 @@
 
 namespace Database\Seeders;
 
+use App\Models\Industry;
 use App\Models\Tenant;
 use App\Models\TenantModule;
 use App\Models\TenantService;
@@ -32,14 +33,18 @@ class TenancySeeder extends Seeder
             ]
         );
 
-        // 2. Demo tenant.
+        // 2. Ensure retail industry exists.
+        $retailIndustry = Industry::where('key', 'retail')->first();
+
+        // 2b. Demo tenant.
         $demo = Tenant::firstOrCreate(
             ['slug' => 'demo'],
             [
-                'name'   => 'Demo Tenant',
-                'brand'  => 'Elite Advisors Management Suite',
-                'status' => Tenant::STATUS_ACTIVE,
-                'plan'   => 'standard',
+                'name'        => 'Demo Tenant',
+                'brand'       => 'Elite Advisors Management Suite',
+                'status'      => Tenant::STATUS_ACTIVE,
+                'plan'        => 'standard',
+                'industry_id' => $retailIndustry?->id,
             ]
         );
 
