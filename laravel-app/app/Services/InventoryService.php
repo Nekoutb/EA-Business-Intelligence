@@ -8,18 +8,20 @@ use DateTimeImmutable;
 /**
  * InventoryService — Inventory reconciliation and trend analysis.
  *
- * Reconciles stock.quant total value to GL inventory accounts (OHADA 3XX,
- * excluding 39X impairment accounts). Builds month/week-end value series
- * for the YTD trend chart.
+ * Reconciles stock value to the GL trial balance for OHADA 3XX accounts
+ * (excluding 39X impairment). Both sides are snapshotted at the SAME date
+ * (the period end, clamped to today) so the comparison is like-for-like.
  *
- * Strategy:
- *   - Current value: sum stock.valuation.layer (preferred) or fallback to
- *     stock.quant × product.standard_price.
- *   - Trend: ONE search_read on stock.valuation.layer ordered by date,
- *     then aggregated client-side into month/week buckets. This avoids
- *     N round-trips per data point (which times out for YTD windows).
- *   - GL: pull account.account where code starts with '3' (OHADA range)
- *     excluding '39%' impairments, then sum balances from move lines.
+ * Data sources:
+ *   - Stock value at as-of date:
+ *       * as-of >= today  → stock.quant × product.standard_price (live)
+ *       * as-of <  today  → stock.valuation.layer cumulative sum (historical)
+ *   - GL trial balance at as-of date:
+ *       sum(account.move.line.balance) WHERE account.code =like '3%' AND
+ *       NOT '39%' AND parent_state='posted' AND date <= as-of
+ *       → matches Odoo's Trial Balance "End Balance" column for the same range
+ *   - Trend chart: one search_read on stock.valuation.layer, bucketized
+ *     client-side into month/week ends (O(N+B) instead of O(N*B)).
  */
 class InventoryService
 {
@@ -47,13 +49,19 @@ class InventoryService
             $errors[] = 'Period resolution failed: ' . $e->getMessage();
         }
 
+        // As-of date drives both sides of the reconciliation. Clamp to today
+        // so we never query for tomorrow's data. `historical` flag lets the
+        // view distinguish a live snapshot from a reconstructed past one.
+        $asOfDate   = ($to > $today) ? $today : $to;
+        $historical = $asOfDate->format('Y-m-d') < $today->format('Y-m-d');
+
         // Defensive: each section returns an empty/default shape on failure
         // so the view never sees missing keys AND reconcile() never gets null.
         // Coalesce BEFORE passing to reconcile (which is type-hinted `array`).
-        $current     = $this->safe(fn() => $this->getCurrentInventory(),       $errors, 'current_inventory') ?? $this->emptyCurrent();
-        $glInventory = $this->safe(fn() => $this->getGLInventoryAccounts(),    $errors, 'gl_inventory')      ?? $this->emptyGLInventory();
-        $trend       = $this->safe(fn() => $this->getInventoryTrend($from, $to), $errors, 'trend')           ?? ['by_month' => [], 'by_week' => []];
-        $currency    = $this->safe(fn() => $this->detectCurrency(),            $errors, 'currency')          ?? 'USD';
+        $current     = $this->safe(fn() => $this->getInventoryValueAt($asOfDate),       $errors, 'inventory_value') ?? $this->emptyCurrent();
+        $glInventory = $this->safe(fn() => $this->getGLInventoryAccounts($asOfDate),    $errors, 'gl_inventory')    ?? $this->emptyGLInventory();
+        $trend       = $this->safe(fn() => $this->getInventoryTrend($from, $to),         $errors, 'trend')           ?? ['by_month' => [], 'by_week' => []];
+        $currency    = $this->safe(fn() => $this->detectCurrency(),                      $errors, 'currency')        ?? 'USD';
 
         $reconciliation = $this->reconcile($current, $glInventory);
 
@@ -67,12 +75,118 @@ class InventoryService
             'period_label'   => $label,
             'from'           => $from->format('Y-m-d'),
             'to'             => $to->format('Y-m-d'),
+            'as_of'          => $asOfDate->format('Y-m-d'),
+            'historical'     => $historical,
             'error'          => empty($errors) ? null : implode(' | ', $errors),
         ];
     }
 
     // ─────────────────────────────────────────────────────────────────
-    // Current inventory (point-in-time)
+    // Inventory value at as-of date
+    // ─────────────────────────────────────────────────────────────────
+
+    /**
+     * Dispatch: live snapshot for "now", historical reconstruction for past.
+     */
+    private function getInventoryValueAt(DateTimeImmutable $asOfDate): array
+    {
+        $todayStr = (new DateTimeImmutable())->format('Y-m-d');
+        if ($asOfDate->format('Y-m-d') >= $todayStr) {
+            return $this->getCurrentInventory();
+        }
+        return $this->getHistoricalInventory($asOfDate);
+    }
+
+    /**
+     * Historical inventory at a past date — reconstruct from
+     * stock.valuation.layer cumulative sums per product.
+     * Layer.value is signed (positive on inflow, negative on outflow / write-down)
+     * so the running sum equals the net inventory book value at that point.
+     */
+    private function getHistoricalInventory(DateTimeImmutable $asOfDate): array
+    {
+        $companyId = $this->getCompanyId();
+
+        try {
+            $layers = $this->odoo->searchRead(
+                'stock.valuation.layer',
+                [
+                    ['company_id', '=', $companyId],
+                    ['create_date', '<=', $asOfDate->format('Y-m-d') . ' 23:59:59'],
+                ],
+                ['product_id', 'quantity', 'value'],
+                ['limit' => 100000]
+            );
+        } catch (\Throwable $e) {
+            // Model unavailable — fall back to current snapshot but flag it
+            $current = $this->getCurrentInventory();
+            $current['historical_unavailable'] = true;
+            return $current;
+        }
+
+        if (empty($layers)) {
+            return $this->emptyCurrent();
+        }
+
+        // Aggregate qty + value per product
+        $byPid = [];
+        $totalValue = 0.0;
+        $totalQty   = 0.0;
+        foreach ($layers as $l) {
+            $pid = is_array($l['product_id'] ?? null) ? ($l['product_id'][0] ?? null) : null;
+            if (!$pid) continue;
+            if (!isset($byPid[$pid])) {
+                $byPid[$pid] = ['qty' => 0.0, 'value' => 0.0];
+            }
+            $q = (float)($l['quantity'] ?? 0);
+            $v = (float)($l['value']    ?? 0);
+            $byPid[$pid]['qty']   += $q;
+            $byPid[$pid]['value'] += $v;
+            $totalQty   += $q;
+            $totalValue += $v;
+        }
+
+        // Pull product names/codes
+        $pids = array_keys($byPid);
+        $info = [];
+        if (!empty($pids)) {
+            foreach (array_chunk($pids, 500) as $chunk) {
+                foreach ($this->odoo->read('product.product', $chunk, ['name', 'default_code']) as $r) {
+                    $info[$r['id']] = $r;
+                }
+            }
+        }
+
+        $byProduct = [];
+        foreach ($byPid as $pid => $row) {
+            $name = $info[$pid]['name'] ?? ('Product #' . $pid);
+            $code = $info[$pid]['default_code'] ?? '';
+            $qty  = $row['qty'];
+            $val  = $row['value'];
+            // Implied unit cost (avoids needing a separate read on standard_price,
+            // and reflects the actual cost basis used by Odoo's valuation engine)
+            $cost = abs($qty) > 0.0001 ? $val / $qty : 0.0;
+            $byProduct[$name] = [
+                'qty'   => round($qty, 2),
+                'cost'  => round($cost, 2),
+                'value' => round($val, 2),
+                'code'  => $code,
+            ];
+        }
+        uasort($byProduct, fn($a, $b) => $b['value'] <=> $a['value']);
+        $byProduct = array_slice($byProduct, 0, 50, true);
+
+        return [
+            'total_value'  => round(max(0.0, $totalValue), 2),
+            'total_qty'    => round($totalQty, 2),
+            'by_product'   => $byProduct,
+            'record_count' => count($layers),
+            'historical'   => true,
+        ];
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Current inventory (live snapshot from stock.quant)
     // ─────────────────────────────────────────────────────────────────
 
     private function getCurrentInventory(): array
@@ -153,7 +267,11 @@ class InventoryService
     // GL inventory accounts (OHADA 3XX, excluding 39X impairment)
     // ─────────────────────────────────────────────────────────────────
 
-    private function getGLInventoryAccounts(): array
+    /**
+     * Compute trial balance "End Balance" for inventory accounts as of a date.
+     * Domain mirrors what Odoo's Trial Balance report uses when end_date = $asOfDate.
+     */
+    private function getGLInventoryAccounts(DateTimeImmutable $asOfDate): array
     {
         // Step 1: find inventory accounts (code starts with 3, not 39)
         $accounts = $this->odoo->searchRead(
@@ -181,15 +299,20 @@ class InventoryService
             ];
         }
 
+        // Domain shared by both query strategies — `date <= as-of` is the
+        // critical filter that aligns this with Odoo's Trial Balance report.
+        $domain = [
+            ['parent_state', '=', 'posted'],
+            ['account_id',   'in', $accountIds],
+            ['company_id',   '=', $this->getCompanyId()],
+            ['date',         '<=', $asOfDate->format('Y-m-d')],
+        ];
+
         // Step 2: aggregate balance from posted move lines.
         // Use callModel(read_group) for efficient server-side aggregation.
         try {
             $groups = $this->odoo->callModel('account.move.line', 'read_group', [
-                'domain'  => [
-                    ['parent_state', '=', 'posted'],
-                    ['account_id',   'in', $accountIds],
-                    ['company_id',   '=', $this->getCompanyId()],
-                ],
+                'domain'  => $domain,
                 'fields'  => ['account_id', 'balance:sum'],
                 'groupby' => ['account_id'],
             ]);
@@ -204,11 +327,7 @@ class InventoryService
             // Fallback: searchRead and aggregate client-side
             $lines = $this->odoo->searchRead(
                 'account.move.line',
-                [
-                    ['parent_state', '=', 'posted'],
-                    ['account_id',   'in', $accountIds],
-                    ['company_id',   '=', $this->getCompanyId()],
-                ],
+                $domain,
                 ['account_id', 'balance'],
                 ['limit' => 100000]
             );

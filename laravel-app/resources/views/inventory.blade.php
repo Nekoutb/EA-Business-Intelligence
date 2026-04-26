@@ -73,12 +73,24 @@
         $varianceColor = abs($variance) < 0.01 ? 'text-slate-700' : 'text-amber-700';
     @endphp
 
+    @php
+        $asOfDate    = $data['as_of'] ?? null;
+        $isHistorical = !empty($data['historical']);
+        $asOfLabel   = $asOfDate ? \DateTime::createFromFormat('Y-m-d', $asOfDate)->format('j M Y') : '';
+    @endphp
+
     <section class="mb-8 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
         {{-- Header bar --}}
         <header class="flex items-center justify-between px-6 py-4 border-b border-slate-200 bg-gradient-to-r from-slate-50 to-white">
             <div>
                 <h3 class="text-lg font-semibold text-slate-900">Inventory Reconciliation</h3>
-                <p class="text-xs text-slate-500 mt-0.5">Stock ledger value vs. trial balance — accounts <code class="font-mono bg-slate-100 px-1 rounded">3%</code> (excl. <code class="font-mono bg-slate-100 px-1 rounded">39%</code> impairment)</p>
+                <p class="text-xs text-slate-500 mt-0.5">
+                    Stock ledger value vs. trial balance — accounts <code class="font-mono bg-slate-100 px-1 rounded">3%</code> (excl. <code class="font-mono bg-slate-100 px-1 rounded">39%</code> impairment)
+                    @if ($asOfLabel)
+                        <span class="ml-1">·</span>
+                        <span class="font-medium text-slate-700">as of {{ $asOfLabel }}</span>
+                    @endif
+                </p>
             </div>
             <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold ring-1 {{ $tone['pill'] }}">
                 @if ($accuracy >= 99.99)
@@ -96,13 +108,19 @@
             <div class="p-5">
                 <p class="text-[11px] uppercase tracking-wide text-slate-500 font-semibold">Inventory Value</p>
                 <p class="text-2xl font-bold text-slate-900 mt-1">{{ ea_money_short($stockValue, $data['currency']) }}</p>
-                <p class="text-[11px] text-slate-400 mt-1">from <code class="font-mono">stock.quant</code></p>
+                <p class="text-[11px] text-slate-400 mt-1">
+                    @if ($isHistorical)
+                        <code class="font-mono">stock.valuation.layer</code> · {{ $asOfLabel }}
+                    @else
+                        <code class="font-mono">stock.quant</code> · live
+                    @endif
+                </p>
             </div>
             {{-- GL Balance --}}
             <div class="p-5">
                 <p class="text-[11px] uppercase tracking-wide text-slate-500 font-semibold">GL Balance</p>
                 <p class="text-2xl font-bold text-slate-900 mt-1">{{ ea_money_short($glBalance, $data['currency']) }}</p>
-                <p class="text-[11px] text-slate-400 mt-1">trial balance · accounts 3%</p>
+                <p class="text-[11px] text-slate-400 mt-1">trial balance end · {{ $asOfLabel }}</p>
             </div>
             {{-- Variance --}}
             <div class="p-5">
