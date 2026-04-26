@@ -82,6 +82,12 @@ class GLQualityService
             'description_quality'
         ) ?? null;
 
+        $manualEntryReview = $this->safe(
+            fn() => (new ManualEntryReviewService($this->odoo))->analyze($today),
+            $errors,
+            'manual_entry_review'
+        ) ?? null;
+
         return [
             'receivables'           => $receivables,
             'payables'              => $payables,
@@ -89,6 +95,7 @@ class GLQualityService
             'fixed_assets_original' => $faOriginal,
             'fixed_assets_book'     => $faBook,
             'description_quality'   => $descriptionQuality,
+            'manual_entry_review'   => $manualEntryReview,
             'currency'              => $currency,
             'as_of'                 => $asOfDate->format('Y-m-d'),
             'period_label'          => 'YTD ' . $today->format('Y'),

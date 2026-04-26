@@ -36,6 +36,33 @@ class GLQualityController extends Controller
      */
     public function descriptionReport(Request $request): StreamedResponse
     {
+        return $this->streamReport(
+            $request,
+            'description_quality',
+            'gl-description-quality'
+        );
+    }
+
+    /**
+     * Streaming CSV download of every GL line flagged by any of the 8
+     * manual-entry review checks.
+     */
+    public function manualEntryReport(Request $request): StreamedResponse
+    {
+        return $this->streamReport(
+            $request,
+            'manual_entry_review',
+            'gl-manual-entry-review'
+        );
+    }
+
+    /**
+     * Shared CSV streamer — both audit reports use the same row shape
+     * (Date | Move | Account | Partner | Move type | Amount | Ref |
+     *  Narration | Failed checks).
+     */
+    private function streamReport(Request $request, string $reportKey, string $filenameStem): StreamedResponse
+    {
         $today = new \DateTimeImmutable();
 
         $data = ea_cached('gl_quality_ytd', function () use ($today) {
@@ -43,12 +70,12 @@ class GLQualityController extends Controller
             return $svc->analyze($today);
         });
 
-        $dq       = $data['description_quality'] ?? [];
-        $rows     = $dq['report']     ?? [];
-        $currency = $data['currency'] ?? 'XAF';
-        $asOf     = $data['as_of']    ?? date('Y-m-d');
+        $section  = $data[$reportKey] ?? [];
+        $rows     = $section['report'] ?? [];
+        $currency = $data['currency']  ?? 'XAF';
+        $asOf     = $data['as_of']     ?? date('Y-m-d');
 
-        $filename = 'gl-description-quality_' . $asOf . '.csv';
+        $filename = $filenameStem . '_' . $asOf . '.csv';
 
         return response()->streamDownload(function () use ($rows, $currency) {
             $out = fopen('php://output', 'w');

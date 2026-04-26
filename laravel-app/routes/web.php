@@ -104,6 +104,8 @@ Route::prefix('t/{tenant}')
                 // before Laravel's router sees the request.
                 Route::get('/general-ledger-quality/description-report',
                     [GLQualityController::class, 'descriptionReport'])->middleware('module:gl_quality');
+                Route::get('/general-ledger-quality/manual-entry-report',
+                    [GLQualityController::class, 'manualEntryReport'])->middleware('module:gl_quality');
 
                 // ── Tax Compliance service ────────────────────────────────────
                 Route::get('/vat-compliance',         [VATComplianceController::class, 'index'])->middleware('module:vat_compliance');
