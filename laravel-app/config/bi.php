@@ -9,8 +9,8 @@
  * config/modules.php under the 'services' array.
  */
 return [
-    'suite_name' => env('APP_SUITE_NAME', 'Elite Advisors Management Suite'),
-    'brand' => env('APP_BRAND', 'Elite Advisors Management Suite'),
+    'suite_name' => env('APP_SUITE_NAME', 'Elite Advisors Business Management Suite'),
+    'brand' => env('APP_BRAND', 'Elite Advisors Business Management Suite'),
     'logo'  => env('APP_LOGO', ''),
 
     'auth' => [
