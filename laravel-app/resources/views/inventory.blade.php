@@ -81,16 +81,24 @@
 
         {{-- Box 1: Reconciliation (compact, vertical metric stack) --}}
         <section class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
-            <header class="px-5 py-4 border-b border-slate-200 bg-gradient-to-r from-slate-50 to-white">
-                <h3 class="text-base font-semibold text-slate-900">Inventory Reconciliation</h3>
-                <p class="text-xs text-slate-500 mt-0.5">
+            <details class="group border-b border-slate-200 bg-gradient-to-r from-slate-50 to-white">
+                <summary class="px-5 py-4 cursor-pointer list-none flex items-start justify-between [&::-webkit-details-marker]:hidden">
+                    <div>
+                        <h3 class="text-base font-semibold text-slate-900">Inventory Reconciliation</h3>
+                        @if ($asOfLabel)
+                            <p class="text-xs text-slate-500 mt-0.5">
+                                <span class="font-medium text-slate-700">YTD as of {{ $asOfLabel }}</span>
+                            </p>
+                        @endif
+                    </div>
+                    <svg class="w-4 h-4 mt-1 text-slate-400 transition-transform group-open:rotate-180 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                    </svg>
+                </summary>
+                <p class="text-xs text-slate-500 px-5 pb-3 -mt-1">
                     Stock ledger vs trial balance · accounts <code class="font-mono bg-slate-100 px-1 rounded">3%</code> (excl. <code class="font-mono bg-slate-100 px-1 rounded">39%</code>)
-                    @if ($asOfLabel)
-                        <br>
-                        <span class="font-medium text-slate-700">YTD as of {{ $asOfLabel }}</span>
-                    @endif
                 </p>
-            </header>
+            </details>
 
             {{-- Vertical metric stack — 4 rows, label left, value right --}}
             <dl class="px-5 py-4 space-y-3 flex-1">
@@ -153,16 +161,24 @@
 
         {{-- Box 2: Inventory Days (compact, vertical metric stack) --}}
         <section class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
-            <header class="px-5 py-4 border-b border-slate-200 bg-gradient-to-r from-slate-50 to-white">
-                <h3 class="text-base font-semibold text-slate-900">Inventory Days</h3>
-                <p class="text-xs text-slate-500 mt-0.5">
+            <details class="group border-b border-slate-200 bg-gradient-to-r from-slate-50 to-white">
+                <summary class="px-5 py-4 cursor-pointer list-none flex items-start justify-between [&::-webkit-details-marker]:hidden">
+                    <div>
+                        <h3 class="text-base font-semibold text-slate-900">Inventory Days</h3>
+                        @if ($asOfLabel)
+                            <p class="text-xs text-slate-500 mt-0.5">
+                                <span class="font-medium text-slate-700">YTD as of {{ $asOfLabel }}</span>
+                            </p>
+                        @endif
+                    </div>
+                    <svg class="w-4 h-4 mt-1 text-slate-400 transition-transform group-open:rotate-180 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                    </svg>
+                </summary>
+                <p class="text-xs text-slate-500 px-5 pb-3 -mt-1">
                     Days of stock-on-hand · COGS from GL <code class="font-mono bg-slate-100 px-1 rounded">60%</code> accounts
-                    @if ($asOfLabel)
-                        <br>
-                        <span class="font-medium text-slate-700">YTD as of {{ $asOfLabel }}</span>
-                    @endif
                 </p>
-            </header>
+            </details>
 
             @php
                 $beginningInv = $invDays['beginning_inventory'] ?? 0;
@@ -224,19 +240,28 @@ document.addEventListener('DOMContentLoaded', function() {
 
     if (!points.length) {
         canvas.parentElement.innerHTML =
-            '<p class="text-center text-slate-500 py-6 text-sm">No trend data available — stock.valuation.layer is empty for the current year.</p>';
+            '<p class="text-center text-slate-500 py-6 text-sm">No trend data available — no posted entries on inventory accounts for the current year.</p>';
         return;
     }
 
     const labels = points.map(d => d.month);
     const values = points.map(d => d.value);
 
-    const fmt = v => new Intl.NumberFormat('en-US', {
-        style: 'currency',
-        currency: currency,
-        minimumFractionDigits: 0,
-        maximumFractionDigits: 0
-    }).format(v);
+    // Mirror PHP's ea_money_short() so axis labels and tooltips use the same
+    // notation as the rest of the report (1.23M XAF / 4.5K XAF / 720 XAF).
+    // Logic kept in lockstep with helpers.php::ea_money_short.
+    const fmt = v => {
+        const n = Number(v) || 0;
+        const abs = Math.abs(n);
+        const sign = n < 0 ? '-' : '';
+        const withCommas = (x, dp) => x.toLocaleString('en-US', {
+            minimumFractionDigits: dp, maximumFractionDigits: dp
+        });
+        if (abs >= 1e9) return sign + withCommas(abs / 1e9, 2) + 'B ' + currency;
+        if (abs >= 1e6) return sign + withCommas(abs / 1e6, 2) + 'M ' + currency;
+        if (abs >= 1e3) return sign + withCommas(abs / 1e3, 1) + 'K ' + currency;
+        return sign + withCommas(abs, 0) + ' ' + currency;
+    };
 
     new Chart(canvas.getContext('2d'), {
         type: 'line',
