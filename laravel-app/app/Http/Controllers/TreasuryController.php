@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Odoo\OdooFactory;
+use App\Services\CashFlowService;
 use App\Services\PayablesService;
 use App\Services\ProfitLossService;
 use App\Services\ReceivablesService;
@@ -12,18 +13,24 @@ class TreasuryController extends Controller
 {
     public function index()
     {
-        $error        = null;
-        $receivables  = null;
-        $payables     = null;
-        $pl           = null;
-        $revenue      = null;
-        $summary      = null;
-        $cashEvolution = [];
-        $cashflowBreakdown = [];
+        $error           = null;
+        $receivables     = null;
+        $payables        = null;
+        $pl              = null;
+        $revenue         = null;
+        $summary         = null;
+        $cashEvolution   = [];
+        $cashflowDirect  = null;
+        $journalBalances = null;
 
         try {
             $client = OdooFactory::fromConfig();
             $source = (string) config_env('REVENUE_SOURCE', 'invoice');
+
+            $cashFlowSvc = new CashFlowService($client);
+            $cashflowDirect  = ea_cached('cf_direct',     fn () => $cashFlowSvc->directCashFlow());
+            $cashEvolution   = ea_cached('cf_evolution',  fn () => $cashFlowSvc->cashEvolution());
+            $journalBalances = ea_cached('cf_journals',   fn () => $cashFlowSvc->journalBalances());
 
             $revenue = ea_cached('revenue_ytd',
                 fn() => (new RevenueService($client, $source))->analyze());
@@ -55,20 +62,6 @@ class TreasuryController extends Controller
                 $runwayMonths = max(0, ($receivables['total_ar'] ?? 0) / $monthlyBurn);
             }
 
-            // ── Cash balance evolution (monthly) ─────────────────────────
-            $cashEvolution = $this->buildCashEvolution($revenue, $pl, $daysInYtd);
-
-            // ── Cash flow breakdown (where cash is spent) ────────────────
-            $plCur = $pl['current'] ?? [];
-            $cashflowBreakdown = $this->buildCashflowBreakdown(
-                $revenueYtd,
-                (float) ($plCur['cogs'] ?? 0),
-                (float) ($plCur['opex'] ?? 0),
-                (float) ($plCur['d_and_a'] ?? 0),
-                (float) ($receivables['total_ar'] ?? 0),
-                (float) ($payables['kpis']['total_ap'] ?? 0),
-            );
-
             $summary = [
                 'working_capital'      => $workingCapital,
                 'collection_score'     => $collectionScore,
@@ -84,67 +77,16 @@ class TreasuryController extends Controller
         }
 
         return view('treasury', [
-            'summary'            => $summary,
-            'receivables'        => $receivables,
-            'payables'           => $payables,
-            'pl'                 => $pl,
-            'cashEvolution'      => $cashEvolution,
-            'cashflowBreakdown'  => $cashflowBreakdown,
-            'error'              => $error,
-            'active'             => 'treasury',
-            'aiPage'             => 'dashboard',
+            'summary'           => $summary,
+            'receivables'       => $receivables,
+            'payables'          => $payables,
+            'pl'                => $pl,
+            'cashEvolution'     => $cashEvolution,
+            'cashflowDirect'    => $cashflowDirect,
+            'journalBalances'   => $journalBalances,
+            'error'             => $error,
+            'active'            => 'treasury',
+            'aiPage'            => 'dashboard',
         ]);
-    }
-
-    /**
-     * Build a monthly cash-balance proxy from YTD revenue and expense data.
-     * Distributes totals evenly across elapsed months for a smooth trend.
-     */
-    private function buildCashEvolution(array $revenue, array $pl, int $daysInYtd): array
-    {
-        $today       = new \DateTimeImmutable('today');
-        $janFirst    = new \DateTimeImmutable($today->format('Y') . '-01-01');
-        $currentMonth = (int) $today->format('n');
-
-        $revenueYtd  = (float) ($revenue['current']['total'] ?? 0);
-        $cogsYtd     = (float) ($pl['current']['cogs'] ?? 0);
-        $opexYtd     = (float) ($pl['current']['opex'] ?? 0);
-        $netYtd      = $revenueYtd - $cogsYtd - $opexYtd;
-
-        $months = [];
-        $cumulativeCash = 0;
-        $monthLabels = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-
-        for ($m = 1; $m <= $currentMonth; $m++) {
-            $monthlyNet = $netYtd / max(1, $currentMonth);
-            $cumulativeCash += $monthlyNet;
-            $months[] = [
-                'label'   => $monthLabels[$m - 1],
-                'balance' => round($cumulativeCash, 2),
-            ];
-        }
-
-        return $months;
-    }
-
-    /**
-     * Build a simple cashflow breakdown showing inflows vs outflows.
-     */
-    private function buildCashflowBreakdown(
-        float $revenue,
-        float $cogs,
-        float $opex,
-        float $dAndA,
-        float $arOutstanding,
-        float $apOutstanding,
-    ): array {
-        return [
-            ['label' => 'Revenue',       'amount' => $revenue,       'type' => 'inflow'],
-            ['label' => 'Cost of Sales', 'amount' => $cogs,          'type' => 'outflow'],
-            ['label' => 'Operating Exp',  'amount' => $opex,          'type' => 'outflow'],
-            ['label' => 'D&A',           'amount' => $dAndA,          'type' => 'outflow'],
-            ['label' => 'AR Locked',     'amount' => $arOutstanding, 'type' => 'locked'],
-            ['label' => 'AP Owed',       'amount' => $apOutstanding, 'type' => 'owed'],
-        ];
     }
 }
