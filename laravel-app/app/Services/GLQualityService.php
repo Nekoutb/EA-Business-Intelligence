@@ -9,25 +9,27 @@ use DateTimeImmutable;
 /**
  * GLQualityService — sub-ledger vs trial balance reconciliations.
  *
- * Two reconciliations, both at the same as-of date (today, YTD scope),
- * both reading from account.move.line on the same companyId.
+ * Three reconciliations, all at the same as-of date (today, YTD scope),
+ * all reading from account.move.line on the same companyId.
  *
- * 1. Accounts Receivable
- *    sub-ledger    = Σ balance WHERE account.code =like '41%' AND
- *                    parent_state='posted' AND date<=today AND
- *                    partner_id IS NOT NULL
+ * 1. Accounts Receivable (debit-natural, account codes 41X)
+ *    sub-ledger    = Σ balance for 41X accounts WHERE partner_id IS NOT NULL
  *    trial balance = same query without the partner_id filter
- *    variance      = trial − sub-ledger (postings to receivable accounts
- *                    that have NO partner attached — a data-quality red
- *                    flag; healthy AR books should have variance == 0).
+ *    variance      = orphan postings (no partner attached). Healthy AR
+ *                    books have variance == 0.
  *
- * 2. Inventory
+ * 2. Accounts Payable (credit-natural, account codes 40X)
+ *    Same logic as AR, but raw GL balances are negative because the
+ *    accounts are credit-natural. We take abs() on both sides before
+ *    presenting so the user sees the amount owed as a positive figure
+ *    (matching Odoo's Aged Payable report).
+ *
+ * 3. Inventory
  *    stock side    = stock.quant × product.standard_price (live snapshot)
- *    trial balance = Σ balance WHERE account.code =like '3%' AND NOT 39%
- *                    AND parent_state='posted' AND date<=today
- *    variance      = trial − stock (= unrecorded outflows / impairments).
+ *    trial balance = Σ balance for 3X accounts excluding 39X impairment
+ *    variance      = unrecorded outflows / impairments
  *
- * Both use the same accuracy formula:
+ * All three use the same accuracy formula:
  *   accuracy_% = 100 − min(100, |variance| / max(|left|, |right|, 0.01) × 100)
  */
 class GLQualityService
@@ -37,6 +39,7 @@ class GLQualityService
 
     /** Cached chart-of-accounts subsets. */
     private ?array $receivableAccountsCache = null;
+    private ?array $payableAccountsCache    = null;
     private ?array $inventoryAccountsCache  = null;
     private ?array $internalLocationIds     = null;
 
@@ -51,11 +54,13 @@ class GLQualityService
         $asOfDate = $today;
 
         $receivables = $this->safe(fn() => $this->reconcileReceivables($asOfDate), $errors, 'receivables') ?? $this->emptyReconciliation();
+        $payables    = $this->safe(fn() => $this->reconcilePayables($asOfDate),    $errors, 'payables')    ?? $this->emptyReconciliation();
         $inventory   = $this->safe(fn() => $this->reconcileInventory($asOfDate),   $errors, 'inventory')   ?? $this->emptyReconciliation();
         $currency    = $this->safe(fn() => $this->detectCurrency(),                $errors, 'currency')   ?? 'USD';
 
         return [
             'receivables' => $receivables,
+            'payables'    => $payables,
             'inventory'   => $inventory,
             'currency'    => $currency,
             'as_of'       => $asOfDate->format('Y-m-d'),
@@ -86,14 +91,15 @@ class GLQualityService
         $byAccount = $this->balancesByAccount($accountIds, $accounts, $asOfDate);
 
         return [
-            'left_label'   => 'Sub-ledger (Aged Receivable)',
-            'left_value'   => $subLedger,
-            'right_label'  => 'Trial balance (41X accounts)',
-            'right_value'  => $trialBalance,
-            'variance'     => round($trialBalance - $subLedger, 2),
-            'accuracy_pct' => $this->accuracyPercent($subLedger, $trialBalance),
-            'subtitle'     => 'Sub-ledger vs trial balance · accounts 41% · variance flags receivable postings without a partner.',
-            'by_account'   => $byAccount,
+            'left_label'      => 'Sub-ledger (Aged Receivable)',
+            'left_value'      => $subLedger,
+            'right_label'     => 'Trial balance (41X accounts)',
+            'right_value'     => $trialBalance,
+            'variance'        => round($trialBalance - $subLedger, 2),
+            'accuracy_pct'    => $this->accuracyPercent($subLedger, $trialBalance),
+            'subtitle'        => 'Sub-ledger vs trial balance · accounts 41% · variance flags receivable postings without a partner.',
+            'by_account'      => $byAccount,
+            'breakdown_total' => $trialBalance,  // 41X are debit-natural; signed = abs
         ];
     }
 
@@ -132,6 +138,46 @@ class GLQualityService
     }
 
     // ─────────────────────────────────────────────────────────────────
+    // Accounts Payable reconciliation
+    // ─────────────────────────────────────────────────────────────────
+
+    private function reconcilePayables(DateTimeImmutable $asOfDate): array
+    {
+        $accounts = $this->findPayableAccounts();
+        if (empty($accounts)) {
+            return $this->emptyReconciliation('No 40X payable accounts found in the chart of accounts.');
+        }
+        $accountIds = array_column($accounts, 'id');
+
+        // Both totals are negative on the trial balance because 40X are
+        // credit-natural liabilities. We take abs() before comparison so
+        // the user sees the amount owed as a positive figure (matching
+        // Odoo's Aged Payable report header).
+        $trialBalanceSigned = $this->sumGLBalance($accountIds, $asOfDate, withPartnerOnly: false);
+        $subLedgerSigned    = $this->sumGLBalance($accountIds, $asOfDate, withPartnerOnly: true);
+
+        $trialBalanceAbs = abs($trialBalanceSigned);
+        $subLedgerAbs    = abs($subLedgerSigned);
+
+        // Per-account breakdown: keep signed values so the user can cross-
+        // reference each row with Odoo's Trial Balance report (which shows
+        // 73,542 for 401100 and -100,000 for 401101 in the screenshot).
+        $byAccount = $this->balancesByAccount($accountIds, $accounts, $asOfDate);
+
+        return [
+            'left_label'      => 'Sub-ledger (Aged Payable)',
+            'left_value'      => $subLedgerAbs,
+            'right_label'     => 'Trial balance (40X accounts)',
+            'right_value'     => $trialBalanceAbs,
+            'variance'        => round($trialBalanceAbs - $subLedgerAbs, 2),
+            'accuracy_pct'    => $this->accuracyPercent($subLedgerAbs, $trialBalanceAbs),
+            'subtitle'        => 'Sub-ledger vs trial balance · accounts 40% · totals shown as absolute values (40X are credit-natural liabilities, signed negative on the trial balance).',
+            'by_account'      => $byAccount,
+            'breakdown_total' => round($trialBalanceSigned, 2),  // signed, matches sum of signed rows
+        ];
+    }
+
+    // ─────────────────────────────────────────────────────────────────
     // Inventory reconciliation
     // ─────────────────────────────────────────────────────────────────
 
@@ -160,14 +206,15 @@ class GLQualityService
         $byAccount    = $this->balancesByAccount($accountIds, $accounts, $asOfDate);
 
         return [
-            'left_label'   => 'Stock ledger (inventory)',
-            'left_value'   => $stockValue,
-            'right_label'  => 'Trial balance (3X accounts, excl. 39%)',
-            'right_value'  => $trialBalance,
-            'variance'     => round($trialBalance - $stockValue, 2),
-            'accuracy_pct' => $this->accuracyPercent($stockValue, $trialBalance),
-            'subtitle'     => 'Stock ledger vs trial balance · accounts 3% (excl. 39% impairment).',
-            'by_account'   => $byAccount,
+            'left_label'      => 'Stock ledger (inventory)',
+            'left_value'      => $stockValue,
+            'right_label'     => 'Trial balance (3X accounts, excl. 39%)',
+            'right_value'     => $trialBalance,
+            'variance'        => round($trialBalance - $stockValue, 2),
+            'accuracy_pct'    => $this->accuracyPercent($stockValue, $trialBalance),
+            'subtitle'        => 'Stock ledger vs trial balance · accounts 3% (excl. 39% impairment).',
+            'by_account'      => $byAccount,
+            'breakdown_total' => $trialBalance,  // 3X are debit-natural; signed = abs
         ];
     }
 
@@ -291,6 +338,22 @@ class GLQualityService
         return $this->receivableAccountsCache = $accounts;
     }
 
+    /** OHADA payable accounts: code starts with 40 (suppliers, advances, etc.). */
+    private function findPayableAccounts(): array
+    {
+        if ($this->payableAccountsCache !== null) {
+            return $this->payableAccountsCache;
+        }
+        $accounts = $this->odoo->searchRead(
+            'account.account',
+            [['code', '=like', '40%']],
+            ['code', 'name'],
+            ['limit' => 1000, 'order' => 'code asc']
+        );
+        $accounts = array_values(array_filter($accounts, fn($a) => str_starts_with((string)($a['code'] ?? ''), '40')));
+        return $this->payableAccountsCache = $accounts;
+    }
+
     /** OHADA inventory accounts: code starts with 3, but not 39. */
     private function findInventoryAccounts(): array
     {
@@ -380,14 +443,15 @@ class GLQualityService
     private function emptyReconciliation(string $note = ''): array
     {
         return [
-            'left_label'   => '—',
-            'left_value'   => 0.0,
-            'right_label'  => '—',
-            'right_value'  => 0.0,
-            'variance'     => 0.0,
-            'accuracy_pct' => 100.0,
-            'subtitle'     => $note ?: 'No data available.',
-            'by_account'   => [],
+            'left_label'      => '—',
+            'left_value'      => 0.0,
+            'right_label'     => '—',
+            'right_value'     => 0.0,
+            'variance'        => 0.0,
+            'accuracy_pct'    => 100.0,
+            'subtitle'        => $note ?: 'No data available.',
+            'by_account'      => [],
+            'breakdown_total' => 0.0,
         ];
     }
 }
