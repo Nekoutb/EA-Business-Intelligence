@@ -380,4 +380,128 @@
 
     </div>
 
+    {{-- ───────── Description Quality (full width) ───────── --}}
+    @php
+        $dq = $data['description_quality'] ?? null;
+    @endphp
+
+    @if ($dq)
+        @php
+            $dqScore  = (float)($dq['overall_score']  ?? 0);
+            $dqPassed = (int)($dq['checks_passed']    ?? 0);
+            $dqTotal  = (int)($dq['checks_total']     ?? 0);
+            $dqLines  = (int)($dq['lines_reviewed']   ?? 0);
+            $dqCapped = (bool)($dq['lines_capped']    ?? false);
+            $dqLimit  = (int)($dq['fetch_limit']      ?? 50000);
+            $dqExcl   = $dq['exclusions']             ?? [];
+            $dqCats   = $dq['categories']             ?? [];
+            $dqError  = $dq['error']                  ?? null;
+
+            // Color the headline like the reconciliation accuracy
+            if ($dqScore >= 99.99) $dqColor = 'text-emerald-700';
+            elseif ($dqScore >= 80) $dqColor = 'text-yellow-800';
+            elseif ($dqScore >= 50) $dqColor = 'text-amber-800';
+            else                   $dqColor = 'text-rose-800';
+        @endphp
+
+        <details class="group/dq bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-6">
+            <summary class="px-5 py-4 cursor-pointer list-none flex items-center justify-between gap-4 hover:bg-slate-50 transition [&::-webkit-details-marker]:hidden">
+                <div class="flex-1 min-w-0">
+                    <h3 class="text-base font-semibold text-slate-900">GL Description Quality</h3>
+                    <p class="text-xs text-slate-500 mt-0.5">
+                        @if ($asOfLabel)
+                            <span class="font-medium text-slate-700">YTD as of {{ $asOfLabel }}</span> ·
+                        @endif
+                        {{ number_format($dqLines) }} {{ $dqLines === 1 ? 'line' : 'lines' }} reviewed
+                        @if ($dqCapped)
+                            <span class="ml-1 text-amber-700">(capped at {{ number_format($dqLimit) }})</span>
+                        @endif
+                    </p>
+                    @if (!empty($dqExcl))
+                        <p class="text-[11px] text-slate-500 mt-1">
+                            Excluding:
+                            @foreach ($dqExcl as $i => $rule)
+                                <span class="inline-flex items-center gap-1 ml-1">
+                                    <svg class="w-3 h-3 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
+                                    {{ $rule['label'] ?? '' }}{{ $i < count($dqExcl) - 1 ? ',' : '' }}
+                                </span>
+                            @endforeach
+                        </p>
+                    @endif
+                </div>
+                <div class="flex items-center gap-3 flex-shrink-0">
+                    <div class="text-right">
+                        <div class="text-2xl font-bold {{ $dqColor }} leading-none">{{ number_format($dqScore, 1) }}%</div>
+                        <div class="text-[11px] text-slate-500 mt-0.5">{{ $dqPassed }} / {{ $dqTotal }} checks passed</div>
+                    </div>
+                    <svg class="w-4 h-4 text-slate-400 transition-transform group-open/dq:rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                    </svg>
+                </div>
+            </summary>
+
+            <div class="border-t border-slate-200">
+                <p class="text-xs text-slate-500 px-5 pt-3">
+                    Audits posted GL line narrations (<code class="font-mono bg-slate-100 px-1 rounded">account.move.line.name</code>)
+                    against {{ $dqTotal }} description-quality rules. Lines on accounts already proven by reconciliation are skipped.
+                </p>
+
+                @if ($dqError)
+                    <div class="mx-5 mt-3 px-3 py-2 rounded bg-rose-50 border border-rose-200 text-rose-700 text-xs">
+                        Partial error: {{ $dqError }}
+                    </div>
+                @endif
+
+                <div class="px-5 pb-5 pt-3 space-y-5">
+                    @foreach ($dqCats as $cat)
+                        <div>
+                            <h4 class="text-[11px] font-semibold uppercase tracking-wide text-slate-500 mb-2 border-b border-slate-100 pb-1">
+                                {{ $cat['label'] ?? '' }}
+                            </h4>
+                            <ul class="space-y-1.5">
+                                @foreach (($cat['checks'] ?? []) as $chk)
+                                    @php
+                                        $passed = (bool)($chk['passed'] ?? false);
+                                        $count  = (int)($chk['count']  ?? 0);
+                                    @endphp
+                                    <li class="flex items-start gap-3 text-sm">
+                                        @if ($passed)
+                                            <svg class="w-5 h-5 mt-0.5 flex-shrink-0 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/>
+                                            </svg>
+                                        @else
+                                            <svg class="w-5 h-5 mt-0.5 flex-shrink-0 text-rose-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12"/>
+                                            </svg>
+                                        @endif
+                                        <div class="flex-1 min-w-0">
+                                            <div class="flex items-baseline justify-between gap-3">
+                                                <span class="text-slate-900">
+                                                    <span class="text-slate-400 font-mono text-xs mr-1">{{ $chk['no'] ?? '' }}.</span>
+                                                    {{ $chk['name'] ?? '' }}
+                                                </span>
+                                                <span class="text-xs whitespace-nowrap {{ $passed ? 'text-slate-500' : 'text-rose-700 font-medium' }}">
+                                                    {{ number_format($count) }} {{ $count === 1 ? 'line' : 'lines' }}
+                                                </span>
+                                            </div>
+                                            <p class="text-[11px] text-slate-500 mt-0.5">{{ $chk['description'] ?? '' }}</p>
+                                        </div>
+                                    </li>
+                                @endforeach
+                            </ul>
+                        </div>
+                    @endforeach
+                </div>
+
+                <div class="px-5 py-3 border-t border-slate-200 bg-slate-50/50">
+                    <p class="text-xs text-slate-600 text-center">
+                        Score:
+                        <span class="font-semibold {{ $dqColor }}">{{ $dqPassed }} of {{ $dqTotal }} checks passed</span>
+                        ({{ number_format($dqScore, 1) }}%)
+                    </p>
+                </div>
+            </div>
+        </details>
+    @endif
+
 @endsection

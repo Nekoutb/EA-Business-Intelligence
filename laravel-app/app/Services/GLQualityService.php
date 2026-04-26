@@ -71,17 +71,62 @@ class GLQualityService
         $faBook        = $this->safe(fn() => $this->reconcileFixedAssetsBook($asOfDate),    $errors, 'fixed_assets_book')      ?? $this->emptyReconciliation();
         $currency      = $this->safe(fn() => $this->detectCurrency(),                      $errors, 'currency')         ?? 'USD';
 
+        // Build exclusion rules for the description-quality audit:
+        // skip an account range from text-quality checks when its
+        // reconciliation is already perfectly matched.
+        $exclusions = $this->buildDescriptionExclusions($receivables, $payables, $inventory);
+
+        $descriptionQuality = $this->safe(
+            fn() => (new DescriptionQualityService($this->odoo))->analyze($today, $exclusions),
+            $errors,
+            'description_quality'
+        ) ?? null;
+
         return [
             'receivables'           => $receivables,
             'payables'              => $payables,
             'inventory'             => $inventory,
             'fixed_assets_original' => $faOriginal,
             'fixed_assets_book'     => $faBook,
+            'description_quality'   => $descriptionQuality,
             'currency'              => $currency,
             'as_of'                 => $asOfDate->format('Y-m-d'),
             'period_label'          => 'YTD ' . $today->format('Y'),
             'error'                 => empty($errors) ? null : implode(' | ', $errors),
         ];
+    }
+
+    /**
+     * Skip lines on AR / AP / Inventory accounts from the description audit
+     * when the corresponding reconciliation is at 100% — those accounts are
+     * already proven correct by the sub-ledger ↔ trial-balance match.
+     * If a reconciliation is below 100%, those lines stay in scope so the
+     * description checks can help triage where the variance hides.
+     */
+    private function buildDescriptionExclusions(array $ar, array $ap, array $inv): array
+    {
+        $threshold = 99.99; // floating-point tolerance for "100%"
+        $exclusions = [];
+        if ((float)($ar['accuracy_pct']  ?? 0) >= $threshold) {
+            $exclusions[] = [
+                'starts_with' => '41',
+                'label'       => '41XX (AR fully reconciled)',
+            ];
+        }
+        if ((float)($ap['accuracy_pct']  ?? 0) >= $threshold) {
+            $exclusions[] = [
+                'starts_with' => '401',
+                'label'       => '401XX (AP fully reconciled)',
+            ];
+        }
+        if ((float)($inv['accuracy_pct'] ?? 0) >= $threshold) {
+            $exclusions[] = [
+                'starts_with'        => '3',
+                'except_starts_with' => ['39'],
+                'label'              => '3X excl. 39 (Inventory fully reconciled)',
+            ];
+        }
+        return $exclusions;
     }
 
     // ─────────────────────────────────────────────────────────────────
