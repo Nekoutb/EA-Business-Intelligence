@@ -244,33 +244,45 @@ class InventoryService
 
     private function reconcile(array $current, array $glInventory): array
     {
-        $stockValue = (float)($current['total_value']      ?? 0);
+        $stockValue = (float)($current['total_value']       ?? 0);
         $glBalance  = (float)($glInventory['total_balance'] ?? 0);
         $variance   = $glBalance - $stockValue;
         $variancePct = $stockValue > 0 ? round(($variance / $stockValue) * 100, 2) : 0.0;
+
+        // Accuracy %: 100 when stock == GL, drops as the gap widens.
+        // Symmetric: uses max(|stock|, |GL|) as denominator so over- and
+        // under-statement of GL are treated identically. Floor at 0.
+        // Edge case: both zero → degenerate match (100%).
+        $denominator = max(abs($stockValue), abs($glBalance));
+        if ($denominator < 0.01) {
+            $accuracyPct = 100.0; // both effectively zero
+        } else {
+            $gapPct      = min(100.0, abs($variance) / $denominator * 100);
+            $accuracyPct = round(max(0.0, 100.0 - $gapPct), 2);
+        }
 
         return [
             'stock_value'      => round($stockValue, 2),
             'gl_balance'       => round($glBalance,  2),
             'variance'         => round($variance,   2),
             'variance_percent' => $variancePct,
+            'accuracy_percent' => $accuracyPct,
             'reconciled'       => abs($variance) < 0.01,
-            'interpretation'   => $this->interpretVariance($variance, $stockValue),
+            'interpretation'   => $this->interpretVariance($variance, $stockValue, $accuracyPct),
         ];
     }
 
-    private function interpretVariance(float $variance, float $stockValue): string
+    private function interpretVariance(float $variance, float $stockValue, float $accuracyPct): string
     {
         if (abs($variance) < 0.01) {
             return 'Inventory perfectly reconciled with the general ledger.';
         }
-        $pct = $stockValue > 0 ? abs($variance / $stockValue) * 100 : 0;
-        $pctStr = number_format($pct, 1) . '%';
+        $accStr = number_format($accuracyPct, 1) . '%';
 
         if ($variance > 0) {
-            return "GL balance exceeds stock value by {$pctStr} — possible unrecorded outflows or impairments not captured in stock.quant.";
+            return "GL balance exceeds stock value ({$accStr} accuracy) — possible unrecorded outflows or impairments not captured in stock.quant.";
         }
-        return "Stock value exceeds GL balance by {$pctStr} — possible missing cost-of-goods entries or in-transit movements not yet posted.";
+        return "Stock value exceeds GL balance ({$accStr} accuracy) — possible missing cost-of-goods entries or in-transit movements not yet posted.";
     }
 
     // ─────────────────────────────────────────────────────────────────
