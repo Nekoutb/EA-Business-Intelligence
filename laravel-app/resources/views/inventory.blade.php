@@ -79,138 +79,145 @@
     {{-- ───────────── Two compact boxes side-by-side ───────────── --}}
     <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
 
-        {{-- Box 1: Reconciliation (compact, vertical metric stack) --}}
-        <section class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
-            <details class="group border-b border-slate-200 bg-gradient-to-r from-slate-50 to-white">
-                <summary class="px-5 py-4 cursor-pointer list-none flex items-start justify-between [&::-webkit-details-marker]:hidden">
-                    <div>
-                        <h3 class="text-base font-semibold text-slate-900">Inventory Reconciliation</h3>
-                        @if ($asOfLabel)
-                            <p class="text-xs text-slate-500 mt-0.5">
-                                <span class="font-medium text-slate-700">YTD as of {{ $asOfLabel }}</span>
-                            </p>
-                        @endif
-                    </div>
-                    <svg class="w-4 h-4 mt-1 text-slate-400 transition-transform group-open:rotate-180 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        @php
+            $beginningInv = $invDays['beginning_inventory'] ?? 0;
+            $endingInv    = $invDays['ending_inventory']    ?? 0;
+        @endphp
+
+        {{-- Box 1: Reconciliation — collapsed by default, headline %  visible --}}
+        <details class="group/recon bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+            <summary class="px-5 py-4 cursor-pointer list-none flex items-center justify-between gap-4 hover:bg-slate-50 transition [&::-webkit-details-marker]:hidden">
+                <div class="flex-1 min-w-0">
+                    <h3 class="text-base font-semibold text-slate-900">Inventory Reconciliation</h3>
+                    @if ($asOfLabel)
+                        <p class="text-xs text-slate-500 mt-0.5">
+                            <span class="font-medium text-slate-700">YTD as of {{ $asOfLabel }}</span>
+                        </p>
+                    @endif
+                </div>
+                <div class="flex items-center gap-3 flex-shrink-0">
+                    <span class="text-2xl font-bold {{ $tone['msg'] }}">{{ number_format($accuracy, 1) }}%</span>
+                    <svg class="w-4 h-4 text-slate-400 transition-transform group-open/recon:rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
                     </svg>
-                </summary>
-                <p class="text-xs text-slate-500 px-5 pb-3 -mt-1">
+                </div>
+            </summary>
+
+            <div class="border-t border-slate-200">
+                <p class="text-xs text-slate-500 px-5 pt-3">
                     Stock ledger vs trial balance · accounts <code class="font-mono bg-slate-100 px-1 rounded">3%</code> (excl. <code class="font-mono bg-slate-100 px-1 rounded">39%</code>)
                 </p>
-            </details>
 
-            {{-- Vertical metric stack — 4 rows, label left, value right --}}
-            <dl class="px-5 py-4 space-y-3 flex-1">
-                <div class="flex items-baseline justify-between border-b border-slate-100 pb-2">
-                    <dt class="text-sm text-slate-600">Stock ledger (inventory)</dt>
-                    <dd class="text-base font-semibold text-slate-900">{{ ea_money_short($stockValue, $data['currency']) }}</dd>
-                </div>
-                <div class="flex items-baseline justify-between border-b border-slate-100 pb-2">
-                    <dt class="text-sm text-slate-600">General ledger</dt>
-                    <dd class="text-base font-semibold text-slate-900">{{ ea_money_short($glBalance, $data['currency']) }}</dd>
-                </div>
-                <div class="flex items-baseline justify-between border-b border-slate-100 pb-2">
-                    <dt class="text-sm text-slate-600">Variance <span class="text-[11px] text-slate-400">(GL − Stock)</span></dt>
-                    <dd class="text-base font-semibold {{ $varianceColor }}">{{ ea_money_short($variance, $data['currency']) }}</dd>
-                </div>
-                <div class="flex items-baseline justify-between">
-                    <dt class="text-sm text-slate-600">Reconciliation</dt>
-                    <dd class="text-lg font-bold {{ $tone['msg'] }}">{{ number_format($accuracy, 1) }}%</dd>
-                </div>
-            </dl>
-
-            {{-- Hidden trial balance breakdown (collapsible) --}}
-            <details class="border-t border-slate-200 group">
-                <summary class="px-5 py-2.5 text-xs font-medium text-slate-600 cursor-pointer hover:bg-slate-50 flex items-center gap-2 select-none">
-                    <svg class="w-3.5 h-3.5 transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-                    Trial balance breakdown
-                    <span class="text-[11px] text-slate-400 font-normal">({{ count($glAccounts) }} {{ count($glAccounts) === 1 ? 'account' : 'accounts' }})</span>
-                </summary>
-                <div class="overflow-x-auto border-t border-slate-200">
-                    <table class="w-full text-xs">
-                        <thead class="bg-slate-50">
-                            <tr>
-                                <th class="text-left py-2 px-5 font-semibold text-slate-600 uppercase tracking-wide">Code</th>
-                                <th class="text-left py-2 px-3 font-semibold text-slate-600 uppercase tracking-wide">Account</th>
-                                <th class="text-right py-2 px-5 font-semibold text-slate-600 uppercase tracking-wide">Balance</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            @if (empty($glAccounts))
-                                <tr><td colspan="3" class="py-4 px-5 text-center text-slate-500">No inventory accounts found</td></tr>
-                            @else
-                                @foreach ($glAccounts as $account)
-                                    <tr class="border-t border-slate-100 hover:bg-slate-50">
-                                        <td class="py-2 px-5 text-slate-700">{{ $account['code'] ?? '—' }}</td>
-                                        <td class="py-2 px-3 text-slate-900">{{ $account['name'] ?? 'Unknown' }}</td>
-                                        <td class="text-right py-2 px-5 text-slate-700">{{ ea_money_short($account['balance'] ?? 0, $data['currency']) }}</td>
-                                    </tr>
-                                @endforeach
-                                <tr class="border-t-2 border-slate-300 bg-slate-50 font-semibold">
-                                    <td class="py-2 px-5"></td>
-                                    <td class="py-2 px-3 text-slate-900">Total</td>
-                                    <td class="text-right py-2 px-5 text-slate-900">{{ ea_money_short($glBalance, $data['currency']) }}</td>
-                                </tr>
-                            @endif
-                        </tbody>
-                    </table>
-                </div>
-            </details>
-        </section>
-
-        {{-- Box 2: Inventory Days (compact, vertical metric stack) --}}
-        <section class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
-            <details class="group border-b border-slate-200 bg-gradient-to-r from-slate-50 to-white">
-                <summary class="px-5 py-4 cursor-pointer list-none flex items-start justify-between [&::-webkit-details-marker]:hidden">
-                    <div>
-                        <h3 class="text-base font-semibold text-slate-900">Inventory Days</h3>
-                        @if ($asOfLabel)
-                            <p class="text-xs text-slate-500 mt-0.5">
-                                <span class="font-medium text-slate-700">YTD as of {{ $asOfLabel }}</span>
-                            </p>
-                        @endif
+                <dl class="px-5 py-4 space-y-3">
+                    <div class="flex items-baseline justify-between border-b border-slate-100 pb-2">
+                        <dt class="text-sm text-slate-600">Stock ledger (inventory)</dt>
+                        <dd class="text-base font-semibold text-slate-900">{{ ea_money_short($stockValue, $data['currency']) }}</dd>
                     </div>
-                    <svg class="w-4 h-4 mt-1 text-slate-400 transition-transform group-open:rotate-180 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <div class="flex items-baseline justify-between border-b border-slate-100 pb-2">
+                        <dt class="text-sm text-slate-600">General ledger</dt>
+                        <dd class="text-base font-semibold text-slate-900">{{ ea_money_short($glBalance, $data['currency']) }}</dd>
+                    </div>
+                    <div class="flex items-baseline justify-between border-b border-slate-100 pb-2">
+                        <dt class="text-sm text-slate-600">Variance <span class="text-[11px] text-slate-400">(GL − Stock)</span></dt>
+                        <dd class="text-base font-semibold {{ $varianceColor }}">{{ ea_money_short($variance, $data['currency']) }}</dd>
+                    </div>
+                    <div class="flex items-baseline justify-between">
+                        <dt class="text-sm text-slate-600">Reconciliation</dt>
+                        <dd class="text-lg font-bold {{ $tone['msg'] }}">{{ number_format($accuracy, 1) }}%</dd>
+                    </div>
+                </dl>
+
+                {{-- Nested: Trial balance breakdown --}}
+                <details class="border-t border-slate-200 group/breakdown">
+                    <summary class="px-5 py-2.5 text-xs font-medium text-slate-600 cursor-pointer hover:bg-slate-50 flex items-center gap-2 select-none [&::-webkit-details-marker]:hidden">
+                        <svg class="w-3.5 h-3.5 transition-transform group-open/breakdown:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                        Trial balance breakdown
+                        <span class="text-[11px] text-slate-400 font-normal">({{ count($glAccounts) }} {{ count($glAccounts) === 1 ? 'account' : 'accounts' }})</span>
+                    </summary>
+                    <div class="overflow-x-auto border-t border-slate-200">
+                        <table class="w-full text-xs">
+                            <thead class="bg-slate-50">
+                                <tr>
+                                    <th class="text-left py-2 px-5 font-semibold text-slate-600 uppercase tracking-wide">Code</th>
+                                    <th class="text-left py-2 px-3 font-semibold text-slate-600 uppercase tracking-wide">Account</th>
+                                    <th class="text-right py-2 px-5 font-semibold text-slate-600 uppercase tracking-wide">Balance</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @if (empty($glAccounts))
+                                    <tr><td colspan="3" class="py-4 px-5 text-center text-slate-500">No inventory accounts found</td></tr>
+                                @else
+                                    @foreach ($glAccounts as $account)
+                                        <tr class="border-t border-slate-100 hover:bg-slate-50">
+                                            <td class="py-2 px-5 text-slate-700">{{ $account['code'] ?? '—' }}</td>
+                                            <td class="py-2 px-3 text-slate-900">{{ $account['name'] ?? 'Unknown' }}</td>
+                                            <td class="text-right py-2 px-5 text-slate-700">{{ ea_money_short($account['balance'] ?? 0, $data['currency']) }}</td>
+                                        </tr>
+                                    @endforeach
+                                    <tr class="border-t-2 border-slate-300 bg-slate-50 font-semibold">
+                                        <td class="py-2 px-5"></td>
+                                        <td class="py-2 px-3 text-slate-900">Total</td>
+                                        <td class="text-right py-2 px-5 text-slate-900">{{ ea_money_short($glBalance, $data['currency']) }}</td>
+                                    </tr>
+                                @endif
+                            </tbody>
+                        </table>
+                    </div>
+                </details>
+            </div>
+        </details>
+
+        {{-- Box 2: Inventory Days — collapsed by default, headline days visible --}}
+        <details class="group/days bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+            <summary class="px-5 py-4 cursor-pointer list-none flex items-center justify-between gap-4 hover:bg-slate-50 transition [&::-webkit-details-marker]:hidden">
+                <div class="flex-1 min-w-0">
+                    <h3 class="text-base font-semibold text-slate-900">Inventory Days</h3>
+                    @if ($asOfLabel)
+                        <p class="text-xs text-slate-500 mt-0.5">
+                            <span class="font-medium text-slate-700">YTD as of {{ $asOfLabel }}</span>
+                        </p>
+                    @endif
+                </div>
+                <div class="flex items-center gap-3 flex-shrink-0">
+                    <span class="text-2xl font-bold text-indigo-700">{{ number_format($daysOutstanding, 1) }} days</span>
+                    <svg class="w-4 h-4 text-slate-400 transition-transform group-open/days:rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
                     </svg>
-                </summary>
-                <p class="text-xs text-slate-500 px-5 pb-3 -mt-1">
+                </div>
+            </summary>
+
+            <div class="border-t border-slate-200">
+                <p class="text-xs text-slate-500 px-5 pt-3">
                     Days of stock-on-hand · COGS from GL <code class="font-mono bg-slate-100 px-1 rounded">60%</code> accounts
                 </p>
-            </details>
 
-            @php
-                $beginningInv = $invDays['beginning_inventory'] ?? 0;
-                $endingInv    = $invDays['ending_inventory']    ?? 0;
-            @endphp
+                <dl class="px-5 py-4 space-y-3">
+                    <div class="flex items-baseline justify-between border-b border-slate-100 pb-2">
+                        <dt class="text-sm text-slate-600">
+                            Average inventory
+                            <span class="block text-[11px] text-slate-400 font-normal mt-0.5">(beginning {{ ea_money_short($beginningInv, $data['currency']) }} + ending {{ ea_money_short($endingInv, $data['currency']) }}) ÷ 2</span>
+                        </dt>
+                        <dd class="text-base font-semibold text-slate-900">{{ ea_money_short($avgInventory, $data['currency']) }}</dd>
+                    </div>
+                    <div class="flex items-baseline justify-between border-b border-slate-100 pb-2">
+                        <dt class="text-sm text-slate-600">COGS YTD <span class="text-[11px] text-slate-400">(60X accounts)</span></dt>
+                        <dd class="text-base font-semibold text-slate-900">{{ ea_money_short($cogsYtd, $data['currency']) }}</dd>
+                    </div>
+                    <div class="flex items-baseline justify-between border-b border-slate-100 pb-2">
+                        <dt class="text-sm text-slate-600">Period days elapsed</dt>
+                        <dd class="text-base font-semibold text-slate-900">{{ $invDays['period_days'] ?? 0 }}</dd>
+                    </div>
+                    <div class="flex items-baseline justify-between">
+                        <dt class="text-sm text-slate-600">Days outstanding</dt>
+                        <dd class="text-lg font-bold text-indigo-700">{{ number_format($daysOutstanding, 1) }} days</dd>
+                    </div>
+                </dl>
 
-            <dl class="px-5 py-4 space-y-3 flex-1">
-                <div class="flex items-baseline justify-between border-b border-slate-100 pb-2">
-                    <dt class="text-sm text-slate-600">
-                        Average inventory
-                        <span class="block text-[11px] text-slate-400 font-normal mt-0.5">(beginning {{ ea_money_short($beginningInv, $data['currency']) }} + ending {{ ea_money_short($endingInv, $data['currency']) }}) ÷ 2</span>
-                    </dt>
-                    <dd class="text-base font-semibold text-slate-900">{{ ea_money_short($avgInventory, $data['currency']) }}</dd>
-                </div>
-                <div class="flex items-baseline justify-between border-b border-slate-100 pb-2">
-                    <dt class="text-sm text-slate-600">COGS YTD <span class="text-[11px] text-slate-400">(60X accounts)</span></dt>
-                    <dd class="text-base font-semibold text-slate-900">{{ ea_money_short($cogsYtd, $data['currency']) }}</dd>
-                </div>
-                <div class="flex items-baseline justify-between border-b border-slate-100 pb-2">
-                    <dt class="text-sm text-slate-600">Period days elapsed</dt>
-                    <dd class="text-base font-semibold text-slate-900">{{ $invDays['period_days'] ?? 0 }}</dd>
-                </div>
-                <div class="flex items-baseline justify-between">
-                    <dt class="text-sm text-slate-600">Days outstanding</dt>
-                    <dd class="text-lg font-bold text-indigo-700">{{ number_format($daysOutstanding, 1) }} days</dd>
-                </div>
-            </dl>
-
-            <p class="px-5 pb-3 text-[11px] text-slate-400">
-                = (avg inventory × period days) ÷ COGS
-            </p>
-        </section>
+                <p class="px-5 pb-3 text-[11px] text-slate-400">
+                    = (avg inventory × period days) ÷ COGS
+                </p>
+            </div>
+        </details>
 
     </div>
 
