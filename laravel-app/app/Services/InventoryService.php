@@ -8,31 +8,34 @@ use DateTimeImmutable;
 /**
  * InventoryService — Inventory reconciliation, days, and trend (YTD).
  *
- * Three blocks of analytics, all sharing one YTD window (1 January → today):
+ * Three blocks of analytics, all sharing one YTD window (1 January → today)
+ * and ALL deriving inventory value from the GL trial balance — Odoo's
+ * stock.valuation.layer is Enterprise-only and absent on Community editions
+ * or instances configured with manual_periodic valuation. The trial balance
+ * is the lowest-common-denominator data source that's always present.
  *
- * 1. Reconciliation — stock vs trial balance for OHADA 3XX accounts
- *    (excluding 39X impairment). Both sides snapshotted at the SAME date
- *    so the comparison is like-for-like with Odoo's Trial Balance report.
+ * 1. Reconciliation — physical stock vs trial balance, OHADA 3XX accounts
+ *    (excluding 39X impairment). Stock side from stock.quant; GL side from
+ *    account.move.line. Both snapshotted at the SAME date.
  *
  * 2. Inventory Days (textbook two-point avg, P&L-aligned COGS, YTD-rate):
  *        days = (avg_inventory × period_days_ytd) / cogs_ytd
  *      avg_inventory  = (beginning + ending) / 2
- *                       beginning = Σ stock.valuation.layer.value WHERE
- *                                   create_date < 1 Jan  (opening balance)
- *                       ending    = Σ all layers up to today
+ *                       beginning = trial balance End Balance ≤ 31 Dec prior
+ *                                   year  (= opening balance for YTD)
+ *                       ending    = trial balance End Balance ≤ today
  *      cogs_ytd       = Σ account.move.line.balance for 60X accounts in YTD
- *                       (matches what the income statement shows as COGS)
  *      period_days_ytd= calendar days elapsed from 1 January
  *
- * 3. Trend — month-end inventory value, January through today, from the
- *    cumulative sum of stock.valuation.layer.
+ * 3. Trend — month-end inventory value, January through today, computed by
+ *    walking posted move lines for inventory accounts in chronological order
+ *    starting from the opening balance, snapshotting at each month-end.
  *
- * Data sources:
- *   - Stock value:        stock.quant × product.standard_price
+ * Data sources (everything in the GL):
+ *   - Stock value:        stock.quant × product.standard_price (live only)
  *   - GL trial balance:   account.move.line, accounts code =like '3%' (not 39%)
  *   - COGS YTD:           account.move.line, accounts code =like '60%'
- *   - Trend chart:        stock.valuation.layer cumulative sum, bucketized
- *                         into month-ends (O(N+B), one round-trip).
+ *   - Trend chart:        same 3% accounts, walked forward from opening balance
  */
 class InventoryService
 {
@@ -41,6 +44,9 @@ class InventoryService
 
     /** Cached internal location ids. */
     private ?array $internalLocationIds = null;
+
+    /** Cached OHADA inventory account list (3% excluding 39%). */
+    private ?array $inventoryAccountsCache = null;
 
     public function __construct(private OdooClient $odoo) {}
 
@@ -59,20 +65,25 @@ class InventoryService
         $asOfDate = $today;
         $label    = 'YTD ' . $today->format('Y');
 
-        // Fetch the inventory valuation ledger ONCE — both the trend chart and
-        // the inventory-days calculation derive their numbers from the same
-        // chronological cumulative sum of layer values, so we only round-trip
-        // to Odoo a single time for it.
-        $layers = $this->safe(fn() => $this->fetchValuationLayers($to), $errors, 'valuation_layers') ?? [];
-
         $current     = $this->safe(fn() => $this->getInventoryValueAt($asOfDate),    $errors, 'inventory_value') ?? $this->emptyCurrent();
         $glInventory = $this->safe(fn() => $this->getGLInventoryAccounts($asOfDate), $errors, 'gl_inventory')    ?? $this->emptyGLInventory();
-        $trend       = $this->buildTrend($layers, $from, $to);
-        $cogsYtd     = $this->safe(fn() => $this->getCogsYtd($from, $to),            $errors, 'cogs')            ?? 0.0;
-        $currency    = $this->safe(fn() => $this->detectCurrency(),                  $errors, 'currency')        ?? 'USD';
 
-        $reconciliation  = $this->reconcile($current, $glInventory);
-        $inventoryDays   = $this->computeInventoryDays($layers, $cogsYtd, $from, $to);
+        // Beginning inventory = trial balance just before YTD started
+        // (i.e. closing balance of the prior accounting year). We feed this
+        // back through getGLInventoryAccounts() which already implements the
+        // correct domain — date <= asOfDate — using the same accounts list
+        // (cached so we don't refetch the 3X account list).
+        $priorYearEnd     = $from->modify('-1 day');
+        $beginningGL      = $this->safe(fn() => $this->getGLInventoryAccounts($priorYearEnd), $errors, 'beginning_balance') ?? $this->emptyGLInventory();
+        $beginningBalance = (float)($beginningGL['total_balance'] ?? 0);
+        $endingBalance    = (float)($glInventory['total_balance']  ?? 0);
+
+        $trend    = $this->safe(fn() => $this->buildGLTrend($from, $to), $errors, 'trend')    ?? ['by_month' => []];
+        $cogsYtd  = $this->safe(fn() => $this->getCogsYtd($from, $to),    $errors, 'cogs')     ?? 0.0;
+        $currency = $this->safe(fn() => $this->detectCurrency(),          $errors, 'currency') ?? 'USD';
+
+        $reconciliation = $this->reconcile($current, $glInventory);
+        $inventoryDays  = $this->computeInventoryDays($beginningBalance, $endingBalance, $cogsYtd, $from, $to);
 
         return [
             'current'         => $current,
@@ -90,24 +101,36 @@ class InventoryService
     }
 
     // ─────────────────────────────────────────────────────────────────
-    // Shared valuation layer fetch (used by trend + days)
+    // Inventory accounts (cached) — OHADA 3X excluding 39X
     // ─────────────────────────────────────────────────────────────────
 
     /**
-     * Fetch all stock.valuation.layer rows up to $to, ordered chronologically.
-     * One round-trip; consumed by buildTrend() and computeInventoryDays().
+     * Resolve and cache the inventory account list (id, code, name).
+     * Called by getGLInventoryAccounts() and buildGLTrend(); the cache
+     * means the 3X account list is fetched once per service instance.
      */
-    private function fetchValuationLayers(DateTimeImmutable $to): array
+    private function findInventoryAccounts(): array
     {
-        return $this->odoo->searchRead(
-            'stock.valuation.layer',
-            [
-                ['company_id', '=', $this->getCompanyId()],
-                ['create_date', '<=', $to->format('Y-m-d') . ' 23:59:59'],
-            ],
-            ['value', 'create_date'],
-            ['limit' => 200000, 'order' => 'create_date asc']
+        if ($this->inventoryAccountsCache !== null) {
+            return $this->inventoryAccountsCache;
+        }
+
+        $accounts = $this->odoo->searchRead(
+            'account.account',
+            [['code', '=like', '3%']],
+            ['code', 'name'],
+            ['limit' => 1000, 'order' => 'code asc']
         );
+
+        // Client-side: keep only accounts whose code starts with 3 but not 39.
+        // (Doing this client-side avoids Odoo's `like` operator auto-wrapping
+        // values with %s, which made `not like '39%'` unreliable.)
+        $accounts = array_values(array_filter($accounts, function ($a) {
+            $code = (string)($a['code'] ?? '');
+            return str_starts_with($code, '3') && !str_starts_with($code, '39');
+        }));
+
+        return $this->inventoryAccountsCache = $accounts;
     }
 
     // ─────────────────────────────────────────────────────────────────
@@ -180,41 +203,22 @@ class InventoryService
     /**
      * Days of inventory outstanding, YTD basis (textbook two-point average).
      *
-     *   avg_inventory    = (beginning_inventory + ending_inventory) / 2
-     *     beginning      = inventory value as of period start (1 January)
-     *                      = Σ stock.valuation.layer.value WHERE create_date < $from
-     *                      → opening balance for the year (= prior-year close)
-     *     ending         = inventory value as of period end (today)
-     *                      = Σ all layer values up to $to
+     *   avg_inventory    = (beginning + ending) / 2
+     *     beginning      = trial balance End Balance ≤ 31 Dec prior year
+     *                      (= inventory carried into the new year)
+     *     ending         = trial balance End Balance ≤ today
+     *                      (= same number shown on the reconciliation box)
      *
      *   days_outstanding = (avg_inventory × period_days) / cogs_ytd
      *
-     * This is the standard accounting/audit formula, aligned with US GAAP,
-     * IFRS and OHADA practice. Not annualised — the figure remains stable
-     * through the year if consumption stays steady.
+     * Standard accounting / audit formula (US GAAP, IFRS, OHADA). Not
+     * annualised — the figure remains stable through the year if the
+     * consumption rate stays steady.
      */
-    private function computeInventoryDays(array $layers, float $cogs, DateTimeImmutable $from, DateTimeImmutable $to): array
+    private function computeInventoryDays(float $beginning, float $ending, float $cogs, DateTimeImmutable $from, DateTimeImmutable $to): array
     {
-        // Cutoff: anything strictly BEFORE 1 Jan 00:00:00 is opening inventory.
-        $beginningCutoff = $from->format('Y-m-d') . ' 00:00:00';
-
-        $beginning = 0.0;
-        $ending    = 0.0;
-        foreach ($layers as $l) {
-            $v = (float)($l['value']       ?? 0);
-            $d = (string)($l['create_date'] ?? '');
-            // Layers list is already filtered to `create_date <= $to` upstream,
-            // so summing the whole list gives the ending balance.
-            $ending += $v;
-            // Beginning = subset of layers that existed before YTD started.
-            if ($d !== '' && $d < $beginningCutoff) {
-                $beginning += $v;
-            }
-        }
-
-        // Cumulative inventory cannot be negative in the real world.
-        // (A negative cumulative sum would imply more outflows than inflows
-        // ever recorded, which only happens with seed-data anomalies.)
+        // Floor at 0 — a negative trial-balance value on inventory accounts
+        // would indicate a bookkeeping error rather than physical reality.
         $beginning = max(0.0, $beginning);
         $ending    = max(0.0, $ending);
 
@@ -225,117 +229,29 @@ class InventoryService
             : 0.0;
 
         return [
-            'beginning_inventory' => round($beginning,   2),
-            'ending_inventory'    => round($ending,      2),
+            'beginning_inventory' => round($beginning,    2),
+            'ending_inventory'    => round($ending,       2),
             'avg_inventory'       => round($avgInventory, 2),
-            'cogs_ytd'            => round($cogs,        2),
+            'cogs_ytd'            => round($cogs,         2),
             'period_days'         => $periodDays,
-            'days_outstanding'    => round($days,        1),
+            'days_outstanding'    => round($days,         1),
         ];
     }
 
     // ─────────────────────────────────────────────────────────────────
-    // Inventory value at as-of date
+    // Inventory value at as-of date — live snapshot from stock.quant
     // ─────────────────────────────────────────────────────────────────
 
     /**
-     * Dispatch: live snapshot for "now", historical reconstruction for past.
+     * In YTD-only mode the as-of date is always today, so this just
+     * returns the live snapshot. Kept as a thin wrapper for clarity
+     * and to leave the door open for historical reconstructions
+     * (would have to rely on GL move lines now that
+     * stock.valuation.layer is no longer assumed to exist).
      */
     private function getInventoryValueAt(DateTimeImmutable $asOfDate): array
     {
-        $todayStr = (new DateTimeImmutable())->format('Y-m-d');
-        if ($asOfDate->format('Y-m-d') >= $todayStr) {
-            return $this->getCurrentInventory();
-        }
-        return $this->getHistoricalInventory($asOfDate);
-    }
-
-    /**
-     * Historical inventory at a past date — reconstruct from
-     * stock.valuation.layer cumulative sums per product.
-     * Layer.value is signed (positive on inflow, negative on outflow / write-down)
-     * so the running sum equals the net inventory book value at that point.
-     */
-    private function getHistoricalInventory(DateTimeImmutable $asOfDate): array
-    {
-        $companyId = $this->getCompanyId();
-
-        try {
-            $layers = $this->odoo->searchRead(
-                'stock.valuation.layer',
-                [
-                    ['company_id', '=', $companyId],
-                    ['create_date', '<=', $asOfDate->format('Y-m-d') . ' 23:59:59'],
-                ],
-                ['product_id', 'quantity', 'value'],
-                ['limit' => 100000]
-            );
-        } catch (\Throwable $e) {
-            // Model unavailable — fall back to current snapshot but flag it
-            $current = $this->getCurrentInventory();
-            $current['historical_unavailable'] = true;
-            return $current;
-        }
-
-        if (empty($layers)) {
-            return $this->emptyCurrent();
-        }
-
-        // Aggregate qty + value per product
-        $byPid = [];
-        $totalValue = 0.0;
-        $totalQty   = 0.0;
-        foreach ($layers as $l) {
-            $pid = is_array($l['product_id'] ?? null) ? ($l['product_id'][0] ?? null) : null;
-            if (!$pid) continue;
-            if (!isset($byPid[$pid])) {
-                $byPid[$pid] = ['qty' => 0.0, 'value' => 0.0];
-            }
-            $q = (float)($l['quantity'] ?? 0);
-            $v = (float)($l['value']    ?? 0);
-            $byPid[$pid]['qty']   += $q;
-            $byPid[$pid]['value'] += $v;
-            $totalQty   += $q;
-            $totalValue += $v;
-        }
-
-        // Pull product names/codes
-        $pids = array_keys($byPid);
-        $info = [];
-        if (!empty($pids)) {
-            foreach (array_chunk($pids, 500) as $chunk) {
-                foreach ($this->odoo->read('product.product', $chunk, ['name', 'default_code']) as $r) {
-                    $info[$r['id']] = $r;
-                }
-            }
-        }
-
-        $byProduct = [];
-        foreach ($byPid as $pid => $row) {
-            $name = $info[$pid]['name'] ?? ('Product #' . $pid);
-            $code = $info[$pid]['default_code'] ?? '';
-            $qty  = $row['qty'];
-            $val  = $row['value'];
-            // Implied unit cost (avoids needing a separate read on standard_price,
-            // and reflects the actual cost basis used by Odoo's valuation engine)
-            $cost = abs($qty) > 0.0001 ? $val / $qty : 0.0;
-            $byProduct[$name] = [
-                'qty'   => round($qty, 2),
-                'cost'  => round($cost, 2),
-                'value' => round($val, 2),
-                'code'  => $code,
-            ];
-        }
-        uasort($byProduct, fn($a, $b) => $b['value'] <=> $a['value']);
-        $byProduct = array_slice($byProduct, 0, 50, true);
-
-        return [
-            'total_value'  => round(max(0.0, $totalValue), 2),
-            'total_qty'    => round($totalQty, 2),
-            'by_product'   => $byProduct,
-            'record_count' => count($layers),
-            'historical'   => true,
-        ];
+        return $this->getCurrentInventory();
     }
 
     // ─────────────────────────────────────────────────────────────────
@@ -426,33 +342,7 @@ class InventoryService
      */
     private function getGLInventoryAccounts(DateTimeImmutable $asOfDate): array
     {
-        // Step 1: find inventory accounts (code starts with 3, excluding 39X impairment).
-        //
-        // Note: `account.account.company_id` was REMOVED in Odoo 17 — the chart of
-        // accounts is now shared across companies via the `company_ids` m2m. Filtering
-        // by company here would crash. We rely on the `company_id` filter on
-        // account.move.line (which still has it) to scope balances per company.
-        //
-        // Note: we don't combine `=like '3%'` with `not like '39%'` in the domain,
-        // because Odoo's `like` operator auto-wraps the value with %s — making
-        // `not like '39%'` equivalent to `NOT LIKE '%39%%'`, which is unreliable
-        // for "doesn't start with 39". Instead we fetch all 3X accounts and
-        // exclude 39X client-side.
-        $accounts = $this->odoo->searchRead(
-            'account.account',
-            [
-                ['code', '=like', '3%'],
-            ],
-            ['code', 'name'],
-            ['limit' => 1000, 'order' => 'code asc']
-        );
-
-        // Client-side: keep only accounts whose code starts with 3 but not 39
-        $accounts = array_values(array_filter($accounts, function ($a) {
-            $code = (string)($a['code'] ?? '');
-            return str_starts_with($code, '3') && !str_starts_with($code, '39');
-        }));
-
+        $accounts = $this->findInventoryAccounts();
         if (empty($accounts)) {
             return $this->emptyGLInventory();
         }
@@ -577,62 +467,96 @@ class InventoryService
     // ─────────────────────────────────────────────────────────────────
 
     /**
-     * Build month-end value series from already-fetched valuation layers.
-     * Cumulative running sum walks the layers chronologically once,
-     * snapshotting at each month-end within [$from, $to]. O(N+B).
+     * Build month-end inventory value series from the GL trial balance.
      *
-     * The cumulative sum starts from the very first layer (which is
-     * pre-YTD) because layers from prior years represent the opening
-     * inventory. We need that base for January's value to be correct.
+     * Two queries:
+     *   1. Opening balance (= sum of inventory account balances ≤ 31 Dec
+     *      prior year) — equivalent to a Trial Balance report run with
+     *      end_date = day before YTD start.
+     *   2. All YTD posted lines on inventory accounts, ordered by date.
+     *
+     * Then walk the lines forward, starting from the opening balance,
+     * snapshotting the running cumulative balance at each month-end.
+     *
+     * This is what Odoo's Trial Balance report would show for each
+     * month-end if you ran it 12 times — but in 2 round-trips total.
      */
-    private function buildTrend(array $layers, DateTimeImmutable $from, DateTimeImmutable $to): array
+    private function buildGLTrend(DateTimeImmutable $from, DateTimeImmutable $to): array
     {
-        if (empty($layers)) {
+        $accounts = $this->findInventoryAccounts();
+        if (empty($accounts)) {
             return ['by_month' => []];
         }
+        $accountIds = array_column($accounts, 'id');
+        $companyId  = $this->getCompanyId();
 
+        // Step 1: opening balance (everything posted before YTD started)
+        $opening = 0.0;
+        try {
+            $g = $this->odoo->callModel('account.move.line', 'read_group', [
+                'domain' => [
+                    ['parent_state', '=', 'posted'],
+                    ['account_id',   'in', $accountIds],
+                    ['company_id',   '=', $companyId],
+                    ['date',         '<', $from->format('Y-m-d')],
+                ],
+                'fields'  => ['balance:sum'],
+                'groupby' => [],
+            ]);
+            $opening = (float)($g[0]['balance'] ?? 0);
+        } catch (\Throwable $e) {
+            // Fallback: client-side aggregation
+            $rows = $this->odoo->searchRead(
+                'account.move.line',
+                [
+                    ['parent_state', '=', 'posted'],
+                    ['account_id',   'in', $accountIds],
+                    ['company_id',   '=', $companyId],
+                    ['date',         '<', $from->format('Y-m-d')],
+                ],
+                ['balance'],
+                ['limit' => 200000]
+            );
+            foreach ($rows as $r) {
+                $opening += (float)($r['balance'] ?? 0);
+            }
+        }
+
+        // Step 2: YTD posted lines, ordered by date
+        $lines = $this->odoo->searchRead(
+            'account.move.line',
+            [
+                ['parent_state', '=', 'posted'],
+                ['account_id',   'in', $accountIds],
+                ['company_id',   '=', $companyId],
+                ['date',         '>=', $from->format('Y-m-d')],
+                ['date',         '<=', $to->format('Y-m-d')],
+            ],
+            ['date', 'balance'],
+            ['limit' => 200000, 'order' => 'date asc, id asc']
+        );
+
+        // Step 3: walk lines forward, snapshot at each month-end
         $monthBuckets = $this->generateMonthEnds($from, $to);
-        $monthSeries  = $this->bucketize($layers, $monthBuckets);
+        $running      = $opening;
+        $li           = 0;
+        $count        = count($lines);
+        $byMonth      = [];
 
-        $byMonth = [];
-        foreach ($monthSeries as $row) {
+        foreach ($monthBuckets as $bucketEnd) {
+            $endStr = $bucketEnd->format('Y-m-d');
+            while ($li < $count && (string)($lines[$li]['date'] ?? '') <= $endStr) {
+                $running += (float)($lines[$li]['balance'] ?? 0);
+                $li++;
+            }
             $byMonth[] = [
-                'date'  => $row['date']->format('Y-m-d'),
-                'month' => $row['date']->format('M Y'),
-                'value' => round($row['value'], 2),
+                'date'  => $bucketEnd->format('Y-m-d'),
+                'month' => $bucketEnd->format('M Y'),
+                'value' => round(max(0.0, $running), 2),
             ];
         }
 
         return ['by_month' => $byMonth];
-    }
-
-    /**
-     * Walk through chronologically-ordered valuation layers and snapshot
-     * the cumulative sum at each bucket boundary. O(N + B) instead of O(N*B).
-     */
-    private function bucketize(array $layers, array $bucketEnds): array
-    {
-        $running = 0.0;
-        $li = 0;
-        $count = count($layers);
-        $out = [];
-
-        foreach ($bucketEnds as $bucketEnd) {
-            $endStr = $bucketEnd->format('Y-m-d') . ' 23:59:59';
-            // Advance through layers up to and including bucketEnd
-            while ($li < $count) {
-                $layerDate = (string)($layers[$li]['create_date'] ?? '');
-                if ($layerDate === '' || $layerDate <= $endStr) {
-                    $running += (float)($layers[$li]['value'] ?? 0);
-                    $li++;
-                } else {
-                    break;
-                }
-            }
-            $out[] = ['date' => $bucketEnd, 'value' => max(0, $running)];
-        }
-
-        return $out;
     }
 
     /** Last day of each month in [from, to], capped at $to. */
@@ -646,25 +570,6 @@ class InventoryService
             $cursor = $cursor->modify('+1 day')->modify('last day of this month');
         }
         // Always include the final $to date so the chart ends "now"
-        if (empty($ends) || end($ends)->format('Y-m-d') !== $to->format('Y-m-d')) {
-            $ends[] = $to;
-        }
-        return $ends;
-    }
-
-    /** Sundays (week ends) in [from, to], capped at $to. */
-    private function generateWeekEnds(DateTimeImmutable $from, DateTimeImmutable $to): array
-    {
-        $ends = [];
-        // Find first Sunday on/after $from
-        $cursor = $from->modify('Sunday this week');
-        if ($cursor < $from) {
-            $cursor = $cursor->modify('+7 days');
-        }
-        for ($i = 0; $i < 260 && $cursor <= $to; $i++) {
-            $ends[] = $cursor;
-            $cursor = $cursor->modify('+7 days');
-        }
         if (empty($ends) || end($ends)->format('Y-m-d') !== $to->format('Y-m-d')) {
             $ends[] = $to;
         }
