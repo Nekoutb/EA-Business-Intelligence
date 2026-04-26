@@ -17,6 +17,7 @@ use App\Http\Controllers\Tax\VATComplianceController;
 use App\Http\Controllers\Tax\VATInvoiceComplianceController;
 use App\Http\Controllers\Admin\AdminAuthController;
 use App\Http\Controllers\Admin\AdminDashboardController;
+use App\Http\Controllers\Admin\AiSettingsController as AdminAiSettingsController;
 use App\Http\Controllers\Admin\TenantController as AdminTenantController;
 use App\Models\Tenant;
 use Illuminate\Support\Facades\Route;
@@ -62,6 +63,10 @@ Route::prefix('admin')->group(function () {
         Route::post('/tenants/{tenant}/settings',    [AdminTenantController::class, 'saveSettings']);
         Route::post('/tenants/{tenant}/suspend',     [AdminTenantController::class, 'suspend']);
         Route::post('/tenants/{tenant}/activate',    [AdminTenantController::class, 'activate']);
+
+        // Platform-wide AI provider configuration (super-admin only).
+        Route::get('/settings/ai',  [AdminAiSettingsController::class, 'show']);
+        Route::post('/settings/ai', [AdminAiSettingsController::class, 'save']);
     });
 });
 

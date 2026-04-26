@@ -16,10 +16,11 @@
     @csrf
 
     @php
+        // AI provider config is platform-global (managed at /admin/settings/ai),
+        // so it's intentionally not exposed on a per-tenant page.
         $groups = [
             'Odoo connection'    => ['ODOO_URL','ODOO_DB','ODOO_USERNAME','ODOO_API_KEY','ODOO_PROTOCOL','REVENUE_SOURCE'],
             'Branding'           => ['APP_BRAND'],
-            'AI advisor'         => ['AI_PROVIDER','AI_MODEL','AI_API_KEY'],
             'Budget benchmarks'  => ['BUDGET_MONTHLY_REVENUE','BUDGET_MONTHLY_OUTFITS','BUDGET_MONTHLY_COGS','BUDGET_MONTHLY_DISCOUNTS','BUDGET_MONTHLY_CUSTOMERS'],
         ];
     @endphp

@@ -79,7 +79,7 @@ class AiInsights extends Component
 
             // If no insights were generated but no error occurred, show a message
             if (empty($this->insights)) {
-                $this->error = 'No insights were generated. This may be due to empty data or an API issue. Please check your Claude API key in Settings.';
+                $this->error = 'No insights were generated. This may be due to empty data or an API issue. Ask your platform administrator to verify the AI provider configuration.';
             }
             logger()->info('AiInsights generate done', ['page' => $this->page, 'count' => count($this->insights), 'error' => $this->error]);
         } catch (\Throwable $e) {

@@ -43,7 +43,7 @@ final class AIAdvisorService
         $model    = (string) ($opts['model'] ?? config_env('AI_MODEL', ''));
         $apiKey   = (string) config_env('AI_API_KEY', '');
         if ($apiKey === '') {
-            throw new \RuntimeException('AI API key not configured. Add it on the Settings page.');
+            throw new \RuntimeException('AI provider not configured by the platform admin yet.');
         }
 
         if ($model === '') {

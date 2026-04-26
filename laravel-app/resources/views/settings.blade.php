@@ -3,7 +3,7 @@
 
 @section('header')
     <h1 class="text-2xl font-bold text-slate-900">Settings</h1>
-    <p class="text-xs text-slate-500 mt-1">Odoo connection, branding and the Claude AI advisor.</p>
+    <p class="text-xs text-slate-500 mt-1">Per-workspace configuration: Odoo connection, branding, budget benchmarks. Secrets are encrypted at rest.</p>
 @endsection
 
 @section('content')
@@ -34,7 +34,9 @@
                     <label class="block text-xs font-medium text-slate-600 mb-1">
                         API Key <span class="text-slate-400 font-normal">(leave blank to keep current)</span>
                     </label>
-                    <input name="ODOO_API_KEY" type="password" placeholder="••••••••••••"
+                    <input name="ODOO_API_KEY" type="password"
+                           placeholder="{{ !empty($values['__has_ODOO_API_KEY']) ? '•••• stored (leave blank to keep)' : '••••••••••••' }}"
+                           autocomplete="off"
                            class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm font-mono">
                 </div>
                 <div>
@@ -106,51 +108,8 @@
             </div>
         </div>
 
-        {{-- ── Claude AI ──────────────────────────────────────────────── --}}
-        <div id="ai" class="bg-gradient-to-br from-violet-50 via-white to-fuchsia-50 rounded-xl border border-violet-200 shadow-sm p-6 relative overflow-hidden">
-            <div class="absolute top-0 right-0 w-32 h-32 bg-gradient-to-br from-violet-400 to-fuchsia-400 opacity-10 rounded-full -mr-16 -mt-16"></div>
-            <div class="flex items-center gap-3 mb-3 relative">
-                <div class="w-10 h-10 rounded-lg bg-gradient-to-br from-violet-500 via-fuchsia-500 to-amber-500 flex items-center justify-center shadow-lg">
-                    <svg class="w-5 h-5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L9.5 8.5 3 11l6.5 2.5L12 20l2.5-6.5L21 11l-6.5-2.5z"/></svg>
-                </div>
-                <div>
-                    <h2 class="text-sm font-semibold text-slate-900">Elite Advisor (AI Insights)</h2>
-                    <p class="text-xs text-slate-500">Powers the right-rail commentary on every data page.</p>
-                </div>
-            </div>
-
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 relative">
-                <div>
-                    <label class="block text-xs font-medium text-slate-600 mb-1">Provider</label>
-                    <select name="AI_PROVIDER" class="w-full border border-violet-200 rounded-lg px-3 py-2 text-sm bg-white">
-                        @foreach (['claude' => 'Anthropic Claude', 'openai' => 'OpenAI'] as $v => $l)
-                          <option value="{{ $v }}" {{ $values['AI_PROVIDER'] === $v ? 'selected' : '' }}>{{ $l }}</option>
-                        @endforeach
-                    </select>
-                </div>
-                <div>
-                    <label class="block text-xs font-medium text-slate-600 mb-1">Model</label>
-                    <input name="AI_MODEL" value="{{ $values['AI_MODEL'] }}" placeholder="claude-sonnet-4-5"
-                           class="w-full border border-violet-200 rounded-lg px-3 py-2 text-sm font-mono">
-                </div>
-                <div class="md:col-span-2">
-                    <label class="block text-xs font-medium text-slate-600 mb-1">
-                        API Key <span class="text-slate-400 font-normal">(leave blank to keep current)</span>
-                    </label>
-                    <input name="AI_API_KEY" type="password"
-                           placeholder="{{ $values['AI_API_KEY'] !== '' ? '•••• stored ••••' : 'sk-ant-api03-...' }}"
-                           class="w-full border border-violet-200 rounded-lg px-3 py-2 text-sm font-mono">
-                </div>
-            </div>
-
-            <div class="mt-4 p-3 bg-white/60 rounded-lg border border-violet-100 text-[11px] text-slate-600 leading-relaxed relative">
-                <strong class="text-slate-800">Where to get a Claude key:</strong><br>
-                Go to <a href="https://console.anthropic.com" target="_blank" class="text-violet-600 font-mono hover:underline">console.anthropic.com</a>,
-                sign up, add at least $5 of prepaid credits under <em>Billing</em>, then create a key under <em>API Keys</em>.
-                Typical cost on this dashboard: <strong>$0.01 – $0.05</strong> per page load (with 5-min cache).
-                Recommended model: <code class="bg-violet-100 px-1 rounded">claude-sonnet-4-5</code>.
-            </div>
-        </div>
+        {{-- Elite Advisor (AI Insights) is configured platform-wide by the super
+             admin. Nothing for tenants to manage here. --}}
 
         <div class="flex justify-end">
             <button class="bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white font-medium px-5 py-2.5 rounded-lg text-sm shadow-lg shadow-indigo-900/20 transition">

@@ -25,8 +25,9 @@
         @php $active = $active ?? ''; @endphp
         <nav class="flex-1 px-3 py-4 space-y-0.5 text-[13px]">
             @foreach ([
-                ['dashboard', '/admin',          'Dashboard',   'M3 12l9-9 9 9M5 10v10h14V10'],
-                ['tenants',   '/admin/tenants',  'Tenants',     'M17 21v-2a4 4 0 0 0-3-3.87M9 21v-2a4 4 0 0 1 3-3.87M12 7a4 4 0 1 1 0 8 4 4 0 0 1 0-8z'],
+                ['dashboard',   '/admin',             'Dashboard',   'M3 12l9-9 9 9M5 10v10h14V10'],
+                ['tenants',     '/admin/tenants',     'Tenants',     'M17 21v-2a4 4 0 0 0-3-3.87M9 21v-2a4 4 0 0 1 3-3.87M12 7a4 4 0 1 1 0 8 4 4 0 0 1 0-8z'],
+                ['ai_settings', '/admin/settings/ai', 'AI Provider', 'M12 2a4 4 0 0 0-4 4v1H7a3 3 0 0 0-3 3v1a3 3 0 0 0 1 2.236V17a3 3 0 0 0 3 3h8a3 3 0 0 0 3-3v-3.764A3 3 0 0 0 20 11v-1a3 3 0 0 0-3-3h-1V6a4 4 0 0 0-4-4zM9 14h.01M15 14h.01'],
             ] as [$slug, $url, $label, $path])
               <a href="{{ $url }}"
                  class="flex items-center gap-2.5 px-3 py-2 rounded-lg transition

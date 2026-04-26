@@ -15,11 +15,14 @@ if (!function_exists('config_env')) {
      * the ported Odoo services.
      *
      * Priority order (multi-tenant aware):
-     *   1. Active tenant's tenant_settings row (when in tenant context)
-     *   2. Session overrides (Settings page live tweaks; legacy single-tenant path)
-     *   3. Laravel config('bi.*') — seeded from .env at boot
-     *   4. Raw env() fallback
-     *   5. Supplied default
+     *   1. AI_* keys — global_settings (super-admin managed) wins always.
+     *      Centralising the LLM provider/key means the operator pays one bill,
+     *      rolls model upgrades atomically, and tenants can never override.
+     *   2. Active tenant's tenant_settings row (Odoo creds, brand, budgets…).
+     *   3. Session overrides (Settings page live tweaks; legacy path).
+     *   4. Laravel config('bi.*') — seeded from .env at boot.
+     *   5. Raw env() fallback.
+     *   6. Supplied default.
      */
     function config_env(string $key, $default = null)
     {
@@ -38,7 +41,22 @@ if (!function_exists('config_env')) {
             'CURRENCY'       => 'bi.currency',
         ];
 
-        // 1. Tenant settings take precedence whenever a tenant is in scope.
+        static $globalKeys = ['AI_PROVIDER', 'AI_MODEL', 'AI_API_KEY'];
+
+        // 1. AI configuration is platform-global and managed by super admins.
+        //    We resolve it from the global_settings table before anything else.
+        if (in_array($key, $globalKeys, true)) {
+            try {
+                $v = \App\Models\GlobalSetting::lookup($key);
+                if ($v !== null && $v !== '') {
+                    return $v;
+                }
+            } catch (\Throwable $e) {
+                // Table may not exist yet during fresh install/migration; fall through.
+            }
+        }
+
+        // 2. Tenant settings take precedence whenever a tenant is in scope.
         if (function_exists('app') && app()->bound(\App\Tenancy\TenantContext::class)) {
             $ctx = app(\App\Tenancy\TenantContext::class);
             if ($ctx->has()) {
@@ -49,7 +67,7 @@ if (!function_exists('config_env')) {
             }
         }
 
-        // 2. Session overrides (legacy path).
+        // 3. Session overrides (legacy path).
         $overrides = session('bi_overrides', []);
         if (array_key_exists($key, $overrides) && $overrides[$key] !== '' && $overrides[$key] !== null) {
             return $overrides[$key];

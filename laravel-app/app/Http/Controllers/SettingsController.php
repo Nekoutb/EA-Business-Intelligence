@@ -2,77 +2,90 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\TenantSetting;
+use App\Tenancy\TenantContext;
 use Illuminate\Http\Request;
 
 /**
- * Settings edit page.  We persist changes to .env so they survive restarts,
- * and also write them to the session so they apply immediately (via
- * config_env() override lookup) without needing a `php artisan config:clear`.
+ * Tenant-scoped Settings page.
+ *
+ * Persists changes into the active tenant's `tenant_settings` row so values
+ * survive restarts AND stay isolated between workspaces. Secrets are
+ * encrypted at rest by the TenantSetting model.
+ *
+ * AI provider configuration is intentionally absent here — it lives in
+ * `global_settings` and is managed by super admins only via /admin/settings/ai.
  */
 class SettingsController extends Controller
 {
-    /** Keys exposed in the UI.  Everything else in .env is left untouched. */
+    /**
+     * Keys exposed in the tenant Settings UI.
+     *
+     * Notably excludes AI_PROVIDER / AI_MODEL / AI_API_KEY: those are
+     * platform-global and managed in the super-admin backend.
+     */
     private const FIELDS = [
         'ODOO_URL', 'ODOO_DB', 'ODOO_USERNAME', 'ODOO_API_KEY', 'ODOO_PROTOCOL',
         'REVENUE_SOURCE', 'APP_BRAND',
-        'AI_PROVIDER', 'AI_MODEL', 'AI_API_KEY',
         'BUDGET_MONTHLY_REVENUE', 'BUDGET_MONTHLY_OUTFITS', 'BUDGET_MONTHLY_COGS',
         'BUDGET_MONTHLY_DISCOUNTS', 'BUDGET_MONTHLY_CUSTOMERS',
     ];
 
     public function show()
     {
+        $tenant = $this->requireTenant();
+
         $values = [];
+        $rows   = $tenant->settings()->whereIn('key', self::FIELDS)->get();
         foreach (self::FIELDS as $k) {
-            $values[$k] = (string) config_env($k, '');
+            $row = $rows->firstWhere('key', $k);
+            // Never echo secrets back into the form.
+            $values[$k] = $row && !TenantSetting::shouldEncrypt($k) ? (string) $row->value : '';
+            $values["__has_{$k}"] = $row !== null && $row->value !== null && $row->value !== '';
         }
+
         return view('settings', ['values' => $values, 'active' => null]);
     }
 
     public function save(Request $request)
     {
-        $overrides = session('bi_overrides', []);
-        $envUpdate = [];
+        $tenant = $this->requireTenant();
 
         foreach (self::FIELDS as $k) {
-            $val = trim((string) $request->input($k, ''));
+            if (!$request->has($k)) continue;
+            $val = trim((string) $request->input($k));
 
-            // Keep existing secrets if the user left the input blank.
-            if (($k === 'ODOO_API_KEY' || $k === 'AI_API_KEY') && $val === '') {
+            // Leave secrets untouched when the field was submitted blank.
+            if (TenantSetting::shouldEncrypt($k) && $val === '') {
                 continue;
             }
 
-            $overrides[$k] = $val;
-            $envUpdate[$k] = $val;
+            $row = TenantSetting::firstOrNew(['tenant_id' => $tenant->id, 'key' => $k]);
+            $row->value = $val;
+            $row->save();
         }
 
-        session(['bi_overrides' => $overrides]);
-        $this->writeEnv($envUpdate);
+        // Drop any cached service responses that may have been computed under
+        // the previous (stale) credentials so the next page load refetches.
         ea_cache_clear();
 
-        return redirect('/settings')->with('flash', [
+        return redirect(tenant_url('/settings'))->with('flash', [
             'type' => 'success',
-            'msg'  => 'Settings saved. Live cache flushed.',
+            'msg'  => 'Settings saved.',
         ]);
     }
 
-    /** Idempotently update keys in the repo .env file. */
-    private function writeEnv(array $updates): void
+    /**
+     * The Settings page only makes sense inside a tenant scope; if the
+     * resolver didn't bind one, fail loudly rather than silently writing
+     * the changes nowhere.
+     */
+    private function requireTenant(): \App\Models\Tenant
     {
-        if (empty($updates)) return;
-        $path = base_path('.env');
-        if (!is_file($path) || !is_writable($path)) return;
-
-        $content = file_get_contents($path);
-        foreach ($updates as $k => $v) {
-            $quoted = str_contains($v, ' ') ? '"' . addslashes($v) . '"' : $v;
-            $line   = $k . '=' . $quoted;
-            if (preg_match("/^{$k}=.*/m", $content)) {
-                $content = preg_replace("/^{$k}=.*/m", $line, $content);
-            } else {
-                $content .= PHP_EOL . $line;
-            }
+        $ctx = app(TenantContext::class);
+        if (!$ctx->has()) {
+            abort(404, 'No tenant in scope for settings.');
         }
-        file_put_contents($path, $content);
+        return $ctx->tenant();
     }
 }

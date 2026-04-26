@@ -19,11 +19,16 @@ use Illuminate\Support\Str;
  */
 class TenantController extends Controller
 {
-    /** Settings keys exposed in the per-tenant settings UI. */
+    /**
+     * Settings keys exposed in the per-tenant settings UI.
+     *
+     * AI provider keys (AI_PROVIDER / AI_MODEL / AI_API_KEY) are intentionally
+     * absent: those are platform-global and live in `global_settings`, edited
+     * via /admin/settings/ai. Each tenant DOES keep its own Odoo connection.
+     */
     private const SETTING_FIELDS = [
         'ODOO_URL', 'ODOO_DB', 'ODOO_USERNAME', 'ODOO_API_KEY', 'ODOO_PROTOCOL',
         'REVENUE_SOURCE', 'APP_BRAND',
-        'AI_PROVIDER', 'AI_MODEL', 'AI_API_KEY',
         'BUDGET_MONTHLY_REVENUE', 'BUDGET_MONTHLY_OUTFITS', 'BUDGET_MONTHLY_COGS',
         'BUDGET_MONTHLY_DISCOUNTS', 'BUDGET_MONTHLY_CUSTOMERS',
     ];

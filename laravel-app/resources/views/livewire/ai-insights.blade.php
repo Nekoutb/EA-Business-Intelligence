@@ -41,14 +41,10 @@
     @if ($unconfigured)
         <div class="rounded-xl border border-dashed border-violet-300 bg-gradient-to-br from-violet-50 to-fuchsia-50 p-4 text-center space-y-2">
             <div class="text-xs text-slate-700">
-                Add your <strong>Claude API key</strong> to unlock live AI commentary.
+                <strong>Elite Advisor</strong> isn't switched on yet for this platform.
             </div>
-            <a href="/settings#ai"
-               class="inline-block text-xs font-medium text-white bg-gradient-to-r from-violet-600 to-fuchsia-600 px-3 py-1.5 rounded-lg shadow hover:shadow-md transition">
-                Configure in Settings →
-            </a>
-            <p class="text-[10px] text-slate-400 leading-tight">
-                Get a key at <span class="font-mono text-slate-600">console.anthropic.com</span>
+            <p class="text-[10px] text-slate-500 leading-tight">
+                Your platform administrator can enable it from the super-admin backend.
             </p>
         </div>
 
