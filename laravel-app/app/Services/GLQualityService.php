@@ -94,6 +94,46 @@ class GLQualityService
             'journal_timing'
         ) ?? null;
 
+        // ── Overall GL Quality score ─────────────────────────────────
+        // Equal-weighted average of four section scores:
+        //   1. Reconciliation section = avg of the 5 sub-recons' accuracy_pct
+        //   2. Description Quality section.overall_score
+        //   3. Manual Entry Review  section.overall_score
+        //   4. Journal Entry Timing section.overall_score
+        //
+        // Each "audit category" gets equal voice; reconciliation aggregates
+        // its 5 sub-checks internally before being weighted alongside the
+        // three audit categories. Threshold: ≥ 96% green, < 96% red.
+        $reconAccs = array_filter([
+            $receivables['accuracy_pct'] ?? null,
+            $payables['accuracy_pct']    ?? null,
+            $inventory['accuracy_pct']   ?? null,
+            $faOriginal['accuracy_pct']  ?? null,
+            $faBook['accuracy_pct']      ?? null,
+        ], fn($v) => $v !== null);
+        $reconAvg = !empty($reconAccs) ? array_sum($reconAccs) / count($reconAccs) : 100.0;
+
+        $sectionScores = [
+            'reconciliation'      => round($reconAvg, 1),
+            'description_quality' => $descriptionQuality['overall_score'] ?? 100.0,
+            'manual_entry_review' => $manualEntryReview['overall_score']  ?? 100.0,
+            'journal_timing'      => $journalTiming['overall_score']       ?? 100.0,
+        ];
+        $overallScore = round(array_sum($sectionScores) / count($sectionScores), 1);
+
+        // ── Monthly trend ────────────────────────────────────────────
+        // For each YTD month-end, compute the AR + AP reconciliation
+        // accuracy. We use only those two because: AR/AP move-line
+        // queries respect a date filter (so the past is reproducible);
+        // Inventory and FA sub-ledgers are 'current-only' (stock.quant /
+        // account.asset don't snapshot historically); and re-running the
+        // full audits per month would balloon the page load.
+        $monthlyTrend = $this->safe(
+            fn() => $this->buildMonthlyTrend($today),
+            $errors,
+            'monthly_trend'
+        ) ?? [];
+
         return [
             'receivables'           => $receivables,
             'payables'              => $payables,
@@ -103,11 +143,51 @@ class GLQualityService
             'description_quality'   => $descriptionQuality,
             'manual_entry_review'   => $manualEntryReview,
             'journal_timing'        => $journalTiming,
+            'overall_score'         => $overallScore,
+            'overall_threshold'     => 96.0,
+            'section_scores'        => $sectionScores,
+            'monthly_trend'         => $monthlyTrend,
             'currency'              => $currency,
             'as_of'                 => $asOfDate->format('Y-m-d'),
             'period_label'          => 'YTD ' . $today->format('Y'),
             'error'                 => empty($errors) ? null : implode(' | ', $errors),
         ];
+    }
+
+    /**
+     * AR + AP reconciliation accuracy at each YTD month-end.
+     * Returns: [{ month: 'Jan 2026', date: '2026-01-31', score: 96.4 }, ...]
+     */
+    private function buildMonthlyTrend(DateTimeImmutable $today): array
+    {
+        $points = [];
+        $localErrors = [];
+        $cursor = $today->modify('first day of January')->modify('last day of this month');
+        for ($i = 0; $i < 12 && $cursor <= $today; $i++) {
+            // For the current month, use today (not month-end which may be future)
+            $asOf = ($cursor > $today) ? $today : $cursor;
+
+            $ar = $this->safe(
+                fn() => $this->reconcileReceivables($asOf)['accuracy_pct'] ?? null,
+                $localErrors, 'trend_ar_' . $asOf->format('Y_m')
+            );
+            $ap = $this->safe(
+                fn() => $this->reconcilePayables($asOf)['accuracy_pct'] ?? null,
+                $localErrors, 'trend_ap_' . $asOf->format('Y_m')
+            );
+
+            $vals = array_filter([$ar, $ap], fn($v) => $v !== null);
+            $score = !empty($vals) ? round(array_sum($vals) / count($vals), 1) : null;
+
+            $points[] = [
+                'month' => $asOf->format('M Y'),
+                'date'  => $asOf->format('Y-m-d'),
+                'score' => $score,
+            ];
+
+            $cursor = $cursor->modify('+1 day')->modify('last day of this month');
+        }
+        return $points;
     }
 
     /**

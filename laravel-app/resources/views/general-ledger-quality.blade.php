@@ -31,6 +31,79 @@
         </div>
     @endif
 
+    {{-- ───────── Overall GL Quality (hero panel + trend) ───────── --}}
+    @php
+        $overall      = (float)($data['overall_score']     ?? 0);
+        $threshold    = (float)($data['overall_threshold'] ?? 96.0);
+        $sectionScores = $data['section_scores']           ?? [];
+        $trend        = $data['monthly_trend']             ?? [];
+        $isGreen      = $overall >= $threshold;
+        $heroBg       = $isGreen ? 'from-emerald-50 to-emerald-100/40' : 'from-rose-50 to-rose-100/40';
+        $heroRing     = $isGreen ? 'ring-emerald-300' : 'ring-rose-300';
+        $heroText     = $isGreen ? 'text-emerald-700' : 'text-rose-700';
+        $heroIcon     = $isGreen ? 'M5 13l4 4L19 7' : 'M12 9v2m0 4h.01M5.07 19h13.86c1.54 0 2.5-1.67 1.73-3L13.73 4a2 2 0 00-3.46 0L3.34 16c-.77 1.33.19 3 1.73 3z';
+    @endphp
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+        {{-- Hero: overall score --}}
+        <section class="bg-gradient-to-br {{ $heroBg }} rounded-xl border border-slate-200 ring-1 {{ $heroRing }} shadow-sm overflow-hidden">
+            <div class="px-6 py-5">
+                <div class="flex items-start justify-between">
+                    <div>
+                        <h3 class="text-base font-semibold text-slate-900">Overall GL Quality Score</h3>
+                        <p class="text-xs text-slate-500 mt-0.5">
+                            Equal-weighted average of four sections · threshold {{ number_format($threshold, 0) }}%
+                        </p>
+                    </div>
+                    <div class="flex items-center gap-2 {{ $heroText }}">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="{{ $heroIcon }}"/>
+                        </svg>
+                        <span class="text-xs font-semibold uppercase tracking-wide">{{ $isGreen ? 'Above threshold' : 'Below threshold' }}</span>
+                    </div>
+                </div>
+                <div class="mt-3 flex items-baseline gap-3">
+                    <span class="text-5xl font-extrabold {{ $heroText }} leading-none">{{ number_format($overall, 1) }}%</span>
+                </div>
+
+                @if (!empty($sectionScores))
+                    <dl class="mt-5 grid grid-cols-2 gap-x-5 gap-y-2 text-xs">
+                        <div class="flex items-baseline justify-between border-b border-slate-200/70 pb-1">
+                            <dt class="text-slate-600">Reconciliation (avg of 5)</dt>
+                            <dd class="text-slate-900 font-semibold">{{ number_format($sectionScores['reconciliation'] ?? 0, 1) }}%</dd>
+                        </div>
+                        <div class="flex items-baseline justify-between border-b border-slate-200/70 pb-1">
+                            <dt class="text-slate-600">Description Quality</dt>
+                            <dd class="text-slate-900 font-semibold">{{ number_format($sectionScores['description_quality'] ?? 0, 1) }}%</dd>
+                        </div>
+                        <div class="flex items-baseline justify-between">
+                            <dt class="text-slate-600">Manual Entry Reviews</dt>
+                            <dd class="text-slate-900 font-semibold">{{ number_format($sectionScores['manual_entry_review'] ?? 0, 1) }}%</dd>
+                        </div>
+                        <div class="flex items-baseline justify-between">
+                            <dt class="text-slate-600">Journal Entry Timing</dt>
+                            <dd class="text-slate-900 font-semibold">{{ number_format($sectionScores['journal_timing'] ?? 0, 1) }}%</dd>
+                        </div>
+                    </dl>
+                @endif
+            </div>
+        </section>
+
+        {{-- Monthly trend --}}
+        <section class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+            <header class="px-5 py-4 border-b border-slate-200 bg-gradient-to-r from-slate-50 to-white">
+                <h3 class="text-base font-semibold text-slate-900">Monthly Trend</h3>
+                <p class="text-xs text-slate-500 mt-0.5">
+                    AR + AP reconciliation accuracy at each YTD month-end ·
+                    <span class="text-slate-400 italic">historical inventory / fixed-assets sub-ledgers are current-only and excluded from the trend</span>
+                </p>
+            </header>
+            <div class="p-4">
+                <canvas id="glQualityTrend" height="80"></canvas>
+            </div>
+        </section>
+    </div>
+
     @php
         $asOfDate  = $data['as_of'] ?? null;
         $asOfLabel = $asOfDate ? \DateTime::createFromFormat('Y-m-d', $asOfDate)->format('j M Y') : '';
@@ -476,11 +549,14 @@
                             <ul class="space-y-1.5">
                                 @foreach (($cat['checks'] ?? []) as $chk)
                                     @php
-                                        $passed = (bool)($chk['passed'] ?? false);
-                                        $count  = (int)($chk['count']  ?? 0);
+                                        $passed        = (bool)($chk['passed'] ?? false);
+                                        $count         = (int)($chk['count']  ?? 0);
+                                        $notApplicable = !empty($chk['not_applicable']);
                                     @endphp
                                     <li class="flex items-start gap-3 text-sm">
-                                        @if ($passed)
+                                        @if ($notApplicable)
+                                            <span class="inline-flex items-center justify-center w-5 h-5 mt-0.5 flex-shrink-0 rounded-full bg-slate-200 text-slate-500 text-[9px] font-bold tracking-wider">N/A</span>
+                                        @elseif ($passed)
                                             <svg class="w-5 h-5 mt-0.5 flex-shrink-0 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/>
                                             </svg>
@@ -495,8 +571,12 @@
                                                     <span class="text-slate-400 font-mono text-xs mr-1">{{ $chk['no'] ?? '' }}.</span>
                                                     {{ $chk['name'] ?? '' }}
                                                 </span>
-                                                <span class="text-xs whitespace-nowrap {{ $passed ? 'text-slate-500' : 'text-rose-700 font-medium' }}">
-                                                    {{ number_format($count) }} {{ $count === 1 ? 'line' : 'lines' }}
+                                                <span class="text-xs whitespace-nowrap {{ $notApplicable ? 'text-slate-400 italic' : ($passed ? 'text-slate-500' : 'text-rose-700 font-medium') }}">
+                                                    @if ($notApplicable)
+                                                        Not applicable
+                                                    @else
+                                                        {{ number_format($count) }} {{ $count === 1 ? 'line' : 'lines' }}
+                                                    @endif
                                                 </span>
                                             </div>
                                             <p class="text-[11px] text-slate-500 mt-0.5">{{ $chk['description'] ?? '' }}</p>
@@ -599,8 +679,13 @@
                             $count  = (int)($chk['count']  ?? 0);
                             $note   = $chk['note']         ?? null;
                         @endphp
+                        @php
+                            $notApplicable = !empty($chk['not_applicable']);
+                        @endphp
                         <li class="flex items-start gap-3 text-sm border-b border-slate-100 pb-2 last:border-b-0">
-                            @if ($passed)
+                            @if ($notApplicable)
+                                <span class="inline-flex items-center justify-center w-5 h-5 mt-0.5 flex-shrink-0 rounded-full bg-slate-200 text-slate-500 text-[9px] font-bold tracking-wider">N/A</span>
+                            @elseif ($passed)
                                 <svg class="w-5 h-5 mt-0.5 flex-shrink-0 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/>
                                 </svg>
@@ -615,9 +700,11 @@
                                         <span class="text-slate-400 font-mono text-xs mr-1">{{ $chk['no'] ?? '' }}.</span>
                                         {{ $chk['name'] ?? '' }}
                                     </span>
-                                    <span class="text-xs whitespace-nowrap {{ $passed ? 'text-slate-500' : 'text-rose-700 font-medium' }}">
-                                        @if ($note)
+                                    <span class="text-xs whitespace-nowrap {{ $notApplicable ? 'text-slate-400 italic' : ($passed ? 'text-slate-500' : 'text-rose-700 font-medium') }}">
+                                        @if ($note ?? null)
                                             <span class="text-slate-500 italic">{{ $note }}</span>
+                                        @elseif ($notApplicable)
+                                            Not applicable
                                         @else
                                             {{ number_format($count) }} {{ $count === 1 ? 'line' : 'lines' }}
                                         @endif
@@ -758,3 +845,82 @@
     @endif
 
 @endsection
+
+@push('scripts')
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const trendData = @json($data['monthly_trend'] ?? []);
+    const threshold = @json($data['overall_threshold'] ?? 96.0);
+    const canvas = document.getElementById('glQualityTrend');
+    if (!canvas || !trendData.length) {
+        if (canvas) {
+            canvas.parentElement.innerHTML =
+                '<p class="text-center text-slate-500 py-6 text-sm">No trend data yet — at least one month-end must be in the past.</p>';
+        }
+        return;
+    }
+
+    const labels = trendData.map(p => p.month);
+    const values = trendData.map(p => p.score);
+
+    new Chart(canvas.getContext('2d'), {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [
+                {
+                    label: 'Reconciliation accuracy',
+                    data: values,
+                    borderColor: 'rgb(79, 70, 229)',
+                    backgroundColor: 'rgba(79, 70, 229, 0.1)',
+                    borderWidth: 2,
+                    fill: true,
+                    tension: 0.3,
+                    pointBackgroundColor: 'rgb(79, 70, 229)',
+                    pointBorderColor: 'white',
+                    pointBorderWidth: 2,
+                    pointRadius: 4,
+                    pointHoverRadius: 6,
+                },
+                {
+                    // Threshold line (96% by default)
+                    label: 'Threshold (' + threshold + '%)',
+                    data: labels.map(() => threshold),
+                    borderColor: 'rgba(16, 185, 129, 0.6)',
+                    borderDash: [4, 4],
+                    borderWidth: 1.5,
+                    pointRadius: 0,
+                    fill: false,
+                    tension: 0,
+                },
+            ],
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            plugins: {
+                legend: { display: true, position: 'top', labels: { boxWidth: 12, font: { size: 11 } } },
+                tooltip: {
+                    backgroundColor: 'rgba(0, 0, 0, 0.85)',
+                    padding: 10,
+                    titleFont: { size: 12, weight: 'bold' },
+                    bodyFont: { size: 11 },
+                    callbacks: {
+                        label: ctx => ctx.dataset.label + ': ' + (ctx.parsed.y == null ? '—' : ctx.parsed.y.toFixed(1) + '%'),
+                    }
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: false,
+                    suggestedMin: Math.max(0, Math.min(...values.filter(v => v != null), threshold) - 5),
+                    suggestedMax: 100,
+                    ticks: { callback: v => v + '%' },
+                }
+            }
+        }
+    });
+});
+</script>
+@endpush

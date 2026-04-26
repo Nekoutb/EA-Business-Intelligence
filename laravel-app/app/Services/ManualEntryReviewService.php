@@ -54,9 +54,15 @@ class ManualEntryReviewService
             $this->check8ProvisionsCorrelation($lines),
         ];
 
-        $passed = count(array_filter($checks, fn($c) => $c['passed']));
-        $total  = count($checks);
-        $score  = $total > 0 ? round($passed / $total * 100, 1) : 100.0;
+        // Score = passed / applicable. N/A checks (e.g. profit-allocation
+        // before 30 June, interest-expense when no loans) are excluded
+        // from BOTH the numerator and the denominator so they don't drag
+        // the percentage down or up artificially.
+        $applicable = array_values(array_filter($checks, fn($c) => empty($c['not_applicable'])));
+        $passed     = count(array_filter($applicable, fn($c) => $c['passed']));
+        $total      = count($checks);
+        $appCount   = count($applicable);
+        $score      = $appCount > 0 ? round($passed / $appCount * 100, 1) : 100.0;
 
         $report = $this->buildReport($lines, $checks);
 
@@ -67,17 +73,18 @@ class ManualEntryReviewService
         unset($c);
 
         return [
-            'overall_score'  => $score,
-            'checks_passed'  => $passed,
-            'checks_total'   => $total,
-            'lines_reviewed' => count($lines),
-            'lines_capped'   => count($lines) >= self::FETCH_LIMIT,
-            'fetch_limit'    => self::FETCH_LIMIT,
-            'checks'         => $checks,
-            'report'         => $report,
-            'report_capped'  => count($report) >= self::REPORT_LIMIT,
-            'report_limit'   => self::REPORT_LIMIT,
-            'error'          => empty($errors) ? null : implode(' | ', $errors),
+            'overall_score'    => $score,
+            'checks_passed'    => $passed,
+            'checks_total'     => $total,
+            'checks_applicable'=> $appCount,
+            'lines_reviewed'   => count($lines),
+            'lines_capped'     => count($lines) >= self::FETCH_LIMIT,
+            'fetch_limit'      => self::FETCH_LIMIT,
+            'checks'           => $checks,
+            'report'           => $report,
+            'report_capped'    => count($report) >= self::REPORT_LIMIT,
+            'report_limit'     => self::REPORT_LIMIT,
+            'error'            => empty($errors) ? null : implode(' | ', $errors),
         ];
     }
 
@@ -300,13 +307,14 @@ class ManualEntryReviewService
 
         if (!$isPastDeadline) {
             return [
-                'no'           => '6',
-                'name'         => 'Profit allocation entry by 30 June',
-                'description'  => 'At least one manual entry on accounts 11/12/13 (reserves, carry-forward, net result) should be posted by 30 June to record the prior-year result allocation.',
-                'passed'       => true,
-                'count'        => 0,
-                '_flagged_ids' => [],
-                'note'         => 'Pending — deadline is 30 June ' . $today->format('Y') . '.',
+                'no'             => '6',
+                'name'           => 'Profit allocation entry by 30 June',
+                'description'    => 'At least one manual entry on accounts 11/12/13 (reserves, carry-forward, net result) should be posted by 30 June to record the prior-year result allocation.',
+                'passed'         => true,
+                'count'          => 0,
+                '_flagged_ids'   => [],
+                'note'           => 'Pending — deadline is 30 June ' . $today->format('Y') . '.',
+                'not_applicable' => true,
             ];
         }
 
@@ -358,13 +366,14 @@ class ManualEntryReviewService
         $hasLoans = abs($loanBalance) > 0.01;
         if (!$hasLoans) {
             return [
-                'no'           => '7',
-                'name'         => 'Interest expense on existing loans',
-                'description'  => 'If account 16X (loans) carries a balance, manual interest-expense entries should exist on 67X.',
-                'passed'       => true,
-                'count'        => 0,
-                '_flagged_ids' => [],
-                'note'         => 'No outstanding loan balance on 16X — check not applicable.',
+                'no'             => '7',
+                'name'           => 'Interest expense on existing loans',
+                'description'    => 'If account 16X (loans) carries a balance, manual interest-expense entries should exist on 67X.',
+                'passed'         => true,
+                'count'          => 0,
+                '_flagged_ids'   => [],
+                'note'           => 'No outstanding loan balance on 16X — check not applicable.',
+                'not_applicable' => true,
             ];
         }
         if ($hasManualInterest) {
@@ -390,20 +399,32 @@ class ManualEntryReviewService
 
     private function check8ProvisionsCorrelation(array $lines): array
     {
+        // OHADA provision-account ranges. Same correlation rule for all of them:
+        //   debit on the provision account → expects a credit on 79X (reversal income)
+        //   credit on the provision account → expects a debit on 69X (provision expense)
+        static $provisionPrefixes = ['19', '39', '49', '59'];
+
         // Index lines by move
         $byMove = [];
         foreach ($lines as $l) {
             if ($l['move_id'] !== null) $byMove[$l['move_id']][] = $l;
         }
 
+        $isProvision = function (string $code) use ($provisionPrefixes): bool {
+            foreach ($provisionPrefixes as $p) {
+                if (str_starts_with($code, $p)) return true;
+            }
+            return false;
+        };
+
         $flagged = [];
         foreach ($byMove as $moveId => $moveLines) {
-            // Only consider moves that touch 19X
-            $has19 = false;
+            // Only consider moves that touch any provision account
+            $hasProvision = false;
             foreach ($moveLines as $ml) {
-                if (str_starts_with($ml['account_code'], '19')) { $has19 = true; break; }
+                if ($isProvision($ml['account_code'])) { $hasProvision = true; break; }
             }
-            if (!$has19) continue;
+            if (!$hasProvision) continue;
 
             // Does the move contain the expected counter-leg(s)?
             $has69Debit  = false;
@@ -414,9 +435,9 @@ class ManualEntryReviewService
                 if (str_starts_with($code, '79') && $ml['credit'] > 0.01) $has79Credit = true;
             }
 
-            // Inspect each 19X line and flag if its required counter-leg is missing
+            // Inspect each provision line and flag if its counter-leg is missing
             foreach ($moveLines as $ml) {
-                if (!str_starts_with($ml['account_code'], '19')) continue;
+                if (!$isProvision($ml['account_code'])) continue;
                 if ($ml['debit']  > 0.01 && !$has79Credit) $flagged[] = $ml['id']; // ↓ provision needs 79 income
                 if ($ml['credit'] > 0.01 && !$has69Debit)  $flagged[] = $ml['id']; // ↑ provision needs 69 expense
             }
@@ -424,8 +445,8 @@ class ManualEntryReviewService
 
         return [
             'no'           => '8',
-            'name'         => 'Provisions correlation (19 ↔ 69 ↔ 79)',
-            'description'  => 'Every move touching 19X provisions must pair: debits on 19X with credits on 79X (reversal); credits on 19X with debits on 69X (provision charge).',
+            'name'         => 'Provisions correlation (19 / 39 / 49 / 59 ↔ 69 ↔ 79)',
+            'description'  => 'Every move touching a provision account (19, 39, 49, 59) must pair: debits with credits on 79X (reversal income); credits with debits on 69X (provision charge).',
             'passed'       => empty($flagged),
             'count'        => count($flagged),
             '_flagged_ids' => $flagged,

@@ -49,9 +49,13 @@ class JournalTimingService
             $this->check2WeekendOrHoliday($lines),
         ];
 
-        $passed = count(array_filter($checks, fn($c) => $c['passed']));
-        $total  = count($checks);
-        $score  = $total > 0 ? round($passed / $total * 100, 1) : 100.0;
+        // Score = passed / applicable (N/A checks excluded — no N/A in this
+        // service today, but consistent with the rest of GL Quality).
+        $applicable = array_values(array_filter($checks, fn($c) => empty($c['not_applicable'])));
+        $passed     = count(array_filter($applicable, fn($c) => $c['passed']));
+        $total      = count($checks);
+        $appCount   = count($applicable);
+        $score      = $appCount > 0 ? round($passed / $appCount * 100, 1) : 100.0;
 
         $report = $this->buildReport($lines, $checks);
 
@@ -61,17 +65,18 @@ class JournalTimingService
         unset($c);
 
         return [
-            'overall_score'  => $score,
-            'checks_passed'  => $passed,
-            'checks_total'   => $total,
-            'lines_reviewed' => count($lines),
-            'lines_capped'   => count($lines) >= self::FETCH_LIMIT,
-            'fetch_limit'    => self::FETCH_LIMIT,
-            'checks'         => $checks,
-            'report'         => $report,
-            'report_capped'  => count($report) >= self::REPORT_LIMIT,
-            'report_limit'   => self::REPORT_LIMIT,
-            'error'          => empty($errors) ? null : implode(' | ', $errors),
+            'overall_score'    => $score,
+            'checks_passed'    => $passed,
+            'checks_total'     => $total,
+            'checks_applicable'=> $appCount,
+            'lines_reviewed'   => count($lines),
+            'lines_capped'     => count($lines) >= self::FETCH_LIMIT,
+            'fetch_limit'      => self::FETCH_LIMIT,
+            'checks'           => $checks,
+            'report'           => $report,
+            'report_capped'    => count($report) >= self::REPORT_LIMIT,
+            'report_limit'     => self::REPORT_LIMIT,
+            'error'            => empty($errors) ? null : implode(' | ', $errors),
         ];
     }
 

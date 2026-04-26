@@ -121,16 +121,18 @@ class DescriptionQualityService
             ],
         ];
 
-        // Flatten + score
+        // Flatten + score (N/A checks are excluded from both numerator and denominator)
         $allChecks = [];
         foreach ($categories as $cat) {
             foreach ($cat['checks'] as $c) {
                 $allChecks[] = $c;
             }
         }
-        $passed = count(array_filter($allChecks, fn($c) => $c['passed']));
-        $total  = count($allChecks);
-        $score  = $total > 0 ? round($passed / $total * 100, 1) : 100.0;
+        $applicable = array_values(array_filter($allChecks, fn($c) => empty($c['not_applicable'])));
+        $passed     = count(array_filter($applicable, fn($c) => $c['passed']));
+        $total      = count($allChecks);
+        $appCount   = count($applicable);
+        $score      = $appCount > 0 ? round($passed / $appCount * 100, 1) : 100.0;
 
         // Build the downloadable report BEFORE stripping the internal
         // _flagged_ids accumulators.
@@ -146,18 +148,19 @@ class DescriptionQualityService
         unset($cat);
 
         return [
-            'overall_score'   => $score,
-            'checks_passed'   => $passed,
-            'checks_total'    => $total,
-            'lines_reviewed'  => count($lines),
-            'lines_capped'    => count($lines) >= self::FETCH_LIMIT,
-            'fetch_limit'     => self::FETCH_LIMIT,
-            'exclusions'      => $exclusions,
-            'categories'      => $categories,
-            'report'          => $report,
-            'report_capped'   => count($report) >= self::REPORT_LIMIT,
-            'report_limit'    => self::REPORT_LIMIT,
-            'error'           => empty($errors) ? null : implode(' | ', $errors),
+            'overall_score'    => $score,
+            'checks_passed'    => $passed,
+            'checks_total'     => $total,
+            'checks_applicable'=> $appCount,
+            'lines_reviewed'   => count($lines),
+            'lines_capped'     => count($lines) >= self::FETCH_LIMIT,
+            'fetch_limit'      => self::FETCH_LIMIT,
+            'exclusions'       => $exclusions,
+            'categories'       => $categories,
+            'report'           => $report,
+            'report_capped'    => count($report) >= self::REPORT_LIMIT,
+            'report_limit'     => self::REPORT_LIMIT,
+            'error'            => empty($errors) ? null : implode(' | ', $errors),
         ];
     }
 
