@@ -187,7 +187,29 @@ return [
             'status'  => 'live',
         ],
 
-        // ── Tax Compliance (ported from EA Tax Compliance) ───────────────
+        // ── Tax Compliance ───────────────────────────────────────────────
+        [
+            'key'     => 'tax_dashboard',
+            'service' => 'tax_compliance',
+            'label'   => 'Tax Dashboard',
+            'url'     => '/tax-dashboard',
+            'active'  => 'tax_dashboard',
+            'icon'    => 'M3 3v18h18M7 14l4-4 3 3 5-5',
+            'default' => true,
+            'core'    => false,
+            'status'  => 'live',
+        ],
+        [
+            'key'     => 'income_tax_compliance',
+            'service' => 'tax_compliance',
+            'label'   => 'Income Tax Compliance',
+            'url'     => '/income-tax-compliance',
+            'active'  => 'income_tax_compliance',
+            'icon'    => 'M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z',
+            'default' => true,
+            'core'    => false,
+            'status'  => 'live',
+        ],
         [
             'key'     => 'vat_compliance',
             'service' => 'tax_compliance',
@@ -206,17 +228,6 @@ return [
             'url'     => '/vat-invoice-compliance',
             'active'  => 'vat_invoice_compliance',
             'icon'    => 'M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8zM14 2v6h6M9 13h6M9 17h6',
-            'default' => true,
-            'core'    => false,
-            'status'  => 'live',
-        ],
-        [
-            'key'     => 'tax_calendar',
-            'service' => 'tax_compliance',
-            'label'   => 'Tax Calendar',
-            'url'     => '/tax-calendar',
-            'active'  => 'tax_calendar',
-            'icon'    => 'M8 2v4M16 2v4M3 10h18M5 6h14a2 2 0 012 2v12a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2z',
             'default' => true,
             'core'    => false,
             'status'  => 'live',

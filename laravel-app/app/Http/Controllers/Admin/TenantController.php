@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\AuditLog;
+use App\Models\Industry;
 use App\Models\Tenant;
 use App\Models\TenantModule;
 use App\Models\TenantService;
@@ -58,7 +59,12 @@ class TenantController extends Controller
 
     public function create()
     {
-        $step = request('step', 1);
+        // Cast to int explicitly. request('step', 1) returns the *string* '2'
+        // when the URL has ?step=2, while the strict === comparisons below
+        // expect integers. Without the cast, no branch matches and the
+        // fallback redirect at the end of this method fires on every step
+        // > 1, producing ERR_TOO_MANY_REDIRECTS.
+        $step = (int) request('step', 1);
         $wizardData = session('wizard_data', []);
         $services = config('modules.services', []);
         $modules = config('modules.modules', []);
@@ -121,10 +127,11 @@ class TenantController extends Controller
             // Validate current step and save to session
             if ($step === 1) {
                 $data = $request->validate([
-                    'slug'  => ['required', 'string', 'max:64', 'alpha_dash', 'unique:tenants,slug'],
-                    'name'  => ['required', 'string', 'max:191'],
-                    'brand' => ['nullable', 'string', 'max:191'],
-                    'plan'  => ['nullable', 'string', 'max:32'],
+                    'slug'        => ['required', 'string', 'max:64', 'alpha_dash', 'unique:tenants,slug'],
+                    'name'        => ['required', 'string', 'max:191'],
+                    'brand'       => ['nullable', 'string', 'max:191'],
+                    'plan'        => ['nullable', 'string', 'max:32'],
+                    'industry_id' => ['required', 'integer', 'exists:industries,id'],
                 ]);
                 $wizardData = $request->session()->get('wizard_data', []);
                 $wizardData['workspace'] = $data;
@@ -212,41 +219,68 @@ class TenantController extends Controller
         }
 
         $tenant = Tenant::create([
-            'slug'   => Str::lower($data['slug']),
-            'name'   => $data['name'],
-            'brand'  => $data['brand'] ?? $data['name'],
-            'plan'   => $data['plan'] ?? 'standard',
-            'status' => Tenant::STATUS_ACTIVE,
+            'slug'        => Str::lower($data['slug']),
+            'name'        => $data['name'],
+            'brand'       => $data['brand'] ?? $data['name'],
+            'plan'        => $data['plan'] ?? 'standard',
+            'status'      => Tenant::STATUS_ACTIVE,
+            'industry_id' => $data['industry_id'] ?? null,
         ]);
 
-        // Handle services - enable all modules in selected services
-        $selectedServiceKeys = collect($services)->flip();
-        foreach (config('modules.services', []) as $s) {
-            if ($selectedServiceKeys->has($s['key'])) {
-                TenantService::create([
-                    'tenant_id'  => $tenant->id,
-                    'service_key' => $s['key'],
-                    'enabled'    => true,
-                    'enabled_at' => now(),
-                    'enabled_by' => $request->attributes->get('admin_user')?->id,
-                ]);
-            }
+        $adminUserId = $request->attributes->get('admin_user')?->id;
+
+        // Apply industry defaults if industry is specified
+        if ($tenant->industry_id) {
+            $industry = $tenant->industry;
+
+            // Get industry's module bundle
+            $bundle = config("industries.bundles.{$industry->key}", []);
+            $bundleModules = $bundle['modules'] ?? [];
+
+            // Get industry's service bundle
+            $bundleServices = $bundle['services'] ?? [];
+            $selectedServiceKeys = collect($bundleServices)->flip();
+        } else {
+            // Fallback: use wizard-provided services (for backward compatibility)
+            $selectedServiceKeys = collect($services)->flip();
+            $bundleModules = [];
         }
 
-        // Create module records: enable if service selected or core module
-        $selectedModules = collect($data['modules'] ?? [])->flip();
-        $serviceModules = collect(config('modules.modules', []))
-            ->filter(fn ($m) => $selectedServiceKeys->has($m['service'] ?? null))
-            ->pluck('key');
+        // Handle services
+        foreach (config('modules.services', []) as $s) {
+            $enabled = $selectedServiceKeys->has($s['key']);
+            TenantService::create([
+                'tenant_id'   => $tenant->id,
+                'service_key' => $s['key'],
+                'enabled'     => $enabled,
+                'enabled_at'  => $enabled ? now() : null,
+                'enabled_by'  => $adminUserId,
+            ]);
+        }
 
+        // Create module records with industry defaults
         foreach (config('modules.modules', []) as $m) {
-            $enabled = $serviceModules->contains($m['key']) || !empty($m['core']) || $selectedModules->has($m['key']);
+            $moduleKey = $m['key'];
+
+            // Determine if module is enabled
+            if ($bundleModules) {
+                // Use industry bundle defaults
+                $bundleDefault = $bundleModules[$moduleKey]['default'] ?? false;
+                $enabled = $bundleDefault || !empty($m['core']);
+            } else {
+                // Fallback to registry defaults
+                $serviceModules = collect(config('modules.modules', []))
+                    ->filter(fn ($mod) => $selectedServiceKeys->has($mod['service'] ?? null))
+                    ->pluck('key');
+                $enabled = $serviceModules->contains($moduleKey) || !empty($m['core']);
+            }
+
             TenantModule::create([
-                'tenant_id'  => $tenant->id,
-                'module_key' => $m['key'],
-                'enabled'    => $enabled,
-                'enabled_at' => $enabled ? now() : null,
-                'enabled_by' => $request->attributes->get('admin_user')?->id,
+                'tenant_id'   => $tenant->id,
+                'module_key'  => $moduleKey,
+                'enabled'     => $enabled,
+                'enabled_at'  => $enabled ? now() : null,
+                'enabled_by'  => $adminUserId,
             ]);
         }
 

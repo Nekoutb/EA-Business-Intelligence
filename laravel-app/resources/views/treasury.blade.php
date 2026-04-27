@@ -23,8 +23,126 @@
     @endif
 
     @php
-        $ccy = $summary['currency'] ?? 'USD';
+        $ccy = $summary['currency'] ?? ($cashflowDirect['currency'] ?? 'USD');
     @endphp
+
+    {{-- ════════════════════════════════════════════════════════════════
+         DIRECT CASH FLOW STATEMENT (GL-sourced, not P&L proxy)
+         Equation:  Opening + Collections − Σ(outflows) − Other = Closing
+       ════════════════════════════════════════════════════════════════ --}}
+    @if (!empty($cashflowDirect))
+        @php
+            $cf       = $cashflowDirect;
+            $year     = $cf['period']['year'] ?? date('Y');
+            $openAt   = $cf['period']['opening_as_of'] ?? '';
+            $closeAt  = $cf['period']['closing_as_of'] ?? '';
+            $netMove  = ($cf['closing_balance'] ?? 0) - ($cf['opening_balance'] ?? 0);
+            $otherAbs = abs($cf['other'] ?? 0);
+            $totalIn  = (float) ($cf['collections'] ?? 0);
+            $totalOut = (float) ($cf['total_outflows'] ?? 0);
+        @endphp
+        <div class="mb-7">
+            <div class="flex items-center justify-between mb-3">
+                <div class="flex items-center gap-2">
+                    <div class="w-1 h-4 rounded bg-brand-400"></div>
+                    <h2 class="text-xs font-semibold uppercase tracking-wider text-[#5a6a70]">Direct Cash Flow Statement · {{ $year }} YTD</h2>
+                </div>
+                <span class="text-[10px] text-[#a09d95]">From GL movement on cash &amp; bank accounts</span>
+            </div>
+
+            <div class="section-card p-0 overflow-hidden">
+                {{-- Headline strip: net change at-a-glance --}}
+                <div class="grid grid-cols-2 lg:grid-cols-4 border-b border-[#e8e4de] bg-[#faf8f3]">
+                    <div class="p-4 border-r border-[#e8e4de]">
+                        <div class="text-[10px] uppercase tracking-wider text-[#8a8578] font-medium">Opening</div>
+                        <div class="text-lg font-bold text-[#1e3d44] mt-1 tabular-nums">{{ ea_money_short((float)($cf['opening_balance'] ?? 0), $ccy) }}</div>
+                        <div class="text-[10px] text-[#a09d95] mt-0.5">as of {{ $openAt }}</div>
+                    </div>
+                    <div class="p-4 border-r border-[#e8e4de]">
+                        <div class="text-[10px] uppercase tracking-wider text-[#8a8578] font-medium">Closing</div>
+                        <div class="text-lg font-bold text-[#1e3d44] mt-1 tabular-nums">{{ ea_money_short((float)($cf['closing_balance'] ?? 0), $ccy) }}</div>
+                        <div class="text-[10px] text-[#a09d95] mt-0.5">as of {{ $closeAt }}</div>
+                    </div>
+                    <div class="p-4 border-r border-[#e8e4de]">
+                        <div class="text-[10px] uppercase tracking-wider text-[#8a8578] font-medium">Net Movement</div>
+                        <div class="text-lg font-bold {{ $netMove >= 0 ? 'text-sage-600' : 'text-coral-600' }} mt-1 tabular-nums">
+                            {{ ($netMove >= 0 ? '+' : '−') }}{{ ea_money_short(abs($netMove), $ccy) }}
+                        </div>
+                        <div class="text-[10px] text-[#a09d95] mt-0.5">closing − opening</div>
+                    </div>
+                    <div class="p-4">
+                        <div class="text-[10px] uppercase tracking-wider text-[#8a8578] font-medium">Net Cash Flow</div>
+                        <div class="text-lg font-bold text-[#1e3d44] mt-1 tabular-nums">{{ ea_money_short($totalIn - $totalOut - ($cf['other'] ?? 0), $ccy) }}</div>
+                        <div class="text-[10px] text-[#a09d95] mt-0.5">collections − outflows − other</div>
+                    </div>
+                </div>
+
+                {{-- Statement table --}}
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm">
+                        <thead>
+                            <tr class="text-left text-[10px] text-[#8a8578] uppercase tracking-wider border-b border-[#e8e4de] bg-[#fdfcf8]">
+                                <th class="px-5 py-3 font-semibold">Description</th>
+                                <th class="px-5 py-3 text-right font-semibold w-48">Amount ({{ $ccy }})</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {{-- Opening (subtotal) --}}
+                            <tr class="bg-brand-50/40 border-b border-[#e8e4de]">
+                                <td class="px-5 py-3 font-semibold text-[#1e3d44]">Opening balance — cash &amp; bank</td>
+                                <td class="px-5 py-3 text-right tabular-nums font-bold text-[#1e3d44]">{{ ea_money((float)($cf['opening_balance'] ?? 0), $ccy) }}</td>
+                            </tr>
+
+                            {{-- Collections --}}
+                            <tr class="border-b border-[#f0ede7] hover:bg-sage-50/30">
+                                <td class="px-5 py-2.5 text-[#2d3748]">
+                                    <span class="text-sage-600 font-semibold mr-2">+</span>Collections from customers
+                                </td>
+                                <td class="px-5 py-2.5 text-right tabular-nums text-sage-700">
+                                    +{{ ea_money($totalIn, $ccy) }}
+                                </td>
+                            </tr>
+
+                            {{-- Outflows --}}
+                            @foreach ($cf['outflows'] ?? [] as $row)
+                                <tr class="border-b border-[#f0ede7] hover:bg-coral-50/30">
+                                    <td class="px-5 py-2.5 text-[#2d3748] pl-9">
+                                        <span class="text-coral-600 font-semibold mr-2">−</span>{{ $row['label'] }}
+                                    </td>
+                                    <td class="px-5 py-2.5 text-right tabular-nums {{ ($row['amount'] ?? 0) > 0 ? 'text-coral-700' : 'text-[#a09d95]' }}">
+                                        @if (($row['amount'] ?? 0) > 0)−@endif{{ ea_money((float)($row['amount'] ?? 0), $ccy) }}
+                                    </td>
+                                </tr>
+                            @endforeach
+
+                            {{-- Other (balancing figure) --}}
+                            <tr class="border-b border-[#f0ede7] hover:bg-warm-50/30">
+                                <td class="px-5 py-2.5 text-[#2d3748] pl-9">
+                                    <span class="font-semibold mr-2 {{ ($cf['other'] ?? 0) >= 0 ? 'text-coral-600' : 'text-sage-600' }}">{{ ($cf['other'] ?? 0) >= 0 ? '−' : '+' }}</span>
+                                    Other
+                                    <span class="text-[10px] text-[#a09d95] ml-1.5">(balancing — non-categorised cash movement)</span>
+                                </td>
+                                <td class="px-5 py-2.5 text-right tabular-nums {{ ($cf['other'] ?? 0) >= 0 ? 'text-coral-700' : 'text-sage-700' }}">
+                                    {{ ($cf['other'] ?? 0) >= 0 ? '−' : '+' }}{{ ea_money($otherAbs, $ccy) }}
+                                </td>
+                            </tr>
+
+                            {{-- Closing (subtotal) --}}
+                            <tr class="bg-brand-50/40 border-t-2 border-[#1e3d44]">
+                                <td class="px-5 py-3 font-semibold text-[#1e3d44]">Closing balance — cash &amp; bank (today)</td>
+                                <td class="px-5 py-3 text-right tabular-nums font-bold text-[#1e3d44]">{{ ea_money((float)($cf['closing_balance'] ?? 0), $ccy) }}</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                {{-- Methodology footer --}}
+                <div class="px-5 py-2.5 bg-[#fdfcf8] border-t border-[#e8e4de] text-[10px] text-[#8a8578] leading-relaxed">
+                    Direct method · Opening = Trial balance of cash &amp; bank ({{ $openAt }}) · Collections = cash debits to bank with corresponding AR credit · Outflows = cash credits with corresponding debit to the named expense category · Other plugs the equation to today's actual closing balance.
+                </div>
+            </div>
+        </div>
+    @endif
 
     {{-- ── Section: Working Capital KPIs ──────────────────────────────── --}}
     <div class="mb-7">
@@ -74,30 +192,82 @@
         </div>
     </div>
 
-    {{-- ── Section: Cash Balance Evolution + Cashflow Breakdown ────────── --}}
-    <div class="grid lg:grid-cols-2 gap-4 mb-7">
-        {{-- Cash Balance Evolution Chart --}}
+    {{-- ── Section: Cash Balance Evolution (GL) + Journal Balances ─────── --}}
+    <div class="grid lg:grid-cols-[1.4fr_1fr] gap-4 mb-7">
+        {{-- Cash Balance Evolution Chart (GL-sourced, month-end 52* + 57*) --}}
         <div class="section-card p-5">
             <div class="flex items-center gap-2 mb-4">
                 <div class="w-1 h-4 rounded bg-sage-400"></div>
                 <div>
-                    <h2 class="text-[13px] font-semibold text-[#1e3d44]">Cash Balance Evolution</h2>
-                    <p class="text-[11px] text-[#8a8578]">Cumulative net cash position YTD ({{ $ccy }})</p>
+                    <h2 class="text-[13px] font-semibold text-[#1e3d44]">Cash Balance Evolution · YTD</h2>
+                    <p class="text-[11px] text-[#8a8578]">Cumulative cash &amp; bank balance at month-end · accounts 52* + 57* ({{ $ccy }})</p>
                 </div>
             </div>
-            <div class="h-52"><canvas id="cashEvolutionChart"></canvas></div>
+            <div class="h-56"><canvas id="cashEvolutionChart"></canvas></div>
         </div>
 
-        {{-- Cashflow Breakdown Chart --}}
+        {{-- Journal Balances Table (bank & cash journals as of today) --}}
+        @php
+            $jb = $journalBalances ?? null;
+            $jbRows  = $jb['rows']  ?? [];
+            $jbTotal = $jb['total'] ?? 0;
+            $jbAsOf  = $jb['as_of'] ?? '';
+        @endphp
         <div class="section-card p-5">
-            <div class="flex items-center gap-2 mb-4">
-                <div class="w-1 h-4 rounded bg-warm-400"></div>
-                <div>
-                    <h2 class="text-[13px] font-semibold text-[#1e3d44]">Where Cash Goes</h2>
-                    <p class="text-[11px] text-[#8a8578]">YTD inflows, outflows and locked positions ({{ $ccy }})</p>
+            <div class="flex items-center justify-between mb-4">
+                <div class="flex items-center gap-2">
+                    <div class="w-1 h-4 rounded bg-brand-400"></div>
+                    <div>
+                        <h2 class="text-[13px] font-semibold text-[#1e3d44]">Bank &amp; Cash Journals</h2>
+                        <p class="text-[11px] text-[#8a8578]">Closing balance per journal · {{ $jbAsOf }}</p>
+                    </div>
                 </div>
+                <span class="text-[10px] text-[#a09d95] font-medium">{{ count($jbRows) }} journal{{ count($jbRows) === 1 ? '' : 's' }}</span>
             </div>
-            <div class="h-52"><canvas id="cashflowBreakdownChart"></canvas></div>
+
+            @if (empty($jbRows))
+                <div class="text-[12px] text-[#a09d95] italic py-6 text-center">No bank or cash journals configured.</div>
+            @else
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm">
+                        <thead>
+                            <tr class="text-left text-[10px] text-[#8a8578] uppercase tracking-wider border-b border-[#e8e4de]">
+                                <th class="pb-2.5 font-semibold">Journal</th>
+                                <th class="pb-2.5 text-right font-semibold">Balance</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach ($jbRows as $j)
+                                <tr class="table-row-hover border-b border-[#f0ede7]">
+                                    <td class="py-2.5">
+                                        <div class="text-[13px] font-medium text-[#2d3748] flex items-center gap-2">
+                                            <span class="inline-block w-1.5 h-1.5 rounded-full {{ $j['type'] === 'bank' ? 'bg-brand-400' : 'bg-sage-400' }}"></span>
+                                            {{ $j['name'] }}
+                                        </div>
+                                        <div class="text-[10px] text-[#a09d95] uppercase tracking-wider">{{ $j['type'] }}</div>
+                                    </td>
+                                    <td class="py-2.5 text-right tabular-nums text-[13px] {{ $j['balance'] < 0 ? 'text-coral-700' : 'text-[#1e3d44]' }}">
+                                        {{ ea_money((float) $j['balance'], $ccy) }}
+                                    </td>
+                                </tr>
+                            @endforeach
+                        </tbody>
+                        <tfoot>
+                            <tr class="border-t-2 border-[#1e3d44]">
+                                <td class="pt-2.5 text-[12px] font-bold text-[#1e3d44] uppercase tracking-wider">Total</td>
+                                <td class="pt-2.5 text-right tabular-nums text-[14px] font-bold text-[#1e3d44]">{{ ea_money((float) $jbTotal, $ccy) }}</td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+                @if (!empty($cashflowDirect) && abs($jbTotal - ($cashflowDirect['closing_balance'] ?? 0)) > 0.5)
+                    <div class="mt-3 text-[10px] text-warm-700 bg-warm-50 border border-warm-200 px-3 py-2 rounded">
+                        Reconciliation note: total above differs from cash-flow closing by
+                        <span class="font-semibold tabular-nums">{{ ea_money(abs($jbTotal - ($cashflowDirect['closing_balance'] ?? 0)), $ccy) }}</span>.
+                        This usually means a journal posts to a non-52*/57* default account.
+                    </div>
+                @endif
+            @endif
         </div>
     </div>
 
@@ -308,48 +478,6 @@
         });
     }
 
-    // ── Cashflow Breakdown (Horizontal Bar Chart) ────────────────────
-    const cfData = @json($cashflowBreakdown ?? []);
-    const cfCtx = document.getElementById('cashflowBreakdownChart');
-    if (cfCtx && cfData.length) {
-        const colorMap = {
-            inflow:  '#5a815e',
-            outflow: '#d06a50',
-            locked:  '#dfa05e',
-            owed:    '#4da8b4',
-        };
-        new Chart(cfCtx, {
-            type: 'bar',
-            data: {
-                labels: cfData.map(d => d.label),
-                datasets: [{
-                    data: cfData.map(d => d.amount),
-                    backgroundColor: cfData.map(d => colorMap[d.type] || '#94a3b8'),
-                    borderRadius: 4,
-                    barThickness: 18,
-                }],
-            },
-            options: {
-                responsive: true, maintainAspectRatio: false,
-                indexAxis: 'y',
-                plugins: {
-                    legend: { display: false },
-                    tooltip: {
-                        backgroundColor: '#1c2637', titleFont: { size: 11 }, bodyFont: { size: 11 }, padding: 10, cornerRadius: 8,
-                        callbacks: { label: ctx => {
-                            const v = ctx.raw;
-                            return v >= 1e6 ? (v/1e6).toFixed(1)+'M' : v >= 1e3 ? (v/1e3).toFixed(0)+'K' : v.toFixed(0);
-                        }}
-                    }
-                },
-                scales: {
-                    x: { grid: { color: '#f0ede7' }, ticks: { font: { size: 10 }, color: '#8a8578',
-                          callback: v => v >= 1e6 ? (v/1e6).toFixed(1)+'M' : v >= 1e3 ? (v/1e3).toFixed(0)+'K' : v } },
-                    y: { grid: { display: false }, ticks: { font: { size: 10, weight: 500 }, color: '#5a6a70' } },
-                },
-            },
-        });
-    }
 })();
 </script>
 @endpush

@@ -802,7 +802,7 @@ final class RevenueService
         } catch (\Throwable $e) {
             // ignore and fall through
         }
-        return 'USD';
+        return 'XAF';
     }
 
     private function pct(float $current, float $previous): ?float

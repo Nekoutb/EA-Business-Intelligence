@@ -54,6 +54,19 @@
                            class="mt-1.5 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                            placeholder="standard">
                 </label>
+                <label class="block col-span-2">
+                    <span class="text-xs font-medium text-slate-600">Industry <span class="text-red-500">*</span></span>
+                    <select name="industry_id" required
+                            class="mt-1.5 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent">
+                        <option value="">Select an industry...</option>
+                        @foreach(\App\Models\Industry::active()->orderBy('sort_order')->get() as $industry)
+                            <option value="{{ $industry->id }}" {{ old('industry_id', $data['industry_id'] ?? '') == $industry->id ? 'selected' : '' }}>
+                                {{ $industry->name }}
+                            </option>
+                        @endforeach
+                    </select>
+                    <p class="text-[10px] text-slate-400 mt-1">Industry determines default modules and KPI templates</p>
+                </label>
             </div>
 
             <div class="flex gap-3 pt-4 border-t border-slate-200">

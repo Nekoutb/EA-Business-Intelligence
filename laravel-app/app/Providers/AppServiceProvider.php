@@ -21,6 +21,13 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        //
+        // Safety net for slow Odoo-backed pages: give web requests up to
+        // 120s so a single slow upstream call surfaces as a clean
+        // OdooException instead of a Symfony FatalError. CLI / queue
+        // workers keep their own limits (typically 0 = unlimited).
+        if (PHP_SAPI !== 'cli' && function_exists('set_time_limit')) {
+            @set_time_limit(120);
+        }
     }
 }
+

@@ -25,6 +25,7 @@ class Tenant extends Model
     protected $fillable = [
         'slug', 'name', 'brand', 'logo_path',
         'status', 'plan', 'trial_ends_at', 'onboarded_at',
+        'industry_id',
     ];
 
     protected $casts = [
@@ -50,6 +51,11 @@ class Tenant extends Model
     public function services(): HasMany
     {
         return $this->hasMany(TenantService::class);
+    }
+
+    public function industry()
+    {
+        return $this->belongsTo(Industry::class);
     }
 
     /** Convenience accessor for an active tenant in the request context. */

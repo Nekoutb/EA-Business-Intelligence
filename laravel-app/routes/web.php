@@ -13,11 +13,14 @@ use App\Http\Controllers\InventoryController;
 use App\Http\Controllers\GLQualityController;
 use App\Http\Controllers\CustomerInsightsController;
 use App\Http\Controllers\SettingsController;
+use App\Http\Controllers\Tax\IncomeTaxComplianceController;
+use App\Http\Controllers\Tax\TaxDashboardController;
 use App\Http\Controllers\Tax\VATComplianceController;
 use App\Http\Controllers\Tax\VATInvoiceComplianceController;
 use App\Http\Controllers\Admin\AdminAuthController;
 use App\Http\Controllers\Admin\AdminDashboardController;
 use App\Http\Controllers\Admin\AiSettingsController as AdminAiSettingsController;
+use App\Http\Controllers\Admin\IndustryController as AdminIndustryController;
 use App\Http\Controllers\Admin\TenantController as AdminTenantController;
 use App\Models\Tenant;
 use Illuminate\Support\Facades\Route;
@@ -49,6 +52,16 @@ Route::prefix('admin')->group(function () {
 
     Route::middleware('admin.auth')->group(function () {
         Route::get('/', [AdminDashboardController::class, 'index']);
+
+        // Industries (configuration)
+        Route::get('/industries',                          [AdminIndustryController::class, 'index']);
+        Route::get('/industries/create',                   [AdminIndustryController::class, 'create']);
+        Route::post('/industries',                         [AdminIndustryController::class, 'store']);
+        Route::get('/industries/{industry}/edit',          [AdminIndustryController::class, 'edit']);
+        Route::patch('/industries/{industry}',             [AdminIndustryController::class, 'update']);
+        Route::get('/industries/{industry}/edit-modules',  [AdminIndustryController::class, 'editModules']);
+        Route::patch('/industries/{industry}/edit-modules',[AdminIndustryController::class, 'updateModules']);
+        Route::delete('/industries/{industry}',            [AdminIndustryController::class, 'destroy']);
 
         Route::get('/tenants',                       [AdminTenantController::class, 'index']);
         Route::get('/tenants/create',                [AdminTenantController::class, 'create']);
@@ -115,9 +128,16 @@ Route::prefix('t/{tenant}')
                     [GLQualityController::class, 'timingReport'])->middleware('module:gl_quality');
 
                 // ── Tax Compliance service ────────────────────────────────────
+                Route::get('/tax-dashboard',          [TaxDashboardController::class, 'index'])->middleware('module:tax_dashboard');
+                Route::get ('/income-tax-compliance',                       [IncomeTaxComplianceController::class, 'index'])           ->middleware('module:income_tax_compliance');
+                Route::get ('/income-tax-compliance/export',                [IncomeTaxComplianceController::class, 'export'])          ->middleware('module:income_tax_compliance');
+                Route::post('/income-tax-compliance/donations/category',    [IncomeTaxComplianceController::class, 'setCategory'])     ->middleware('module:income_tax_compliance');
+                Route::post('/income-tax-compliance/donations/upload',      [IncomeTaxComplianceController::class, 'uploadDoc'])       ->middleware('module:income_tax_compliance');
+                Route::get ('/income-tax-compliance/donations/export',      [IncomeTaxComplianceController::class, 'exportDonations']) ->middleware('module:income_tax_compliance');
                 Route::get('/vat-compliance',         [VATComplianceController::class, 'index'])->middleware('module:vat_compliance');
                 Route::get('/vat-invoice-compliance', [VATInvoiceComplianceController::class, 'index'])->middleware('module:vat_invoice_compliance');
-                Route::get('/tax-calendar',           [VATComplianceController::class, 'calendar'])->middleware('module:tax_calendar');
+                // Backward-compat redirects (old URLs from prior to 2026-04-27 reshuffle)
+                Route::get('/tax-calendar', fn () => redirect()->to(tenant_url('/tax-dashboard')));
 
                 Route::get('/settings',          [SettingsController::class, 'show']);
                 Route::post('/settings',         [SettingsController::class, 'save']);

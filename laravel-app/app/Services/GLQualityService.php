@@ -729,10 +729,10 @@ class GLQualityService
             $curRef = $company[0]['currency_id'] ?? null;
             if (is_array($curRef) && !empty($curRef[0])) {
                 $cur = $this->odoo->read('res.currency', [$curRef[0]], ['name']);
-                return $cur[0]['name'] ?? 'USD';
+                return $cur[0]['name'] ?? 'XAF';
             }
         } catch (\Throwable $e) { /* fall through */ }
-        return 'USD';
+        return 'XAF';
     }
 
     private function getCompanyId(): int
