@@ -13,6 +13,8 @@ use App\Http\Controllers\InventoryController;
 use App\Http\Controllers\GLQualityController;
 use App\Http\Controllers\CustomerInsightsController;
 use App\Http\Controllers\SettingsController;
+use App\Http\Controllers\Tax\IncomeTaxComplianceController;
+use App\Http\Controllers\Tax\TaxDashboardController;
 use App\Http\Controllers\Tax\VATComplianceController;
 use App\Http\Controllers\Tax\VATInvoiceComplianceController;
 use App\Http\Controllers\Admin\AdminAuthController;
@@ -126,9 +128,12 @@ Route::prefix('t/{tenant}')
                     [GLQualityController::class, 'timingReport'])->middleware('module:gl_quality');
 
                 // ── Tax Compliance service ────────────────────────────────────
+                Route::get('/tax-dashboard',          [TaxDashboardController::class, 'index'])->middleware('module:tax_dashboard');
+                Route::get('/income-tax-compliance',  [IncomeTaxComplianceController::class, 'index'])->middleware('module:income_tax_compliance');
                 Route::get('/vat-compliance',         [VATComplianceController::class, 'index'])->middleware('module:vat_compliance');
                 Route::get('/vat-invoice-compliance', [VATInvoiceComplianceController::class, 'index'])->middleware('module:vat_invoice_compliance');
-                Route::get('/tax-calendar',           [VATComplianceController::class, 'calendar'])->middleware('module:tax_calendar');
+                // Backward-compat redirects (old URLs from prior to 2026-04-27 reshuffle)
+                Route::get('/tax-calendar', fn () => redirect()->to(tenant_url('/tax-dashboard')));
 
                 Route::get('/settings',          [SettingsController::class, 'show']);
                 Route::post('/settings',         [SettingsController::class, 'save']);

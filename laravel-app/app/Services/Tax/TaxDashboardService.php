@@ -6,7 +6,7 @@ namespace App\Services\Tax;
 use App\Odoo\OdooClient;
 
 /**
- * Tax Console — tax-regime classification + effective tax rate.
+ * Tax Dashboard — tax-regime classification + effective tax rate.
  *
  * Tax-regime classification:
  *   Pulls prior-year trial-balance turnover from accounts 70* and maps
@@ -25,7 +25,7 @@ use App\Odoo\OdooClient;
  *   which timed out on charts of accounts with many 70* rows. Rewritten
  *   to use a single server-aggregated `read_group` call per metric.
  */
-final class VATComplianceService
+final class TaxDashboardService
 {
     public function __construct(private OdooClient $odoo) {}
 
