@@ -59,7 +59,12 @@ class TenantController extends Controller
 
     public function create()
     {
-        $step = request('step', 1);
+        // Cast to int explicitly. request('step', 1) returns the *string* '2'
+        // when the URL has ?step=2, while the strict === comparisons below
+        // expect integers. Without the cast, no branch matches and the
+        // fallback redirect at the end of this method fires on every step
+        // > 1, producing ERR_TOO_MANY_REDIRECTS.
+        $step = (int) request('step', 1);
         $wizardData = session('wizard_data', []);
         $services = config('modules.services', []);
         $modules = config('modules.modules', []);
