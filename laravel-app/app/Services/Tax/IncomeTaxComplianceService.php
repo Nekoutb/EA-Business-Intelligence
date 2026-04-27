@@ -6,39 +6,56 @@ namespace App\Services\Tax;
 use App\Odoo\OdooClient;
 
 /**
- * Income Tax Compliance — surfaces transactions whose tax treatment
- * creates exposure under Cameroon CGI / OHADA rules.
+ * Income Tax Compliance — high-value cash expenditures (Cameroon CGI).
  *
- * High-value cash payments (current rule)
- * ────────────────────────────────────────
- *   Posted cash payments — i.e. credits to a 57* (cash on hand) account
- *   in the YTD window — whose individual line credit exceeds the
- *   XAF 100,000 threshold.
+ * Methodology (per CGI cross-references)
+ * ─────────────────────────────────────────
+ *   • Article 7-A CGI : cash payments above the LF threshold are NOT
+ *                       deductible from taxable income.
+ *   • Article 17 CGI  : statutory income tax rate — 30 % IS + 10 % CAC
+ *                       (Centimes Additionnels Communaux) = 33 %.
+ *   • Article 26 CGI  : doctrine of "revenus réputés distribués"; the
+ *                       disallowed amount is treated as a hidden
+ *                       distribution.
+ *   • Article 91 CGI  : IRCM on dividend distributions — 15 % + 10 % CAC
+ *                       = 16.5 %.
+ *   • Total stacked exposure : 33 % + 16.5 % = 49.5 %.
+ *     The stack assumes the DGI requalifies the disallowed amount in full
+ *     as a hidden distribution. If the requalification is not pursued,
+ *     only the 33 % income-tax leg applies.
  *
- *   Such payments are non-deductible for corporate income tax purposes.
- *   The exposure is assessed at 49.5% of the disallowed amount:
- *     - 33.0% : Income tax (Impôt sur les Sociétés)
- *     - 16.5% : Withholding tax on deemed dividend distribution
+ *   • Cash account scope : SYSCOHADA account 57 — Caisse (cash on hand).
+ *                          Excludes class 52 (banques) by design.
+ *   • Threshold          : XAF 100,000 per line (cf. LF 2024 / 2025).
+ *                          Operationally we filter per move-line credit;
+ *                          intra-day splits to the same counterparty
+ *                          should be aggregated by reviewers.
  *
- * Methodology
- * ───────────
- *   - Account scope: any account where `code` starts with `57`.
- *   - Window: YTD (1 Jan to anchor date inclusive).
- *   - Posted only (`parent_state = posted`).
- *   - Threshold filter: `credit > 100,000`.
- *   - Per-line aggregation; we surface the count and total credit value.
+ * Output shape
+ * ────────────
+ *   - high_value_cash.{ count, total_amount, total_impact, ... }
+ *   - high_value_cash.transactions[] : line-level detail for the table
+ *   - high_value_cash.groups[]       : aggregations by (partner, date)
+ *   - high_value_cash.threshold_xaf  : the LF threshold in force
  */
 final class IncomeTaxComplianceService
 {
-    /** Account-code prefix considered "cash on hand" under OHADA. */
     private const CASH_ON_HAND_PREFIXES = ['57'];
 
-    /** Disallowance threshold in XAF; lines below this are not flagged. */
+    /** LF threshold in XAF — XAF 100,000 per line. */
     public const HIGH_VALUE_THRESHOLD_XAF = 100_000.0;
 
-    /** Tax exposure rate: 33% CIT + 16.5% WHT on dividends = 49.5%. */
-    public const CIT_RATE_PCT      = 33.0;
-    public const WHT_DIVIDEND_PCT  = 16.5;
+    /** Reference to the LF version used to anchor the threshold. */
+    public const THRESHOLD_LF_REFERENCE  = 'LF 2025 — Article 7-A CGI';
+
+    /** Income tax (Article 17 CGI): 30 % IS + 10 % CAC = 33 %. */
+    public const IS_RATE_PCT  = 30.0;
+    public const CAC_RATE_PCT = 10.0;
+    public const CIT_RATE_PCT = 33.0; // 30 * (1 + 10%)
+
+    /** IRCM on hidden distribution (Articles 26, 91 CGI): 15 % + 10 % CAC = 16.5 %. */
+    public const IRCM_BASE_PCT = 15.0;
+    public const IRCM_RATE_PCT = 16.5; // 15 * (1 + 10%)
 
     public function __construct(private OdooClient $odoo) {}
 
@@ -47,55 +64,129 @@ final class IncomeTaxComplianceService
         $today = ($today ?? new \DateTimeImmutable('today'))->setTime(0, 0, 0);
         $jan1  = new \DateTimeImmutable($today->format('Y') . '-01-01');
 
-        $cashOnHandIds = $this->accountIdsByPrefix(self::CASH_ON_HAND_PREFIXES);
-        if ($cashOnHandIds === []) {
+        $cashIds = $this->accountIdsByPrefix(self::CASH_ON_HAND_PREFIXES);
+        if ($cashIds === []) {
             return $this->emptyResult($jan1, $today);
         }
 
-        // Server-aggregated count + sum of high-value cash credits in YTD.
-        $rows = $this->odoo->callModel('account.move.line', 'read_group', [
-            'domain' => [
-                ['account_id', 'in', $cashOnHandIds],
-                ['credit', '>', self::HIGH_VALUE_THRESHOLD_XAF],
-                ['date', '>=', $jan1->format('Y-m-d')],
-                ['date', '<=', $today->format('Y-m-d')],
-                ['parent_state', '=', 'posted'],
-            ],
-            'fields'  => ['credit:sum'],
-            'groupby' => [],
-            'lazy'    => false,
-        ]);
+        // Pull the line-level qualifying transactions.
+        $rawLines = $this->odoo->searchRead('account.move.line', [
+            ['account_id', 'in', $cashIds],
+            ['credit', '>', self::HIGH_VALUE_THRESHOLD_XAF],
+            ['date', '>=', $jan1->format('Y-m-d')],
+            ['date', '<=', $today->format('Y-m-d')],
+            ['parent_state', '=', 'posted'],
+        ], ['date', 'credit', 'partner_id', 'journal_id', 'account_id', 'move_id', 'name'],
+            ['order' => 'date desc, credit desc']);
 
-        $count       = (int)   ($rows[0]['__count'] ?? 0);
-        $totalAmount = (float) ($rows[0]['credit']  ?? 0);
+        // Resolve missing-attachment flag in batch: any move whose
+        // ir.attachment count == 0 is flagged "no doc on file".
+        $moveIds = [];
+        foreach ($rawLines as $l) {
+            if (isset($l['move_id']) && is_array($l['move_id'])) {
+                $moveIds[(int) $l['move_id'][0]] = true;
+            }
+        }
+        $moveIds = array_keys($moveIds);
+        $movesWithAttachment = [];
+        if ($moveIds !== []) {
+            $atts = $this->odoo->searchRead('ir.attachment', [
+                ['res_model', '=', 'account.move'],
+                ['res_id', 'in', $moveIds],
+            ], ['res_id'], []);
+            foreach ($atts as $a) {
+                if (isset($a['res_id'])) $movesWithAttachment[(int) $a['res_id']] = true;
+            }
+        }
 
-        // Tax exposure split.
-        $citRate     = self::CIT_RATE_PCT     / 100.0;     // 0.33
-        $whtRate     = self::WHT_DIVIDEND_PCT / 100.0;     // 0.165
-        $totalRate   = $citRate + $whtRate;                // 0.495
+        // Build line-level transactions list.
+        $transactions = [];
+        $totalAmount  = 0.0;
+        foreach ($rawLines as $l) {
+            $credit  = (float) ($l['credit'] ?? 0);
+            $totalAmount += $credit;
+
+            $partner = (is_array($l['partner_id'] ?? null)) ? (string) $l['partner_id'][1] : null;
+            $journal = (is_array($l['journal_id'] ?? null)) ? (string) $l['journal_id'][1] : '—';
+            $account = (is_array($l['account_id'] ?? null)) ? (string) $l['account_id'][1] : '—';
+            $moveId  = (is_array($l['move_id']    ?? null)) ? (int)    $l['move_id'][0]    : 0;
+
+            $transactions[] = [
+                'date'                => (string) ($l['date'] ?? ''),
+                'amount'              => round($credit, 2),
+                'partner'             => $partner,                 // null if unrecorded
+                'narration'           => (string) ($l['name'] ?? ''),
+                'journal'             => $journal,
+                'account'             => $account,
+                'missing_supporting'  => !isset($movesWithAttachment[$moveId]),
+                'move_id'             => $moveId,
+            ];
+        }
+
+        // Group by (partner_id_or_unknown, date) for display.
+        $groups = [];
+        foreach ($transactions as $tx) {
+            $key = ($tx['partner'] ?? '__UNRECORDED__') . '|' . $tx['date'];
+            if (!isset($groups[$key])) {
+                $groups[$key] = [
+                    'partner'             => $tx['partner'],
+                    'date'                => $tx['date'],
+                    'count'               => 0,
+                    'total'               => 0.0,
+                    'any_missing_doc'     => false,
+                ];
+            }
+            $groups[$key]['count']++;
+            $groups[$key]['total']           += $tx['amount'];
+            $groups[$key]['any_missing_doc']  = $groups[$key]['any_missing_doc'] || $tx['missing_supporting'];
+        }
+        // Sort groups by total descending so the heaviest exposure rises.
+        usort($groups, fn ($a, $b) => $b['total'] <=> $a['total']);
+        $groups = array_map(fn ($g) => array_merge($g, ['total' => round($g['total'], 2)]), $groups);
+
+        // Tax exposure split (33 % CIT + 16.5 % IRCM = 49.5 %).
+        $citRate     = self::CIT_RATE_PCT  / 100.0;        // 0.33
+        $ircmRate    = self::IRCM_RATE_PCT / 100.0;        // 0.165
+        $totalRate   = $citRate + $ircmRate;               // 0.495
         $citImpact   = round($totalAmount * $citRate,   2);
-        $whtImpact   = round($totalAmount * $whtRate,   2);
+        $ircmImpact  = round($totalAmount * $ircmRate,  2);
         $totalImpact = round($totalAmount * $totalRate, 2);
 
+        $missingDocCount = 0;
+        foreach ($transactions as $tx) {
+            if ($tx['missing_supporting']) $missingDocCount++;
+        }
+
         return [
-            'currency'             => $this->detectCurrency(),
-            'period'               => [
-                'from'  => $jan1->format('Y-m-d'),
-                'to'    => $today->format('Y-m-d'),
-                'year'  => (int) $today->format('Y'),
+            'currency'              => $this->detectCurrency(),
+            'period'                => [
+                'from' => $jan1->format('Y-m-d'),
+                'to'   => $today->format('Y-m-d'),
+                'year' => (int) $today->format('Y'),
             ],
-            'high_value_cash'      => [
-                'threshold_xaf' => self::HIGH_VALUE_THRESHOLD_XAF,
-                'count'         => $count,
-                'total_amount'  => round($totalAmount, 2),
-                'cit_rate_pct'  => self::CIT_RATE_PCT,
-                'wht_rate_pct'  => self::WHT_DIVIDEND_PCT,
-                'total_rate_pct'=> round(self::CIT_RATE_PCT + self::WHT_DIVIDEND_PCT, 2),
-                'cit_impact'    => $citImpact,
-                'wht_impact'    => $whtImpact,
-                'total_impact'  => $totalImpact,
+            'high_value_cash'       => [
+                'threshold_xaf'        => self::HIGH_VALUE_THRESHOLD_XAF,
+                'threshold_reference'  => self::THRESHOLD_LF_REFERENCE,
+                'count'                => count($transactions),
+                'group_count'          => count($groups),
+                'total_amount'         => round($totalAmount, 2),
+                'missing_doc_count'    => $missingDocCount,
+
+                'is_rate_pct'          => self::IS_RATE_PCT,
+                'cac_rate_pct'         => self::CAC_RATE_PCT,
+                'cit_rate_pct'         => self::CIT_RATE_PCT,
+                'ircm_base_pct'        => self::IRCM_BASE_PCT,
+                'ircm_rate_pct'        => self::IRCM_RATE_PCT,
+                'total_rate_pct'       => round(self::CIT_RATE_PCT + self::IRCM_RATE_PCT, 2),
+
+                'cit_impact'           => $citImpact,
+                'ircm_impact'          => $ircmImpact,
+                'total_impact'         => $totalImpact,
+
+                'transactions'         => $transactions,    // line-level
+                'groups'               => $groups,          // aggregated by partner+date
             ],
-            'as_of'                => $today->format('Y-m-d'),
+            'as_of'                 => $today->format('Y-m-d'),
         ];
     }
 
@@ -120,15 +211,23 @@ final class IncomeTaxComplianceService
                 'year' => (int) $to->format('Y'),
             ],
             'high_value_cash' => [
-                'threshold_xaf'  => self::HIGH_VALUE_THRESHOLD_XAF,
-                'count'          => 0,
-                'total_amount'   => 0.0,
-                'cit_rate_pct'   => self::CIT_RATE_PCT,
-                'wht_rate_pct'   => self::WHT_DIVIDEND_PCT,
-                'total_rate_pct' => round(self::CIT_RATE_PCT + self::WHT_DIVIDEND_PCT, 2),
-                'cit_impact'     => 0.0,
-                'wht_impact'     => 0.0,
-                'total_impact'   => 0.0,
+                'threshold_xaf'        => self::HIGH_VALUE_THRESHOLD_XAF,
+                'threshold_reference'  => self::THRESHOLD_LF_REFERENCE,
+                'count'                => 0,
+                'group_count'          => 0,
+                'total_amount'         => 0.0,
+                'missing_doc_count'    => 0,
+                'is_rate_pct'          => self::IS_RATE_PCT,
+                'cac_rate_pct'         => self::CAC_RATE_PCT,
+                'cit_rate_pct'         => self::CIT_RATE_PCT,
+                'ircm_base_pct'        => self::IRCM_BASE_PCT,
+                'ircm_rate_pct'        => self::IRCM_RATE_PCT,
+                'total_rate_pct'       => round(self::CIT_RATE_PCT + self::IRCM_RATE_PCT, 2),
+                'cit_impact'           => 0.0,
+                'ircm_impact'          => 0.0,
+                'total_impact'         => 0.0,
+                'transactions'         => [],
+                'groups'               => [],
             ],
             'as_of'           => $to->format('Y-m-d'),
         ];

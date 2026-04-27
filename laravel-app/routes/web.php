@@ -129,7 +129,8 @@ Route::prefix('t/{tenant}')
 
                 // ── Tax Compliance service ────────────────────────────────────
                 Route::get('/tax-dashboard',          [TaxDashboardController::class, 'index'])->middleware('module:tax_dashboard');
-                Route::get('/income-tax-compliance',  [IncomeTaxComplianceController::class, 'index'])->middleware('module:income_tax_compliance');
+                Route::get('/income-tax-compliance',         [IncomeTaxComplianceController::class, 'index'])->middleware('module:income_tax_compliance');
+                Route::get('/income-tax-compliance/export',  [IncomeTaxComplianceController::class, 'export'])->middleware('module:income_tax_compliance');
                 Route::get('/vat-compliance',         [VATComplianceController::class, 'index'])->middleware('module:vat_compliance');
                 Route::get('/vat-invoice-compliance', [VATInvoiceComplianceController::class, 'index'])->middleware('module:vat_invoice_compliance');
                 // Backward-compat redirects (old URLs from prior to 2026-04-27 reshuffle)
