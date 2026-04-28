@@ -8,39 +8,46 @@ use App\Odoo\OdooClient;
 /**
  * Operations service — container & logistics analytics.
  *
- * Sourced from the customer's Odoo Logistique module (custom models
- * exposing container records, scan events, manifestes, EDI documents).
+ * Sourced from the customer's custom AW Cargo Odoo module ("Logistique"
+ * menu) which models a maritime port operation:
  *
- *  ┌─────────────────────────────────────────────────────────────────┐
- *  │ STATUS: schema-discovery phase                                  │
- *  │                                                                 │
- *  │ The actual model and field names are unknown until the          │
- *  │ /admin/tenants/{id}/odoo-probe diagnostic returns. Every Odoo   │
- *  │ call below is therefore stubbed and marked `pending => true`.   │
- *  │ The view renders "Pending data" placeholders when it sees that  │
- *  │ flag, so the page is functional today.                          │
- *  │                                                                 │
- *  │ When the probe results land, integration is localised to this   │
- *  │ file: each `*Pending()` helper becomes a real searchRead /      │
- *  │ read_group call, the `pending` flag flips to false, and the     │
- *  │ view immediately shows live data without further changes.       │
- *  └─────────────────────────────────────────────────────────────────┘
+ *   aw_cargo.stopover   (Escales)    — vessel calls (ship + voyage + ETA/ETD)
+ *   aw_cargo.cargo      (Cargaisons) — bills of lading / shipments
+ *   aw_cargo.equipment  (Conteneurs) — individual containers, with the
+ *                                       scan/inspection/gate-check flags
+ *                                       that drive most operational KPIs
+ *
+ * The schema was discovered via /admin/tenants/{id}/odoo-probe (PR #13).
  *
  * KPI shape contract — each helper returns:
  *   [
- *     'value'   => mixed,    // formatted number, ratio, or breakdown array
+ *     'value'   => string,   // formatted number / percentage / breakdown
  *     'sub'     => string,   // optional sub-text (denominator detail)
- *     'pending' => bool,     // true while we don't have schema yet
- *     'vsPy'    => ?float,   // % vs prior-year same window (optional)
- *     'vsPlan'  => ?float,   // % vs plan (optional, no plan today)
+ *     'pending' => bool,     // false = live data; true = no schema / error
+ *     'vsPy'    => ?float,   // % vs prior-year same window (when available)
+ *     'error'   => ?string,  // present when an Odoo call threw
  *   ]
  *
- * The shape mirrors what RevenueService's helpers produce so the
- * <x-kpi> component can consume Operations KPIs without modification.
+ * Period anchor: every KPI uses `create_date` as the period filter
+ * because:
+ *   - aw_cargo.stopover.eta is often null in the data (sample showed
+ *     2 of 2 records with eta=false)
+ *   - aw_cargo.cargo.eta same story
+ *   - create_date is set by Odoo automatically and approximates "when
+ *     this container/voyage was registered in the system" which is the
+ *     closest proxy to "handled this period"
+ *
+ * If a future deploy wants ETA-based filtering once the data quality
+ * improves, swap the field name in the `periodDomain()` calls below.
  */
 final class OperationsService
 {
     private OdooClient $odoo;
+
+    /** Custom Odoo models from the AW Cargo module. */
+    private const MODEL_STOPOVER  = 'aw_cargo.stopover';
+    private const MODEL_CARGO     = 'aw_cargo.cargo';
+    private const MODEL_EQUIPMENT = 'aw_cargo.equipment';
 
     public function __construct(OdooClient $odoo)
     {
@@ -55,101 +62,320 @@ final class OperationsService
         $pyFrom = $cyFrom->modify('-1 year');
         $pyTo   = $cyTo->modify('-1 year');
 
-        $cyWorkingDays = $this->workingDays($cyFrom, $cyTo);
-        $pyWorkingDays = $this->workingDays($pyFrom, $pyTo);
+        $cyWd = $this->workingDays($cyFrom, $cyTo);
+        $pyWd = $this->workingDays($pyFrom, $pyTo);
 
-        // KPI map. Each entry is consumed by operations.blade.php and
-        // rendered through <x-kpi>. While we're in schema-discovery the
-        // helpers all return `pending => true` and the view shows the
-        // placeholder UI; flipping a single helper to live data is a
-        // local change.
+        // Each helper traps its own exceptions and returns pending=true on
+        // failure, so a single broken query never takes down the whole page.
         $kpis = [
-            'containers_scanned'  => $this->containersScannedPending($cyFrom, $cyTo, $pyFrom, $pyTo),
-            'containers_per_day'  => $this->containersPerDayPending($cyFrom, $cyTo, $cyWorkingDays, $pyWorkingDays),
-            'avg_dwell_hours'     => $this->avgDwellHoursPending($cyFrom, $cyTo, $pyFrom, $pyTo),
-            'mix_by_type'         => $this->mixByTypePending($cyFrom, $cyTo),
-            'reefer_share'        => $this->reeferSharePending($cyFrom, $cyTo, $pyFrom, $pyTo),
-            'revenue_per_container' => $this->revenuePerContainerPending($cyFrom, $cyTo, $pyFrom, $pyTo),
-            'top_customers'       => $this->topCustomersPending($cyFrom, $cyTo, 5),
-            'top_destinations'    => $this->topDestinationsPending($cyFrom, $cyTo, 5),
+            // ── Throughput ───────────────────────────────────────────────
+            'vessel_calls'        => $this->vesselCalls($cyFrom, $cyTo, $pyFrom, $pyTo),
+            'containers_handled'  => $this->containersHandled($cyFrom, $cyTo, $pyFrom, $pyTo),
+            'containers_per_day'  => $this->containersPerDay($cyFrom, $cyTo, $cyWd, $pyFrom, $pyTo, $pyWd),
+
+            // ── Scan & Quality ───────────────────────────────────────────
+            'containers_scanned'  => $this->containersScanned($cyFrom, $cyTo, $pyFrom, $pyTo),
+            'scan_rate'           => $this->scanRate($cyFrom, $cyTo, $pyFrom, $pyTo),
+            'inspection_rate'     => $this->inspectionRate($cyFrom, $cyTo, $pyFrom, $pyTo),
+
+            // ── Mix ──────────────────────────────────────────────────────
+            'mix_by_size'         => $this->mixBySize($cyFrom, $cyTo),
+            'full_empty_mix'      => $this->fullEmptyMix($cyFrom, $cyTo),
+            'direction_mix'       => $this->directionMix($cyFrom, $cyTo),
         ];
 
         return [
             'currency' => $this->detectCurrency(),
             'period'   => [
-                'from'  => $cyFrom->format('Y-m-d'),
-                'to'    => $cyTo->format('Y-m-d'),
-                'label' => $periodLabel,
-                'cy_working_days' => $cyWorkingDays,
-                'py_working_days' => $pyWorkingDays,
+                'from'            => $cyFrom->format('Y-m-d'),
+                'to'              => $cyTo->format('Y-m-d'),
+                'label'           => $periodLabel,
+                'cy_working_days' => $cyWd,
+                'py_working_days' => $pyWd,
             ],
-            'kpis'     => $kpis,
+            'kpis'            => $kpis,
             'pending_overall' => collect($kpis)->every(fn ($k) => !empty($k['pending'])),
         ];
     }
 
-    /* ── KPI helpers (pending — to be replaced once schema is known) ──── */
+    /* ── KPI helpers ─────────────────────────────────────────────────── */
 
-    private function containersScannedPending(\DateTimeImmutable $cyFrom, \DateTimeImmutable $cyTo, \DateTimeImmutable $pyFrom, \DateTimeImmutable $pyTo): array
+    private function vesselCalls(\DateTimeImmutable $cyFrom, \DateTimeImmutable $cyTo, \DateTimeImmutable $pyFrom, \DateTimeImmutable $pyTo): array
     {
-        // TARGET (post-probe):
-        //   $cy = $this->odoo->searchCount('<scan_model>', [
-        //       ['<scan_type_field>', '=', 'sortie'],
-        //       ['<datetime_field>', '>=', $cyFrom->format('Y-m-d')],
-        //       ['<datetime_field>', '<=', $cyTo->format('Y-m-d 23:59:59')],
-        //   ]);
-        //   $py = …same with pyFrom/pyTo
-        //   return ['value' => $cy, 'sub' => 'Containers shipped', 'pending' => false,
-        //           'vsPy' => $this->pct($cy, $py)];
-        return ['value' => null, 'sub' => 'Period count (entrée + sortie)', 'pending' => true];
+        try {
+            $cy = $this->odoo->searchCount(self::MODEL_STOPOVER, $this->stdDomain($cyFrom, $cyTo));
+            $py = $this->odoo->searchCount(self::MODEL_STOPOVER, $this->stdDomain($pyFrom, $pyTo));
+
+            return [
+                'value'   => number_format($cy),
+                'sub'     => 'Escales (vessel calls)',
+                'pending' => false,
+                'vsPy'    => $this->pct((float) $cy, (float) $py),
+            ];
+        } catch (\Throwable $e) {
+            return $this->failed('Escales (vessel calls)', $e);
+        }
     }
 
-    private function containersPerDayPending(\DateTimeImmutable $cyFrom, \DateTimeImmutable $cyTo, int $cyWd, int $pyWd): array
+    private function containersHandled(\DateTimeImmutable $cyFrom, \DateTimeImmutable $cyTo, \DateTimeImmutable $pyFrom, \DateTimeImmutable $pyTo): array
     {
-        // TARGET: containers_scanned / cyWd
-        return ['value' => null, 'sub' => 'Throughput rate · 6-day basis', 'pending' => true];
+        try {
+            $cy = $this->odoo->searchCount(self::MODEL_EQUIPMENT, $this->stdDomain($cyFrom, $cyTo));
+            $py = $this->odoo->searchCount(self::MODEL_EQUIPMENT, $this->stdDomain($pyFrom, $pyTo));
+
+            return [
+                'value'   => number_format($cy),
+                'sub'     => 'Containers in period',
+                'pending' => false,
+                'vsPy'    => $this->pct((float) $cy, (float) $py),
+            ];
+        } catch (\Throwable $e) {
+            return $this->failed('Containers in period', $e);
+        }
     }
 
-    private function avgDwellHoursPending(\DateTimeImmutable $cyFrom, \DateTimeImmutable $cyTo, \DateTimeImmutable $pyFrom, \DateTimeImmutable $pyTo): array
+    private function containersPerDay(\DateTimeImmutable $cyFrom, \DateTimeImmutable $cyTo, int $cyWd, \DateTimeImmutable $pyFrom, \DateTimeImmutable $pyTo, int $pyWd): array
     {
-        // TARGET: pair entrée + sortie scans by container_id, compute avg
-        // (sortie_dt - entrée_dt) in hours. Will likely need read_group on
-        // <scan_model> with groupby=container_id to find paired rows.
-        return ['value' => null, 'sub' => 'Hours between entrée & sortie', 'pending' => true];
+        try {
+            $cy = $this->odoo->searchCount(self::MODEL_EQUIPMENT, $this->stdDomain($cyFrom, $cyTo));
+            $py = $this->odoo->searchCount(self::MODEL_EQUIPMENT, $this->stdDomain($pyFrom, $pyTo));
+
+            $cyRate = $cyWd > 0 ? $cy / $cyWd : 0.0;
+            $pyRate = $pyWd > 0 ? $py / $pyWd : 0.0;
+
+            return [
+                'value'   => number_format($cyRate, 1),
+                'sub'     => "Throughput / working day · {$cyWd} WD",
+                'pending' => false,
+                'vsPy'    => $this->pct($cyRate, $pyRate),
+            ];
+        } catch (\Throwable $e) {
+            return $this->failed("Throughput / working day", $e);
+        }
     }
 
-    private function mixByTypePending(\DateTimeImmutable $cyFrom, \DateTimeImmutable $cyTo): array
+    private function containersScanned(\DateTimeImmutable $cyFrom, \DateTimeImmutable $cyTo, \DateTimeImmutable $pyFrom, \DateTimeImmutable $pyTo): array
     {
-        // TARGET: read_group on container model groupby=container_type.
-        // Returns ['20ft' => N, '40ft' => N, '40hc' => N, 'reefer' => N].
-        return ['value' => null, 'sub' => "20'/40'/40HC/Reefer share", 'pending' => true];
+        try {
+            // Note: filter on `scanned_date` (when the scan happened), not
+            // create_date, so this is "scanned in this period" regardless of
+            // when the container record was first registered.
+            $cy = $this->odoo->searchCount(self::MODEL_EQUIPMENT, [
+                ['scanned', '=', true],
+                ['scanned_date', '>=', $cyFrom->format('Y-m-d 00:00:00')],
+                ['scanned_date', '<=', $cyTo->format('Y-m-d 23:59:59')],
+            ]);
+            $py = $this->odoo->searchCount(self::MODEL_EQUIPMENT, [
+                ['scanned', '=', true],
+                ['scanned_date', '>=', $pyFrom->format('Y-m-d 00:00:00')],
+                ['scanned_date', '<=', $pyTo->format('Y-m-d 23:59:59')],
+            ]);
+
+            return [
+                'value'   => number_format($cy),
+                'sub'     => 'Scanned in period',
+                'pending' => false,
+                'vsPy'    => $this->pct((float) $cy, (float) $py),
+            ];
+        } catch (\Throwable $e) {
+            return $this->failed('Scanned in period', $e);
+        }
     }
 
-    private function reeferSharePending(\DateTimeImmutable $cyFrom, \DateTimeImmutable $cyTo, \DateTimeImmutable $pyFrom, \DateTimeImmutable $pyTo): array
+    private function scanRate(\DateTimeImmutable $cyFrom, \DateTimeImmutable $cyTo, \DateTimeImmutable $pyFrom, \DateTimeImmutable $pyTo): array
     {
-        // TARGET: count(reefer) / count(all)
-        return ['value' => null, 'sub' => 'Refrigerated as % of total', 'pending' => true];
+        try {
+            $totalCy   = $this->odoo->searchCount(self::MODEL_EQUIPMENT, $this->stdDomain($cyFrom, $cyTo));
+            $scannedCy = $this->odoo->searchCount(self::MODEL_EQUIPMENT, array_merge(
+                $this->stdDomain($cyFrom, $cyTo),
+                [['scanned', '=', true]]
+            ));
+            $totalPy   = $this->odoo->searchCount(self::MODEL_EQUIPMENT, $this->stdDomain($pyFrom, $pyTo));
+            $scannedPy = $this->odoo->searchCount(self::MODEL_EQUIPMENT, array_merge(
+                $this->stdDomain($pyFrom, $pyTo),
+                [['scanned', '=', true]]
+            ));
+
+            $cyPct = $totalCy > 0 ? 100.0 * $scannedCy / $totalCy : 0.0;
+            $pyPct = $totalPy > 0 ? 100.0 * $scannedPy / $totalPy : 0.0;
+
+            return [
+                'value'   => number_format($cyPct, 1) . '%',
+                'sub'     => number_format($scannedCy) . ' of ' . number_format($totalCy),
+                'pending' => false,
+                'vsPy'    => $cyPct - $pyPct,  // pp delta (signed)
+            ];
+        } catch (\Throwable $e) {
+            return $this->failed('Scan rate', $e);
+        }
     }
 
-    private function revenuePerContainerPending(\DateTimeImmutable $cyFrom, \DateTimeImmutable $cyTo, \DateTimeImmutable $pyFrom, \DateTimeImmutable $pyTo): array
+    private function inspectionRate(\DateTimeImmutable $cyFrom, \DateTimeImmutable $cyTo, \DateTimeImmutable $pyFrom, \DateTimeImmutable $pyTo): array
     {
-        // TARGET: sum(invoice.amount_total via container.invoice_id) / count(container)
-        return ['value' => null, 'sub' => 'Invoice value ÷ containers', 'pending' => true];
+        try {
+            $totalCy = $this->odoo->searchCount(self::MODEL_EQUIPMENT, $this->stdDomain($cyFrom, $cyTo));
+            $inspectedCy = $this->odoo->searchCount(self::MODEL_EQUIPMENT, array_merge(
+                $this->stdDomain($cyFrom, $cyTo),
+                [['inspected', '!=', 'not_done']]
+            ));
+            $totalPy = $this->odoo->searchCount(self::MODEL_EQUIPMENT, $this->stdDomain($pyFrom, $pyTo));
+            $inspectedPy = $this->odoo->searchCount(self::MODEL_EQUIPMENT, array_merge(
+                $this->stdDomain($pyFrom, $pyTo),
+                [['inspected', '!=', 'not_done']]
+            ));
+
+            $cyPct = $totalCy > 0 ? 100.0 * $inspectedCy / $totalCy : 0.0;
+            $pyPct = $totalPy > 0 ? 100.0 * $inspectedPy / $totalPy : 0.0;
+
+            return [
+                'value'   => number_format($cyPct, 1) . '%',
+                'sub'     => number_format($inspectedCy) . ' of ' . number_format($totalCy),
+                'pending' => false,
+                'vsPy'    => $cyPct - $pyPct,
+            ];
+        } catch (\Throwable $e) {
+            return $this->failed('Inspection rate', $e);
+        }
     }
 
-    private function topCustomersPending(\DateTimeImmutable $cyFrom, \DateTimeImmutable $cyTo, int $limit): array
+    private function mixBySize(\DateTimeImmutable $cyFrom, \DateTimeImmutable $cyTo): array
     {
-        // TARGET: read_group groupby=partner_id, sort desc, take $limit
-        return ['value' => null, 'sub' => 'Containers per partner', 'pending' => true];
+        try {
+            $rows = $this->odoo->callModel(self::MODEL_EQUIPMENT, 'read_group', [
+                'domain'  => $this->stdDomain($cyFrom, $cyTo),
+                'fields'  => [],
+                'groupby' => ['size'],
+                'lazy'    => false,
+            ]);
+
+            $total = 0;
+            $bySize = [];
+            foreach ($rows as $r) {
+                $key = (string) ($r['size'] ?? 'unknown');
+                if ($key === '' || $key === 'false') $key = 'n/a';
+                $cnt = (int) ($r['__count'] ?? $r['size_count'] ?? 0);
+                $bySize[$key] = ($bySize[$key] ?? 0) + $cnt;
+                $total += $cnt;
+            }
+            arsort($bySize);
+
+            $parts = [];
+            foreach (array_slice($bySize, 0, 4, true) as $size => $cnt) {
+                $pct = $total > 0 ? round(100.0 * $cnt / $total) : 0;
+                $label = match ($size) {
+                    '20'    => "20'",
+                    '40'    => "40'",
+                    '45'    => "45'",
+                    'n/a'   => 'n/a',
+                    default => $size,
+                };
+                $parts[] = "{$label} {$pct}%";
+            }
+
+            return [
+                'value'   => number_format($total),
+                'sub'     => implode(' · ', $parts) ?: 'no records',
+                'pending' => false,
+            ];
+        } catch (\Throwable $e) {
+            return $this->failed('Mix by size', $e);
+        }
     }
 
-    private function topDestinationsPending(\DateTimeImmutable $cyFrom, \DateTimeImmutable $cyTo, int $limit): array
+    private function fullEmptyMix(\DateTimeImmutable $cyFrom, \DateTimeImmutable $cyTo): array
     {
-        // TARGET: read_group groupby=destination_country_id, sort desc
-        return ['value' => null, 'sub' => 'Containers per export country', 'pending' => true];
+        try {
+            $rows = $this->odoo->callModel(self::MODEL_EQUIPMENT, 'read_group', [
+                'domain'  => $this->stdDomain($cyFrom, $cyTo),
+                'fields'  => [],
+                'groupby' => ['full'],
+                'lazy'    => false,
+            ]);
+
+            $full  = 0;
+            $empty = 0;
+            $other = 0;
+            foreach ($rows as $r) {
+                $key = (string) ($r['full'] ?? '');
+                $cnt = (int) ($r['__count'] ?? $r['full_count'] ?? 0);
+                if ($key === 'yes')      $full  += $cnt;
+                elseif ($key === 'no')   $empty += $cnt;
+                else                     $other += $cnt;
+            }
+            $total = $full + $empty + $other;
+            $fullPct = $total > 0 ? 100.0 * $full / $total : 0.0;
+
+            return [
+                'value'   => number_format($fullPct, 1) . '% full',
+                'sub'     => number_format($full) . ' laden · ' . number_format($empty) . ' empty',
+                'pending' => false,
+            ];
+        } catch (\Throwable $e) {
+            return $this->failed('Laden share', $e);
+        }
     }
 
-    /* ── Shared helpers (already real today) ───────────────────────────── */
+    private function directionMix(\DateTimeImmutable $cyFrom, \DateTimeImmutable $cyTo): array
+    {
+        try {
+            // Direction lives on cargo, not equipment. Aggregate at cargo
+            // level and weight by equipment_count so the breakdown reflects
+            // container volume rather than BL count.
+            $rows = $this->odoo->callModel(self::MODEL_CARGO, 'read_group', [
+                'domain'  => $this->stdDomain($cyFrom, $cyTo),
+                'fields'  => ['equipment_count:sum'],
+                'groupby' => ['direction'],
+                'lazy'    => false,
+            ]);
+
+            $imp = 0;
+            $exp = 0;
+            $other = 0;
+            foreach ($rows as $r) {
+                $key = (string) ($r['direction'] ?? '');
+                $cnt = (int) ($r['equipment_count'] ?? 0);
+                if ($key === 'in')        $imp += $cnt;
+                elseif ($key === 'out')   $exp += $cnt;
+                else                      $other += $cnt;
+            }
+            $total = $imp + $exp + $other;
+            $impPct = $total > 0 ? round(100.0 * $imp / $total) : 0;
+            $expPct = $total > 0 ? round(100.0 * $exp / $total) : 0;
+
+            return [
+                'value'   => "{$impPct}% Imp · {$expPct}% Exp",
+                'sub'     => number_format($imp) . ' in · ' . number_format($exp) . ' out',
+                'pending' => false,
+            ];
+        } catch (\Throwable $e) {
+            return $this->failed('Direction mix', $e);
+        }
+    }
+
+    /* ── Shared helpers ───────────────────────────────────────────────── */
+
+    /**
+     * Standard period + active filter applied to all logistique models.
+     * Period anchor: create_date (always populated by Odoo).
+     */
+    private function stdDomain(\DateTimeImmutable $from, \DateTimeImmutable $to): array
+    {
+        return [
+            ['create_date', '>=', $from->format('Y-m-d 00:00:00')],
+            ['create_date', '<=', $to->format('Y-m-d 23:59:59')],
+            ['active', '=', true],
+        ];
+    }
+
+    private function failed(string $sub, \Throwable $e): array
+    {
+        return [
+            'value'   => null,
+            'sub'     => $sub,
+            'pending' => true,
+            'error'   => $e->getMessage(),
+        ];
+    }
 
     /**
      * Mon-Sat working days in [from, to]. Matches RevenueService basis so
