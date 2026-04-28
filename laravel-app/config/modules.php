@@ -176,6 +176,26 @@ return [
             'status'  => 'live',
         ],
         [
+            // Operations — container & logistics analytics, populated from
+            // the customer's Odoo Logistique module (scans, manifestes,
+            // EDI). Distinct from Inventory (which deals with stock-on-hand
+            // for retail/manufacturing): Operations is for businesses whose
+            // P&L revolves around moving physical units through a logistics
+            // pipeline (containers, shipments, deliveries).
+            //
+            // default=false on purpose — only tenants with a Logistique
+            // module in their Odoo benefit. Super admin enables per tenant.
+            'key'     => 'operations',
+            'service' => 'business_intelligence',
+            'label'   => 'Operations',
+            'url'     => '/operations',
+            'active'  => 'operations',
+            'icon'    => 'M4 7v10a2 2 0 002 2h12a2 2 0 002-2V7M4 7l8-4 8 4M4 7h16M9 11h6M9 15h6',
+            'default' => false,
+            'core'    => false,
+            'status'  => 'live',
+        ],
+        [
             'key'     => 'ai_insights',
             'service' => 'business_intelligence',
             'label'   => 'AI Insights',
