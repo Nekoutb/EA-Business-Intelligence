@@ -27,15 +27,21 @@ use App\Odoo\OdooClient;
  *
  *   • Ceiling = 0.5 % × CA_net_YTD.
  *
- *   • Category rules:
- *       Cat 1 — fully deducted, no exposure.
- *       Cat 2 — deductible up to the ceiling collectively. If total Cat 2
- *               > ceiling, excess is reintegrated (allocated pro-rata
- *               to each Cat 2 beneficiary by their share).
- *       Cat 3 — fully reintegrated. If is_non_resident, additional 15 %
- *               TSR (Article 225 CGI).
- *       Unresolved — treated as Cat 3 for exposure purposes (conservative
- *               default). Surfaced in red so the user resolves it.
+ *   • Category rules (refined 2026-04-28):
+ *       Cat 1 — fully deducted, no exposure (uncapped).
+ *       Cat 2 + Cat 3 + Unresolved — pooled and tested COLLECTIVELY
+ *               against the ceiling. If the combined non-Cat-1 spend is
+ *               at or below the ceiling, nothing is reintegrated — the
+ *               actual disbursement is within the deductibility cap so
+ *               there is no exposure. Above the ceiling, only the EXCESS
+ *               is reintegrated, distributed pro-rata across Cat 2 / 3 /
+ *               Unresolved by their share of the non-Cat-1 pool.
+ *       Non-resident Cat 3 / Unresolved beneficiaries with a non-zero
+ *               reintegrated portion bear an additional 15 % TSR
+ *               (Article 225 CGI) on that reintegrated amount.
+ *       Unresolved beneficiaries are surfaced in red so the user
+ *               documents their category, but are NOT conservatively
+ *               reintegrated when total spend is below the ceiling.
  *
  *   • Stacked exposure on the reintegrated portion:
  *       33 % statutory income tax (Article 17 CGI)
@@ -219,31 +225,60 @@ final class DonationsComplianceService
             }
         }
 
-        // Cat 2 cap: aggregate cap over all Cat 2; excess reintegrated.
-        $cat2Allowed       = min($cat2Total, $ceiling);
-        $cat2Reintegrated  = max(0.0, $cat2Total - $ceiling);
-        // Cat 3 + unresolved: fully reintegrated.
-        $cat3Reintegrated  = $cat3Total + $unresolvedTotal;
-        $totalDeductible   = $cat1Total + $cat2Allowed;
-        $totalReintegrated = $cat2Reintegrated + $cat3Reintegrated;
+        // ── Apply ceiling collectively to the non-Cat-1 pool ─────────────
+        // Methodology refinement (2026-04-28):
+        //   The 0.5% × CA_net ceiling is treated as a materiality threshold
+        //   over the WHOLE non-Cat-1 spend, not just over Cat 2. If the
+        //   firm's combined Cat 2 + Cat 3 + Unresolved spending is ≤ ceiling,
+        //   nothing is reintegrated — the actual disbursement falls below
+        //   the deductibility cap so there is no exposure.
+        //
+        //   Above the ceiling, the *excess* is reintegrated and apportioned
+        //   pro-rata across the contributing categories by share. Cat 1
+        //   amounts are always exempt regardless of ceiling.
+        $cat1Allowed     = $cat1Total;                      // always deductible
+        $nonCat1Total    = $cat2Total + $cat3Total + $unresolvedTotal;
+        $excessOverCap   = max(0.0, $nonCat1Total - $ceiling);
 
-        // Per-beneficiary deductible / reintegrated apportionment.
-        $cat2Ratio = $cat2Total > 0 ? min(1.0, $ceiling / $cat2Total) : 1.0;
+        // Pro-rata distribution of the excess back onto each non-Cat-1 bucket.
+        $shareCat2  = $nonCat1Total > 0 ? $cat2Total      / $nonCat1Total : 0.0;
+        $shareCat3  = $nonCat1Total > 0 ? $cat3Total      / $nonCat1Total : 0.0;
+        $shareUnres = $nonCat1Total > 0 ? $unresolvedTotal / $nonCat1Total : 0.0;
+
+        $cat2Reintegrated  = round($excessOverCap * $shareCat2,  2);
+        $cat3Reintegrated  = round($excessOverCap * $shareCat3,  2);
+        $unresReintegrated = round($excessOverCap * $shareUnres, 2);
+        $cat2Allowed       = $cat2Total      - $cat2Reintegrated;
+        $cat3Allowed       = $cat3Total      - $cat3Reintegrated;
+        $unresAllowed      = $unresolvedTotal - $unresReintegrated;
+
+        $totalDeductible   = $cat1Allowed + $cat2Allowed + $cat3Allowed + $unresAllowed;
+        $totalReintegrated = $cat2Reintegrated + $cat3Reintegrated + $unresReintegrated;
+
+        // Per-beneficiary apportionment: each beneficiary's reintegrated
+        // share is the same proportion of its category's total as the
+        // category-level reintegration ratio.
+        $reintRatioByCat = [
+            1 => 0.0,
+            2 => $cat2Total      > 0 ? $cat2Reintegrated  / $cat2Total      : 0.0,
+            3 => $cat3Total      > 0 ? $cat3Reintegrated  / $cat3Total      : 0.0,
+            0 => $unresolvedTotal > 0 ? $unresReintegrated / $unresolvedTotal : 0.0,
+        ];
         foreach ($beneficiaries as &$b) {
             $a   = (float) $b['total'];
             $cat = (int) ($b['category'] ?? 0);
             $deductible = $reintegrated = 0.0; $tsr = 0.0;
-            if ($cat === 1) {
-                $deductible = $a;
-            } elseif ($cat === 2) {
-                $deductible   = round($a * $cat2Ratio, 2);
-                $reintegrated = round($a - $deductible, 2);
-            } else { // 3 or unresolved → full reintegration
-                $reintegrated = $a;
-                if ($b['is_non_resident']) {
-                    $tsr = round($a * (self::TSR_NON_RESIDENT_PCT / 100.0), 2);
-                }
+
+            $ratio        = $reintRatioByCat[$cat] ?? $reintRatioByCat[0];
+            $reintegrated = round($a * $ratio, 2);
+            $deductible   = round($a - $reintegrated, 2);
+
+            // 15% TSR (Article 225 CGI) applies on the reintegrated portion
+            // for Cat 3 / Unresolved beneficiaries flagged as non-resident.
+            if ($reintegrated > 0 && ($cat === 3 || $cat === 0) && $b['is_non_resident']) {
+                $tsr = round($reintegrated * (self::TSR_NON_RESIDENT_PCT / 100.0), 2);
             }
+
             $citWht = round($reintegrated * (self::STACKED_RATE_PCT / 100.0), 2);
             $b['deductible']     = $deductible;
             $b['reintegrated']   = $reintegrated;
