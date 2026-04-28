@@ -107,12 +107,16 @@ final class FixedAssetsService
         $accumulated = $grossValue - $netBookValue;
         $avgAgeYears = $grossValue > 0 ? ($weightedAgeDays / $grossValue) / 365.25 : 0.0;
 
-        // 2. YTD depreciation charge from the GL (account_type = expense_depreciation).
+        // 2. YTD depreciation charge from the GL — SYSCOHADA Class 68
+        //    (Dotations aux amortissements et provisions). Filter by `code`
+        //    instead of `account_type` so this works on Odoo 14-19+ (the
+        //    `account_type` selection field was introduced in Odoo 17 and
+        //    is missing on v15-v16).
         $depreciationYtd = 0.0;
         try {
             $daAccounts = $this->odoo->searchRead(
                 'account.account',
-                [['account_type', '=', 'expense_depreciation']],
+                [['code', '=like', '68%']],
                 ['id'], []
             );
             $ids = array_map(fn($r) => (int) $r['id'], $daAccounts);
