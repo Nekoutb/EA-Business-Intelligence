@@ -6,7 +6,7 @@
         <div>
             <div class="flex items-center gap-2 mb-1">
                 <span class="inline-block w-2 h-2 rounded-full bg-sage-400 animate-pulse"></span>
-                <span class="text-[10px] uppercase tracking-[0.35em] text-[#8a8578] font-medium">Live · {{ ea_last_sync_label() }}</span>
+                <span class="text-[10px] uppercase tracking-[0.35em] text-[#8a8578] font-medium">{{ $periodLabel ?? 'Live' }} · {{ ea_last_sync_label() }}</span>
             </div>
             <h1 class="text-2xl font-bold text-[#1e3d44]">Executive Overview</h1>
         </div>
@@ -22,6 +22,11 @@
 @endsection
 
 @section('content')
+
+    {{-- YTD / MTD timeframe selector. Limited to those two tabs (Month/YoY
+         live on the Revenue page) so the dashboard stays a fast read of
+         "year-to-date" vs "this month so far". --}}
+    <x-period-filter :period="$period" :options="[['ytd','YTD'],['mtd','MTD']]" />
 
     @if ($error)
         <div class="bg-coral-50 border border-coral-200 text-coral-800 rounded-xl p-4 text-sm mb-6">
