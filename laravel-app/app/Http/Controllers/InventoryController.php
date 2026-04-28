@@ -14,13 +14,20 @@ class InventoryController extends Controller
         // The cache key reflects that scope (per-tenant via ea_cached helper).
         $today = new \DateTimeImmutable();
 
-        $data = ea_cached('inventory_ytd', function () use ($today) {
-            $svc = new InventoryService(OdooFactory::fromConfig());
-            return $svc->analyze($today);
-        });
+        $data  = null;
+        $error = null;
+        try {
+            $data = ea_cached('inventory_ytd', function () use ($today) {
+                $svc = new InventoryService(OdooFactory::fromConfig());
+                return $svc->analyze($today);
+            });
+        } catch (\Throwable $e) {
+            $error = $e->getMessage();
+        }
 
         return view('inventory', [
             'data'   => $data,
+            'error'  => $error,
             'active' => 'inventory',
             'aiPage' => 'inventory',
         ]);

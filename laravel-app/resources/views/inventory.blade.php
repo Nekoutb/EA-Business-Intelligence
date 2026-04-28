@@ -25,10 +25,21 @@
 @endsection
 
 @section('content')
+    @if ($error ?? null)
+        <div class="mb-6 px-4 py-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-sm">
+            <div class="font-medium mb-1">Could not load data from Odoo</div>
+            <div>{{ $error }}</div>
+            <div class="mt-2 text-[12px]">Go to <a href="{{ tenant_url('/settings') }}" class="underline">Settings</a> to verify your Odoo connection.</div>
+        </div>
+    @elseif (!$data)
+        <div class="mb-6 px-4 py-3 rounded-lg bg-slate-50 border border-slate-200 text-slate-600 text-sm">
+            No data available.
+        </div>
+    @else
     {{-- Error Display --}}
     @if ($data['error'] ?? null)
         <div class="mb-6 px-4 py-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-sm">
-            <strong>Error:</strong> {{ $data['error'] }}
+            <strong>Partial error:</strong> {{ $data['error'] }}
         </div>
     @endif
 
@@ -110,6 +121,7 @@
         </div>
     </section>
 
+    @endif {{-- end: $error / $data null guard --}}
 @endsection
 
 @push('scripts')
