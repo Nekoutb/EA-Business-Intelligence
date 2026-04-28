@@ -357,7 +357,7 @@
                   <thead>
                       <tr class="text-[10px] uppercase tracking-wider text-[#8a8578] border-b border-[#e8e4de]">
                           <th class="text-left  py-2 pr-3 font-medium">Category</th>
-                          <th class="text-right py-2 px-3 font-medium">Containers</th>
+                          <th class="text-right py-2 px-3 font-medium">Count</th>
                           <th class="text-right py-2 px-3 font-medium">Price / unit</th>
                           <th class="text-right py-2 pl-3 font-medium">Revenue HT</th>
                       </tr>
@@ -394,11 +394,11 @@
               </table>
           </div>
           <div class="text-[11px] text-[#7c7466] mt-3 leading-relaxed space-y-1.5">
-              <div><strong>Note:</strong> Empty (vide) and Transit containers are scanned systematically and free of charge per the price grid. 45' containers are billed at the 40' tariff (the grid only enumerates 20"/40"). Period anchor for revenue is <code class="text-[10px] bg-[#faf8f5] border border-[#ece7df] rounded px-1 py-0.5">scanned_date</code> — the moment the fee is earned.</div>
+              <div><strong>Note:</strong> Empty (vide) and Transit containers are scanned systematically and free of charge per the price grid. 45' containers are billed at the 40' tariff (the grid only enumerates 20"/40"). Vehicles are classified via <code class="text-[10px] bg-[#faf8f5] border border-[#ece7df] rounded px-1 py-0.5">aw_vehicule.vehicule.cylinders</code> (4/6 → Voiture, 8 → Camion, 12 → Bulldoze); rates per the Grille Tarifaire. Period anchor for revenue is <code class="text-[10px] bg-[#faf8f5] border border-[#ece7df] rounded px-1 py-0.5">scanned_date</code> — the moment the fee is earned.</div>
               <div>
-                <strong>*</strong> <em>Vehicles</em>: count shown but <strong>no rate is assumed</strong>. Revenue here is computed from the scan data (operational ground truth) so it can be reconciled against actual invoiced revenue later. The grid distinguishes <em>voiture</em> (50K) / <em>camion 4t+</em> (95K) / <em>bulldozer</em> (105K) / <em>OGG</em> (105K), but
+                <strong>*</strong> <em>Other / non-vehicle items</em>: the
                 <code class="text-[10px] bg-[#faf8f5] border border-[#ece7df] rounded px-1 py-0.5">aw_vehicule.vehicule</code>
-                has no reliable per-record classifier today (<code class="text-[10px] bg-[#faf8f5] border border-[#ece7df] rounded px-1 py-0.5">goods_group</code> is unpopulated; <code class="text-[10px] bg-[#faf8f5] border border-[#ece7df] rounded px-1 py-0.5">manufacturer</code> contains mixed values like <em>SACS</em>/<em>COOKWARE</em>). Until either the source data is enriched with a type field, or we derive one from physical attributes, this row stays count-only — assigning an arbitrary rate would invalidate the reconciliation.
+                model also stores rows that aren't vehicles at all — sample data shows <em>CARTONS</em>, <em>SACS</em>, <em>COOKWARE</em>, even loose 40' containers. These have no cylinders match, are not billed here, and are surfaced count-only so the source-data quirk is visible rather than swept under the rug.
               </div>
               <div>
                 <strong>**</strong> <em>Bois</em>: tariff is 35,000 HT <em>per truck or wagon</em>, not per piece of wood. Approximated by counting distinct cargos with at least one scanned bois record in the period (each cargo ≈ one truckload). The
@@ -407,6 +407,159 @@
               </div>
           </div>
       </div>
+    @endif
+
+    {{-- ── Expected Revenue Simulation (what-if scenarios) ──────────────── --}}
+    @php
+        $sim = null;
+        if ($breakdown && empty($breakdown['error'])) {
+            $billableKeys = [
+                'import_full_40', 'import_full_20',
+                'export_full_40', 'export_full_20',
+                'voiture', 'camion', 'bulldoze',
+                'wood_per_truckload',
+            ];
+            $simRows = [];
+            foreach ($billableKeys as $k) {
+                if (!isset($breakdown['categories'][$k])) continue;
+                $cat = $breakdown['categories'][$k];
+                $price = $cat['price'] ?? null;
+                if ($price === null || $price === 0) continue;
+                $simRows[] = [
+                    'key'   => $k,
+                    'label' => $cat['label'],
+                    'count' => (int) ($cat['count'] ?? 0),
+                    'price' => (int) $price,
+                ];
+            }
+            if (!empty($simRows)) {
+                $sim = $simRows;
+            }
+        }
+    @endphp
+    @if ($sim)
+      <div class="bg-white border border-[#e8e4de] rounded-xl p-5 mb-6">
+          <div class="flex items-start justify-between mb-3 gap-3 flex-wrap">
+              <div>
+                  <h3 class="text-sm font-semibold text-[#1e3d44]">
+                      Expected Revenue Simulation
+                      <span class="text-[10px] uppercase tracking-wider text-[#a09d95] font-medium ml-1">FCFA · HT · what-if · {{ $period['type'] === 'mtd' ? 'MTD' : 'YTD' }}</span>
+                  </h3>
+                  <p class="text-[11px] text-[#7c7466] mt-1.5 leading-relaxed max-w-3xl">
+                      Volumes default to the current period's scanned counts; unit prices default to the Grille Tarifaire. Edit any field to model a scenario — subtotals and the grand total recompute instantly. Empty / Transit (free) and unclassified vehicle-table residue are excluded by design.
+                  </p>
+              </div>
+              <button type="button" id="ops-sim-reset"
+                      class="text-[11px] text-[#7c7466] hover:text-[#1e3d44] border border-[#e8e4de] rounded px-3 py-1.5 transition whitespace-nowrap">
+                  ↻ Reset to scanned baseline
+              </button>
+          </div>
+
+          <div class="overflow-x-auto">
+              <table class="w-full text-xs">
+                  <thead>
+                      <tr class="text-[10px] uppercase tracking-wider text-[#8a8578] border-b border-[#e8e4de]">
+                          <th class="text-left  py-2 pr-3 font-medium">Category</th>
+                          <th class="text-right py-2 px-3 font-medium">Volume</th>
+                          <th class="text-right py-2 px-3 font-medium">Unit Price (HT)</th>
+                          <th class="text-right py-2 pl-3 font-medium">Subtotal</th>
+                      </tr>
+                  </thead>
+                  <tbody class="divide-y divide-[#f1ede5]" id="ops-sim-body">
+                      @foreach ($sim as $row)
+                          <tr data-row="{{ $row['key'] }}" class="text-[#2d3748]">
+                              <td class="py-2 pr-3">{{ $row['label'] }}</td>
+                              <td class="py-2 px-3 text-right">
+                                  <input type="number" min="0" step="1"
+                                         value="{{ $row['count'] }}"
+                                         data-default="{{ $row['count'] }}"
+                                         data-field="count"
+                                         class="w-24 text-right tabular-nums bg-[#faf8f5] border border-[#ece7df] rounded px-2 py-1 focus:outline-none focus:border-[#1e3d44]" />
+                              </td>
+                              <td class="py-2 px-3 text-right">
+                                  <input type="number" min="0" step="500"
+                                         value="{{ $row['price'] }}"
+                                         data-default="{{ $row['price'] }}"
+                                         data-field="price"
+                                         class="w-28 text-right tabular-nums bg-[#faf8f5] border border-[#ece7df] rounded px-2 py-1 focus:outline-none focus:border-[#1e3d44]" />
+                              </td>
+                              <td class="py-2 pl-3 text-right tabular-nums font-medium" data-subtotal>—</td>
+                          </tr>
+                      @endforeach
+                  </tbody>
+                  <tfoot>
+                      <tr class="border-t-2 border-[#e8e4de] font-semibold text-[#1e3d44]">
+                          <td class="py-2.5 pr-3" colspan="3">Total Expected Revenue</td>
+                          <td class="py-2.5 pl-3 text-right tabular-nums" id="ops-sim-total">—</td>
+                      </tr>
+                      <tr class="text-[11px] text-[#7c7466]">
+                          <td class="py-1 pr-3" colspan="2">
+                              <span class="font-medium">Δ vs. baseline:</span>
+                              <span id="ops-sim-delta" class="ml-1">—</span>
+                          </td>
+                          <td class="py-1 px-3 text-right">Baseline</td>
+                          <td class="py-1 pl-3 text-right tabular-nums" id="ops-sim-baseline">—</td>
+                      </tr>
+                  </tfoot>
+              </table>
+          </div>
+
+          <div class="text-[11px] text-[#7c7466] mt-3 leading-relaxed">
+              <strong>Tip:</strong> set Voiture price to <code class="text-[10px] bg-[#faf8f5] border border-[#ece7df] rounded px-1 py-0.5">0</code> to remove it from the model, bump container volumes to project a busy month, or stress-test what a 10% rate increase across all categories does to the top line. Nothing here is persisted — this is purely a planning sandbox.
+          </div>
+      </div>
+
+      <script>
+      (function () {
+          var body = document.getElementById('ops-sim-body');
+          if (!body) return;
+          var totalEl = document.getElementById('ops-sim-total');
+          var deltaEl = document.getElementById('ops-sim-delta');
+          var baseEl  = document.getElementById('ops-sim-baseline');
+          var resetBtn = document.getElementById('ops-sim-reset');
+
+          var fmt = function (n) {
+              return Math.round(n).toLocaleString('en-US');
+          };
+
+          function recompute() {
+              var total = 0;
+              var base  = 0;
+              body.querySelectorAll('tr[data-row]').forEach(function (tr) {
+                  var cI = tr.querySelector('input[data-field="count"]');
+                  var pI = tr.querySelector('input[data-field="price"]');
+                  var c = parseFloat(cI.value) || 0;
+                  var p = parseFloat(pI.value) || 0;
+                  var sub = c * p;
+                  total += sub;
+                  tr.querySelector('[data-subtotal]').textContent = fmt(sub);
+                  var dC = parseFloat(cI.dataset.default) || 0;
+                  var dP = parseFloat(pI.dataset.default) || 0;
+                  base += dC * dP;
+              });
+              totalEl.textContent = fmt(total);
+              baseEl.textContent  = fmt(base);
+              var diff = total - base;
+              var pct  = base > 0 ? (diff / base * 100) : 0;
+              var sign = diff >= 0 ? '+' : '';
+              var color = diff > 0 ? '#3a7d44' : (diff < 0 ? '#b35a35' : '#7c7466');
+              deltaEl.innerHTML = '<span style="color:' + color + ';font-weight:500">' +
+                  sign + fmt(diff) + ' FCFA (' + sign + pct.toFixed(1) + '%)</span>';
+          }
+
+          body.addEventListener('input', recompute);
+          body.addEventListener('change', recompute);
+          if (resetBtn) {
+              resetBtn.addEventListener('click', function () {
+                  body.querySelectorAll('input[data-default]').forEach(function (i) {
+                      i.value = i.dataset.default;
+                  });
+                  recompute();
+              });
+          }
+          recompute();
+      })();
+      </script>
     @endif
 
     {{-- ── Schema notes & next steps ────────────────────────────────────── --}}
