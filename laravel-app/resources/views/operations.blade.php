@@ -382,8 +382,20 @@
                   </tfoot>
               </table>
           </div>
-          <div class="text-[11px] text-[#7c7466] mt-3 leading-relaxed">
-              <strong>Note:</strong> Empty (vide) and Transit containers are scanned systematically and free of charge per the price grid. 45' containers are billed at the 40' tariff (the grid only enumerates 20"/40"). Period anchor for revenue is <code class="text-[10px] bg-[#faf8f5] border border-[#ece7df] rounded px-1 py-0.5">scanned_date</code> — the moment the fee is earned.
+          <div class="text-[11px] text-[#7c7466] mt-3 leading-relaxed space-y-1.5">
+              <div><strong>Note:</strong> Empty (vide) and Transit containers are scanned systematically and free of charge per the price grid. 45' containers are billed at the 40' tariff (the grid only enumerates 20"/40"). Period anchor for revenue is <code class="text-[10px] bg-[#faf8f5] border border-[#ece7df] rounded px-1 py-0.5">scanned_date</code> — the moment the fee is earned.</div>
+              <div>
+                <strong>*</strong> <em>Vehicles</em>: billed at the flat <em>voiture</em> rate (50,000 HT). The price grid distinguishes <em>voiture</em> / <em>camion 4t+</em> / <em>bulldozer</em> / <em>OGG</em> at 50K-105K HT, but the source model
+                <code class="text-[10px] bg-[#faf8f5] border border-[#ece7df] rounded px-1 py-0.5">aw_vehicule.vehicule</code>
+                has no reliable type classifier (the
+                <code class="text-[10px] bg-[#faf8f5] border border-[#ece7df] rounded px-1 py-0.5">goods_group</code>
+                field is unpopulated, and <code class="text-[10px] bg-[#faf8f5] border border-[#ece7df] rounded px-1 py-0.5">manufacturer</code> shows mixed values like <em>SACS</em>/<em>COOKWARE</em>). Revenue from heavier categories is therefore <strong>understated</strong>; the gap closes once upstream classification is in place.
+              </div>
+              <div>
+                <strong>**</strong> <em>Bois</em>: tariff is 35,000 HT <em>per truck or wagon</em>, not per piece of wood. Approximated by counting distinct cargos with at least one scanned bois record in the period (each cargo ≈ one truckload). The
+                <code class="text-[10px] bg-[#faf8f5] border border-[#ece7df] rounded px-1 py-0.5">im_vehicule</code>
+                field on bois would give a sharper count but is mostly empty in the live data.
+              </div>
           </div>
       </div>
     @endif
