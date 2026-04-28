@@ -260,6 +260,169 @@ Route::prefix('admin')->group(function () {
                     }
                 }
                 $report['model_details'] = $details;
+
+                /* 5. DEEP DIVE: vehicle classification.
+                 *
+                 * The user wants to know whether ANY data source — outside
+                 * the billing path — can tell us if a scanned record is a
+                 * voiture / camion / bulldozer / OGG. We answer that by:
+                 *
+                 *   a. Dumping EVERY field on aw_vehicule.vehicule (no
+                 *      noise filter) so nothing hides.
+                 *   b. Reading 8 sample records (more than the regular 2)
+                 *      so the user can see the spread of values.
+                 *   c. Enumerating selection-field choices, since those
+                 *      are where Odoo typically encodes categorical type.
+                 *   d. Cross-model field search: any field anywhere in
+                 *      Odoo whose name OR human label hints at vehicle
+                 *      type / category / classification / dimensions.
+                 *   e. Full dump of aw_cargo_invoice.product (the
+                 *      container-billing config table) — useful to see
+                 *      whether a parallel vehicle-billing table exists.
+                 *   f. Inventory of every aw_* model in the install with
+                 *      record counts so nothing is missed.
+                 */
+                $deep = [];
+
+                try {
+                    $allVehFields = $client->callModel('aw_vehicule.vehicule', 'fields_get', [
+                        'attributes' => ['string', 'type', 'required', 'relation', 'help', 'selection'],
+                    ]);
+                    $deep['aw_vehicule.vehicule_full_fields'] = $allVehFields;
+
+                    // Pull 8 spread-out samples so we see variety in the
+                    // actually-populated columns (manufacturer, model_code,
+                    // goods_group, name, etc.).
+                    $deep['aw_vehicule.vehicule_samples'] = $client->searchRead(
+                        'aw_vehicule.vehicule',
+                        [],
+                        array_slice(array_keys($allVehFields), 0, 80),
+                        ['limit' => 8, 'order' => 'id desc']
+                    );
+
+                    // Selection-field choices: in modern Odoo each
+                    // selection field's options live in the field's
+                    // `selection` attribute (which fields_get returns).
+                    // Pull them out separately for readability.
+                    $vehSelections = [];
+                    foreach ($allVehFields as $name => $meta) {
+                        if (($meta['type'] ?? null) === 'selection') {
+                            $vehSelections[$name] = [
+                                'label'   => $meta['string']    ?? $name,
+                                'choices' => $meta['selection'] ?? null,
+                            ];
+                        }
+                    }
+                    $deep['aw_vehicule.vehicule_selection_fields'] = $vehSelections;
+
+                    // Distribution of populated values for the most
+                    // promising classifier candidates. read_group gives us
+                    // value -> count for free.
+                    $candidates = ['goods_group', 'manufacturer', 'model_code',
+                                   'manufacturer_code', 'cylinders', 'position',
+                                   'state', 'pdf_img'];
+                    $vehDistributions = [];
+                    foreach ($candidates as $f) {
+                        if (!isset($allVehFields[$f])) continue;
+                        try {
+                            $rows = $client->callModel('aw_vehicule.vehicule', 'read_group', [
+                                'domain'  => [],
+                                'fields'  => [],
+                                'groupby' => [$f],
+                                'lazy'    => false,
+                                'limit'   => 25,
+                            ]);
+                            $vehDistributions[$f] = array_map(fn ($r) => [
+                                'value' => $r[$f] ?? null,
+                                'count' => $r['__count'] ?? null,
+                            ], $rows);
+                        } catch (\Throwable $e) {
+                            $vehDistributions[$f] = ['error' => $e->getMessage()];
+                        }
+                    }
+                    $deep['aw_vehicule.vehicule_value_distributions'] = $vehDistributions;
+                } catch (\Throwable $e) {
+                    $deep['aw_vehicule.vehicule_error'] = $e->getMessage();
+                }
+
+                // Cross-model field name search.
+                try {
+                    $fieldHits = $client->searchRead('ir.model.fields',
+                        [
+                            '|','|','|','|','|','|','|','|','|','|','|','|','|','|',
+                            ['name',              'ilike', 'goods_group'],
+                            ['name',              'ilike', 'classif'],
+                            ['name',              'ilike', 'category'],
+                            ['name',              'ilike', 'gabarit'],
+                            ['name',              'ilike', 'vehicle_type'],
+                            ['name',              'ilike', 'tonnage'],
+                            ['field_description', 'ilike', 'voiture'],
+                            ['field_description', 'ilike', 'camion'],
+                            ['field_description', 'ilike', 'bulldozer'],
+                            ['field_description', 'ilike', 'engin'],
+                            ['field_description', 'ilike', 'gabarit'],
+                            ['field_description', 'ilike', 'classif'],
+                            ['field_description', 'ilike', 'marchandise'],
+                            ['field_description', 'ilike', 'tonnage'],
+                            ['field_description', 'ilike', 'véhicule'],
+                        ],
+                        ['model', 'name', 'field_description', 'ttype', 'help', 'relation'],
+                        ['limit' => 200, 'order' => 'model, name']
+                    );
+                    // Drop hits that come from std Odoo / sale / stock /
+                    // mail / utm / etc. — keep only AW + custom + fields
+                    // on models we already touched.
+                    $fieldHits = array_values(array_filter($fieldHits, function ($h) {
+                        $m = (string) ($h['model'] ?? '');
+                        if ($m === '') return false;
+                        if (str_starts_with($m, 'mail.')) return false;
+                        if (str_starts_with($m, 'ir.')) return false;
+                        if (str_starts_with($m, 'res.users')) return false;
+                        if (str_starts_with($m, 'utm.')) return false;
+                        if (str_starts_with($m, 'web_')) return false;
+                        return true;
+                    }));
+                    $deep['classification_field_hits'] = $fieldHits;
+                } catch (\Throwable $e) {
+                    $deep['classification_field_hits_error'] = $e->getMessage();
+                }
+
+                // aw_cargo_invoice.product full dump (~31 rows; small).
+                try {
+                    $deep['aw_cargo_invoice.product_full'] = $client->searchRead(
+                        'aw_cargo_invoice.product',
+                        [],
+                        ['size', 'journey_type', 'direction', 'product_id'],
+                        ['limit' => 100, 'order' => 'id']
+                    );
+                } catch (\Throwable $e) {
+                    $deep['aw_cargo_invoice.product_full_error'] = $e->getMessage();
+                }
+
+                // Full inventory of aw_* models with row counts.
+                try {
+                    $awModels = $client->searchRead('ir.model',
+                        [
+                            ['model', 'ilike', 'aw_'],
+                            ['transient', '=', false],
+                        ],
+                        ['model', 'name'],
+                        ['limit' => 200, 'order' => 'model']
+                    );
+                    foreach ($awModels as &$m) {
+                        try {
+                            $m['row_count'] = $client->searchCount($m['model'], []);
+                        } catch (\Throwable $e) {
+                            $m['row_count_error'] = $e->getMessage();
+                        }
+                    }
+                    unset($m);
+                    $deep['aw_models_inventory'] = $awModels;
+                } catch (\Throwable $e) {
+                    $deep['aw_models_inventory_error'] = $e->getMessage();
+                }
+
+                $report['deep_vehicle_probe'] = $deep;
             } catch (\Throwable $e) {
                 $report['error'] = $e->getMessage();
             } finally {
