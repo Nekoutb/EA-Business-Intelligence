@@ -16,100 +16,73 @@
 @section('content')
     <x-period-filter :period="$period" :options="[['ytd','YTD'],['mtd','MTD']]" />
 
-    {{-- ── Scope-in-progress notice ─────────────────────────────────────── --}}
-    <div class="bg-warm-50 border border-warm-200 rounded-xl p-5 mb-6">
-        <div class="flex items-start gap-3">
-            <div class="w-8 h-8 rounded-lg bg-warm-100 border border-warm-200 flex items-center justify-center shrink-0">
-                <svg class="w-4 h-4 text-warm-700" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v4l3 2M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z"/></svg>
-            </div>
-            <div class="flex-1">
-                <div class="text-sm font-semibold text-[#7a5a1a]">Scope in progress</div>
-                <p class="text-xs text-[#7c7466] mt-1 leading-relaxed">
-                    The KPIs below are being mapped against your Odoo <strong>Logistique</strong> schema (containers, scans, manifestes, EDI). Once the schema introspection is back, each card will be wired up to live data and the placeholder badges will go away.
-                </p>
+    @if ($error)
+        {{-- Service-layer failure — usually a connection issue (Odoo
+             unreachable, creds missing). The cards still render below in
+             pending state so the page doesn't 500. --}}
+        <div class="bg-coral-50 border border-coral-200 text-coral-800 rounded-xl p-4 text-sm mb-6">
+            <strong>Could not reach Odoo:</strong> {{ $error }}
+            <div class="text-xs mt-1 text-coral-600">Verify credentials in <a href="{{ tenant_url('/settings') }}" class="underline">Settings</a> or run the schema probe at <code>/admin/tenants/&lt;id&gt;/odoo-probe</code>.</div>
+        </div>
+    @endif
+
+    @if (!$ops || !empty($ops['pending_overall']))
+        {{-- Scope-in-progress notice — shown until at least one KPI helper
+             flips pending=false. Disappears automatically as the analyzer
+             gets wired up KPI by KPI. --}}
+        <div class="bg-warm-50 border border-warm-200 rounded-xl p-5 mb-6">
+            <div class="flex items-start gap-3">
+                <div class="w-8 h-8 rounded-lg bg-warm-100 border border-warm-200 flex items-center justify-center shrink-0">
+                    <svg class="w-4 h-4 text-warm-700" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v4l3 2M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z"/></svg>
+                </div>
+                <div class="flex-1">
+                    <div class="text-sm font-semibold text-[#7a5a1a]">Scope in progress</div>
+                    <p class="text-xs text-[#7c7466] mt-1 leading-relaxed">
+                        The KPIs below are being mapped against your Odoo <strong>Logistique</strong> schema (containers, scans, manifestes, EDI). Once the schema introspection is back, each card will be wired up to live data and the placeholder badges will go away.
+                    </p>
+                </div>
             </div>
         </div>
-    </div>
+    @endif
 
     {{-- ── Proposed KPIs (preview) ──────────────────────────────────────── --}}
     @php
-        // The KPI plan is laid out here as a static array so it's trivially
-        // editable as we learn more from the Odoo probe. Once we wire up
-        // the real OperationsService, these become <x-kpi> cards backed by
-        // live values; the structure stays the same.
+        // KPI plan — static metadata (title, icon, source-formula label, palette).
+        // Each entry's `key` is looked up in $ops['kpis'][$key] for the live
+        // value (or pending placeholder while OperationsService is in
+        // schema-discovery). Adding a new KPI here is a 2-step: drop an
+        // entry in this array + add the matching helper in
+        // OperationsService::analyze().
         $proposedKpis = [
             [
                 'group' => 'Container Throughput',
                 'cards' => [
-                    [
-                        'title'   => 'Containers Scanned',
-                        'sub'     => 'Period count (entrée + sortie)',
-                        'source'  => 'count(x_container_scan)',
-                        'icon'    => 'M3 7h18M3 12h18M3 17h18',
-                        'color'   => 'brand',
-                    ],
-                    [
-                        'title'   => 'Containers per Day',
-                        'sub'     => 'Throughput rate · 6-day basis',
-                        'source'  => 'count ÷ working_days',
-                        'icon'    => 'M12 8v4l3 2M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z',
-                        'color'   => 'sage',
-                    ],
-                    [
-                        'title'   => 'Avg Dwell Time',
-                        'sub'     => 'Hours between entrée &amp; sortie',
-                        'source'  => 'avg(sortie - entrée)',
-                        'icon'    => 'M12 6v6l4 2',
-                        'color'   => 'warm',
-                    ],
+                    ['key' => 'containers_scanned', 'title' => 'Containers Scanned',  'source' => 'count(x_container_scan)', 'icon' => 'M3 7h18M3 12h18M3 17h18', 'color' => 'brand'],
+                    ['key' => 'containers_per_day', 'title' => 'Containers per Day',  'source' => 'count ÷ working_days',    'icon' => 'M12 8v4l3 2M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z', 'color' => 'sage'],
+                    ['key' => 'avg_dwell_hours',    'title' => 'Avg Dwell Time',      'source' => 'avg(sortie - entrée)',    'icon' => 'M12 6v6l4 2', 'color' => 'warm'],
                 ],
             ],
             [
                 'group' => 'Container Mix',
                 'cards' => [
-                    [
-                        'title'   => 'Mix by Container Type',
-                        'sub'     => "20' / 40' / 40HC / Reefer share",
-                        'source'  => 'group_by(x_container_type)',
-                        'icon'    => 'M4 4h16v6H4zM4 14h16v6H4z',
-                        'color'   => 'brand',
-                    ],
-                    [
-                        'title'   => 'Reefer Share',
-                        'sub'     => 'Refrigerated as % of total',
-                        'source'  => "x_container_type = 'reefer' ÷ total",
-                        'icon'    => 'M12 2l4 8h-3v8h-2v-8H8z',
-                        'color'   => 'sage',
-                    ],
+                    ['key' => 'mix_by_type',  'title' => 'Mix by Container Type', 'source' => 'group_by(x_container_type)',           'icon' => 'M4 4h16v6H4zM4 14h16v6H4z', 'color' => 'brand'],
+                    ['key' => 'reefer_share', 'title' => 'Reefer Share',          'source' => "x_container_type = 'reefer' ÷ total",  'icon' => 'M12 2l4 8h-3v8h-2v-8H8z',    'color' => 'sage'],
                 ],
             ],
             [
                 'group' => 'Revenue & Customers',
                 'cards' => [
-                    [
-                        'title'   => 'Revenue per Container',
-                        'sub'     => 'Invoice value ÷ containers shipped',
-                        'source'  => 'sum(invoice) ÷ count(container)',
-                        'icon'    => 'M12 1v22M2 12h20',
-                        'color'   => 'brand',
-                    ],
-                    [
-                        'title'   => 'Top 5 Customers by Volume',
-                        'sub'     => 'Containers per partner',
-                        'source'  => 'group_by(partner_id)',
-                        'icon'    => 'M3 12h6l3-9 3 18 3-9h3',
-                        'color'   => 'coral',
-                    ],
-                    [
-                        'title'   => 'Top 5 Destinations',
-                        'sub'     => 'Containers per export country',
-                        'source'  => 'group_by(destination)',
-                        'icon'    => 'M12 2C8 6 6 9 6 13a6 6 0 0 0 12 0c0-4-2-7-6-11zM12 13a2 2 0 1 1 0-4 2 2 0 0 1 0 4z',
-                        'color'   => 'slate',
-                    ],
+                    ['key' => 'revenue_per_container', 'title' => 'Revenue per Container',     'source' => 'sum(invoice) ÷ count(container)', 'icon' => 'M12 1v22M2 12h20',                                                                'color' => 'brand'],
+                    ['key' => 'top_customers',         'title' => 'Top 5 Customers by Volume', 'source' => 'group_by(partner_id)',            'icon' => 'M3 12h6l3-9 3 18 3-9h3',                                                          'color' => 'coral'],
+                    ['key' => 'top_destinations',      'title' => 'Top 5 Destinations',        'source' => 'group_by(destination)',           'icon' => 'M12 2C8 6 6 9 6 13a6 6 0 0 0 12 0c0-4-2-7-6-11zM12 13a2 2 0 1 1 0-4 2 2 0 0 1 0 4z', 'color' => 'slate'],
                 ],
             ],
         ];
+
+        // Service output. May be null if OdooFactory threw (no creds yet,
+        // or unreachable). Treat null and missing keys as pending so the
+        // page never 500s — it shows the placeholder UI instead.
+        $opsKpis = $ops['kpis'] ?? [];
     @endphp
 
     @foreach ($proposedKpis as $section)
@@ -129,18 +102,32 @@
                             'slate' => ['bg-slate-400',  'bg-slate-50',  'border-slate-100',  'text-slate-500'],
                         ];
                         [$bar, $bg, $bdr, $txt] = $palettes[$card['color']] ?? $palettes['brand'];
+
+                        // Resolve live data from the service. Treat any of
+                        // these as "pending" → render placeholder UI:
+                        //   - service unavailable (Odoo down / no creds)
+                        //   - no entry for this key (KPI not yet helper'd)
+                        //   - service explicitly flagged pending=true
+                        $live    = $opsKpis[$card['key']] ?? null;
+                        $pending = !$live || !empty($live['pending']);
+                        $value   = $pending ? '— —' : ($live['value'] ?? '— —');
+                        $sub     = $live['sub'] ?? '';
                     @endphp
                     <div class="kpi-card bg-white rounded-xl border border-[#e8e4de] shadow-sm relative overflow-hidden flex">
-                        <div class="accent-bar {{ $bar }} shrink-0 opacity-60"></div>
+                        <div class="accent-bar {{ $bar }} shrink-0 {{ $pending ? 'opacity-60' : '' }}"></div>
                         <div class="flex-1 min-w-0 p-4">
                             <div class="flex items-start justify-between gap-2">
                                 <div class="min-w-0 flex-1">
                                     <div class="flex items-center gap-1.5 mb-1">
                                         <span class="text-[11px] uppercase tracking-wider text-[#8a8578] font-medium truncate">{{ $card['title'] }}</span>
-                                        <span class="inline-flex items-center text-[9px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded bg-warm-100 text-warm-700 border border-warm-200">Pending data</span>
+                                        @if ($pending)
+                                          <span class="inline-flex items-center text-[9px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded bg-warm-100 text-warm-700 border border-warm-200">Pending data</span>
+                                        @endif
                                     </div>
-                                    <div class="text-xl font-bold text-[#a09d95] mt-1 tabular-nums">— —</div>
-                                    <div class="text-[11px] text-[#a09d95] mt-0.5">{!! $card['sub'] !!}</div>
+                                    <div class="text-xl font-bold {{ $pending ? 'text-[#a09d95]' : 'text-[#2d3748]' }} mt-1 tabular-nums truncate">{{ $value }}</div>
+                                    @if ($sub)
+                                      <div class="text-[11px] {{ $pending ? 'text-[#a09d95]' : 'text-[#7c7466]' }} mt-0.5">{!! $sub !!}</div>
+                                    @endif
                                 </div>
                                 <div class="w-7 h-7 rounded-md {{ $bg }} {{ $bdr }} border flex items-center justify-center shrink-0">
                                     <svg class="w-3.5 h-3.5 {{ $txt }}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -149,6 +136,9 @@
                                 </div>
                             </div>
 
+                            {{-- Source-formula chip — kept visible for both pending
+                                 and live cards so the user always sees how the KPI
+                                 is computed. Tasteful slate styling when live. --}}
                             <div class="mt-2 text-[11px] font-mono text-[#7c7466] bg-[#faf8f5] border border-[#ece7df] rounded px-2 py-1 truncate" title="{{ $card['source'] }}">
                                 {{ $card['source'] }}
                             </div>
