@@ -66,9 +66,11 @@
             [
                 'group' => 'Scan & Quality',
                 'cards' => [
-                    ['key' => 'containers_scanned', 'title' => 'Containers Scanned', 'source' => 'count(scanned=true) by scanned_date',            'icon' => 'M4 6h16M4 10h16M4 14h16M4 18h16',                                                'color' => 'brand'],
-                    ['key' => 'scan_rate',          'title' => 'Scan Rate',          'source' => 'scanned ÷ handled in period',                    'icon' => 'M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z',                                  'color' => 'sage'],
-                    ['key' => 'inspection_rate',    'title' => 'Inspection Rate',    'source' => "count(inspected != 'not_done') ÷ handled",       'icon' => "M11 17a2 2 0 100-4 2 2 0 000 4zM10 12V8m1 9h.01M5 4h14a2 2 0 012 2v12a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z", 'color' => 'coral'],
+                    ['key' => 'containers_scanned',  'title' => 'Containers Scanned',  'source' => 'count(scanned=true) by scanned_date',            'icon' => 'M4 6h16M4 10h16M4 14h16M4 18h16',                                                'color' => 'brand'],
+                    ['key' => 'scan_rate',           'title' => 'Scan Rate',           'source' => 'scanned ÷ handled in period',                    'icon' => 'M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z',                                  'color' => 'sage'],
+                    ['key' => 'inspection_rate',     'title' => 'Inspection Rate',     'source' => "count(inspected != 'not_done') ÷ handled",       'icon' => "M11 17a2 2 0 100-4 2 2 0 000 4zM10 12V8m1 9h.01M5 4h14a2 2 0 012 2v12a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z", 'color' => 'coral'],
+                    ['key' => 'median_time_to_scan', 'title' => 'Median Time-to-Scan', 'source' => 'median(scanned_date - create_date)',             'icon' => 'M12 8v4l3 2M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z',                            'color' => 'warm'],
+                    ['key' => 'same_day_scan_rate',  'title' => '% Scanned Same-Day',  'source' => 'count(time_to_scan ≤ 24h) ÷ scanned',            'icon' => 'M19 14l-7 7m0 0l-7-7m7 7V3',                                                     'color' => 'sage'],
                 ],
             ],
             [
@@ -77,6 +79,12 @@
                     ['key' => 'mix_by_size',    'title' => "Mix by Size (20'/40'/45')", 'source' => 'group_by(equipment.size)',                       'icon' => 'M4 4h16v6H4zM4 14h16v6H4z',          'color' => 'brand'],
                     ['key' => 'full_empty_mix', 'title' => 'Laden vs Empty',            'source' => "group_by(equipment.full = 'yes')",               'icon' => 'M5 5h14v14H5zM5 12h14',              'color' => 'sage'],
                     ['key' => 'direction_mix',  'title' => 'Import vs Export',          'source' => 'group_by(cargo.direction) weighted by containers', 'icon' => 'M3 12h18M12 5l7 7-7 7M5 5l-2 7 2 7',  'color' => 'warm'],
+                ],
+            ],
+            [
+                'group' => 'Scan Revenue',
+                'cards' => [
+                    ['key' => 'scan_revenue', 'title' => 'Expected Revenue (HT)', 'source' => 'price grid × scanned containers · FCFA',         'icon' => 'M12 1v22M2 12h20',                  'color' => 'brand'],
                 ],
             ],
         ];
@@ -170,6 +178,52 @@
         </div>
     @endforeach
 
+    {{-- ── Scan revenue breakdown (per official price grid) ─────────────── --}}
+    @php
+        $breakdown = $ops['revenue_breakdown'] ?? null;
+    @endphp
+    @if ($breakdown && empty($breakdown['error']) && ($breakdown['total_count'] ?? 0) > 0)
+      <div class="bg-white border border-[#e8e4de] rounded-xl p-5 mb-6">
+          <div class="flex items-center justify-between mb-3">
+              <h3 class="text-sm font-semibold text-[#1e3d44]">Scan Revenue Breakdown <span class="text-[10px] uppercase tracking-wider text-[#a09d95] font-medium ml-1">FCFA · HT · {{ $period['type'] === 'mtd' ? 'MTD' : 'YTD' }}</span></h3>
+              <span class="text-[11px] text-[#7c7466]">Per the customer's official <em>Grille Tarifaire</em></span>
+          </div>
+          <div class="overflow-x-auto">
+              <table class="w-full text-xs">
+                  <thead>
+                      <tr class="text-[10px] uppercase tracking-wider text-[#8a8578] border-b border-[#e8e4de]">
+                          <th class="text-left  py-2 pr-3 font-medium">Category</th>
+                          <th class="text-right py-2 px-3 font-medium">Containers</th>
+                          <th class="text-right py-2 px-3 font-medium">Price / unit</th>
+                          <th class="text-right py-2 pl-3 font-medium">Revenue HT</th>
+                      </tr>
+                  </thead>
+                  <tbody class="divide-y divide-[#f1ede5]">
+                      @foreach ($breakdown['categories'] as $cat)
+                          <tr class="{{ $cat['price'] === 0 ? 'text-[#9b958a]' : 'text-[#2d3748]' }}">
+                              <td class="py-2 pr-3">{{ $cat['label'] }}</td>
+                              <td class="py-2 px-3 text-right tabular-nums">{{ number_format($cat['count']) }}</td>
+                              <td class="py-2 px-3 text-right tabular-nums">{{ $cat['price'] === 0 ? '— free —' : number_format($cat['price']) }}</td>
+                              <td class="py-2 pl-3 text-right tabular-nums font-medium">{{ $cat['price'] === 0 ? '—' : number_format($cat['revenue']) }}</td>
+                          </tr>
+                      @endforeach
+                  </tbody>
+                  <tfoot>
+                      <tr class="border-t-2 border-[#e8e4de] font-semibold text-[#1e3d44]">
+                          <td class="py-2 pr-3">Total</td>
+                          <td class="py-2 px-3 text-right tabular-nums">{{ number_format($breakdown['total_count']) }}</td>
+                          <td class="py-2 px-3 text-right text-[#7c7466] font-normal">— blended —</td>
+                          <td class="py-2 pl-3 text-right tabular-nums">{{ number_format($breakdown['total_revenue']) }}</td>
+                      </tr>
+                  </tfoot>
+              </table>
+          </div>
+          <div class="text-[11px] text-[#7c7466] mt-3 leading-relaxed">
+              <strong>Note:</strong> Empty (vide) and Transit containers are scanned systematically and free of charge per the price grid. 45' containers are billed at the 40' tariff (the grid only enumerates 20"/40"). Period anchor for revenue is <code class="text-[10px] bg-[#faf8f5] border border-[#ece7df] rounded px-1 py-0.5">scanned_date</code> — the moment the fee is earned.
+          </div>
+      </div>
+    @endif
+
     {{-- ── Schema notes & next steps ────────────────────────────────────── --}}
     <div class="bg-white border border-[#e8e4de] rounded-xl p-5">
         <h3 class="text-sm font-semibold text-[#1e3d44] mb-3">Data sources &amp; design notes</h3>
@@ -190,10 +244,13 @@
                 <span class="font-semibold text-[#1e3d44]">Working-day basis</span> — Mon–Sat (consistent with the Dashboard's RpD &amp; Run-Rate).
             </div>
             <div>
+                <span class="font-semibold text-[#1e3d44]">Revenue model</span> — <em>Expected Revenue</em> applies the customer's official Grille Tarifaire to the scanned-container mix (per-row pricing in
+                <code class="text-[11px] bg-[#faf8f5] border border-[#ece7df] rounded px-1.5 py-0.5">App\Services\OperationsService::PRICE_HT_*</code> constants). To switch to actual invoiced revenue, traverse <code class="text-[11px] bg-[#faf8f5] border border-[#ece7df] rounded px-1.5 py-0.5">cargo.invoice_ids</code> → <code class="text-[11px] bg-[#faf8f5] border border-[#ece7df] rounded px-1.5 py-0.5">account.move</code> in a v2 — the expected vs actual delta then becomes a leakage metric.
+            </div>
+            <div>
                 <span class="font-semibold text-[#1e3d44]">Deferred to v2</span> —
-                <em>Revenue per Container</em> (needs to traverse <code class="text-[11px] bg-[#faf8f5] border border-[#ece7df] rounded px-1.5 py-0.5">cargo.invoice_ids</code> → <code class="text-[11px] bg-[#faf8f5] border border-[#ece7df] rounded px-1.5 py-0.5">account.move</code>),
-                <em>Average Time-to-Scan</em>,
                 <em>Top Vessels by Volume</em> (drill-down list page),
+                <em>Single-container detail page</em>,
                 <em>Customer / Destination breakdowns</em> (the <code class="text-[11px] bg-[#faf8f5] border border-[#ece7df] rounded px-1.5 py-0.5">partner_id</code> field is mostly empty in the source data — needs upstream data quality work).
             </div>
         </div>
