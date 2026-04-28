@@ -91,6 +91,14 @@ final class Json2Client implements OdooClient
 
     public function callModel(string $model, string $method, array $kwargs = [])
     {
+        // Defensive default for read_group: Odoo's `lazy` flag changed
+        // semantics across versions. Some servers (notably Odoo 15) return
+        // a different shape — or error — when `lazy` is omitted with an
+        // empty groupby. Forcing `lazy: false` everywhere makes the
+        // response shape stable and predictable on v14 → v19+.
+        if ($method === 'read_group' && !array_key_exists('lazy', $kwargs)) {
+            $kwargs['lazy'] = false;
+        }
         return $this->call($model, $method, $kwargs);
     }
 

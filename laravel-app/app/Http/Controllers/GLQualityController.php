@@ -17,13 +17,20 @@ class GLQualityController extends Controller
     {
         $today = new \DateTimeImmutable();
 
-        $data = ea_cached('gl_quality_ytd', function () use ($today) {
-            $svc = new GLQualityService(OdooFactory::fromConfig());
-            return $svc->analyze($today);
-        });
+        $data  = null;
+        $error = null;
+        try {
+            $data = ea_cached('gl_quality_ytd', function () use ($today) {
+                $svc = new GLQualityService(OdooFactory::fromConfig());
+                return $svc->analyze($today);
+            });
+        } catch (\Throwable $e) {
+            $error = $e->getMessage();
+        }
 
         return view('general-ledger-quality', [
             'data'   => $data,
+            'error'  => $error,
             'active' => 'gl_quality',
             'aiPage' => 'gl_quality',
         ]);
