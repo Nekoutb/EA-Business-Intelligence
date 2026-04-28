@@ -1,0 +1,20 @@
+name: Diagnose
+on: workflow_dispatch
+jobs:
+  d:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.SERVER_IP }}
+          username: ${{ secrets.SERVER_USER }}
+          password: ${{ secrets.SERVER_PASSWORD }}
+          port: 22
+          script: |
+            cd /var/www/eams/laravel-app
+            echo "=== Last 60 lines of laravel.log ==="
+            tail -60 storage/logs/laravel.log 2>/dev/null
+            echo "=== Apache error log (last 30) ==="
+            tail -30 /var/log/apache2/error.log 2>/dev/null || true
+            echo "=== PHP memory_limit + max_execution_time ==="
+            php -i | grep -E "memory_limit|max_execution_time" | head -10
