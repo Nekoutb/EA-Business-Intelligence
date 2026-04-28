@@ -128,6 +128,14 @@ final class OperationsService
             'scan_revenue'        => $this->scanRevenue($cyRevenue, $pyRevenue),
         ];
 
+        // Trend chart series — granularity follows period:
+        //   YTD selected → monthly buckets across the year so far
+        //   MTD selected → weekly buckets within the current month
+        // Series for every KPI that has a clean per-bucket aggregation
+        // (counts and revenue; medians/percentiles need a bigger fetch
+        // and are deferred to a v2 of this method).
+        $trend = $this->buildTrend($cyFrom, $cyTo, $period);
+
         return [
             'currency' => $this->detectCurrency(),
             'period'   => [
@@ -139,8 +147,162 @@ final class OperationsService
             ],
             'kpis'              => $kpis,
             'revenue_breakdown' => $cyRevenue,
+            'trend'             => $trend,
             'pending_overall'   => collect($kpis)->every(fn ($k) => !empty($k['pending'])),
         ];
+    }
+
+    /* ── Trend chart ──────────────────────────────────────────────────── */
+
+    /**
+     * Build the per-bucket time series for the chart below the KPIs.
+     *
+     * Granularity:
+     *   - YTD → monthly (Jan, Feb, …, current month)
+     *   - MTD → weekly (W1, W2, W3, W4, W5)
+     *
+     * Series produced:
+     *   - containers_handled    : count(equipment) bucketed by create_date
+     *   - containers_scanned    : count(scanned=true) bucketed by scanned_date
+     *   - scan_rate             : scanned ÷ handled per bucket (×100)
+     *   - scan_revenue          : per-bucket revenue from the price grid
+     *   - vessel_calls          : count(stopover) bucketed by create_date
+     *
+     * @return array{granularity:string, buckets:array<int,array{key:string,label:string,from:string,to:string}>, series:array<string,array<int,float>>, meta:array<string,array{label:string,unit:string,format:string}>, error:?string}
+     */
+    private function buildTrend(\DateTimeImmutable $cyFrom, \DateTimeImmutable $cyTo, array $period): array
+    {
+        $type = $period['type'] ?? 'ytd';
+        $granularity = $type === 'mtd' ? 'week' : 'month';
+
+        try {
+            $buckets = $this->trendBuckets($cyFrom, $cyTo, $granularity);
+
+            $series = [
+                'containers_handled' => [],
+                'containers_scanned' => [],
+                'scan_rate'          => [],
+                'scan_revenue'       => [],
+                'vessel_calls'       => [],
+            ];
+
+            foreach ($buckets as $b) {
+                $bFrom = new \DateTimeImmutable($b['from']);
+                $bTo   = new \DateTimeImmutable($b['to']);
+
+                // Containers handled — count equipment created in bucket.
+                $handled = $this->odoo->searchCount(self::MODEL_EQUIPMENT, [
+                    ['create_date', '>=', $bFrom->format('Y-m-d 00:00:00')],
+                    ['create_date', '<=', $bTo->format('Y-m-d 23:59:59')],
+                    ['active', '=', true],
+                ]);
+                $series['containers_handled'][] = (float) $handled;
+
+                // Containers scanned — count scans by scanned_date.
+                $scanned = $this->odoo->searchCount(self::MODEL_EQUIPMENT, [
+                    ['scanned', '=', true],
+                    ['scanned_date', '>=', $bFrom->format('Y-m-d 00:00:00')],
+                    ['scanned_date', '<=', $bTo->format('Y-m-d 23:59:59')],
+                ]);
+                $series['containers_scanned'][] = (float) $scanned;
+
+                // Scan rate — scanned/handled. Note the basis: we want
+                // "of containers handled in bucket, how many got scanned
+                // (regardless of when)". Reusing handled denominator.
+                // For chart purposes use scanned-in-bucket / handled-in-bucket
+                // so the rate moves with current operational tempo.
+                $series['scan_rate'][] = $handled > 0 ? round(100.0 * $scanned / $handled, 1) : 0.0;
+
+                // Vessel calls — same bucket window.
+                $stopovers = $this->odoo->searchCount(self::MODEL_STOPOVER, [
+                    ['create_date', '>=', $bFrom->format('Y-m-d 00:00:00')],
+                    ['create_date', '<=', $bTo->format('Y-m-d 23:59:59')],
+                    ['active', '=', true],
+                ]);
+                $series['vessel_calls'][] = (float) $stopovers;
+
+                // Revenue — apply price grid to bucketed scan mix.
+                $rev = $this->scanRevenueBreakdown($bFrom, $bTo);
+                $series['scan_revenue'][] = (float) ($rev['total_revenue'] ?? 0);
+            }
+
+            return [
+                'granularity' => $granularity,
+                'buckets'     => $buckets,
+                'series'      => $series,
+                'meta' => [
+                    'containers_handled' => ['label' => 'Containers Handled', 'format' => 'count', 'unit' => ''],
+                    'containers_scanned' => ['label' => 'Containers Scanned', 'format' => 'count', 'unit' => ''],
+                    'scan_rate'          => ['label' => 'Scan Rate',          'format' => 'pct',   'unit' => '%'],
+                    'scan_revenue'       => ['label' => 'Expected Revenue',   'format' => 'money', 'unit' => 'XAF'],
+                    'vessel_calls'       => ['label' => 'Vessel Calls',       'format' => 'count', 'unit' => ''],
+                ],
+                'error' => null,
+            ];
+        } catch (\Throwable $e) {
+            return [
+                'granularity' => $granularity,
+                'buckets'     => [],
+                'series'      => [],
+                'meta'        => [],
+                'error'       => $e->getMessage(),
+            ];
+        }
+    }
+
+    /**
+     * Generate evenly-spaced time buckets from $from to $to.
+     *
+     * Monthly: each calendar month touched by [from, to], clamped to the
+     *          actual period boundaries. Labels Jan / Feb / … / Dec.
+     * Weekly:  ISO weeks within the period. Labels W1 / W2 / … relative
+     *          to the start of the month (or absolute ISO week if YTD
+     *          ever drops to weekly).
+     *
+     * @return array<int,array{key:string,label:string,from:string,to:string}>
+     */
+    private function trendBuckets(\DateTimeImmutable $from, \DateTimeImmutable $to, string $granularity): array
+    {
+        $buckets = [];
+
+        if ($granularity === 'month') {
+            $cursor = new \DateTimeImmutable($from->format('Y-m-01 00:00:00'));
+            while ($cursor <= $to) {
+                $monthEnd = $cursor->modify('last day of this month')->setTime(23, 59, 59);
+                $bFrom = $cursor < $from ? $from : $cursor;
+                $bTo   = $monthEnd > $to ? $to : $monthEnd;
+                $buckets[] = [
+                    'key'   => $cursor->format('Y-m'),
+                    'label' => $cursor->format('M'),
+                    'from'  => $bFrom->format('Y-m-d 00:00:00'),
+                    'to'    => $bTo->format('Y-m-d 23:59:59'),
+                ];
+                $cursor = $cursor->modify('first day of next month')->setTime(0, 0, 0);
+            }
+        } else { // week
+            // Anchor weeks to the start of the month so MTD reads as W1..W5
+            // rather than ISO weeks (which would jump mid-period).
+            $monthStart = new \DateTimeImmutable($from->format('Y-m-01 00:00:00'));
+            $cursor = $monthStart;
+            $weekIndex = 1;
+            while ($cursor <= $to) {
+                $weekEnd = $cursor->modify('+6 days')->setTime(23, 59, 59);
+                $bFrom = $cursor < $from ? $from : $cursor;
+                $bTo   = $weekEnd > $to ? $to : $weekEnd;
+                if ($bFrom <= $bTo) {
+                    $buckets[] = [
+                        'key'   => $cursor->format('Y-m-d'),
+                        'label' => 'W' . $weekIndex,
+                        'from'  => $bFrom->format('Y-m-d 00:00:00'),
+                        'to'    => $bTo->format('Y-m-d 23:59:59'),
+                    ];
+                }
+                $cursor = $cursor->modify('+7 days')->setTime(0, 0, 0);
+                $weekIndex++;
+            }
+        }
+
+        return $buckets;
     }
 
     /* ── KPI helpers ─────────────────────────────────────────────────── */
