@@ -68,17 +68,18 @@ final class OperationsService
     private const PRICE_HT_IMPORT_FULL_20    = 66_000;
     private const PRICE_HT_IMPORT_FULL_40    = 95_000;
 
-    // "Autres" pricing (non-container scans)
+    // "Autres" pricing (non-container scans).
     //
-    //   The grid distinguishes 4 vehicle categories (voiture 50K / camion ≥4t
-    //   95K / bulldozer 105K / OGG 105K) but aw_vehicule.vehicule has no
-    //   reliable classifier today — `goods_group` is unpopulated in the
+    //   The grid distinguishes 4 vehicle categories (voiture 50K / camion
+    //   ≥4t 95K / bulldozer 105K / OGG 105K) but aw_vehicule.vehicule has
+    //   no reliable classifier today — `goods_group` is unpopulated in the
     //   live data, and `manufacturer` shows mixed values like "SACS" /
-    //   "COOKWARE" that aren't even vehicles. We bill the lowest rate
-    //   (voiture) as a conservative floor with a clear caveat in the
-    //   breakdown footnote. Once the upstream data improves, split this
-    //   constant into per-type rates here.
-    private const PRICE_HT_VEHICLE_FLAT      = 50_000;
+    //   "COOKWARE" that aren't even vehicles. We deliberately do NOT
+    //   assume a vehicle rate; revenue stays null until either the
+    //   upstream data is enriched OR we read the actual rate per type
+    //   from the invoice catalogue (next probe iteration).
+    //
+    //   Bois has a single rate per truck so the constant is safe.
     private const PRICE_HT_WOOD_PER_TRUCK    = 35_000;
 
     /**
@@ -711,11 +712,15 @@ final class OperationsService
                     'price'   => self::PRICE_HT_EXPORT_FULL_20,
                     'revenue' => $expFull20 * self::PRICE_HT_EXPORT_FULL_20,
                 ],
-                'vehicles_flat' => [
+                'vehicles_unclassified' => [
                     'label'   => 'Vehicles / Voitures *',
                     'count'   => $vehiclesScanned,
-                    'price'   => self::PRICE_HT_VEHICLE_FLAT,
-                    'revenue' => $vehiclesScanned * self::PRICE_HT_VEHICLE_FLAT,
+                    // Rate intentionally null — the schema doesn't classify
+                    // vehicle type, so we refuse to invent a price. The
+                    // invoice catalogue (probe v3) will give us the
+                    // ground-truth rate per type.
+                    'price'   => null,
+                    'revenue' => null,
                     'caveat'  => true,
                 ],
                 'wood_per_truckload' => [
@@ -739,7 +744,13 @@ final class OperationsService
                 ],
             ];
 
-            $totalRevenue = array_sum(array_column($categories, 'revenue'));
+            // Skip null-priced categories (e.g., unclassified vehicles) when
+            // summing revenue — we explicitly don't bill them, so they
+            // mustn't inflate the total.
+            $totalRevenue = (int) array_sum(array_map(
+                fn ($r) => is_numeric($r['revenue']) ? $r['revenue'] : 0,
+                $categories
+            ));
             $totalCount   = array_sum(array_column($categories, 'count'));
             $freeCount    = $emptyAny + $transitAny;
 
