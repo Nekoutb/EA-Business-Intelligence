@@ -95,6 +95,17 @@ jobs:
             fi
             a2enmod rewrite ssl headers >/dev/null 2>&1 || true
 
+            # ==================== PHP TUNING (apache mod_php) ====================
+            # The default php.ini for mod_php sets memory_limit=128M and
+            # max_execution_time=30 — too tight for our audit pages
+            # (GL Quality / Description Quality fetches up to 50k GL
+            # lines per request). Bump both. Idempotent: matches by key.
+            for INI in /etc/php/*/apache2/php.ini; do
+              [ -f "$INI" ] || continue
+              sed -i 's/^\s*memory_limit\s*=.*/memory_limit = 512M/' "$INI"
+              sed -i 's/^\s*max_execution_time\s*=.*/max_execution_time = 120/' "$INI"
+            done
+
             # ==================== INSTALL MYSQL ====================
             echo "🗄️  MySQL..."
             if ! command -v mysql >/dev/null; then
