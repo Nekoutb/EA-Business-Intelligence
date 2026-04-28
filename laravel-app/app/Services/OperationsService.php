@@ -49,6 +49,33 @@ final class OperationsService
     private const MODEL_CARGO     = 'aw_cargo.cargo';
     private const MODEL_EQUIPMENT = 'aw_cargo.equipment';
 
+    /**
+     * Scanning price grid (FCFA, HT — pre-tax) per the customer's official
+     * "GRILLE TARIFAIRE" (Transatlantic D, La Direction Générale).
+     *
+     * Important rules baked in below:
+     *   - Transit containers (any size) are scanned free (systematic check)
+     *   - Empty containers (any size) are scanned free
+     *   - 45' is treated the same as 40' (the grid only enumerates 20"/40";
+     *     45' is the same physical handling cost so we map it to the
+     *     40' tariff)
+     *
+     * If the firm later wants TTC (after VAT) instead of HT, multiply by
+     * the published TTC ratio (~1.1925 for the 20'/40' rows on the grid).
+     */
+    private const PRICE_HT_EXPORT_FULL_20 = 38_500;
+    private const PRICE_HT_EXPORT_FULL_40 = 50_000;
+    private const PRICE_HT_IMPORT_FULL_20 = 66_000;
+    private const PRICE_HT_IMPORT_FULL_40 = 95_000;
+
+    /**
+     * Cap on the number of records pulled per period for time-to-scan
+     * analytics. Above this we sample the most-recent N (`order desc`).
+     * 10K rows × 2 datetime fields ≈ ~400 KB transfer, fits in 1-2 sec
+     * on the live network.
+     */
+    private const SCAN_TIME_SAMPLE_CAP = 10_000;
+
     public function __construct(OdooClient $odoo)
     {
         $this->odoo = $odoo;
@@ -65,6 +92,18 @@ final class OperationsService
         $cyWd = $this->workingDays($cyFrom, $cyTo);
         $pyWd = $this->workingDays($pyFrom, $pyTo);
 
+        // Time-to-scan analytics — fetched once per period and shared
+        // across the two efficiency KPIs (medianTimeToScan + sameDayScan)
+        // so we don't double-charge the network for the same data.
+        $cyScanTimes = $this->fetchScanTimes($cyFrom, $cyTo);
+        $pyScanTimes = $this->fetchScanTimes($pyFrom, $pyTo);
+
+        // Revenue breakdown — fetched once and exposed both as a headline
+        // KPI ('scan_revenue') and as the `revenue_breakdown` table at the
+        // bottom of the page.
+        $cyRevenue = $this->scanRevenueBreakdown($cyFrom, $cyTo);
+        $pyRevenue = $this->scanRevenueBreakdown($pyFrom, $pyTo);
+
         // Each helper traps its own exceptions and returns pending=true on
         // failure, so a single broken query never takes down the whole page.
         $kpis = [
@@ -77,11 +116,16 @@ final class OperationsService
             'containers_scanned'  => $this->containersScanned($cyFrom, $cyTo, $pyFrom, $pyTo),
             'scan_rate'           => $this->scanRate($cyFrom, $cyTo, $pyFrom, $pyTo),
             'inspection_rate'     => $this->inspectionRate($cyFrom, $cyTo, $pyFrom, $pyTo),
+            'median_time_to_scan' => $this->medianTimeToScan($cyScanTimes, $pyScanTimes),
+            'same_day_scan_rate'  => $this->sameDayScanRate($cyScanTimes, $pyScanTimes),
 
             // ── Mix ──────────────────────────────────────────────────────
             'mix_by_size'         => $this->mixBySize($cyFrom, $cyTo),
             'full_empty_mix'      => $this->fullEmptyMix($cyFrom, $cyTo),
             'direction_mix'       => $this->directionMix($cyFrom, $cyTo),
+
+            // ── Scan Revenue ─────────────────────────────────────────────
+            'scan_revenue'        => $this->scanRevenue($cyRevenue, $pyRevenue),
         ];
 
         return [
@@ -93,8 +137,9 @@ final class OperationsService
                 'cy_working_days' => $cyWd,
                 'py_working_days' => $pyWd,
             ],
-            'kpis'            => $kpis,
-            'pending_overall' => collect($kpis)->every(fn ($k) => !empty($k['pending'])),
+            'kpis'              => $kpis,
+            'revenue_breakdown' => $cyRevenue,
+            'pending_overall'   => collect($kpis)->every(fn ($k) => !empty($k['pending'])),
         ];
     }
 
@@ -236,6 +281,263 @@ final class OperationsService
         } catch (\Throwable $e) {
             return $this->failed('Inspection rate', $e);
         }
+    }
+
+    /**
+     * Pull (scanned_date, create_date) pairs for containers scanned in the
+     * given period. Capped at SCAN_TIME_SAMPLE_CAP and ordered by most-
+     * recent so the sample is representative of current operational
+     * performance, not historical.
+     *
+     * @return array{rows: array<int,array{scanned_date:string,create_date:string}>, capped: bool, error: ?string}
+     */
+    private function fetchScanTimes(\DateTimeImmutable $from, \DateTimeImmutable $to): array
+    {
+        try {
+            $rows = $this->odoo->searchRead(
+                self::MODEL_EQUIPMENT,
+                [
+                    ['scanned', '=', true],
+                    ['scanned_date', '>=', $from->format('Y-m-d 00:00:00')],
+                    ['scanned_date', '<=', $to->format('Y-m-d 23:59:59')],
+                ],
+                ['scanned_date', 'create_date'],
+                ['limit' => self::SCAN_TIME_SAMPLE_CAP, 'order' => 'scanned_date desc']
+            );
+            return [
+                'rows'   => $rows,
+                'capped' => count($rows) >= self::SCAN_TIME_SAMPLE_CAP,
+                'error'  => null,
+            ];
+        } catch (\Throwable $e) {
+            return ['rows' => [], 'capped' => false, 'error' => $e->getMessage()];
+        }
+    }
+
+    /**
+     * Compute time-to-scan in hours for each row, dropping rows where
+     * either timestamp is missing or the diff is negative (data error).
+     *
+     * @return float[] sorted ascending
+     */
+    private function timeDeltasHours(array $scanTimes): array
+    {
+        $deltas = [];
+        foreach ($scanTimes['rows'] ?? [] as $r) {
+            $sd = $r['scanned_date'] ?? null;
+            $cd = $r['create_date']  ?? null;
+            if (!is_string($sd) || !is_string($cd) || $sd === '' || $cd === '') continue;
+            try {
+                $scan = new \DateTimeImmutable($sd);
+                $crea = new \DateTimeImmutable($cd);
+                $diffSec = $scan->getTimestamp() - $crea->getTimestamp();
+                if ($diffSec < 0) continue;  // sanity — scanned before created shouldn't happen
+                $deltas[] = $diffSec / 3600.0;
+            } catch (\Throwable) {
+                continue;
+            }
+        }
+        sort($deltas);
+        return $deltas;
+    }
+
+    private function medianTimeToScan(array $cyScanTimes, array $pyScanTimes): array
+    {
+        try {
+            $cyDeltas = $this->timeDeltasHours($cyScanTimes);
+            $pyDeltas = $this->timeDeltasHours($pyScanTimes);
+
+            if (empty($cyDeltas)) {
+                return ['value' => '— —', 'sub' => 'No scans in period', 'pending' => false];
+            }
+
+            // Median = middle element (or average of two middles for even N).
+            $cyMedian = $this->percentile($cyDeltas, 50.0);
+            $pyMedian = !empty($pyDeltas) ? $this->percentile($pyDeltas, 50.0) : null;
+            $cyP90    = $this->percentile($cyDeltas, 90.0);
+
+            // Lower = better, so vsPy needs to be inverted in the view.
+            // We expose the raw delta and let the view colour it.
+            $vsPy = $pyMedian !== null && $pyMedian > 0
+                ? -100.0 * ($cyMedian - $pyMedian) / $pyMedian   // negate so faster = positive
+                : null;
+
+            return [
+                'value'   => $this->formatHours($cyMedian),
+                'sub'     => 'P90: ' . $this->formatHours($cyP90)
+                          . ($cyScanTimes['capped'] ?? false ? ' · top 10K sample' : ''),
+                'pending' => false,
+                'vsPy'    => $vsPy,
+            ];
+        } catch (\Throwable $e) {
+            return $this->failed('Median time-to-scan', $e);
+        }
+    }
+
+    private function sameDayScanRate(array $cyScanTimes, array $pyScanTimes): array
+    {
+        try {
+            $cyDeltas = $this->timeDeltasHours($cyScanTimes);
+            $pyDeltas = $this->timeDeltasHours($pyScanTimes);
+
+            if (empty($cyDeltas)) {
+                return ['value' => '— —', 'sub' => 'No scans in period', 'pending' => false];
+            }
+
+            $cySameDay = count(array_filter($cyDeltas, fn ($h) => $h <= 24.0));
+            $cyPct     = 100.0 * $cySameDay / count($cyDeltas);
+
+            $pyPct = null;
+            if (!empty($pyDeltas)) {
+                $pySameDay = count(array_filter($pyDeltas, fn ($h) => $h <= 24.0));
+                $pyPct     = 100.0 * $pySameDay / count($pyDeltas);
+            }
+
+            return [
+                'value'   => number_format($cyPct, 1) . '%',
+                'sub'     => number_format($cySameDay) . ' of ' . number_format(count($cyDeltas))
+                          . ' scanned within 24h',
+                'pending' => false,
+                'vsPy'    => $pyPct !== null ? $cyPct - $pyPct : null,  // pp delta
+            ];
+        } catch (\Throwable $e) {
+            return $this->failed('Same-day scan rate', $e);
+        }
+    }
+
+    /**
+     * Compute the per-category container counts and HT revenue for scans
+     * in the period, applying the official price grid.
+     *
+     * @return array{categories: array<string,array{label:string,count:int,price:int,revenue:int}>, total_count:int, total_revenue:int, free_count:int, error:?string}
+     */
+    private function scanRevenueBreakdown(\DateTimeImmutable $from, \DateTimeImmutable $to): array
+    {
+        $emptyResult = [
+            'categories'    => [],
+            'total_count'   => 0,
+            'total_revenue' => 0,
+            'free_count'    => 0,
+            'error'         => null,
+        ];
+
+        try {
+            // Period anchor for revenue is `scanned_date` — the moment of
+            // scan = the moment the fee is earned.
+            $base = [
+                ['scanned', '=', true],
+                ['scanned_date', '>=', $from->format('Y-m-d 00:00:00')],
+                ['scanned_date', '<=', $to->format('Y-m-d 23:59:59')],
+            ];
+
+            // Helper closures so the four billable categories don't bury
+            // the intent in domain noise.
+            $count = fn (array $extra) => $this->odoo->searchCount(
+                self::MODEL_EQUIPMENT, array_merge($base, $extra)
+            );
+
+            // Billable categories — full containers, NOT in transit.
+            $impFull20 = $count([
+                ['full', '=', 'yes'],
+                ['size', '=', '20'],
+                ['cargo_id.direction', '=', 'in'],
+                ['cargo_id.journey_type', '!=', 'transit'],
+            ]);
+            $impFull40 = $count([
+                ['full', '=', 'yes'],
+                ['size', 'in', ['40', '45']],
+                ['cargo_id.direction', '=', 'in'],
+                ['cargo_id.journey_type', '!=', 'transit'],
+            ]);
+            $expFull20 = $count([
+                ['full', '=', 'yes'],
+                ['size', '=', '20'],
+                ['cargo_id.direction', '=', 'out'],
+                ['cargo_id.journey_type', '!=', 'transit'],
+            ]);
+            $expFull40 = $count([
+                ['full', '=', 'yes'],
+                ['size', 'in', ['40', '45']],
+                ['cargo_id.direction', '=', 'out'],
+                ['cargo_id.journey_type', '!=', 'transit'],
+            ]);
+
+            // Free categories — counted but charged at 0.
+            $emptyAny  = $count([['full', '=', 'no']]);
+            $transitAny = $count([['cargo_id.journey_type', '=', 'transit']]);
+
+            $categories = [
+                'import_full_40' => [
+                    'label'   => "Import Full 40' / 45'",
+                    'count'   => $impFull40,
+                    'price'   => self::PRICE_HT_IMPORT_FULL_40,
+                    'revenue' => $impFull40 * self::PRICE_HT_IMPORT_FULL_40,
+                ],
+                'import_full_20' => [
+                    'label'   => "Import Full 20'",
+                    'count'   => $impFull20,
+                    'price'   => self::PRICE_HT_IMPORT_FULL_20,
+                    'revenue' => $impFull20 * self::PRICE_HT_IMPORT_FULL_20,
+                ],
+                'export_full_40' => [
+                    'label'   => "Export Full 40' / 45'",
+                    'count'   => $expFull40,
+                    'price'   => self::PRICE_HT_EXPORT_FULL_40,
+                    'revenue' => $expFull40 * self::PRICE_HT_EXPORT_FULL_40,
+                ],
+                'export_full_20' => [
+                    'label'   => "Export Full 20'",
+                    'count'   => $expFull20,
+                    'price'   => self::PRICE_HT_EXPORT_FULL_20,
+                    'revenue' => $expFull20 * self::PRICE_HT_EXPORT_FULL_20,
+                ],
+                'transit' => [
+                    'label'   => 'Transit (any size)',
+                    'count'   => $transitAny,
+                    'price'   => 0,
+                    'revenue' => 0,
+                ],
+                'empty' => [
+                    'label'   => 'Empty / Vide (any size)',
+                    'count'   => $emptyAny,
+                    'price'   => 0,
+                    'revenue' => 0,
+                ],
+            ];
+
+            $totalRevenue = array_sum(array_column($categories, 'revenue'));
+            $totalCount   = array_sum(array_column($categories, 'count'));
+            $freeCount    = $emptyAny + $transitAny;
+
+            return [
+                'categories'    => $categories,
+                'total_count'   => $totalCount,
+                'total_revenue' => $totalRevenue,
+                'free_count'    => $freeCount,
+                'error'         => null,
+            ];
+        } catch (\Throwable $e) {
+            return array_merge($emptyResult, ['error' => $e->getMessage()]);
+        }
+    }
+
+    private function scanRevenue(array $cy, array $py): array
+    {
+        if (!empty($cy['error'])) {
+            return ['value' => null, 'sub' => 'Scan revenue', 'pending' => true, 'error' => $cy['error']];
+        }
+        $cyRevenue = (int) ($cy['total_revenue'] ?? 0);
+        $pyRevenue = (int) ($py['total_revenue'] ?? 0);
+
+        $billable = ($cy['total_count'] ?? 0) - ($cy['free_count'] ?? 0);
+        $free     = $cy['free_count'] ?? 0;
+
+        return [
+            'value'   => ea_money_short((float) $cyRevenue, 'XAF'),
+            'sub'     => number_format($billable) . ' billable · ' . number_format($free) . ' free',
+            'pending' => false,
+            'vsPy'    => $pyRevenue > 0 ? 100.0 * ($cyRevenue - $pyRevenue) / $pyRevenue : null,
+        ];
     }
 
     private function mixBySize(\DateTimeImmutable $cyFrom, \DateTimeImmutable $cyTo): array
@@ -415,5 +717,36 @@ final class OperationsService
         if (!is_numeric($a) || !is_numeric($b)) return null;
         if ((float) $b === 0.0) return ((float) $a === 0.0) ? 0.0 : null;
         return (((float) $a - (float) $b) / abs((float) $b)) * 100.0;
+    }
+
+    /**
+     * Percentile of a SORTED ascending array. Linear interpolation
+     * between the two closest ranks (PostgreSQL's percentile_cont
+     * convention).
+     */
+    private function percentile(array $sorted, float $p): float
+    {
+        $n = count($sorted);
+        if ($n === 0) return 0.0;
+        if ($n === 1) return (float) $sorted[0];
+        $rank = ($p / 100.0) * ($n - 1);
+        $lo = (int) floor($rank);
+        $hi = (int) ceil($rank);
+        if ($lo === $hi) return (float) $sorted[$lo];
+        $frac = $rank - $lo;
+        return (float) $sorted[$lo] + $frac * ((float) $sorted[$hi] - (float) $sorted[$lo]);
+    }
+
+    /**
+     * Format an hour count compactly:
+     *   < 1h   → "47 min"
+     *   < 24h  → "8.3h"
+     *   ≥ 24h  → "2.4d"
+     */
+    private function formatHours(float $hours): string
+    {
+        if ($hours < 1.0)   return number_format($hours * 60, 0) . ' min';
+        if ($hours < 24.0)  return number_format($hours, 1) . 'h';
+        return number_format($hours / 24.0, 1) . 'd';
     }
 }
