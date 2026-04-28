@@ -165,16 +165,20 @@ final class MonthlyVatReturnService
             ],
             ['id', 'code'], []
         );
-        $byPrefix = [
-            self::VAT_OUTPUT_PREFIX        => [],
-            self::VAT_INPUT_CAPEX_PREFIX   => [],
-            self::VAT_INPUT_OPEX_PREFIX    => [],
-            self::VAT_CREDIT_CARRY_PREFIX  => [],
+        // PHP coerces purely-numeric string array keys to ints, which means
+        // array_keys() would return ints and str_starts_with() would throw
+        // a TypeError. Iterate the prefixes from a separate string list.
+        $prefixes = [
+            self::VAT_OUTPUT_PREFIX,
+            self::VAT_INPUT_CAPEX_PREFIX,
+            self::VAT_INPUT_OPEX_PREFIX,
+            self::VAT_CREDIT_CARRY_PREFIX,
         ];
+        $byPrefix = array_fill_keys($prefixes, []);
         foreach ($rows as $r) {
             $code = (string) ($r['code'] ?? '');
             if ($code === '') continue;
-            foreach (array_keys($byPrefix) as $p) {
+            foreach ($prefixes as $p) {
                 if (str_starts_with($code, $p)) {
                     $byPrefix[$p][] = (int) $r['id'];
                     break;
