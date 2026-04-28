@@ -3,7 +3,9 @@
 namespace App\Http\Controllers;
 
 use App\Models\TenantSetting;
+use App\Services\OdooConnectionTester;
 use App\Tenancy\TenantContext;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 /**
@@ -25,10 +27,16 @@ class SettingsController extends Controller
      * platform-global and managed in the super-admin backend.
      */
     private const FIELDS = [
+        // Odoo connection
         'ODOO_URL', 'ODOO_DB', 'ODOO_USERNAME', 'ODOO_API_KEY', 'ODOO_PROTOCOL',
         'REVENUE_SOURCE', 'APP_BRAND',
+        // Existing budget benchmarks (kept)
         'BUDGET_MONTHLY_REVENUE', 'BUDGET_MONTHLY_OUTFITS', 'BUDGET_MONTHLY_COGS',
         'BUDGET_MONTHLY_DISCOUNTS', 'BUDGET_MONTHLY_CUSTOMERS',
+        // New P&L-line-item budget benchmarks (added 2026-04-28)
+        'BUDGET_MONTHLY_DIRECT_COSTS', 'BUDGET_MONTHLY_INDIRECT_COSTS',
+        'BUDGET_MONTHLY_DA', 'BUDGET_MONTHLY_INCOME_TAX',
+        'BUDGET_MONTHLY_COST_OF_SALES',
     ];
 
     public function show()
@@ -73,6 +81,16 @@ class SettingsController extends Controller
             'type' => 'success',
             'msg'  => 'Settings saved.',
         ]);
+    }
+
+    /**
+     * Test the saved Odoo credentials — round-trip authentication.
+     * Returns JSON for the AJAX caller in the Settings page.
+     */
+    public function testOdoo(): JsonResponse
+    {
+        $this->requireTenant();
+        return response()->json(OdooConnectionTester::testCurrent());
     }
 
     /**

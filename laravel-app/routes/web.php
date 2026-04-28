@@ -72,8 +72,9 @@ Route::prefix('admin')->group(function () {
                                                      [AdminTenantController::class, 'toggleService']);
         Route::post('/tenants/{tenant}/modules/{moduleKey}/toggle',
                                                      [AdminTenantController::class, 'toggleModule']);
-        Route::get('/tenants/{tenant}/settings',     [AdminTenantController::class, 'showSettings']);
-        Route::post('/tenants/{tenant}/settings',    [AdminTenantController::class, 'saveSettings']);
+        Route::get ('/tenants/{tenant}/settings',           [AdminTenantController::class, 'showSettings']);
+        Route::post('/tenants/{tenant}/settings',           [AdminTenantController::class, 'saveSettings']);
+        Route::post('/tenants/{tenant}/settings/test-odoo', [AdminTenantController::class, 'testOdoo']);
         Route::post('/tenants/{tenant}/suspend',     [AdminTenantController::class, 'suspend']);
         Route::post('/tenants/{tenant}/activate',    [AdminTenantController::class, 'activate']);
 
@@ -139,8 +140,9 @@ Route::prefix('t/{tenant}')
                 // Backward-compat redirects (old URLs from prior to 2026-04-27 reshuffle)
                 Route::get('/tax-calendar', fn () => redirect()->to(tenant_url('/tax-dashboard')));
 
-                Route::get('/settings',          [SettingsController::class, 'show']);
-                Route::post('/settings',         [SettingsController::class, 'save']);
+                Route::get ('/settings',                    [SettingsController::class, 'show']);
+                Route::post('/settings',                    [SettingsController::class, 'save']);
+                Route::post('/settings/test-odoo',          [SettingsController::class, 'testOdoo']);
             });
         });
     });
