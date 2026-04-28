@@ -174,10 +174,13 @@ Route::prefix('admin')->group(function () {
                 }
                 $report['models_from_menu_actions'] = $resolvedModels;
 
-                /* 3. Keyword scan of ir.model (catches anything not menu-exposed). */
+                /* 3. Keyword scan of ir.model (catches anything not menu-exposed).
+                 * Extended on 2026-04-28 to also catch vehicle/wood/cargo
+                 * models (cars, trucks, bois) since those have separate
+                 * scanning tariffs in the customer's Grille Tarifaire. */
                 $keywordHits = $client->searchRead('ir.model',
                     [
-                        '|', '|', '|', '|', '|', '|', '|',
+                        '|', '|', '|', '|', '|', '|', '|', '|', '|', '|', '|',
                         ['model', 'ilike', 'container'],
                         ['model', 'ilike', 'conteneur'],
                         ['model', 'ilike', 'scan'],
@@ -186,6 +189,10 @@ Route::prefix('admin')->group(function () {
                         ['model', 'ilike', 'expédition'],
                         ['model', 'ilike', 'manifest'],
                         ['model', 'ilike', 'edi'],
+                        ['model', 'ilike', 'vehicule'],
+                        ['model', 'ilike', 'vehicle'],
+                        ['model', 'ilike', 'bois'],
+                        ['model', 'ilike', 'aw_'],
                     ],
                     ['id', 'model', 'name', 'transient'],
                     ['limit' => 60, 'order' => 'model']
@@ -199,14 +206,21 @@ Route::prefix('admin')->group(function () {
                 ));
                 $report['models_from_keyword_scan'] = $keywordHits;
 
-                /* 4. Union the candidates and probe each. */
+                /* 4. Union the candidates and probe each. We force the
+                 * known logistics models to the front of the list so they
+                 * always get schema-dumped even if the keyword scan
+                 * returns more candidates than the cap. */
+                $forced = ['aw_cargo.equipment', 'aw_cargo.cargo', 'aw_cargo.stopover',
+                           'aw_vehicule.vehicule', 'aw_bois.bois', 'aw_cargo.equipment.type',
+                           'aw_cargo_invoice.product'];
                 $candidateModels = array_values(array_unique(array_merge(
+                    $forced,
                     array_keys($resolvedModels),
                     array_map(fn ($m) => $m['model'], $keywordHits),
                 )));
 
                 $details = [];
-                foreach (array_slice($candidateModels, 0, 12) as $modelName) {
+                foreach (array_slice($candidateModels, 0, 16) as $modelName) {
                     try {
                         $fields = $client->callModel($modelName, 'fields_get', [
                             'attributes' => ['string', 'type', 'required', 'relation', 'help'],

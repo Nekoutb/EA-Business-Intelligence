@@ -178,6 +178,170 @@
         </div>
     @endforeach
 
+    {{-- ── Trend chart ──────────────────────────────────────────────────── --}}
+    @php
+        $trend = $ops['trend'] ?? null;
+        $hasTrend = $trend && empty($trend['error']) && !empty($trend['buckets']) && !empty($trend['series']);
+    @endphp
+    @if ($hasTrend)
+      @php
+          // Default selection — Containers Scanned is the most operationally
+          // meaningful starting point. User can toggle to any other series.
+          $defaultKey = 'containers_scanned';
+          $granularityLabel = $trend['granularity'] === 'week' ? 'Weekly' : 'Monthly';
+      @endphp
+      <div class="bg-white border border-[#e8e4de] rounded-xl p-5 mb-6"
+           data-trend='@json($trend, JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_HEX_TAG)'
+           id="ops-trend-card">
+          <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+              <div>
+                  <h3 class="text-sm font-semibold text-[#1e3d44]">Trend</h3>
+                  <div class="text-[11px] text-[#7c7466] mt-0.5">
+                      {{ $granularityLabel }} buckets · {{ count($trend['buckets']) }} points · click a tab to switch series
+                  </div>
+              </div>
+
+              {{-- KPI tabs — vanilla JS toggles `data-active` and the chart redraws. --}}
+              <div class="flex flex-wrap gap-1 text-[11px]" id="ops-trend-tabs">
+                  @foreach ($trend['meta'] as $key => $meta)
+                      <button type="button"
+                              data-trend-key="{{ $key }}"
+                              class="px-3 py-1.5 rounded-md border transition
+                                     {{ $key === $defaultKey
+                                        ? 'bg-brand-600 text-white border-brand-600 shadow-sm'
+                                        : 'bg-white text-[#5a6a70] border-[#e8e4de] hover:bg-[#faf8f5]' }}">
+                          {{ $meta['label'] }}
+                      </button>
+                  @endforeach
+              </div>
+          </div>
+
+          <div class="relative">
+              <svg id="ops-trend-svg" viewBox="0 0 800 220" preserveAspectRatio="none"
+                   class="w-full h-[220px] block">
+                  {{-- The JS below populates this SVG. SSR-empty is fine. --}}
+              </svg>
+              <div id="ops-trend-readout"
+                   class="absolute top-0 right-0 text-[11px] text-[#5a6a70] bg-white/80 backdrop-blur-sm rounded px-2 py-1 hidden">
+              </div>
+          </div>
+      </div>
+
+      {{-- The script below is intentionally vanilla — Alpine isn't loaded
+           in this codebase yet. Self-contained so removing the chart is a
+           one-element delete. --}}
+      <script>
+      (function () {
+          const card = document.getElementById('ops-trend-card');
+          if (!card) return;
+          const svg  = document.getElementById('ops-trend-svg');
+          const tabs = document.getElementById('ops-trend-tabs');
+          const readout = document.getElementById('ops-trend-readout');
+          let trend;
+          try { trend = JSON.parse(card.dataset.trend); } catch (e) { return; }
+          if (!trend || !trend.series) return;
+
+          const W = 800, H = 220;
+          const PAD_L = 56, PAD_R = 16, PAD_T = 16, PAD_B = 32;
+          const PLOT_W = W - PAD_L - PAD_R;
+          const PLOT_H = H - PAD_T - PAD_B;
+
+          const formatValue = (v, fmt, unit) => {
+              if (typeof v !== 'number' || !isFinite(v)) return '—';
+              if (fmt === 'pct')   return v.toFixed(1) + '%';
+              if (fmt === 'money') {
+                  if (Math.abs(v) >= 1e9) return (v / 1e9).toFixed(2) + 'B ' + (unit||'');
+                  if (Math.abs(v) >= 1e6) return (v / 1e6).toFixed(2) + 'M ' + (unit||'');
+                  if (Math.abs(v) >= 1e3) return (v / 1e3).toFixed(1) + 'K ' + (unit||'');
+                  return Math.round(v).toLocaleString() + ' ' + (unit||'');
+              }
+              return Math.round(v).toLocaleString();
+          };
+
+          const draw = (key) => {
+              const series = trend.series[key] || [];
+              const buckets = trend.buckets || [];
+              const meta = (trend.meta || {})[key] || {label: key, format: 'count', unit: ''};
+              if (!series.length) return;
+
+              // Y-axis bounds — pad by 10% above max for breathing room.
+              let maxV = Math.max(...series, 0);
+              let minV = Math.min(...series, 0);
+              if (maxV === minV) maxV = minV + 1;
+              const range = maxV - minV;
+              const yMax = maxV + range * 0.1;
+              const yMin = minV < 0 ? minV - range * 0.1 : 0;
+
+              const xFor = i => PAD_L + (series.length === 1 ? PLOT_W / 2 : (i / (series.length - 1)) * PLOT_W);
+              const yFor = v => PAD_T + PLOT_H - ((v - yMin) / (yMax - yMin)) * PLOT_H;
+
+              // Build path d-string for the line.
+              const linePath = series.map((v, i) => `${i === 0 ? 'M' : 'L'} ${xFor(i).toFixed(1)} ${yFor(v).toFixed(1)}`).join(' ');
+
+              // Soft area fill below the line.
+              const areaPath = linePath + ` L ${xFor(series.length - 1).toFixed(1)} ${yFor(yMin).toFixed(1)} L ${xFor(0).toFixed(1)} ${yFor(yMin).toFixed(1)} Z`;
+
+              // Gridlines — 4 horizontal levels.
+              const gridLines = [];
+              for (let i = 0; i <= 4; i++) {
+                  const y = PAD_T + (PLOT_H * i / 4);
+                  const v = yMax - (yMax - yMin) * i / 4;
+                  gridLines.push(`<line x1="${PAD_L}" y1="${y}" x2="${W - PAD_R}" y2="${y}" stroke="#f1ede5" stroke-width="1"/>`);
+                  gridLines.push(`<text x="${PAD_L - 6}" y="${y + 3}" text-anchor="end" font-size="10" fill="#a09d95" font-family="ui-sans-serif, system-ui">${formatValue(v, meta.format, meta.unit).replace(' ' + (meta.unit||''), '')}</text>`);
+              }
+
+              // X-axis bucket labels.
+              const xLabels = buckets.map((b, i) => {
+                  const x = xFor(i);
+                  return `<text x="${x.toFixed(1)}" y="${H - 10}" text-anchor="middle" font-size="10" fill="#7c7466" font-family="ui-sans-serif, system-ui">${b.label}</text>`;
+              }).join('');
+
+              // Dots — one per bucket. Each carries data attrs for hover.
+              const dots = series.map((v, i) => {
+                  return `<circle cx="${xFor(i).toFixed(1)}" cy="${yFor(v).toFixed(1)}" r="3.5" fill="white" stroke="#0d6e6e" stroke-width="2" data-i="${i}" data-v="${v}" class="cursor-pointer"/>`;
+              }).join('');
+
+              svg.innerHTML = [
+                  `<defs><linearGradient id="ops-trend-grad" x1="0" x2="0" y1="0" y2="1">
+                      <stop offset="0%"   stop-color="#0d6e6e" stop-opacity="0.18"/>
+                      <stop offset="100%" stop-color="#0d6e6e" stop-opacity="0"/>
+                  </linearGradient></defs>`,
+                  gridLines.join(''),
+                  `<path d="${areaPath}" fill="url(#ops-trend-grad)"/>`,
+                  `<path d="${linePath}" fill="none" stroke="#0d6e6e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>`,
+                  dots,
+                  xLabels,
+              ].join('');
+
+              // Hover handler — show point readout in the corner badge.
+              svg.querySelectorAll('circle').forEach(c => {
+                  c.addEventListener('mouseenter', (e) => {
+                      const i = parseInt(c.dataset.i, 10);
+                      const v = parseFloat(c.dataset.v);
+                      readout.textContent = (buckets[i] ? buckets[i].label : '') + ' · ' + formatValue(v, meta.format, meta.unit);
+                      readout.classList.remove('hidden');
+                  });
+                  c.addEventListener('mouseleave', () => readout.classList.add('hidden'));
+              });
+          };
+
+          // Tab click — toggle styling, redraw.
+          tabs.addEventListener('click', (e) => {
+              const btn = e.target.closest('[data-trend-key]');
+              if (!btn) return;
+              tabs.querySelectorAll('[data-trend-key]').forEach(b => {
+                  b.className = 'px-3 py-1.5 rounded-md border transition bg-white text-[#5a6a70] border-[#e8e4de] hover:bg-[#faf8f5]';
+              });
+              btn.className = 'px-3 py-1.5 rounded-md border transition bg-brand-600 text-white border-brand-600 shadow-sm';
+              draw(btn.dataset.trendKey);
+          });
+
+          // Initial render.
+          draw('{{ $defaultKey }}');
+      })();
+      </script>
+    @endif
+
     {{-- ── Scan revenue breakdown (per official price grid) ─────────────── --}}
     @php
         $breakdown = $ops['revenue_breakdown'] ?? null;
