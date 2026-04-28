@@ -63,10 +63,24 @@ final class OperationsService
      * If the firm later wants TTC (after VAT) instead of HT, multiply by
      * the published TTC ratio (~1.1925 for the 20'/40' rows on the grid).
      */
-    private const PRICE_HT_EXPORT_FULL_20 = 38_500;
-    private const PRICE_HT_EXPORT_FULL_40 = 50_000;
-    private const PRICE_HT_IMPORT_FULL_20 = 66_000;
-    private const PRICE_HT_IMPORT_FULL_40 = 95_000;
+    private const PRICE_HT_EXPORT_FULL_20    = 38_500;
+    private const PRICE_HT_EXPORT_FULL_40    = 50_000;
+    private const PRICE_HT_IMPORT_FULL_20    = 66_000;
+    private const PRICE_HT_IMPORT_FULL_40    = 95_000;
+
+    // "Autres" pricing (non-container scans).
+    //
+    //   The grid distinguishes 4 vehicle categories (voiture 50K / camion
+    //   ≥4t 95K / bulldozer 105K / OGG 105K) but aw_vehicule.vehicule has
+    //   no reliable classifier today — `goods_group` is unpopulated in the
+    //   live data, and `manufacturer` shows mixed values like "SACS" /
+    //   "COOKWARE" that aren't even vehicles. We deliberately do NOT
+    //   assume a vehicle rate; revenue stays null until either the
+    //   upstream data is enriched OR we read the actual rate per type
+    //   from the invoice catalogue (next probe iteration).
+    //
+    //   Bois has a single rate per truck so the constant is safe.
+    private const PRICE_HT_WOOD_PER_TRUCK    = 35_000;
 
     /**
      * Cap on the number of records pulled per period for time-to-scan
@@ -628,6 +642,51 @@ final class OperationsService
             $emptyAny  = $count([['full', '=', 'no']]);
             $transitAny = $count([['cargo_id.journey_type', '=', 'transit']]);
 
+            // ── "Autres" (non-container) sources from the price grid ──
+            //
+            // Vehicles: aw_vehicule.vehicule contains heterogeneous
+            // non-container goods (cars, bags, cookware, …). Without a
+            // reliable type classifier we bill all at the voiture rate
+            // (50K HT). Trucks/heavy/OGG would justify 95-105K — that
+            // delta is a known revenue understatement, surfaced as a
+            // caveat in the breakdown table.
+            $vehiclesScanned = 0;
+            try {
+                $vehiclesScanned = $this->odoo->searchCount('aw_vehicule.vehicule', [
+                    ['scanned', '=', true],
+                    ['scanned_date', '>=', $from->format('Y-m-d 00:00:00')],
+                    ['scanned_date', '<=', $to->format('Y-m-d 23:59:59')],
+                    ['active', '=', true],
+                ]);
+            } catch (\Throwable $e) {
+                // model unreachable / unknown — leave count at 0
+            }
+
+            // Bois: tariff is per camion/wagon, not per piece of wood.
+            // Best proxy: count distinct cargo_id values that contain at
+            // least one scanned bois record in the period (each cargo ~
+            // one truckload). The im_vehicule field on aw_bois.bois would
+            // be more granular but is mostly empty in the live data.
+            $woodTruckloads = 0;
+            try {
+                $boisGroups = $this->odoo->callModel('aw_bois.bois', 'read_group', [
+                    'domain'  => [
+                        ['scanned', '=', true],
+                        ['scanned_date', '>=', $from->format('Y-m-d 00:00:00')],
+                        ['scanned_date', '<=', $to->format('Y-m-d 23:59:59')],
+                    ],
+                    'fields'  => [],
+                    'groupby' => ['cargo_id'],
+                    'lazy'    => false,
+                ]);
+                $woodTruckloads = count(array_filter(
+                    $boisGroups,
+                    fn ($r) => !empty($r['cargo_id']) && $r['cargo_id'] !== false
+                ));
+            } catch (\Throwable $e) {
+                // model unreachable / unknown — leave at 0
+            }
+
             $categories = [
                 'import_full_40' => [
                     'label'   => "Import Full 40' / 45'",
@@ -653,6 +712,24 @@ final class OperationsService
                     'price'   => self::PRICE_HT_EXPORT_FULL_20,
                     'revenue' => $expFull20 * self::PRICE_HT_EXPORT_FULL_20,
                 ],
+                'vehicles_unclassified' => [
+                    'label'   => 'Vehicles / Voitures *',
+                    'count'   => $vehiclesScanned,
+                    // Rate intentionally null — the schema doesn't classify
+                    // vehicle type, so we refuse to invent a price. The
+                    // invoice catalogue (probe v3) will give us the
+                    // ground-truth rate per type.
+                    'price'   => null,
+                    'revenue' => null,
+                    'caveat'  => true,
+                ],
+                'wood_per_truckload' => [
+                    'label'   => 'Bois (per truck/wagon) **',
+                    'count'   => $woodTruckloads,
+                    'price'   => self::PRICE_HT_WOOD_PER_TRUCK,
+                    'revenue' => $woodTruckloads * self::PRICE_HT_WOOD_PER_TRUCK,
+                    'caveat'  => true,
+                ],
                 'transit' => [
                     'label'   => 'Transit (any size)',
                     'count'   => $transitAny,
@@ -667,7 +744,13 @@ final class OperationsService
                 ],
             ];
 
-            $totalRevenue = array_sum(array_column($categories, 'revenue'));
+            // Skip null-priced categories (e.g., unclassified vehicles) when
+            // summing revenue — we explicitly don't bill them, so they
+            // mustn't inflate the total.
+            $totalRevenue = (int) array_sum(array_map(
+                fn ($r) => is_numeric($r['revenue']) ? $r['revenue'] : 0,
+                $categories
+            ));
             $totalCount   = array_sum(array_column($categories, 'count'));
             $freeCount    = $emptyAny + $transitAny;
 

@@ -364,11 +364,22 @@
                   </thead>
                   <tbody class="divide-y divide-[#f1ede5]">
                       @foreach ($breakdown['categories'] as $cat)
-                          <tr class="{{ $cat['price'] === 0 ? 'text-[#9b958a]' : 'text-[#2d3748]' }}">
+                          @php
+                              $priceVal   = $cat['price'] ?? null;
+                              $revenueVal = $cat['revenue'] ?? null;
+                              $priceLabel = $priceVal === null
+                                                ? 'rate pending *'
+                                                : ($priceVal === 0 ? '— free —' : number_format($priceVal));
+                              $revLabel   = $revenueVal === null
+                                                ? 'pending *'
+                                                : ($revenueVal === 0 ? '—' : number_format($revenueVal));
+                              $rowMuted   = ($priceVal === 0 || $priceVal === null);
+                          @endphp
+                          <tr class="{{ $rowMuted ? 'text-[#9b958a]' : 'text-[#2d3748]' }}">
                               <td class="py-2 pr-3">{{ $cat['label'] }}</td>
                               <td class="py-2 px-3 text-right tabular-nums">{{ number_format($cat['count']) }}</td>
-                              <td class="py-2 px-3 text-right tabular-nums">{{ $cat['price'] === 0 ? '— free —' : number_format($cat['price']) }}</td>
-                              <td class="py-2 pl-3 text-right tabular-nums font-medium">{{ $cat['price'] === 0 ? '—' : number_format($cat['revenue']) }}</td>
+                              <td class="py-2 px-3 text-right tabular-nums">{{ $priceLabel }}</td>
+                              <td class="py-2 pl-3 text-right tabular-nums font-medium">{{ $revLabel }}</td>
                           </tr>
                       @endforeach
                   </tbody>
@@ -382,8 +393,18 @@
                   </tfoot>
               </table>
           </div>
-          <div class="text-[11px] text-[#7c7466] mt-3 leading-relaxed">
-              <strong>Note:</strong> Empty (vide) and Transit containers are scanned systematically and free of charge per the price grid. 45' containers are billed at the 40' tariff (the grid only enumerates 20"/40"). Period anchor for revenue is <code class="text-[10px] bg-[#faf8f5] border border-[#ece7df] rounded px-1 py-0.5">scanned_date</code> — the moment the fee is earned.
+          <div class="text-[11px] text-[#7c7466] mt-3 leading-relaxed space-y-1.5">
+              <div><strong>Note:</strong> Empty (vide) and Transit containers are scanned systematically and free of charge per the price grid. 45' containers are billed at the 40' tariff (the grid only enumerates 20"/40"). Period anchor for revenue is <code class="text-[10px] bg-[#faf8f5] border border-[#ece7df] rounded px-1 py-0.5">scanned_date</code> — the moment the fee is earned.</div>
+              <div>
+                <strong>*</strong> <em>Vehicles</em>: count shown but <strong>no rate is assumed</strong>. Revenue here is computed from the scan data (operational ground truth) so it can be reconciled against actual invoiced revenue later. The grid distinguishes <em>voiture</em> (50K) / <em>camion 4t+</em> (95K) / <em>bulldozer</em> (105K) / <em>OGG</em> (105K), but
+                <code class="text-[10px] bg-[#faf8f5] border border-[#ece7df] rounded px-1 py-0.5">aw_vehicule.vehicule</code>
+                has no reliable per-record classifier today (<code class="text-[10px] bg-[#faf8f5] border border-[#ece7df] rounded px-1 py-0.5">goods_group</code> is unpopulated; <code class="text-[10px] bg-[#faf8f5] border border-[#ece7df] rounded px-1 py-0.5">manufacturer</code> contains mixed values like <em>SACS</em>/<em>COOKWARE</em>). Until either the source data is enriched with a type field, or we derive one from physical attributes, this row stays count-only — assigning an arbitrary rate would invalidate the reconciliation.
+              </div>
+              <div>
+                <strong>**</strong> <em>Bois</em>: tariff is 35,000 HT <em>per truck or wagon</em>, not per piece of wood. Approximated by counting distinct cargos with at least one scanned bois record in the period (each cargo ≈ one truckload). The
+                <code class="text-[10px] bg-[#faf8f5] border border-[#ece7df] rounded px-1 py-0.5">im_vehicule</code>
+                field on bois would give a sharper count but is mostly empty in the live data.
+              </div>
           </div>
       </div>
     @endif
