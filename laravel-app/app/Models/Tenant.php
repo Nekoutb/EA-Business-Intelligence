@@ -96,4 +96,46 @@ class Tenant extends Model
             ->where('enabled', true)
             ->exists();
     }
+
+    public function dashboardKpis(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(TenantDashboardKpi::class);
+    }
+
+    /**
+     * Whether a Dashboard KPI card should render for this tenant.
+     *
+     * Resolution order:
+     *   1. If a tenant_dashboard_kpis row exists for (tenant, kpi), use it.
+     *   2. Otherwise fall back to the registry default in
+     *      config/dashboard_kpis.php (lets new tenants inherit a sensible
+     *      default without needing per-row backfill).
+     *   3. If the KPI isn't in the registry at all, allow it (assume the
+     *      view is rendering something we don't yet manage).
+     *
+     * Result is memoised per request to avoid the small but additive
+     * lookup cost when a Dashboard renders 12 cards.
+     */
+    public function dashboardKpiEnabled(string $key): bool
+    {
+        if (!isset($this->_kpiCache)) {
+            $this->_kpiCache = $this->dashboardKpis()
+                ->get(['kpi_key', 'enabled'])
+                ->mapWithKeys(fn ($r) => [$r->kpi_key => (bool) $r->enabled])
+                ->all();
+        }
+        if (array_key_exists($key, $this->_kpiCache)) {
+            return $this->_kpiCache[$key];
+        }
+        // No row → fall back to registry default.
+        foreach (config('dashboard_kpis.kpis', []) as $entry) {
+            if (($entry['key'] ?? null) === $key) {
+                return (bool) ($entry['default'] ?? true);
+            }
+        }
+        return true; // unknown KPI → don't hide
+    }
+
+    /** Per-request memo cache, populated on first dashboardKpiEnabled() call. */
+    public ?array $_kpiCache = null;
 }

@@ -476,6 +476,91 @@ class TenantController extends Controller
         return response()->json($payload);
     }
 
+    /**
+     * Toggle a Business Intelligence Dashboard KPI on/off for a tenant.
+     * Mirrors toggleModule() — but at finer granularity (one card on the
+     * Dashboard page rather than a whole module / page).
+     */
+    public function toggleDashboardKpi(Request $request, Tenant $tenant, string $kpiKey)
+    {
+        // Validate the kpi_key against the registry so we don't silently
+        // accept random strings.
+        $known = collect(config('dashboard_kpis.kpis', []))->pluck('key')->all();
+        abort_unless(in_array($kpiKey, $known, true), 404, 'Unknown dashboard KPI');
+
+        $row = \App\Models\TenantDashboardKpi::firstOrNew([
+            'tenant_id' => $tenant->id,
+            'kpi_key'   => $kpiKey,
+        ]);
+        $row->enabled    = !$row->exists ? true : !$row->enabled; // first toggle = on
+        $row->enabled_at = $row->enabled ? now() : null;
+        $row->enabled_by = $request->attributes->get('admin_user')?->id;
+        $row->save();
+
+        AuditLog::record('tenant.dashboard_kpi.toggle', [
+            'tenant_id' => $tenant->id,
+            'target'    => $tenant->slug . ':' . $kpiKey,
+            'payload'   => ['enabled' => $row->enabled],
+        ]);
+
+        return back()->with('flash', [
+            'type' => 'success',
+            'msg'  => "KPI '{$kpiKey}' " . ($row->enabled ? 'enabled' : 'disabled') . '.',
+        ]);
+    }
+
+    /**
+     * Rename a tenant — change display name, brand and/or plan.
+     * Slug is intentionally NOT changeable here: the URL `/t/{slug}` is
+     * baked into bookmarks, audit logs, and any third-party integrations
+     * that have already connected to this workspace. If a slug change is
+     * ever needed, that's a separate operation with redirect bookkeeping.
+     */
+    public function rename(Request $request, Tenant $tenant)
+    {
+        $data = $request->validate([
+            'name'  => ['required', 'string', 'max:191'],
+            'brand' => ['nullable', 'string', 'max:191'],
+            'plan'  => ['nullable', 'string', 'max:32'],
+        ]);
+
+        $before = [
+            'name'  => $tenant->name,
+            'brand' => $tenant->brand,
+            'plan'  => $tenant->plan,
+        ];
+
+        $tenant->update([
+            'name'  => $data['name'],
+            'brand' => $data['brand'] ?? $tenant->brand,
+            'plan'  => $data['plan']  ?? $tenant->plan,
+        ]);
+
+        // Mirror APP_BRAND on tenant_settings so the tenant-facing
+        // sidebar / login page shows the new name.
+        if (!empty($data['brand'])) {
+            TenantSetting::updateOrCreate(
+                ['tenant_id' => $tenant->id, 'key' => 'APP_BRAND'],
+                ['value' => $data['brand']]
+            );
+        }
+
+        AuditLog::record('tenant.rename', [
+            'tenant_id' => $tenant->id,
+            'target'    => $tenant->slug,
+            'payload'   => ['before' => $before, 'after' => [
+                'name'  => $tenant->name,
+                'brand' => $tenant->brand,
+                'plan'  => $tenant->plan,
+            ]],
+        ]);
+
+        return back()->with('flash', [
+            'type' => 'success',
+            'msg'  => "Tenant renamed to '{$tenant->name}'.",
+        ]);
+    }
+
     public function suspend(Tenant $tenant)
     {
         $tenant->update(['status' => Tenant::STATUS_SUSPENDED]);

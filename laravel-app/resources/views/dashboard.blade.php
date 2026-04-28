@@ -73,6 +73,11 @@
                 }
                 return (($current - $reference) / abs($reference)) * 100.0;
             };
+
+            // Per-tenant KPI on/off — managed in /admin/tenants/{id} → Dashboard KPIs.
+            // Falls back to the registry default if no row exists.
+            $tnt   = tenant();
+            $kpiOn = fn (string $key) => $tnt ? $tnt->dashboardKpiEnabled($key) : true;
         @endphp
 
         {{-- ── Section: Revenue & Profitability KPIs ─────────────────────── --}}
@@ -82,6 +87,7 @@
                 <h2 class="text-xs font-semibold uppercase tracking-wider text-[#5a6a70]">Revenue & Profitability</h2>
             </div>
             <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3">
+                @if ($kpiOn('revenue_ytd'))
                 <x-kpi title="Revenue YTD"
                        :value="ea_money_short((float)($cur['total'] ?? 0), $ccy)"
                        :delta="$yoy"
@@ -89,7 +95,9 @@
                        :vsPlan="$variance($cur['total'] ?? null, $planMetrics['total'])"
                        color="brand"
                        icon="M3 3v18h18M7 14l4-4 3 3 5-5"/>
+                @endif
 
+                @if ($kpiOn('rpd'))
                 <div title="Revenue per day can be highlighted">
                     <x-kpi title="RpD"
                            :value="ea_money_short((float)($cur['rpd'] ?? 0), $ccy)"
@@ -99,7 +107,9 @@
                            color="sage"
                            icon="M12 8v4l3 2M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z"/>
                 </div>
+                @endif
 
+                @if ($kpiOn('rpo'))
                 <div title="Revenue per day can be highlighted">
                     <x-kpi title="RpO"
                            :value="ea_money_short((float)($cur['rpo'] ?? 0), $ccy)"
@@ -109,7 +119,9 @@
                            color="brand"
                            icon="M3 3v18h18M8 12h8"/>
                 </div>
+                @endif
 
+                @if ($kpiOn('opd'))
                 <x-kpi title="OpD"
                        :value="number_format((float)($cur['opd'] ?? 0), 1)"
                        :sub="'Outfits / working day'"
@@ -117,7 +129,9 @@
                        :vsPlan="$variance($cur['opd'] ?? null, $planMetrics['opd'])"
                        color="slate"
                        icon="M4 6h16M4 12h10M4 18h6"/>
+                @endif
 
+                @if ($kpiOn('rpc'))
                 <x-kpi title="RpC"
                        :value="ea_money_short((float)($cur['per_customer'] ?? 0), $ccy)"
                        :sub="number_format((int)($cur['customers'] ?? 0)) . ' customers'"
@@ -125,7 +139,9 @@
                        :vsPlan="$variance($cur['per_customer'] ?? null, $planMetrics['rpc'])"
                        color="coral"
                        icon="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+                @endif
 
+                @if ($kpiOn('dpot'))
                 <x-kpi title="DpOT"
                        :value="ea_money_short((float)($cur['dp_ot'] ?? 0), $ccy)"
                        :sub="'Discount per outfit'"
@@ -134,7 +150,9 @@
                        prefer="down"
                        color="warm"
                        icon="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82zM7 7h.01"/>
+                @endif
 
+                @if ($kpiOn('dpc'))
                 <x-kpi title="DpC"
                        :value="ea_money_short((float)($cur['dp_c'] ?? 0), $ccy)"
                        :sub="'Discount per customer'"
@@ -143,7 +161,9 @@
                        prefer="down"
                        color="warm"
                        icon="M9 14l6-6M9 8h.01M15 14h.01"/>
+                @endif
 
+                @if ($kpiOn('cpo'))
                 <x-kpi title="CpO"
                        :value="ea_money_short((float)($cur['cpo'] ?? 0), $ccy)"
                        :sub="'603 + 7019 basis'"
@@ -152,6 +172,7 @@
                        prefer="down"
                        color="sage"
                        icon="M5 12h14M12 5l7 7-7 7"/>
+                @endif
             </div>
         </div>
 
@@ -162,28 +183,36 @@
                 <h2 class="text-xs font-semibold uppercase tracking-wider text-[#5a6a70]">Margin Structure</h2>
             </div>
             <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+                @if ($kpiOn('gross_profit'))
                 <x-kpi title="Gross Profit"
                        :value="ea_money_short((float)($plCur['gross_profit'] ?? 0), $ccy)"
                        :sub="'Margin ' . number_format((float)($plCur['gross_margin_pct'] ?? $plCur['gross_margin'] ?? 0), 1) . '%'"
                        color="sage"
                        icon="M12 2l3 7h7l-5.5 4L18 20l-6-4-6 4 1.5-7L2 9h7z"/>
+                @endif
 
+                @if ($kpiOn('ebitda'))
                 <x-kpi title="EBITDA"
                        :value="ea_money_short((float)($plCur['ebitda'] ?? 0), $ccy)"
                        :sub="'Margin ' . number_format((float)($plCur['ebitda_margin_pct'] ?? $plCur['ebitda_margin'] ?? 0), 1) . '%'"
                        color="brand"
                        icon="M3 3v18h18M7 14l4-4 3 3 5-5"/>
+                @endif
 
+                @if ($kpiOn('net_profit'))
                 <x-kpi title="Net Profit"
                        :value="ea_money_short((float)($plCur['net_profit'] ?? 0), $ccy)"
                        :sub="'Margin ' . number_format((float)($plCur['net_margin_pct'] ?? $plCur['net_margin'] ?? 0), 1) . '%'"
                        :color="($plCur['net_profit'] ?? 0) >= 0 ? 'sage' : 'coral'"
                        icon="M22 11V3h-8M14 3l8 8-11 11-8-8z"/>
+                @endif
 
+                @if ($kpiOn('opex'))
                 <x-kpi title="OpEx"
                        :value="ea_money_short((float)($plCur['opex'] ?? 0), $ccy)"
                        color="slate"
                        icon="M4 6h16M4 12h16M4 18h16"/>
+                @endif
             </div>
         </div>
         @endif

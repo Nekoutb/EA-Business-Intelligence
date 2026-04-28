@@ -7,7 +7,16 @@
             <div class="flex items-center gap-2 mb-1">
                 <a href="/admin/tenants" class="text-xs text-slate-500 hover:text-slate-800">← All tenants</a>
             </div>
-            <h1 class="text-2xl font-bold text-slate-900">{{ $tenant->name }}</h1>
+            <div class="flex items-center gap-2">
+                <h1 class="text-2xl font-bold text-slate-900">{{ $tenant->name }}</h1>
+                <button type="button"
+                        onclick="document.getElementById('ea-rename-panel').classList.toggle('hidden')"
+                        class="text-[11px] font-medium text-slate-500 hover:text-slate-900 inline-flex items-center gap-1 px-2 py-1 rounded border border-slate-200 hover:border-slate-400 transition"
+                        title="Rename tenant">
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                    Rename
+                </button>
+            </div>
             <p class="text-xs text-slate-500 mt-1">
                 <span class="font-mono">/t/{{ $tenant->slug }}</span>
                 @php
@@ -37,6 +46,65 @@
                 </form>
             @endif
         </div>
+    </div>
+
+    {{-- ─────────── Rename panel (toggled by the Rename button) ─────────── --}}
+    <div id="ea-rename-panel" class="hidden mt-4 bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
+        <form method="POST" action="/admin/tenants/{{ $tenant->id }}/rename" class="space-y-4">
+            @csrf
+            <div class="flex items-baseline justify-between">
+                <div>
+                    <h3 class="text-sm font-semibold text-slate-900">Rename tenant</h3>
+                    <p class="text-[11px] text-slate-500 mt-0.5">
+                        Updates the display name, brand and plan. The URL slug
+                        <code class="bg-slate-100 px-1 py-0.5 rounded">/t/{{ $tenant->slug }}</code>
+                        is immutable to keep bookmarks &amp; audit history consistent.
+                    </p>
+                </div>
+                <button type="button" onclick="document.getElementById('ea-rename-panel').classList.add('hidden')"
+                        class="text-[11px] text-slate-500 hover:text-slate-800">Close ✕</button>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                    <label class="block text-[11px] font-medium text-slate-600 mb-1">Display name <span class="text-rose-500">*</span></label>
+                    <input name="name" required maxlength="191"
+                           value="{{ old('name', $tenant->name) }}"
+                           placeholder="Kissywears"
+                           class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent">
+                    <p class="text-[10px] text-slate-400 mt-1">Shown in the admin and on the tenant detail page.</p>
+                </div>
+                <div>
+                    <label class="block text-[11px] font-medium text-slate-600 mb-1">Brand</label>
+                    <input name="brand" maxlength="191"
+                           value="{{ old('brand', $tenant->brand) }}"
+                           placeholder="Kissywears"
+                           class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent">
+                    <p class="text-[10px] text-slate-400 mt-1">Shown to tenant users in the sidebar &amp; login page (synced to <code class="bg-slate-100 px-1 rounded">APP_BRAND</code>).</p>
+                </div>
+                <div>
+                    <label class="block text-[11px] font-medium text-slate-600 mb-1">Plan</label>
+                    <input name="plan" maxlength="32"
+                           value="{{ old('plan', $tenant->plan) }}"
+                           placeholder="standard"
+                           class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent">
+                </div>
+            </div>
+            @if ($errors->any())
+                <div class="text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-lg p-3">
+                    @foreach ($errors->all() as $err) <div>{{ $err }}</div> @endforeach
+                </div>
+            @endif
+            <div class="flex justify-end gap-2">
+                <button type="button" onclick="document.getElementById('ea-rename-panel').classList.add('hidden')"
+                        class="text-xs font-medium text-slate-600 hover:text-slate-900 px-3 py-2">
+                    Cancel
+                </button>
+                <button type="submit"
+                        class="text-xs font-semibold bg-gradient-to-r from-rose-600 to-orange-600 hover:from-rose-700 hover:to-orange-700 text-white px-4 py-2 rounded-lg shadow transition">
+                    Save changes
+                </button>
+            </div>
+        </form>
     </div>
 @endsection
 
@@ -115,6 +183,61 @@
                         @empty
                             <div class="px-4 py-3 text-xs text-slate-400 italic">No modules in this service yet.</div>
                         @endforelse
+                    </div>
+                </div>
+            @endforeach
+        </div>
+
+        {{-- ── Dashboard KPIs (toggle individual cards on /Dashboard) ─ --}}
+        @php
+            $kpiSections   = config('dashboard_kpis.sections', []);
+            $kpiRegistry   = config('dashboard_kpis.kpis', []);
+            $tenantKpiRows = $tenant->dashboardKpis()
+                ->get(['kpi_key', 'enabled'])
+                ->mapWithKeys(fn ($r) => [$r->kpi_key => (bool) $r->enabled])
+                ->all();
+        @endphp
+        <div class="mt-6 panel">
+            <div class="px-5 pt-5 pb-3">
+                <div class="flex items-baseline justify-between gap-3">
+                    <h2 class="text-sm font-semibold text-slate-900">Dashboard KPIs</h2>
+                    <span class="text-[10px] uppercase tracking-widest text-slate-500 font-medium">
+                        Business Intelligence · Dashboard
+                    </span>
+                </div>
+                <p class="text-xs text-slate-500 mt-0.5">
+                    Toggle individual KPI cards shown on the tenant's Dashboard. Disabled cards are hidden from the tenant view but the underlying data calculation continues to run.
+                </p>
+            </div>
+
+            @foreach ($kpiSections as $sectionKey => $sectionMeta)
+                <div class="border-t border-slate-100">
+                    <div class="px-5 py-2.5 bg-slate-50/60 border-b border-slate-100 flex items-baseline justify-between">
+                        <div class="text-[11px] font-semibold uppercase tracking-widest text-slate-700">{{ $sectionMeta['label'] ?? $sectionKey }}</div>
+                        <div class="text-[10px] text-slate-500">{{ $sectionMeta['description'] ?? '' }}</div>
+                    </div>
+                    <div class="divide-y divide-slate-100">
+                        @foreach (collect($kpiRegistry)->where('section', $sectionKey) as $kpi)
+                            @php
+                                $key      = $kpi['key'];
+                                $enabled  = $tenantKpiRows[$key] ?? (bool) ($kpi['default'] ?? true);
+                            @endphp
+                            <div class="px-5 py-3 flex items-center gap-3">
+                                <div class="flex-1 min-w-0">
+                                    <div class="text-[13px] font-medium text-slate-900">{{ $kpi['label'] }}</div>
+                                    <div class="text-[11px] text-slate-500 truncate">{{ $kpi['description'] ?? '' }}</div>
+                                </div>
+                                <code class="text-[10px] font-mono bg-slate-100 text-slate-600 rounded px-1.5 py-0.5">{{ $key }}</code>
+                                <form method="POST" action="/admin/tenants/{{ $tenant->id }}/dashboard-kpis/{{ $key }}/toggle" class="shrink-0">
+                                    @csrf
+                                    <button type="submit"
+                                            title="{{ $enabled ? 'Disable this KPI for this tenant' : 'Enable this KPI for this tenant' }}"
+                                            class="relative inline-flex h-5 w-9 items-center rounded-full transition {{ $enabled ? 'bg-emerald-500' : 'bg-slate-300' }}">
+                                        <span class="inline-block h-4 w-4 transform rounded-full bg-white shadow transition {{ $enabled ? 'translate-x-4' : 'translate-x-1' }}"></span>
+                                    </button>
+                                </form>
+                            </div>
+                        @endforeach
                     </div>
                 </div>
             @endforeach

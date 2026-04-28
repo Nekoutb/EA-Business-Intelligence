@@ -73,9 +73,12 @@ Route::prefix('admin')->group(function () {
                                                      [AdminTenantController::class, 'toggleService']);
         Route::post('/tenants/{tenant}/modules/{moduleKey}/toggle',
                                                      [AdminTenantController::class, 'toggleModule']);
+        Route::post('/tenants/{tenant}/dashboard-kpis/{kpiKey}/toggle',
+                                                     [AdminTenantController::class, 'toggleDashboardKpi']);
         Route::get ('/tenants/{tenant}/settings',           [AdminTenantController::class, 'showSettings']);
         Route::post('/tenants/{tenant}/settings',           [AdminTenantController::class, 'saveSettings']);
         Route::post('/tenants/{tenant}/settings/test-odoo', [AdminTenantController::class, 'testOdoo']);
+        Route::post('/tenants/{tenant}/rename',      [AdminTenantController::class, 'rename']);
         Route::post('/tenants/{tenant}/suspend',     [AdminTenantController::class, 'suspend']);
         Route::post('/tenants/{tenant}/activate',    [AdminTenantController::class, 'activate']);
 
