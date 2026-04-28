@@ -91,6 +91,13 @@ return [
             'section'     => 'revenue_profitability',
             'default'     => true,
         ],
+        [
+            'key'         => 'run_rate',
+            'label'       => 'Annualised Run-Rate',
+            'description' => 'YTD revenue projected to a full year: (YTD ÷ days elapsed) × 365. Real-time forecast benchmark.',
+            'section'     => 'revenue_profitability',
+            'default'     => true,
+        ],
 
         // ── Margin Structure ──────────────────────────────────────────────
         [

@@ -78,6 +78,17 @@
             // Falls back to the registry default if no row exists.
             $tnt   = tenant();
             $kpiOn = fn (string $key) => $tnt ? $tnt->dashboardKpiEnabled($key) : true;
+
+            // Annualised run-rate: YTD revenue projected to a full calendar year.
+            // (YTD ÷ days_elapsed) × 365. Useful as a real-time forecast benchmark.
+            $daysElapsed = max(1, (int) ($data['period']['days'] ?? 1));
+            $runRate     = ((float) ($cur['total'] ?? 0) / $daysElapsed) * 365.0;
+
+            // Prior-year same-pace projection — gives a vs-PY comparison that
+            // accounts for both prior-year actuals AND the days-elapsed offset.
+            $runRatePy = ($prev['total'] ?? null) !== null
+                ? ((float) $prev['total'] / $daysElapsed) * 365.0
+                : null;
         @endphp
 
         {{-- ── Section: Revenue & Profitability KPIs ─────────────────────── --}}
@@ -172,6 +183,15 @@
                        prefer="down"
                        color="sage"
                        icon="M5 12h14M12 5l7 7-7 7"/>
+                @endif
+
+                @if ($kpiOn('run_rate'))
+                <x-kpi title="Annualised Run-Rate"
+                       :value="ea_money_short($runRate, $ccy)"
+                       :sub="'YTD pace · ' . $daysElapsed . ' days × 365'"
+                       :vsPy="$variance($runRate, $runRatePy)"
+                       color="brand"
+                       icon="M3 17l6-6 4 4 8-8M14 7h7v7"/>
                 @endif
             </div>
         </div>
