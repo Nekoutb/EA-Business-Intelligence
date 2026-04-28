@@ -84,22 +84,23 @@
             //   run_rate = (YTD revenue ÷ working_days_YTD) × annual_working_days
             //
             // We use working days, not calendar days, because revenue is
-            // generally posted only on trading days. This keeps the run-rate
-            // on the same denominator the user already sees in RpD ("101
-            // working days") rather than a calendar-day pace that would
-            // assume weekend revenue.
+            // generally posted only on trading days. CRITICAL: the basis
+            // here MUST match the basis RevenueService uses for
+            // `working_days`. RevenueService::workingDaysExact() counts
+            // Mon-Sat (6-day week), excluding only Sundays — the company
+            // trades on Saturdays. Mixing a 5-day denominator with a 6-day
+            // numerator would inflate the projection by ~17%.
             //
-            // Annual working days: count Mon-Fri in the current calendar
-            // year. Matches the convention RevenueService uses for
-            // working_days (no public-holiday adjustment — if the firm
-            // wants a holiday calendar later, it's a one-line subtraction).
-            // For 2026, this resolves to ~261.
+            // Annual working days: count Mon-Sat in the current calendar
+            // year (no public-holiday adjustment — if the firm wants a
+            // holiday calendar later, it's a one-line subtraction).
+            // For 2026, this resolves to ~313.
             $workingDaysYtd = max(1, (int) ($cur['working_days'] ?? 1));
 
             $year = (int) date('Y');
             $annualWorkingDays = 0;
             for ($d = new \DateTimeImmutable("$year-01-01"); (int) $d->format('Y') === $year; $d = $d->modify('+1 day')) {
-                if ((int) $d->format('N') < 6) {  // Mon-Fri
+                if ((int) $d->format('N') < 7) {  // Mon-Sat (6-day week — company trades Saturdays)
                     $annualWorkingDays++;
                 }
             }

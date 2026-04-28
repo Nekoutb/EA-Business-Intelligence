@@ -79,10 +79,14 @@
         @endif
 
         @if ($vsPyMeta || $vsPlanMeta)
-          <div class="mt-2 text-[10px] font-semibold flex flex-wrap items-center gap-1">
+          {{-- vs-PY / vs-Plan tags: deliberately one notch larger than the
+               legacy delta badge (11px vs 10px) so the comparative read is
+               actually scannable at a glance. Matches the title/sub sizing
+               so the line reads as a peer to the metric, not a footnote. --}}
+          <div class="mt-2 text-[11px] font-semibold flex flex-wrap items-center gap-x-1.5 gap-y-1 leading-tight">
               @if ($vsPyMeta)
                   <span class="inline-flex items-center gap-1 {{ $vsPyMeta['color'] }}">
-                      <svg class="w-2.5 h-2.5" viewBox="0 0 24 24" fill="currentColor">
+                      <svg class="w-3 h-3" viewBox="0 0 24 24" fill="currentColor">
                           <path d="{{ $vsPyMeta['icon'] }}" />
                       </svg>
                       {{ $formatPct($vsPyMeta['value']) }} <span class="font-normal text-[#7c7466]">vs PY</span>
@@ -95,7 +99,7 @@
 
               @if ($vsPlanMeta)
                   <span class="inline-flex items-center gap-1 {{ $vsPlanMeta['color'] }}">
-                      <svg class="w-2.5 h-2.5" viewBox="0 0 24 24" fill="currentColor">
+                      <svg class="w-3 h-3" viewBox="0 0 24 24" fill="currentColor">
                           <path d="{{ $vsPlanMeta['icon'] }}" />
                       </svg>
                       {{ $formatPct($vsPlanMeta['value']) }} <span class="font-normal text-[#7c7466]">vs Plan</span>
