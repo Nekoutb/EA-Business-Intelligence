@@ -45,36 +45,38 @@
         </div>
     @endif
 
-    {{-- ── Proposed KPIs (preview) ──────────────────────────────────────── --}}
+    {{-- ── KPI metadata ────────────────────────────────────────────────── --}}
     @php
         // KPI plan — static metadata (title, icon, source-formula label, palette).
         // Each entry's `key` is looked up in $ops['kpis'][$key] for the live
-        // value (or pending placeholder while OperationsService is in
-        // schema-discovery). Adding a new KPI here is a 2-step: drop an
-        // entry in this array + add the matching helper in
-        // OperationsService::analyze().
+        // value. Adding a new KPI here is a 2-step: drop an entry in this
+        // array + add the matching helper in OperationsService::analyze().
+        //
+        // Source formulas reflect the actual AW Cargo schema discovered via
+        // the /admin/tenants/{id}/odoo-probe diagnostic.
         $proposedKpis = [
             [
-                'group' => 'Container Throughput',
+                'group' => 'Throughput',
                 'cards' => [
-                    ['key' => 'containers_scanned', 'title' => 'Containers Scanned',  'source' => 'count(x_container_scan)', 'icon' => 'M3 7h18M3 12h18M3 17h18', 'color' => 'brand'],
-                    ['key' => 'containers_per_day', 'title' => 'Containers per Day',  'source' => 'count ÷ working_days',    'icon' => 'M12 8v4l3 2M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z', 'color' => 'sage'],
-                    ['key' => 'avg_dwell_hours',    'title' => 'Avg Dwell Time',      'source' => 'avg(sortie - entrée)',    'icon' => 'M12 6v6l4 2', 'color' => 'warm'],
+                    ['key' => 'vessel_calls',       'title' => 'Vessel Calls',       'source' => 'count(aw_cargo.stopover)',                       'icon' => 'M3 18l3-3 3 3 3-3 3 3 3-3 3 3M3 12c4-2 6-2 9 0s5 2 9 0M5 8h14',     'color' => 'brand'],
+                    ['key' => 'containers_handled', 'title' => 'Containers Handled', 'source' => 'count(aw_cargo.equipment) in period',            'icon' => 'M4 7v10a2 2 0 002 2h12a2 2 0 002-2V7M4 7l8-4 8 4M4 7h16M9 11h6M9 15h6', 'color' => 'sage'],
+                    ['key' => 'containers_per_day', 'title' => 'Containers per Day', 'source' => 'handled ÷ working_days · 6-day basis',           'icon' => 'M12 8v4l3 2M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z',                'color' => 'warm'],
                 ],
             ],
             [
-                'group' => 'Container Mix',
+                'group' => 'Scan & Quality',
                 'cards' => [
-                    ['key' => 'mix_by_type',  'title' => 'Mix by Container Type', 'source' => 'group_by(x_container_type)',           'icon' => 'M4 4h16v6H4zM4 14h16v6H4z', 'color' => 'brand'],
-                    ['key' => 'reefer_share', 'title' => 'Reefer Share',          'source' => "x_container_type = 'reefer' ÷ total",  'icon' => 'M12 2l4 8h-3v8h-2v-8H8z',    'color' => 'sage'],
+                    ['key' => 'containers_scanned', 'title' => 'Containers Scanned', 'source' => 'count(scanned=true) by scanned_date',            'icon' => 'M4 6h16M4 10h16M4 14h16M4 18h16',                                                'color' => 'brand'],
+                    ['key' => 'scan_rate',          'title' => 'Scan Rate',          'source' => 'scanned ÷ handled in period',                    'icon' => 'M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z',                                  'color' => 'sage'],
+                    ['key' => 'inspection_rate',    'title' => 'Inspection Rate',    'source' => "count(inspected != 'not_done') ÷ handled",       'icon' => "M11 17a2 2 0 100-4 2 2 0 000 4zM10 12V8m1 9h.01M5 4h14a2 2 0 012 2v12a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z", 'color' => 'coral'],
                 ],
             ],
             [
-                'group' => 'Revenue & Customers',
+                'group' => 'Mix',
                 'cards' => [
-                    ['key' => 'revenue_per_container', 'title' => 'Revenue per Container',     'source' => 'sum(invoice) ÷ count(container)', 'icon' => 'M12 1v22M2 12h20',                                                                'color' => 'brand'],
-                    ['key' => 'top_customers',         'title' => 'Top 5 Customers by Volume', 'source' => 'group_by(partner_id)',            'icon' => 'M3 12h6l3-9 3 18 3-9h3',                                                          'color' => 'coral'],
-                    ['key' => 'top_destinations',      'title' => 'Top 5 Destinations',        'source' => 'group_by(destination)',           'icon' => 'M12 2C8 6 6 9 6 13a6 6 0 0 0 12 0c0-4-2-7-6-11zM12 13a2 2 0 1 1 0-4 2 2 0 0 1 0 4z', 'color' => 'slate'],
+                    ['key' => 'mix_by_size',    'title' => "Mix by Size (20'/40'/45')", 'source' => 'group_by(equipment.size)',                       'icon' => 'M4 4h16v6H4zM4 14h16v6H4z',          'color' => 'brand'],
+                    ['key' => 'full_empty_mix', 'title' => 'Laden vs Empty',            'source' => "group_by(equipment.full = 'yes')",               'icon' => 'M5 5h14v14H5zM5 12h14',              'color' => 'sage'],
+                    ['key' => 'direction_mix',  'title' => 'Import vs Export',          'source' => 'group_by(cargo.direction) weighted by containers', 'icon' => 'M3 12h18M12 5l7 7-7 7M5 5l-2 7 2 7',  'color' => 'warm'],
                 ],
             ],
         ];
@@ -112,6 +114,16 @@
                         $pending = !$live || !empty($live['pending']);
                         $value   = $pending ? '— —' : ($live['value'] ?? '— —');
                         $sub     = $live['sub'] ?? '';
+                        $vsPy    = !$pending && isset($live['vsPy']) && is_numeric($live['vsPy']) ? (float) $live['vsPy'] : null;
+                        // vs-PY semantics: positive = up vs prior year; for
+                        // most ops KPIs that's good (more throughput, more
+                        // scans), but Scan Rate / Inspection Rate already
+                        // express improvement as positive too. So all cards
+                        // can use the same "up = good" colouring.
+                        $vsPyColor = $vsPy === null ? 'text-slate-400'
+                                  : ($vsPy >= 0 ? 'text-sage-700' : 'text-coral-700');
+                        $vsPyArrow = $vsPy === null ? null
+                                  : ($vsPy >= 0 ? 'M12 6l5 5H7z' : 'M12 18l5-5H7z');
                     @endphp
                     <div class="kpi-card bg-white rounded-xl border border-[#e8e4de] shadow-sm relative overflow-hidden flex">
                         <div class="accent-bar {{ $bar }} shrink-0 {{ $pending ? 'opacity-60' : '' }}"></div>
@@ -127,6 +139,15 @@
                                     <div class="text-xl font-bold {{ $pending ? 'text-[#a09d95]' : 'text-[#2d3748]' }} mt-1 tabular-nums truncate">{{ $value }}</div>
                                     @if ($sub)
                                       <div class="text-[11px] {{ $pending ? 'text-[#a09d95]' : 'text-[#7c7466]' }} mt-0.5">{!! $sub !!}</div>
+                                    @endif
+                                    @if ($vsPy !== null)
+                                      <div class="mt-2 text-[11px] font-semibold flex items-center gap-1 {{ $vsPyColor }}">
+                                          <svg class="w-3 h-3" viewBox="0 0 24 24" fill="currentColor">
+                                              <path d="{{ $vsPyArrow }}"/>
+                                          </svg>
+                                          {{ ($vsPy >= 0 ? '+' : '') . number_format($vsPy, 1) . '%' }}
+                                          <span class="font-normal text-[#7c7466]">vs PY</span>
+                                      </div>
                                     @endif
                                 </div>
                                 <div class="w-7 h-7 rounded-md {{ $bg }} {{ $bdr }} border flex items-center justify-center shrink-0">
@@ -149,15 +170,32 @@
         </div>
     @endforeach
 
-    {{-- ── Implementation roadmap ───────────────────────────────────────── --}}
+    {{-- ── Schema notes & next steps ────────────────────────────────────── --}}
     <div class="bg-white border border-[#e8e4de] rounded-xl p-5">
-        <h3 class="text-sm font-semibold text-[#1e3d44] mb-3">Implementation roadmap</h3>
-        <ol class="space-y-2 text-xs text-[#5a6a70] leading-relaxed list-decimal list-inside">
-            <li><strong>Schema discovery</strong> — super admin runs <code class="text-[11px] bg-[#faf8f5] border border-[#ece7df] rounded px-1.5 py-0.5">/admin/tenants/&lt;id&gt;/odoo-probe</code>. JSON output identifies the actual logistics models and fields.</li>
-            <li><strong>Service layer</strong> — <code class="text-[11px] bg-[#faf8f5] border border-[#ece7df] rounded px-1.5 py-0.5">App\Services\OperationsService</code> wraps the OdooClient, mirrors RevenueService's <code class="text-[11px] bg-[#faf8f5] border border-[#ece7df] rounded px-1.5 py-0.5">analyze($today, $period)</code> shape, returns CY/PY same-period comparisons.</li>
-            <li><strong>Wire the cards</strong> — replace the placeholder cards above with <code class="text-[11px] bg-[#faf8f5] border border-[#ece7df] rounded px-1.5 py-0.5">&lt;x-kpi&gt;</code> instances backed by the analyzer; cache per period (<code class="text-[11px] bg-[#faf8f5] border border-[#ece7df] rounded px-1.5 py-0.5">ea_cached("ops_{$type}", …)</code>).</li>
-            <li><strong>Per-tenant KPI toggles</strong> — register Operations KPIs in <code class="text-[11px] bg-[#faf8f5] border border-[#ece7df] rounded px-1.5 py-0.5">config/dashboard_kpis.php</code> (or a sibling <code class="text-[11px] bg-[#faf8f5] border border-[#ece7df] rounded px-1.5 py-0.5">operations_kpis.php</code>) so admins can hide individual cards per tenant.</li>
-            <li><strong>Drill-downs</strong> — secondary pages for <em>Container detail</em>, <em>Scan log</em>, <em>Customer × destination matrix</em>. Same pattern as Revenue → Product Profitability.</li>
-        </ol>
+        <h3 class="text-sm font-semibold text-[#1e3d44] mb-3">Data sources &amp; design notes</h3>
+        <div class="text-xs text-[#5a6a70] leading-relaxed space-y-3">
+            <div>
+                <span class="font-semibold text-[#1e3d44]">Models in use</span> —
+                <code class="text-[11px] bg-[#faf8f5] border border-[#ece7df] rounded px-1.5 py-0.5">aw_cargo.stopover</code> (vessel calls),
+                <code class="text-[11px] bg-[#faf8f5] border border-[#ece7df] rounded px-1.5 py-0.5">aw_cargo.cargo</code> (bills of lading),
+                <code class="text-[11px] bg-[#faf8f5] border border-[#ece7df] rounded px-1.5 py-0.5">aw_cargo.equipment</code> (containers).
+            </div>
+            <div>
+                <span class="font-semibold text-[#1e3d44]">Period anchor</span> — every KPI filters by
+                <code class="text-[11px] bg-[#faf8f5] border border-[#ece7df] rounded px-1.5 py-0.5">create_date</code>
+                because <code class="text-[11px] bg-[#faf8f5] border border-[#ece7df] rounded px-1.5 py-0.5">eta</code> is sparsely populated. Containers Scanned uses
+                <code class="text-[11px] bg-[#faf8f5] border border-[#ece7df] rounded px-1.5 py-0.5">scanned_date</code>.
+            </div>
+            <div>
+                <span class="font-semibold text-[#1e3d44]">Working-day basis</span> — Mon–Sat (consistent with the Dashboard's RpD &amp; Run-Rate).
+            </div>
+            <div>
+                <span class="font-semibold text-[#1e3d44]">Deferred to v2</span> —
+                <em>Revenue per Container</em> (needs to traverse <code class="text-[11px] bg-[#faf8f5] border border-[#ece7df] rounded px-1.5 py-0.5">cargo.invoice_ids</code> → <code class="text-[11px] bg-[#faf8f5] border border-[#ece7df] rounded px-1.5 py-0.5">account.move</code>),
+                <em>Average Time-to-Scan</em>,
+                <em>Top Vessels by Volume</em> (drill-down list page),
+                <em>Customer / Destination breakdowns</em> (the <code class="text-[11px] bg-[#faf8f5] border border-[#ece7df] rounded px-1.5 py-0.5">partner_id</code> field is mostly empty in the source data — needs upstream data quality work).
+            </div>
+        </div>
     </div>
 @endsection
