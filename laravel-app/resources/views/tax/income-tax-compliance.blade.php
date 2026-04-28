@@ -103,7 +103,7 @@
                     </div>
                 </div>
 
-                {{-- Stacking disclosure --}}
+                {{-- Stacking disclosure (now embeds the Rule-reference dropdown) --}}
                 <div class="border-t border-slate-200 bg-slate-50/60 px-5 py-4">
                     <div class="flex items-start gap-3">
                         <div class="text-amber-600 shrink-0 mt-0.5">
@@ -150,118 +150,55 @@
                                     </div>
                                 </div>
                             </div>
+
+                            {{-- Inline rule reference dropdown — now embedded inside the stacking panel --}}
+                            <details class="mt-5 group">
+                                <summary class="inline-flex items-center gap-2 cursor-pointer list-none text-[12px] font-semibold text-slate-900 hover:text-slate-700 select-none">
+                                    <svg class="w-3.5 h-3.5 text-slate-500 transition-transform group-open:rotate-180" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/>
+                                    </svg>
+                                    Rule reference — Articles 7-A, 17, 26, 91 CGI
+                                    <span class="text-[11px] font-normal text-slate-500">· click to expand</span>
+                                </summary>
+                                <div class="mt-3 pl-5 border-l-2 border-slate-200 text-sm text-slate-700 leading-relaxed space-y-3">
+                                    <p>
+                                        <strong class="text-slate-900">Article 7-A CGI.</strong>
+                                        Cash payments above the threshold set by the
+                                        <em>Loi de Finances</em> in force are
+                                        <strong>excluded from deductible charges</strong> for corporate
+                                        income tax purposes. The current threshold is
+                                        <span class="tabular-nums font-medium">{{ number_format($thresh, 0, '.', ',') }} {{ $cur }}</span>
+                                        per transaction with the same counterparty
+                                        <span class="text-[11px] text-slate-500">({{ $thRef }})</span>.
+                                    </p>
+                                    <p>
+                                        <strong class="text-slate-900">Article 17 CGI.</strong>
+                                        Statutory income tax rate of <span class="tabular-nums">33 %</span>
+                                        ({{ number_format($isPct, 0) }} % IS + {{ number_format($cacPct, 0) }} % CAC)
+                                        applies on reintegration of the non-deductible charge into taxable income.
+                                    </p>
+                                    <p>
+                                        <strong class="text-slate-900">Articles 26 + 91 CGI.</strong>
+                                        Beyond the income-tax reintegration, the DGI may additionally
+                                        <strong>requalify the disallowed amount as a hidden distribution</strong>
+                                        (<em>revenus réputés distribués</em>, Article 26 CGI). In that case,
+                                        the same amount is taxed as a dividend at <span class="tabular-nums">16.5 %</span>
+                                        IRCM ({{ number_format($ircmBP, 0) }} % + {{ number_format($cacPct, 0) }} % CAC, Article 91 CGI).
+                                    </p>
+                                    <p class="text-[12px] text-slate-600 bg-white border-l-2 border-slate-300 pl-3 py-2">
+                                        Stacked exposure = <span class="tabular-nums">{{ number_format($citPct, 1) }} % + {{ number_format($ircmPct, 1) }} % = {{ number_format($totPct, 1) }} %</span>
+                                        of the disallowed amount. The IRCM leg is contingent on whether the DGI pursues the requalification.
+                                    </p>
+                                </div>
+                            </details>
                         </div>
                     </div>
                 </div>
             </div>
 
-            {{-- ═══════════════════ Rule reference (collapsible) ═══════════════════ --}}
-            <details class="bg-white border border-slate-200 rounded-xl shadow-sm group">
-                <summary class="flex items-center justify-between px-5 py-4 cursor-pointer list-none">
-                    <div>
-                        <h3 class="text-sm font-semibold text-slate-900">Rule reference — Articles 7-A, 17, 26, 91 CGI</h3>
-                        <p class="text-[11px] text-slate-500 mt-0.5">Why these payments are flagged · click to expand</p>
-                    </div>
-                    <svg class="w-4 h-4 text-slate-500 transition-transform group-open:rotate-180" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/>
-                    </svg>
-                </summary>
-                <div class="border-t border-slate-200 px-5 py-4 text-sm text-slate-700 leading-relaxed space-y-3">
-                    <p>
-                        <strong class="text-slate-900">Article 7-A CGI.</strong>
-                        Cash payments above the threshold set by the
-                        <em>Loi de Finances</em> in force are
-                        <strong>excluded from deductible charges</strong> for corporate
-                        income tax purposes. The current threshold is
-                        <span class="tabular-nums font-medium">{{ number_format($thresh, 0, '.', ',') }} {{ $cur }}</span>
-                        per transaction with the same counterparty
-                        <span class="text-[11px] text-slate-500">({{ $thRef }})</span>.
-                    </p>
-                    <p>
-                        <strong class="text-slate-900">Article 17 CGI.</strong>
-                        Statutory income tax rate of <span class="tabular-nums">33 %</span>
-                        ({{ number_format($isPct, 0) }} % IS + {{ number_format($cacPct, 0) }} % CAC)
-                        applies on reintegration of the non-deductible charge into taxable income.
-                    </p>
-                    <p>
-                        <strong class="text-slate-900">Articles 26 + 91 CGI.</strong>
-                        Beyond the income-tax reintegration, the DGI may additionally
-                        <strong>requalify the disallowed amount as a hidden distribution</strong>
-                        (<em>revenus réputés distribués</em>, Article 26 CGI). In that case,
-                        the same amount is taxed as a dividend at <span class="tabular-nums">16.5 %</span>
-                        IRCM ({{ number_format($ircmBP, 0) }} % + {{ number_format($cacPct, 0) }} % CAC, Article 91 CGI).
-                    </p>
-                    <p class="text-[12px] text-slate-600 bg-slate-50 border-l-2 border-slate-300 pl-3 py-2">
-                        Stacked exposure = <span class="tabular-nums">{{ number_format($citPct, 1) }} % + {{ number_format($ircmPct, 1) }} % = {{ number_format($totPct, 1) }} %</span>
-                        of the disallowed amount. The IRCM leg is contingent on whether the DGI pursues the requalification.
-                    </p>
-                </div>
-            </details>
-
-            {{-- ═══════════════════ Qualifying transactions table ═══════════════════ --}}
-            @if (!empty($groups))
-                <div class="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
-                    <div class="px-5 py-4 border-b border-slate-200 flex flex-wrap items-baseline justify-between gap-3">
-                        <div>
-                            <h3 class="text-sm font-semibold text-slate-900">Qualifying transactions</h3>
-                            <p class="text-[11px] text-slate-500 mt-0.5">Aggregated by counterparty &amp; date · sorted by amount descending</p>
-                        </div>
-                        <a href="{{ tenant_url('/income-tax-compliance/export') }}"
-                           class="text-[11px] font-medium text-brand-700 hover:text-brand-900 inline-flex items-center gap-1.5">
-                            Full line-level detail in the XLSX export
-                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M17 8l4 4m0 0l-4 4m4-4H3"/></svg>
-                        </a>
-                    </div>
-                    <div class="overflow-x-auto">
-                        <table class="w-full text-sm">
-                            <thead>
-                                <tr class="text-left text-[10px] text-slate-500 uppercase tracking-wider border-b border-slate-200 bg-slate-50">
-                                    <th class="px-4 py-3 font-semibold">Date</th>
-                                    <th class="px-4 py-3 font-semibold">Counterparty</th>
-                                    <th class="px-4 py-3 text-right font-semibold">Lines</th>
-                                    <th class="px-4 py-3 text-right font-semibold">Total ({{ $cur }})</th>
-                                    <th class="px-4 py-3 font-semibold">Doc on file</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                @foreach ($groups as $g)
-                                    <tr class="border-b border-slate-100 hover:bg-slate-50/60">
-                                        <td class="px-4 py-2.5 tabular-nums text-slate-900">{{ $g['date'] }}</td>
-                                        <td class="px-4 py-2.5">
-                                            @if ($g['partner'])
-                                                <span class="text-slate-900">{{ $g['partner'] }}</span>
-                                            @else
-                                                <span class="text-rose-700 italic">— unrecorded —</span>
-                                            @endif
-                                        </td>
-                                        <td class="px-4 py-2.5 text-right tabular-nums text-slate-700">{{ number_format($g['count']) }}</td>
-                                        <td class="px-4 py-2.5 text-right tabular-nums font-semibold text-slate-900">{{ number_format($g['total'], 0, '.', ',') }}</td>
-                                        <td class="px-4 py-2.5">
-                                            @if ($g['any_missing_doc'])
-                                                <span class="inline-flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-widest text-rose-700 bg-rose-50 border border-rose-200 rounded-full px-2 py-0.5">
-                                                    <span class="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
-                                                    Missing
-                                                </span>
-                                            @else
-                                                <span class="text-[11px] text-slate-500">On file</span>
-                                            @endif
-                                        </td>
-                                    </tr>
-                                @endforeach
-                            </tbody>
-                            <tfoot>
-                                <tr class="border-t-2 border-slate-700 bg-slate-50">
-                                    <td class="px-4 py-3 text-[10px] uppercase tracking-widest font-bold text-slate-700" colspan="2">Total</td>
-                                    <td class="px-4 py-3 text-right tabular-nums font-bold text-slate-700">{{ number_format($count) }}</td>
-                                    <td class="px-4 py-3 text-right tabular-nums font-bold text-slate-900">{{ number_format($total, 0, '.', ',') }}</td>
-                                    <td class="px-4 py-3"></td>
-                                </tr>
-                            </tfoot>
-                        </table>
-                    </div>
-                </div>
-            @else
-                <div class="bg-white border border-slate-200 rounded-xl p-8 text-center text-slate-500 text-sm">
+            {{-- Qualifying transactions list removed — full line-level detail is in the XLSX export --}}
+            @if (empty($groups))
+                <div class="bg-white border border-slate-200 rounded-xl p-6 text-center text-slate-500 text-sm">
                     No qualifying high-value cash payments in the YTD window.
                 </div>
             @endif
@@ -355,7 +292,7 @@
                         <div class="p-4 bg-amber-50/40">
                             <p class="text-[10px] uppercase tracking-widest text-amber-700 font-semibold">Ceiling ({{ number_format($ceilingPct, 1) }} %)</p>
                             <p class="text-2xl font-bold text-amber-900 tabular-nums mt-1">{{ number_format($ceilingXaf, 0, '.', ',') }}</p>
-                            <p class="text-[10px] text-amber-700/70 mt-0.5">Cat 2 collective cap</p>
+                            <p class="text-[10px] text-amber-700/70 mt-0.5">Collective cap on non-Cat-1 spend</p>
                         </div>
                         <div class="p-4 bg-rose-50/50">
                             <p class="text-[10px] uppercase tracking-widest text-rose-700 font-semibold">Tax exposure</p>
@@ -371,24 +308,23 @@
                             <p class="text-lg font-bold text-emerald-900 tabular-nums mt-1">{{ number_format($cat1Tot, 0, '.', ',') }}</p>
                         </div>
                         <div class="p-4">
-                            <p class="text-[10px] uppercase tracking-widest text-amber-700 font-semibold">Cat 2 — Capped at ceiling</p>
+                            <p class="text-[10px] uppercase tracking-widest text-amber-700 font-semibold">Cat 2 — Public-utility</p>
                             <p class="text-lg font-bold text-amber-900 tabular-nums mt-1">{{ number_format($cat2Tot, 0, '.', ',') }}</p>
-                            <p class="text-[10px] text-amber-700/70 mt-0.5">deductible {{ number_format((float)($don['cat2_allowed'] ?? 0), 0, '.', ',') }}, reintegrated {{ number_format((float)($don['cat2_reintegrated'] ?? 0), 0, '.', ',') }}</p>
                         </div>
                         <div class="p-4">
-                            <p class="text-[10px] uppercase tracking-widest text-rose-700 font-semibold">Cat 3 — Fully reintegrated</p>
+                            <p class="text-[10px] uppercase tracking-widest text-rose-700 font-semibold">Cat 3 — Other</p>
                             <p class="text-lg font-bold text-rose-900 tabular-nums mt-1">{{ number_format($cat3Tot, 0, '.', ',') }}</p>
                         </div>
-                        <div class="p-4 {{ $unresTot > 0 ? 'bg-rose-50/50' : '' }}">
-                            <p class="text-[10px] uppercase tracking-widest {{ $unresTot > 0 ? 'text-rose-700' : 'text-slate-500' }} font-semibold">Unresolved (treated as Cat 3)</p>
-                            <p class="text-lg font-bold {{ $unresTot > 0 ? 'text-rose-900' : 'text-slate-900' }} tabular-nums mt-1">{{ number_format($unresTot, 0, '.', ',') }}</p>
+                        <div class="p-4 {{ $unresTot > 0 ? 'bg-amber-50/30' : '' }}">
+                            <p class="text-[10px] uppercase tracking-widest {{ $unresTot > 0 ? 'text-amber-700' : 'text-slate-500' }} font-semibold">Unresolved</p>
+                            <p class="text-lg font-bold {{ $unresTot > 0 ? 'text-amber-900' : 'text-slate-900' }} tabular-nums mt-1">{{ number_format($unresTot, 0, '.', ',') }}</p>
                             @if ($unresolvedCount > 0)
-                                <p class="text-[10px] text-rose-700/80 mt-0.5">{{ $unresolvedCount }} beneficiar{{ $unresolvedCount === 1 ? 'y needs' : 'ies need' }} resolution</p>
+                                <p class="text-[10px] text-amber-700/80 mt-0.5">{{ $unresolvedCount }} beneficiar{{ $unresolvedCount === 1 ? 'y needs' : 'ies need' }} resolution</p>
                             @endif
                         </div>
                     </div>
 
-                    {{-- Stacking + TSR disclosure --}}
+                    {{-- Stacking + TSR disclosure (now embeds the Rule-reference dropdown) --}}
                     <div class="border-t border-slate-200 bg-slate-50/60 px-5 py-4">
                         <div class="flex items-start gap-3">
                             <div class="text-amber-600 shrink-0 mt-0.5">
@@ -398,77 +334,101 @@
                             </div>
                             <div class="flex-1 text-sm text-slate-700 leading-relaxed">
                                 <p class="font-medium text-slate-900 mb-2">Stacking assumption</p>
-                                <p>
-                                    On the reintegrated portion (<span class="tabular-nums font-medium">{{ number_format($totRein, 0, '.', ',') }} {{ $donCur }}</span>):
-                                    <strong>{{ number_format($stackPct, 1) }} %</strong> stacked exposure
-                                    = 33 % CIT (Article 17 CGI) + 16.5 % IRCM on <em>revenus réputés distribués</em> (Articles 26, 91 CGI)
-                                    = <span class="tabular-nums font-medium">{{ number_format($expStack, 0, '.', ',') }} {{ $donCur }}</span>.
-                                </p>
-                                @if ($expTsr > 0)
-                                    <p class="mt-2">
-                                        Plus <strong>{{ number_format($tsrPct, 0) }} % TSR</strong> on Cat 3 amounts paid to non-resident beneficiaries
-                                        (Article 225 CGI) = <span class="tabular-nums font-medium">{{ number_format($expTsr, 0, '.', ',') }} {{ $donCur }}</span>.
-                                        <span class="text-[12px] text-slate-600">DTA-reduced rates may apply where a treaty is invoked.</span>
+                                @php
+                                    $nonCat1 = $cat2Tot + $cat3Tot + $unresTot;
+                                @endphp
+                                @if ($totRein <= 0)
+                                    <p class="text-emerald-800">
+                                        <strong>No exposure.</strong>
+                                        Combined non-Cat-1 spend
+                                        (<span class="tabular-nums font-medium">{{ number_format($nonCat1, 0, '.', ',') }} {{ $donCur }}</span>)
+                                        is at or below the
+                                        <span class="tabular-nums font-medium">{{ number_format($ceilingPct, 1) }} % × CA_net</span>
+                                        ceiling
+                                        (<span class="tabular-nums font-medium">{{ number_format($ceilingXaf, 0, '.', ',') }} {{ $donCur }}</span>) —
+                                        the actual disbursement is within the deductibility cap, so no reintegration applies.
                                     </p>
+                                @else
+                                    <p>
+                                        Excess over ceiling
+                                        (<span class="tabular-nums font-medium">{{ number_format($totRein, 0, '.', ',') }} {{ $donCur }}</span>)
+                                        is reintegrated and bears <strong>{{ number_format($stackPct, 1) }} %</strong>
+                                        stacked exposure = 33 % CIT (Article 17 CGI) + 16.5 % IRCM on
+                                        <em>revenus réputés distribués</em> (Articles 26, 91 CGI)
+                                        = <span class="tabular-nums font-medium">{{ number_format($expStack, 0, '.', ',') }} {{ $donCur }}</span>.
+                                    </p>
+                                    @if ($expTsr > 0)
+                                        <p class="mt-2">
+                                            Plus <strong>{{ number_format($tsrPct, 0) }} % TSR</strong>
+                                            (Article 225 CGI) on the reintegrated portion of Cat 3 / Unresolved donations
+                                            paid to non-resident beneficiaries =
+                                            <span class="tabular-nums font-medium">{{ number_format($expTsr, 0, '.', ',') }} {{ $donCur }}</span>.
+                                            <span class="text-[12px] text-slate-600">DTA-reduced rates may apply.</span>
+                                        </p>
+                                    @endif
                                 @endif
+
+                                {{-- Inline rule-reference dropdown — formerly a separate box --}}
+                                <details class="mt-5 group">
+                                    <summary class="inline-flex items-center gap-2 cursor-pointer list-none text-[12px] font-semibold text-slate-900 hover:text-slate-700 select-none">
+                                        <svg class="w-3.5 h-3.5 text-slate-500 transition-transform group-open:rotate-180" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/>
+                                        </svg>
+                                        Rule reference — Article 7 CGI &amp; libéralités
+                                        <span class="text-[11px] font-normal text-slate-500">· click to expand</span>
+                                    </summary>
+                                    <div class="mt-3 pl-5 border-l-2 border-slate-200 text-sm text-slate-700 leading-relaxed space-y-3">
+                                        <p>
+                                            <strong class="text-slate-900">Article 7 CGI — Charges déductibles.</strong>
+                                            Donations, gifts and liberalities are deductible only when the beneficiary
+                                            falls within an eligible category, the donor holds written documentation,
+                                            and the payment is made by traceable means (bank transfer, cheque, electronic
+                                            payment — not cash above the LF threshold).
+                                        </p>
+                                        <div class="bg-white border border-slate-200 rounded-lg p-4 space-y-2.5 text-[13px]">
+                                            <p class="font-medium text-slate-900">Cumulative conditions for deductibility</p>
+                                            <ol class="list-decimal list-inside space-y-1 text-slate-700">
+                                                <li>The beneficiary holds <strong>recognised legal status</strong> in one of the eligible categories.</li>
+                                                <li>The donor holds <strong>written supporting documentation</strong> (statuts, attestation d'utilité publique, accord ministériel, etc.).</li>
+                                                <li>Payment is made by <strong>traceable means</strong> (virement bancaire, chèque, monnaie électronique). Cash above the LF threshold is excluded under Article 7-A.</li>
+                                            </ol>
+                                        </div>
+                                        <p>
+                                            <strong class="text-emerald-700">Catégorie 1 — Fully deductible (no cap).</strong>
+                                            Donations to the State, Collectivités Territoriales Décentralisées, public-utility
+                                            scientific / educational / welfare establishments, the CNOSC, national sports
+                                            federations, and named œuvres listed in the LF in force.
+                                        </p>
+                                        <p>
+                                            <strong class="text-amber-700">Catégorie 2 — Public-utility associations.</strong>
+                                            Other recognised public-utility associations and approved research / educational /
+                                            cultural bodies.
+                                        </p>
+                                        <p>
+                                            <strong class="text-rose-700">Catégorie 3 — Other recipients.</strong>
+                                            Political parties, individuals, unregistered associations, undocumented donations,
+                                            foreign recipients without specific accord.
+                                        </p>
+                                        <p class="bg-white border border-slate-200 rounded-lg p-3 text-[12px] text-slate-700">
+                                            <strong class="text-slate-900">Ceiling test (refined):</strong>
+                                            non-Cat-1 spend (Cat 2 + Cat 3 + Unresolved) is tested
+                                            <strong>collectively</strong> against
+                                            <span class="tabular-nums font-medium">{{ number_format($ceilingPct, 1) }} % × CA_net</span>.
+                                            Below ceiling → no reintegration. Above ceiling → only the excess is reintegrated,
+                                            distributed pro-rata across the contributing categories. Cat 1 is always exempt.
+                                            For non-resident Cat 3 / Unresolved beneficiaries with reintegrated amounts,
+                                            an additional 15 % TSR applies (Article 225 CGI).
+                                        </p>
+                                        <p class="text-[12px] text-slate-600 bg-white border-l-2 border-slate-300 pl-3 py-2">
+                                            Sources: Cameroon CGI 2025 — Articles 7, 17, 26, 91, 225 ·
+                                            SYSCOHADA AUDCIF 2017 — Classe 7, comptes 70x &amp; 709.
+                                        </p>
+                                    </div>
+                                </details>
                             </div>
                         </div>
                     </div>
                 </div>
-
-                {{-- ─────── Rule reference dropdown ─────── --}}
-                <details class="bg-white border border-slate-200 rounded-xl shadow-sm group">
-                    <summary class="flex items-center justify-between px-5 py-4 cursor-pointer list-none">
-                        <div>
-                            <h3 class="text-sm font-semibold text-slate-900">Rule reference — Article 7 CGI &amp; libéralités</h3>
-                            <p class="text-[11px] text-slate-500 mt-0.5">Conditions for deductibility · click to expand</p>
-                        </div>
-                        <svg class="w-4 h-4 text-slate-500 transition-transform group-open:rotate-180" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/>
-                        </svg>
-                    </summary>
-                    <div class="border-t border-slate-200 px-5 py-4 text-sm text-slate-700 leading-relaxed space-y-3">
-                        <p>
-                            <strong class="text-slate-900">Article 7 CGI — Charges déductibles.</strong>
-                            Donations, gifts and liberalities are deductible only when the beneficiary
-                            falls within an eligible category, the donor holds written documentation,
-                            and the payment is made by traceable means (bank transfer, cheque, electronic
-                            payment — not cash above the LF threshold).
-                        </p>
-                        <div class="bg-slate-50 border border-slate-200 rounded-lg p-4 space-y-2.5 text-[13px]">
-                            <p class="font-medium text-slate-900">Cumulative conditions for deductibility</p>
-                            <ol class="list-decimal list-inside space-y-1 text-slate-700">
-                                <li>The beneficiary holds <strong>recognised legal status</strong> in one of the eligible categories.</li>
-                                <li>The donor holds <strong>written supporting documentation</strong> (statuts, attestation d'utilité publique, accord ministériel, etc.).</li>
-                                <li>Payment is made by <strong>traceable means</strong> (virement bancaire, chèque, monnaie électronique). Cash above the LF threshold is excluded under Article 7-A.</li>
-                            </ol>
-                        </div>
-                        <p>
-                            <strong class="text-emerald-700">Catégorie 1 — Fully deductible (no cap).</strong>
-                            Donations to the State, Collectivités Territoriales Décentralisées, public-utility
-                            scientific / educational / welfare establishments, the CNOSC, national sports
-                            federations, and named œuvres listed in the LF in force.
-                        </p>
-                        <p>
-                            <strong class="text-amber-700">Catégorie 2 — Capped at 0.5 % of CA net.</strong>
-                            Other recognised public-utility associations and approved research / educational /
-                            cultural bodies. Globally deductible up to <span class="tabular-nums font-medium">{{ number_format($ceilingPct, 1) }} % × CA_net</span>;
-                            any excess is reintegrated into taxable income.
-                        </p>
-                        <p>
-                            <strong class="text-rose-700">Catégorie 3 — Non-deductible.</strong>
-                            All other recipients: political parties, individuals, unregistered associations,
-                            undocumented donations, foreign recipients without specific accord. The full amount
-                            is reintegrated; the disallowed amount may be requalified as a hidden distribution
-                            (Articles 26 + 91 CGI), and amounts paid to non-residents bear an additional
-                            15 % TSR (Article 225 CGI), subject to applicable DTA reductions.
-                        </p>
-                        <p class="text-[12px] text-slate-600 bg-slate-50 border-l-2 border-slate-300 pl-3 py-2">
-                            Sources: Cameroon CGI 2025 — Articles 7, 17, 26, 91, 225 ·
-                            SYSCOHADA AUDCIF 2017 — Classe 7, comptes 70x &amp; 709.
-                        </p>
-                    </div>
-                </details>
 
                 {{-- ─────── Beneficiaries table with inline forms ─────── --}}
                 @if (!empty($bens))
