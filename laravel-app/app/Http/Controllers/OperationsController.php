@@ -2,33 +2,32 @@
 
 namespace App\Http\Controllers;
 
+use App\Odoo\OdooFactory;
+use App\Services\OperationsService;
 use Illuminate\Http\Request;
 
 /**
- * Operations service — container & logistics analytics.
+ * Operations module — container & logistics analytics.
  *
- * Currently renders a proposal/scope page listing the planned KPIs that
- * will land here once the customer's Odoo Logistique schema is mapped
- * (via the one-off /admin/tenants/{id}/odoo-probe diagnostic).
+ * Wires the OperationsService analyzer (which is itself in a "schema-
+ * pending" state — every KPI helper returns pending=true until the
+ * customer's Odoo Logistique schema is mapped via the
+ * /admin/tenants/{id}/odoo-probe diagnostic).
  *
- * When the schema is finalised this controller will:
- *   - fetch from the discovered logistics models (e.g. x_container,
- *     x_container_scan) via OdooFactory
- *   - cache per-period like RevenueController (ea_cached + period key)
- *   - feed an OperationsService analyzer that returns the same shape
- *     RevenueService does (current / previous / period / currency)
+ * Pattern matches RevenueController:
+ *   - period filter (YTD/MTD) parsed from query string
+ *   - per-period cache key in session ("ops_ytd" / "ops_mtd")
+ *   - analyzer call wrapped in try/catch so an Odoo failure renders an
+ *     error banner instead of a 500
  *
- * Until then, the view is a transparent "what's coming" page so the
- * super admin can navigate to the module and see what we're building.
+ * Once the analyzer flips off "pending" for each KPI, this controller
+ * needs zero changes — the view consumes whatever shape the service
+ * returns.
  */
 class OperationsController extends Controller
 {
     public function index(Request $request)
     {
-        // Period selector echoes the dashboard pattern (YTD / MTD).
-        // Stored on the view so the page already accepts the filter
-        // even though the body is a placeholder — flip the cards on
-        // when the analyzer lands without changing this controller.
         $today  = new \DateTimeImmutable();
         $type   = strtolower((string) $request->query('period', 'ytd'));
         if (!in_array($type, ['ytd', 'mtd'], true)) {
@@ -37,10 +36,27 @@ class OperationsController extends Controller
         $period = ['type' => $type];
         [, , $periodLabel] = ea_resolve_period($today, $period);
 
+        $ops   = null;
+        $error = null;
+
+        try {
+            $client = OdooFactory::fromConfig();
+            $ops    = ea_cached(
+                "ops_{$type}",
+                fn () => (new OperationsService($client))->analyze(null, $period)
+            );
+        } catch (\Throwable $e) {
+            // Logistique probe hasn't run yet OR Odoo creds aren't set.
+            // Fall back to the all-pending view; banner explains the state.
+            $error = $e->getMessage();
+        }
+
         return view('operations', [
             'active'      => 'operations',
             'period'      => $period,
             'periodLabel' => $periodLabel,
+            'ops'         => $ops,
+            'error'       => $error,
         ]);
     }
 }
