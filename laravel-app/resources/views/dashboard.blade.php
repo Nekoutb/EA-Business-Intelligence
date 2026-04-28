@@ -79,15 +79,39 @@
             $tnt   = tenant();
             $kpiOn = fn (string $key) => $tnt ? $tnt->dashboardKpiEnabled($key) : true;
 
-            // Annualised run-rate: YTD revenue projected to a full calendar year.
-            // (YTD ÷ days_elapsed) × 365. Useful as a real-time forecast benchmark.
-            $daysElapsed = max(1, (int) ($data['period']['days'] ?? 1));
-            $runRate     = ((float) ($cur['total'] ?? 0) / $daysElapsed) * 365.0;
+            // Annualised run-rate — working-day basis (consistent with RpD).
+            //
+            //   run_rate = (YTD revenue ÷ working_days_YTD) × annual_working_days
+            //
+            // We use working days, not calendar days, because revenue is
+            // generally posted only on trading days. This keeps the run-rate
+            // on the same denominator the user already sees in RpD ("101
+            // working days") rather than a calendar-day pace that would
+            // assume weekend revenue.
+            //
+            // Annual working days: count Mon-Fri in the current calendar
+            // year. Matches the convention RevenueService uses for
+            // working_days (no public-holiday adjustment — if the firm
+            // wants a holiday calendar later, it's a one-line subtraction).
+            // For 2026, this resolves to ~261.
+            $workingDaysYtd = max(1, (int) ($cur['working_days'] ?? 1));
 
-            // Prior-year same-pace projection — gives a vs-PY comparison that
-            // accounts for both prior-year actuals AND the days-elapsed offset.
+            $year = (int) date('Y');
+            $annualWorkingDays = 0;
+            for ($d = new \DateTimeImmutable("$year-01-01"); (int) $d->format('Y') === $year; $d = $d->modify('+1 day')) {
+                if ((int) $d->format('N') < 6) {  // Mon-Fri
+                    $annualWorkingDays++;
+                }
+            }
+
+            $runRate = ((float) ($cur['total'] ?? 0) / $workingDaysYtd) * $annualWorkingDays;
+
+            // Prior-year same-pace projection on the same working-day basis.
+            // Uses the SAME working_days_YTD denominator on the assumption
+            // that PY same-period had a similar working-day count (true to
+            // within ±1 day for most calendars).
             $runRatePy = ($prev['total'] ?? null) !== null
-                ? ((float) $prev['total'] / $daysElapsed) * 365.0
+                ? ((float) $prev['total'] / $workingDaysYtd) * $annualWorkingDays
                 : null;
         @endphp
 
@@ -188,7 +212,7 @@
                 @if ($kpiOn('run_rate'))
                 <x-kpi title="Annualised Run-Rate"
                        :value="ea_money_short($runRate, $ccy)"
-                       :sub="'YTD pace · ' . $daysElapsed . ' days × 365'"
+                       :sub="'Working-day pace · ' . $workingDaysYtd . ' / ' . $annualWorkingDays . ' WD'"
                        :vsPy="$variance($runRate, $runRatePy)"
                        color="brand"
                        icon="M3 17l6-6 4 4 8-8M14 7h7v7"/>
