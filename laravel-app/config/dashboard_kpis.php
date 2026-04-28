@@ -94,7 +94,7 @@ return [
         [
             'key'         => 'run_rate',
             'label'       => 'Annualised Run-Rate',
-            'description' => 'YTD revenue projected to a full year: (YTD ÷ days elapsed) × 365. Real-time forecast benchmark.',
+            'description' => 'YTD revenue projected to a full year on a working-day basis: (YTD ÷ working days YTD) × annual working days. Same denominator as RpD.',
             'section'     => 'revenue_profitability',
             'default'     => true,
         ],
