@@ -80,7 +80,7 @@ final class ProcurementService
             'open_pos'          => $this->openPOsSandbox(),
             'unlinked_bills'    => $this->topUnlinkedBills($cyFrom, $cyTo, 10),
             'top_suppliers'     => $this->topSuppliersBySpend($cyFrom, $cyTo, 10),
-            'trend'             => $this->procurementTrend($today),
+            'trend'             => $this->procurementTrend($today, $period),
             'pending_overall'   => array_reduce(
                 $kpis,
                 fn ($acc, $k) => $acc && !empty($k['pending']),
@@ -721,50 +721,56 @@ final class ProcurementService
     // ─── Trend chart (top of page) ───────────────────────────────────────────
 
     /**
-     * 12-month trailing trend for the chart at the top of /procurement.
-     * Three switchable series:
+     * Trend axis for the chart at the top of /procurement.
+     * Three switchable series — meaning fixed across granularities:
      *
-     *   po_compliance — % of bills WITH a PO in the month
-     *   total_spend   — sum of abs(amount_untaxed_signed) of in_invoice posted
-     *                   in the month (net of taxes)
-     *   open_pos      — count of POs that were open at month-end (date_order
-     *                   ≤ end-of-month AND (effective_date IS NULL OR > eom))
+     *   po_compliance — % of bills WITH a PO in the bucket
+     *   total_spend   — sum of abs(amount_untaxed_signed) of in_invoice
+     *                   posted in the bucket (net of taxes)
+     *   open_pos      — count of POs that were open at the bucket's end
+     *                   (date_order ≤ EOB AND (effective_date IS NULL OR > EOB)).
+     *                   Buckets whose end is in the future return null.
      *
-     * Always 12 monthly buckets regardless of period filter — the trend chart
-     * is a strategic view; the period filter still applies to the KPI cards
-     * below.
+     * Granularity follows the period filter:
+     *   - YTD → 12 monthly buckets for the selected year (Jan…Dec)
+     *   - MTD / Month → 4 weekly buckets within the month
+     *                   (Week 1: 1–7, Week 2: 8–14, Week 3: 15–21,
+     *                   Week 4: 22–EOM)
      */
-    private function procurementTrend(\DateTimeImmutable $today): array
+    private function procurementTrend(\DateTimeImmutable $today, array $period): array
     {
-        // Build the 12-month axis. months[0] = oldest (11 months ago),
-        // months[11] = current month.
-        $months = [];
-        for ($i = 11; $i >= 0; $i--) {
-            $months[] = $today->modify("first day of -{$i} months")->setTime(0, 0, 0);
-        }
-        $monthIndexByKey = [];
-        $labels = [];
-        foreach ($months as $i => $m) {
-            $monthIndexByKey[$m->format('Y-m')] = $i;
-            $labels[] = ['label' => $m->format('M Y')];
-        }
+        $type = strtolower((string) ($period['type'] ?? 'ytd'));
+        $isWeekly = ($type === 'mtd' || $type === 'month');
 
-        $start = $months[0];
+        $buckets = $isWeekly
+            ? $this->trendWeeklyBuckets($today, $period)
+            : $this->trendMonthlyBuckets($today, $period);
 
-        // Series 1 + 2: bills, with-PO, total spend per month
-        $compliancePct = array_fill(0, 12, null);
-        $spend         = array_fill(0, 12, 0.0);
-        $billCount     = array_fill(0, 12, 0);
-        $linkedCount   = array_fill(0, 12, 0);
+        // Service-side outputs, sized to bucket count.
+        $n = count($buckets);
+        $compliancePct = array_fill(0, $n, null);
+        $spend         = array_fill(0, $n, 0.0);
+        $billCount     = array_fill(0, $n, 0);
+        $linkedCount   = array_fill(0, $n, 0);
+        $openPOs       = array_fill(0, $n, null);
 
+        // Earliest bucket start / latest bucket end define the bills query
+        // window; buckets outside [today] still bucketise correctly via
+        // findBucketIndex.
+        $axisStart = $buckets[0]['start'];
+        $axisEnd   = end($buckets)['end'];
+        // Don't pull future bills (none exist anyway).
+        $billCutoff = $axisEnd > $today ? $today : $axisEnd;
+
+        // Series 1 + 2: bills/PO-link/spend per bucket
         try {
             $bills = $this->odoo->searchRead(
                 'account.move',
                 [
                     ['move_type', '=', 'in_invoice'],
                     ['state', '=', 'posted'],
-                    ['invoice_date', '>=', $start->format('Y-m-d')],
-                    ['invoice_date', '<=', $today->format('Y-m-d')],
+                    ['invoice_date', '>=', $axisStart->format('Y-m-d')],
+                    ['invoice_date', '<=', $billCutoff->format('Y-m-d')],
                 ],
                 ['id', 'invoice_date', 'amount_untaxed_signed'],
                 ['limit' => self::FETCH_CAP]
@@ -776,8 +782,11 @@ final class ProcurementService
             foreach ($bills as $b) {
                 $bDate = (string) ($b['invoice_date'] ?? '');
                 if ($bDate === '') continue;
-                $ym  = substr($bDate, 0, 7);
-                $idx = $monthIndexByKey[$ym] ?? null;
+                try {
+                    $bDt = new \DateTimeImmutable($bDate);
+                } catch (\Throwable $e) { continue; }
+
+                $idx = $this->findBucketIndex($bDt, $buckets);
                 if ($idx === null) continue;
 
                 $billCount[$idx]++;
@@ -795,11 +804,7 @@ final class ProcurementService
             // leave arrays as nulls/zeros — chart still renders empty axes
         }
 
-        // Series 3: Open POs at end of each month.
-        // Approach: pull POs created at any time up to today, then for each
-        // month-end check if it was still open (no effective_date or
-        // effective_date > month-end).
-        $openPOs = array_fill(0, 12, 0);
+        // Series 3: Open POs at end of each bucket.
         try {
             $pos = $this->odoo->searchRead(
                 'purchase.order',
@@ -811,7 +816,6 @@ final class ProcurementService
                 ['limit' => self::FETCH_CAP]
             );
 
-            // Pre-parse dates once.
             $parsed = [];
             foreach ($pos as $p) {
                 $do = (string) ($p['date_order'] ?? '');
@@ -829,23 +833,29 @@ final class ProcurementService
                 $parsed[] = ['order' => $doDt, 'eff' => $edDt];
             }
 
-            foreach ($months as $i => $m) {
-                $monthEnd = $m->modify('last day of this month')->setTime(23, 59, 59);
+            foreach ($buckets as $i => $bucket) {
+                $bucketEnd = $bucket['end'];
+                // Future bucket → no data point (preserves "we haven't got
+                // here yet" intent visually rather than plotting a flat line).
+                if ($bucketEnd > $today) {
+                    $openPOs[$i] = null;
+                    continue;
+                }
                 $count = 0;
                 foreach ($parsed as $p) {
-                    if ($p['order'] > $monthEnd) continue;        // not yet created
-                    if ($p['eff'] !== null && $p['eff'] <= $monthEnd) continue; // already received
+                    if ($p['order'] > $bucketEnd) continue;          // not yet created
+                    if ($p['eff'] !== null && $p['eff'] <= $bucketEnd) continue; // already received
                     $count++;
                 }
                 $openPOs[$i] = $count;
             }
         } catch (\Throwable $e) {
-            // leave at zeros
+            // leave at default fills
         }
 
         return [
-            'granularity' => 'month',
-            'buckets'     => $labels,
+            'granularity' => $isWeekly ? 'week' : 'month',
+            'buckets'     => array_map(fn ($b) => ['label' => $b['label']], $buckets),
             'series'      => [
                 'po_compliance' => $compliancePct,
                 'total_spend'   => $spend,
@@ -869,6 +879,83 @@ final class ProcurementService
                 ],
             ],
         ];
+    }
+
+    /**
+     * 12 monthly buckets for the selected year (defaults to current year).
+     * Each bucket carries its DateTime start/end so the bill loop can find
+     * its index without parsing month strings.
+     */
+    private function trendMonthlyBuckets(\DateTimeImmutable $today, array $period): array
+    {
+        $year = (int) ($period['year'] ?? $today->format('Y'));
+        $buckets = [];
+        for ($m = 1; $m <= 12; $m++) {
+            $start = new \DateTimeImmutable(sprintf('%04d-%02d-01 00:00:00', $year, $m));
+            $end   = $start->modify('last day of this month')->setTime(23, 59, 59);
+            $buckets[] = [
+                'start' => $start,
+                'end'   => $end,
+                'label' => $start->format('M Y'),
+            ];
+        }
+        return $buckets;
+    }
+
+    /**
+     * 4 weekly buckets inside a single month:
+     *   Week 1: days 1–7
+     *   Week 2: days 8–14
+     *   Week 3: days 15–21
+     *   Week 4: days 22 → end of month
+     *
+     * Resolves the month from period:
+     *   - type='mtd'   → current month, current year (today's month)
+     *   - type='month' → period['year'] + period['month']
+     */
+    private function trendWeeklyBuckets(\DateTimeImmutable $today, array $period): array
+    {
+        $type = strtolower((string) ($period['type'] ?? 'mtd'));
+        if ($type === 'mtd') {
+            $year  = (int) $today->format('Y');
+            $month = (int) $today->format('m');
+        } else {
+            $year  = (int) ($period['year']  ?? $today->format('Y'));
+            $month = (int) ($period['month'] ?? $today->format('m'));
+            $month = max(1, min(12, $month));
+        }
+
+        $monthStart = new \DateTimeImmutable(sprintf('%04d-%02d-01 00:00:00', $year, $month));
+        $monthEnd   = $monthStart->modify('last day of this month')->setTime(23, 59, 59);
+
+        $buckets = [];
+        for ($w = 1; $w <= 4; $w++) {
+            $startDay = ($w - 1) * 7 + 1;
+            $endDay   = $w * 7;
+            $start = $monthStart->modify('+' . ($startDay - 1) . ' days');
+            $end   = ($w === 4)
+                ? $monthEnd
+                : $monthStart->modify('+' . ($endDay - 1) . ' days')->setTime(23, 59, 59);
+            $buckets[] = [
+                'start' => $start,
+                'end'   => $end,
+                'label' => 'Week ' . $w,
+            ];
+        }
+        return $buckets;
+    }
+
+    /**
+     * Linear scan to find which bucket contains $dt. With 12 buckets max,
+     * an O(N) scan is plenty — and keeps things robust against any
+     * irregularly-shaped buckets we might add later.
+     */
+    private function findBucketIndex(\DateTimeImmutable $dt, array $buckets): ?int
+    {
+        foreach ($buckets as $i => $b) {
+            if ($dt >= $b['start'] && $dt <= $b['end']) return $i;
+        }
+        return null;
     }
 
     private function failed(string $sub, \Throwable $e): array
