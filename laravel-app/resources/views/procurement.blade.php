@@ -203,6 +203,44 @@
             </div>
           @endif
 
+          {{-- Open POs sorted by amount — collapsed by default. --}}
+          @if (!empty($openPOs['top_by_amount']))
+            <details class="mt-3 group">
+                <summary class="cursor-pointer list-none flex items-center justify-between px-3 py-2 bg-[#faf8f5] border border-[#ece7df] rounded-lg hover:bg-[#f4efe5] transition">
+                    <span class="text-[11px] uppercase tracking-wider text-[#5a6a70] font-semibold">Top 10 open POs by amount (largest first)</span>
+                    <svg class="w-3.5 h-3.5 text-[#7c7466] transition-transform group-open:rotate-180" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+                </summary>
+                <div class="overflow-x-auto pt-3">
+                    <table class="w-full text-xs">
+                        <thead>
+                            <tr class="text-[10px] uppercase tracking-wider text-[#8a8578] border-b border-[#e8e4de]">
+                                <th class="text-left  py-2 pr-3 font-medium">PO</th>
+                                <th class="text-left  py-2 px-3 font-medium">Vendor</th>
+                                <th class="text-right py-2 px-3 font-medium">Created</th>
+                                <th class="text-right py-2 px-3 font-medium">Age</th>
+                                <th class="text-right py-2 pl-3 font-medium">Amount</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-[#f1ede5]">
+                            @foreach ($openPOs['top_by_amount'] as $po)
+                                <tr class="text-[#2d3748]">
+                                    <td class="py-2 pr-3 font-medium">{{ $po['name'] ?: '#' . $po['id'] }}</td>
+                                    <td class="py-2 px-3">{{ $po['partner'] ?: '—' }}</td>
+                                    <td class="py-2 px-3 text-right tabular-nums text-[#7c7466]">
+                                        {{ \Carbon\Carbon::parse($po['date_order'])->format('Y-m-d') }}
+                                    </td>
+                                    <td class="py-2 px-3 text-right tabular-nums text-[#7c7466]">
+                                        {{ number_format($po['age_days']) }} d
+                                    </td>
+                                    <td class="py-2 pl-3 text-right tabular-nums font-semibold">{{ number_format($po['amount']) }}</td>
+                                </tr>
+                            @endforeach
+                        </tbody>
+                    </table>
+                </div>
+            </details>
+          @endif
+
           <div class="text-[11px] text-[#7c7466] mt-3 leading-relaxed">
               <strong>Reading the ageing:</strong> POs older than 30 days warrant a chase; over 90 days usually means either a stuck supplier, a forgotten partial receipt, or a PO that should be cancelled. Periodic clean-up here directly improves cycle-time and removes phantom commitments from the books.
           </div>
@@ -263,7 +301,7 @@
                                   </div>
                                 @endif
                                 <div class="mt-3 pt-3 border-t border-[#f1ede5]">
-                                    <code class="text-[10px] text-[#7c7466] block leading-snug font-mono">vendor bills WITHOUT a PO link ÷ all posted vendor bills</code>
+                                    <code class="text-[10px] text-[#7c7466] block leading-snug font-mono">vendor bills WITH a PO link ÷ all posted vendor bills</code>
                                 </div>
                             </div>
                             <div class="flex flex-col items-end gap-2 shrink-0">
@@ -369,7 +407,7 @@
                                   </div>
                                 @endif
                                 <div class="mt-3 pt-3 border-t border-[#f1ede5]">
-                                    <code class="text-[10px] text-[#7c7466] block leading-snug font-mono">sum(amount_total_signed) of posted in_invoice in period</code>
+                                    <code class="text-[10px] text-[#7c7466] block leading-snug font-mono">sum(amount_untaxed_signed) of posted in_invoice in period · net of taxes</code>
                                 </div>
                             </div>
                             <div class="flex flex-col items-end gap-2 shrink-0">
@@ -393,20 +431,29 @@
                               <thead>
                                   <tr class="text-[10px] uppercase tracking-wider text-[#8a8578] border-b border-[#e8e4de]">
                                       <th class="text-left  py-1.5 pr-3 font-medium">Top 10 suppliers by billed spend</th>
+                                      <th class="text-left  py-1.5 px-3 font-medium">Recorded in</th>
                                       <th class="text-right py-1.5 px-3 font-medium">Bills</th>
-                                      <th class="text-right py-1.5 pl-3 font-medium">Amount</th>
+                                      <th class="text-right py-1.5 pl-3 font-medium">Amount (HT)</th>
                                   </tr>
                               </thead>
                               <tbody class="divide-y divide-[#f1ede5]">
                                   @foreach ($topSuppliers as $s)
                                       <tr class="text-[#2d3748]">
-                                          <td class="py-1.5 pr-3 font-medium truncate max-w-[280px]">{{ $s['partner'] ?: '—' }}</td>
+                                          <td class="py-1.5 pr-3 font-medium truncate max-w-[220px]">{{ $s['partner'] ?: '—' }}</td>
+                                          <td class="py-1.5 px-3 truncate max-w-[260px] text-[#5a6a70]">
+                                              @if (!empty($s['account']))
+                                                {{ $s['account'] }}
+                                              @else
+                                                <span class="text-[#a09d95]">—</span>
+                                              @endif
+                                          </td>
                                           <td class="py-1.5 px-3 text-right tabular-nums text-[#7c7466]">{{ number_format($s['count']) }}</td>
                                           <td class="py-1.5 pl-3 text-right tabular-nums font-semibold">{{ number_format($s['amount']) }}</td>
                                       </tr>
                                   @endforeach
                               </tbody>
                           </table>
+                          <div class="text-[10px] text-[#a09d95] mt-2 italic">"Recorded in" = the dominant expense account (highest debit) on each supplier's posted bills.</div>
                       </div>
                   </div>
                 @endif
@@ -414,7 +461,7 @@
         </div>
 
         <div class="text-[11px] text-[#7c7466] mt-3 leading-relaxed">
-            <strong>Reading the rate:</strong> "Maverick spend" is procurement jargon for purchases that bypassed the PO process. Below 5% is best-in-class; 5–15% is normal for most organisations; &gt;15% is an audit concern (no spending controls upstream of the bill). Click each card's chevron to reveal the top-10 lists for remediation focus.
+            <strong>Reading the rate:</strong> the headline is the <em>compliance</em> rate — the share of vendor bills that were raised against an approved PO. Best-in-class is &gt;95%; normal is 85–95%; below 85% means a meaningful slice of spend is bypassing the PO process ("maverick spend"). Click each card's chevron for the top-10 detail lists; spend amounts are net of taxes.
         </div>
     </div>
 
