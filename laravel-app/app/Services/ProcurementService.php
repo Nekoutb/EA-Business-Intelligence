@@ -16,7 +16,9 @@ use App\Odoo\OdooClient;
  *
  *   P2. po_cycle_time      Average days from PO creation (date_order) to
  *                          effective receipt (effective_date). Falls back to
- *                          stock.picking.date_done if effective_date is empty.
+ *                          earliest linked invoice_date when effective_date is
+ *                          empty (covers POs billed without a logged stock
+ *                          receipt). PO is excluded if neither timestamp exists.
  *
  *   P3. po_compliance      Vendor bills booked WITHOUT a linked PO ÷ total
  *                          vendor bills posted in period. Detects "maverick
@@ -24,10 +26,23 @@ use App\Odoo\OdooClient;
  *                          Primary detection: account.move.line.purchase_line_id
  *                          Fallback:           purchase.order.invoice_ids reverse
  *
+ *   P4. total_spend        Total billed spend = sum(amount_total_signed) of
+ *                          posted in_invoice in period. Complements P1 (which
+ *                          measures *committed* PO spend). Surfaces the
+ *                          actual liability incurred regardless of whether
+ *                          there was a PO upstream.
+ *
+ * Drill-downs:
+ *   - Open POs sandbox: count of state='purchase' POs, avg/max age in days,
+ *     and the top 10 oldest as a remediation target list.
+ *   - Top 10 highest-value bills booked WITHOUT a PO link (paired with P3).
+ *   - Top 10 suppliers by billed spend (paired with P4).
+ *
  * Period anchor:
  *   - P1 / P2 anchor on date_order (PO creation)
- *   - P3 anchors on invoice_date (the bill) — that's when the "did it
- *     follow process?" question gets answered.
+ *   - P3 / P4 anchor on invoice_date (the bill) — that's when the
+ *     "did it follow process?" / "what did it cost?" questions crystallise.
+ *   - Open POs sandbox is age-anchored on today (not period-bound).
  *
  * Each KPI helper traps its own exceptions and returns pending=true on
  * failure so a single broken query never 500s the whole page.
@@ -56,12 +71,15 @@ final class ProcurementService
             'po_volume'      => $this->poVolume($cyFrom, $cyTo, $pyFrom, $pyTo),
             'po_cycle_time'  => $this->poCycleTime($cyFrom, $cyTo, $pyFrom, $pyTo),
             'po_compliance'  => $this->poCompliance($cyFrom, $cyTo, $pyFrom, $pyTo),
+            'total_spend'    => $this->totalSpend($cyFrom, $cyTo, $pyFrom, $pyTo),
         ];
 
         return [
             'kpis'              => $kpis,
             'period_label'      => $periodLabel,
-            'unlinked_bills'    => $this->topUnlinkedBills($cyFrom, $cyTo, 5),
+            'open_pos'          => $this->openPOsSandbox(),
+            'unlinked_bills'    => $this->topUnlinkedBills($cyFrom, $cyTo, 10),
+            'top_suppliers'     => $this->topSuppliersBySpend($cyFrom, $cyTo, 10),
             'pending_overall'   => array_reduce(
                 $kpis,
                 fn ($acc, $k) => $acc && !empty($k['pending']),
@@ -125,8 +143,17 @@ final class ProcurementService
     }
 
     /**
-     * Returns avg(effective_date - date_order) in days for POs in period.
-     * Excludes rows where effective_date is null (PO not yet received).
+     * Avg(end - date_order) in days for POs in period, where:
+     *   end := effective_date  (Odoo's computed actual receipt — preferred)
+     *       || earliest linked invoice's invoice_date  (fallback)
+     *
+     * Both paths are valid "PO is effectively closed" anchors. The fallback
+     * picks up POs where stock receipt wasn't logged but the bill was,
+     * which is common when the supplier ships against a PO and the
+     * accounting team enters the bill before warehouse logs it.
+     *
+     * POs with neither timestamp populated are excluded — they're still
+     * in flight, no cycle to measure yet.
      */
     private function avgCycleDays(\DateTimeImmutable $from, \DateTimeImmutable $to): ?float
     {
@@ -137,15 +164,56 @@ final class ProcurementService
                 ['date_order', '>=', $from->format('Y-m-d 00:00:00')],
                 ['date_order', '<=', $to->format('Y-m-d 23:59:59')],
             ],
-            ['id', 'date_order', 'effective_date'],
+            ['id', 'date_order', 'effective_date', 'invoice_ids'],
             ['limit' => self::FETCH_CAP]
         );
+
+        if (empty($pos)) return null;
+
+        // Build a list of invoice IDs we'll need to look up the earliest
+        // posted invoice_date for, but only for POs missing effective_date.
+        $invoiceIdToPoId = [];
+        foreach ($pos as $p) {
+            $end = $p['effective_date'] ?? null;
+            if (!empty($end) && $end !== false) continue;
+            foreach ((array) ($p['invoice_ids'] ?? []) as $invId) {
+                $invoiceIdToPoId[$invId] = $p['id'];
+            }
+        }
+
+        $earliestInvoiceByPo = [];
+        if (!empty($invoiceIdToPoId)) {
+            try {
+                $invs = $this->odoo->searchRead(
+                    'account.move',
+                    [
+                        ['id', 'in', array_keys($invoiceIdToPoId)],
+                        ['state', '=', 'posted'],
+                    ],
+                    ['id', 'invoice_date'],
+                    ['limit' => self::FETCH_CAP]
+                );
+                foreach ($invs as $inv) {
+                    $poId = $invoiceIdToPoId[$inv['id']] ?? null;
+                    $d    = $inv['invoice_date'] ?? null;
+                    if (!$poId || empty($d)) continue;
+                    if (!isset($earliestInvoiceByPo[$poId]) || $d < $earliestInvoiceByPo[$poId]) {
+                        $earliestInvoiceByPo[$poId] = $d;
+                    }
+                }
+            } catch (\Throwable $e) {
+                // ignore — POs without effective_date stay excluded
+            }
+        }
 
         $diffs = [];
         foreach ($pos as $p) {
             $start = (string) ($p['date_order'] ?? '');
             $end   = (string) ($p['effective_date'] ?? '');
-            if ($start === '' || $end === '' || $end === false) continue;
+            if ($end === '' || $end === '0' || $p['effective_date'] === false) {
+                $end = $earliestInvoiceByPo[$p['id']] ?? '';
+            }
+            if ($start === '' || $end === '') continue;
             try {
                 $d1 = new \DateTimeImmutable($start);
                 $d2 = new \DateTimeImmutable($end);
@@ -157,6 +225,145 @@ final class ProcurementService
 
         if (empty($diffs)) return null;
         return array_sum($diffs) / count($diffs);
+    }
+
+    // ─── Open POs sandbox ────────────────────────────────────────────────────
+
+    /**
+     * Snapshot of POs that are confirmed but not yet closed (state='purchase').
+     * Returns headline numbers + the top-10 oldest for action.
+     *
+     * NOT period-filtered — this is "what's open right now", regardless of
+     * when it was created (that's the whole point).
+     */
+    private function openPOsSandbox(): array
+    {
+        try {
+            $pos = $this->odoo->searchRead(
+                'purchase.order',
+                [['state', '=', 'purchase']],
+                ['id', 'name', 'partner_id', 'date_order', 'amount_total'],
+                ['limit' => self::FETCH_CAP, 'order' => 'date_order asc']
+            );
+            if (empty($pos)) {
+                return [
+                    'count'           => 0,
+                    'avg_age_days'    => null,
+                    'oldest_age_days' => null,
+                    'oldest'          => [],
+                ];
+            }
+
+            $today = new \DateTimeImmutable('today');
+            $rows  = [];
+            $ages  = [];
+            foreach ($pos as $p) {
+                $d = (string) ($p['date_order'] ?? '');
+                if ($d === '') continue;
+                try {
+                    $created = new \DateTimeImmutable($d);
+                } catch (\Throwable $e) {
+                    continue;
+                }
+                $age = (int) $today->diff($created)->days;
+                $ages[] = $age;
+                $partner = is_array($p['partner_id'] ?? null) ? $p['partner_id'][1] : '—';
+                $rows[]  = [
+                    'id'         => $p['id'],
+                    'name'       => (string) ($p['name'] ?? ''),
+                    'partner'    => (string) $partner,
+                    'date_order' => $d,
+                    'age_days'   => $age,
+                    'amount'     => (float) ($p['amount_total'] ?? 0),
+                ];
+            }
+
+            usort($rows, fn ($a, $b) => $b['age_days'] <=> $a['age_days']);
+
+            return [
+                'count'           => count($pos),
+                'avg_age_days'    => empty($ages) ? null : array_sum($ages) / count($ages),
+                'oldest_age_days' => empty($ages) ? null : max($ages),
+                'oldest'          => array_slice($rows, 0, 10),
+            ];
+        } catch (\Throwable $e) {
+            return [
+                'count'           => null,
+                'avg_age_days'    => null,
+                'oldest_age_days' => null,
+                'oldest'          => [],
+                'error'           => $e->getMessage(),
+            ];
+        }
+    }
+
+    // ─── P4: Total Vendor Spend (billed) ─────────────────────────────────────
+
+    private function totalSpend(
+        \DateTimeImmutable $cyFrom, \DateTimeImmutable $cyTo,
+        \DateTimeImmutable $pyFrom, \DateTimeImmutable $pyTo
+    ): array {
+        try {
+            $cyCount  = $this->countVendorBills($cyFrom, $cyTo);
+            $pyCount  = $this->countVendorBills($pyFrom, $pyTo);
+            $cyAmount = $this->sumVendorBillAmount($cyFrom, $cyTo);
+            $pyAmount = $this->sumVendorBillAmount($pyFrom, $pyTo);
+
+            if ($cyCount === 0) {
+                return [
+                    'value'   => '— —',
+                    'sub'     => 'No vendor bills in period',
+                    'pending' => true,
+                ];
+            }
+
+            return [
+                'value'   => ea_money_short($cyAmount, 'XAF'),
+                'sub'     => sprintf('%s bills posted', number_format($cyCount)),
+                'pending' => false,
+                // Going up = more spend; not strictly bad/good, but flag positive
+                // as red on the assumption that controlling spend is the default
+                // posture. Slight nudge — easy to flip if user prefers.
+                'vsPy'    => $pyAmount > 0 ? -1.0 * 100.0 * ($cyAmount - $pyAmount) / $pyAmount : null,
+            ];
+        } catch (\Throwable $e) {
+            return $this->failed('Total spend', $e);
+        }
+    }
+
+    /**
+     * Top-N suppliers by billed spend in window. Used as the dropdown
+     * detail next to the Total Spend card.
+     */
+    private function topSuppliersBySpend(\DateTimeImmutable $from, \DateTimeImmutable $to, int $topN): array
+    {
+        try {
+            $rows = $this->odoo->callModel('account.move', 'read_group', [
+                'domain' => [
+                    ['move_type', '=', 'in_invoice'],
+                    ['state', '=', 'posted'],
+                    ['invoice_date', '>=', $from->format('Y-m-d')],
+                    ['invoice_date', '<=', $to->format('Y-m-d')],
+                ],
+                'fields'  => ['partner_id', 'amount_total_signed:sum'],
+                'groupby' => ['partner_id'],
+                'orderby' => 'amount_total_signed desc',
+                'lazy'    => false,
+                'limit'   => $topN,
+            ]);
+            $out = [];
+            foreach ($rows as $r) {
+                $partner = is_array($r['partner_id'] ?? null) ? $r['partner_id'][1] : '—';
+                $out[] = [
+                    'partner' => (string) $partner,
+                    'count'   => (int) ($r['partner_id_count'] ?? 0),
+                    'amount'  => (float) ($r['amount_total_signed'] ?? 0),
+                ];
+            }
+            return $out;
+        } catch (\Throwable $e) {
+            return [];
+        }
     }
 
     // ─── P3: PO Compliance ───────────────────────────────────────────────────
@@ -366,6 +573,36 @@ final class ProcurementService
                 'lazy'    => false,
             ]);
             return (float) ($rows[0]['amount_total'] ?? 0);
+        } catch (\Throwable $e) {
+            return 0.0;
+        }
+    }
+
+    private function countVendorBills(\DateTimeImmutable $from, \DateTimeImmutable $to): int
+    {
+        return $this->odoo->searchCount('account.move', [
+            ['move_type', '=', 'in_invoice'],
+            ['state', '=', 'posted'],
+            ['invoice_date', '>=', $from->format('Y-m-d')],
+            ['invoice_date', '<=', $to->format('Y-m-d')],
+        ]);
+    }
+
+    private function sumVendorBillAmount(\DateTimeImmutable $from, \DateTimeImmutable $to): float
+    {
+        try {
+            $rows = $this->odoo->callModel('account.move', 'read_group', [
+                'domain' => [
+                    ['move_type', '=', 'in_invoice'],
+                    ['state', '=', 'posted'],
+                    ['invoice_date', '>=', $from->format('Y-m-d')],
+                    ['invoice_date', '<=', $to->format('Y-m-d')],
+                ],
+                'fields'  => ['amount_total_signed:sum'],
+                'groupby' => [],
+                'lazy'    => false,
+            ]);
+            return (float) ($rows[0]['amount_total_signed'] ?? 0);
         } catch (\Throwable $e) {
             return 0.0;
         }
