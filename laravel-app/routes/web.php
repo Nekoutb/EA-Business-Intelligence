@@ -11,6 +11,8 @@ use App\Http\Controllers\TreasuryController;
 use App\Http\Controllers\FixedAssetsController;
 use App\Http\Controllers\InventoryController;
 use App\Http\Controllers\OperationsController;
+use App\Http\Controllers\BillingController;
+use App\Http\Controllers\ProcurementController;
 use App\Http\Controllers\GLQualityController;
 use App\Http\Controllers\CustomerInsightsController;
 use App\Http\Controllers\SettingsController;
@@ -477,6 +479,8 @@ Route::prefix('t/{tenant}')
                 Route::get('/fixed-assets',      [FixedAssetsController::class, 'index'])->middleware('module:fixed_assets');
                 Route::get('/inventory',         [InventoryController::class, 'index'])->middleware('module:inventory');
                 Route::get('/operations',        [OperationsController::class, 'index'])->middleware('module:operations');
+                Route::get('/billing',           [BillingController::class, 'index'])->middleware('module:billing');
+                Route::get('/procurement',       [ProcurementController::class, 'index'])->middleware('module:procurement');
 
                 // ── Financial Reporting service ───────────────────────────────
                 Route::get('/general-ledger-quality', [GLQualityController::class, 'index'])->middleware('module:gl_quality');

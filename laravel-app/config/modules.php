@@ -196,6 +196,38 @@ return [
             'status'  => 'live',
         ],
         [
+            // Billing — invoice issuance lens (volume, time-to-invoice on
+            // shipment basis, credit-note rate). Complements Receivables
+            // (which lives in the collection lens). Universally applicable
+            // for any tenant with the Odoo accounting module.
+            'key'     => 'billing',
+            'service' => 'business_intelligence',
+            'label'   => 'Billing',
+            'url'     => '/billing',
+            'active'  => 'billing',
+            'icon'    => 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2M9 12h6m-6 4h4',
+            'default' => true,
+            'core'    => false,
+            'status'  => 'live',
+        ],
+        [
+            // Procurement — PO lifecycle lens (volume + spend, cycle time,
+            // PO compliance / maverick spend). Complements Payables (which
+            // lives in the what-we-owe lens).
+            //
+            // default=false — requires the Odoo `purchase` module installed
+            // at the tenant. Super admin enables per tenant once confirmed.
+            'key'     => 'procurement',
+            'service' => 'business_intelligence',
+            'label'   => 'Procurement',
+            'url'     => '/procurement',
+            'active'  => 'procurement',
+            'icon'    => 'M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z',
+            'default' => false,
+            'core'    => false,
+            'status'  => 'live',
+        ],
+        [
             'key'     => 'ai_insights',
             'service' => 'business_intelligence',
             'label'   => 'AI Insights',
