@@ -465,28 +465,4 @@
         </div>
     </div>
 
-    {{-- ── Schema notes ────────────────────────────────────────────────── --}}
-    <div class="bg-white border border-[#e8e4de] rounded-xl p-5">
-        <h3 class="text-sm font-semibold text-[#1e3d44] mb-3">Data sources &amp; design notes</h3>
-        <div class="text-xs text-[#5a6a70] leading-relaxed space-y-3">
-            <div>
-                <span class="font-semibold text-[#1e3d44]">Models in use</span> —
-                <code class="text-[11px] bg-[#faf8f5] border border-[#ece7df] rounded px-1.5 py-0.5">purchase.order</code> (PO header, source for volume &amp; cycle time),
-                <code class="text-[11px] bg-[#faf8f5] border border-[#ece7df] rounded px-1.5 py-0.5">account.move</code> (vendor bills, <code>move_type='in_invoice'</code>),
-                <code class="text-[11px] bg-[#faf8f5] border border-[#ece7df] rounded px-1.5 py-0.5">account.move.line.purchase_line_id</code> (primary PO link), with <code>purchase.order.invoice_ids</code> as fallback.
-            </div>
-            <div>
-                <span class="font-semibold text-[#1e3d44]">Period anchors</span> — PO Volume &amp; Cycle Time anchor on <code class="text-[11px] bg-[#faf8f5] border border-[#ece7df] rounded px-1.5 py-0.5">date_order</code>; PO Compliance and Total Spend anchor on <code class="text-[11px] bg-[#faf8f5] border border-[#ece7df] rounded px-1.5 py-0.5">invoice_date</code> (the moment the "did it follow process?" / "what did it cost?" questions crystallise). The Open POs sandbox is anchored on <em>today</em> — it asks "what's open right now?", not "what was open in the period?".
-            </div>
-            <div>
-                <span class="font-semibold text-[#1e3d44]">Cycle-time scope</span> — POs with <code>date_order</code> are included if either (a) <code>effective_date</code> is populated (Odoo's computed first-receipt anchor) or (b) at least one linked invoice has been posted (we use the earliest <code>invoice_date</code>). POs with neither are still in flight and are excluded from the average.
-            </div>
-            <div>
-                <span class="font-semibold text-[#1e3d44]">PO Volume vs Total Spend</span> — P1 measures spend you've <em>committed</em> via POs (whether received yet or not); Total Spend measures what you've actually been <em>billed</em> for (whether through a PO or maverick). The two together let you see the gap between authorised commitments and actual liabilities.
-            </div>
-            <div>
-                <span class="font-semibold text-[#1e3d44]">Distinct from Payables</span> — Payables answers "what we owe vendors and how aged". Procurement answers "are purchases controlled, fast, and properly authorised?". Together they cover the full P2P cycle without overlap.
-            </div>
-        </div>
-    </div>
 @endsection
