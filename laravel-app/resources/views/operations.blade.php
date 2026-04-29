@@ -562,35 +562,4 @@
       </script>
     @endif
 
-    {{-- ── Schema notes & next steps ────────────────────────────────────── --}}
-    <div class="bg-white border border-[#e8e4de] rounded-xl p-5">
-        <h3 class="text-sm font-semibold text-[#1e3d44] mb-3">Data sources &amp; design notes</h3>
-        <div class="text-xs text-[#5a6a70] leading-relaxed space-y-3">
-            <div>
-                <span class="font-semibold text-[#1e3d44]">Models in use</span> —
-                <code class="text-[11px] bg-[#faf8f5] border border-[#ece7df] rounded px-1.5 py-0.5">aw_cargo.stopover</code> (vessel calls),
-                <code class="text-[11px] bg-[#faf8f5] border border-[#ece7df] rounded px-1.5 py-0.5">aw_cargo.cargo</code> (bills of lading),
-                <code class="text-[11px] bg-[#faf8f5] border border-[#ece7df] rounded px-1.5 py-0.5">aw_cargo.equipment</code> (containers).
-            </div>
-            <div>
-                <span class="font-semibold text-[#1e3d44]">Period anchor</span> — every KPI filters by
-                <code class="text-[11px] bg-[#faf8f5] border border-[#ece7df] rounded px-1.5 py-0.5">create_date</code>
-                because <code class="text-[11px] bg-[#faf8f5] border border-[#ece7df] rounded px-1.5 py-0.5">eta</code> is sparsely populated. Containers Scanned uses
-                <code class="text-[11px] bg-[#faf8f5] border border-[#ece7df] rounded px-1.5 py-0.5">scanned_date</code>.
-            </div>
-            <div>
-                <span class="font-semibold text-[#1e3d44]">Working-day basis</span> — Mon–Sat (consistent with the Dashboard's RpD &amp; Run-Rate).
-            </div>
-            <div>
-                <span class="font-semibold text-[#1e3d44]">Revenue model</span> — <em>Expected Revenue</em> applies the customer's official Grille Tarifaire to the scanned-container mix (per-row pricing in
-                <code class="text-[11px] bg-[#faf8f5] border border-[#ece7df] rounded px-1.5 py-0.5">App\Services\OperationsService::PRICE_HT_*</code> constants). To switch to actual invoiced revenue, traverse <code class="text-[11px] bg-[#faf8f5] border border-[#ece7df] rounded px-1.5 py-0.5">cargo.invoice_ids</code> → <code class="text-[11px] bg-[#faf8f5] border border-[#ece7df] rounded px-1.5 py-0.5">account.move</code> in a v2 — the expected vs actual delta then becomes a leakage metric.
-            </div>
-            <div>
-                <span class="font-semibold text-[#1e3d44]">Deferred to v2</span> —
-                <em>Top Vessels by Volume</em> (drill-down list page),
-                <em>Single-container detail page</em>,
-                <em>Customer / Destination breakdowns</em> (the <code class="text-[11px] bg-[#faf8f5] border border-[#ece7df] rounded px-1.5 py-0.5">partner_id</code> field is mostly empty in the source data — needs upstream data quality work).
-            </div>
-        </div>
-    </div>
 @endsection

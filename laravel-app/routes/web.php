@@ -57,6 +57,14 @@ Route::prefix('admin')->group(function () {
     Route::middleware('admin.auth')->group(function () {
         Route::get('/', [AdminDashboardController::class, 'index']);
 
+        // Methodology — internal reference page documenting per-module
+        // data sources, formulas and design rationale. Used to live at
+        // the bottom of each client-facing module page; moved here so
+        // it isn't exposed to clients.
+        Route::get('/methodology', fn () => view('admin.methodology', [
+            'active' => 'methodology',
+        ]));
+
         // Industries (configuration)
         Route::get('/industries',                          [AdminIndustryController::class, 'index']);
         Route::get('/industries/create',                   [AdminIndustryController::class, 'create']);

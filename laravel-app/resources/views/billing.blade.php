@@ -226,25 +226,4 @@
       </div>
     @endif
 
-    {{-- ── Schema notes ────────────────────────────────────────────────── --}}
-    <div class="bg-white border border-[#e8e4de] rounded-xl p-5">
-        <h3 class="text-sm font-semibold text-[#1e3d44] mb-3">Data sources &amp; design notes</h3>
-        <div class="text-xs text-[#5a6a70] leading-relaxed space-y-3">
-            <div>
-                <span class="font-semibold text-[#1e3d44]">Models in use</span> —
-                <code class="text-[11px] bg-[#faf8f5] border border-[#ece7df] rounded px-1.5 py-0.5">account.move</code> (invoices &amp; credit notes),
-                <code class="text-[11px] bg-[#faf8f5] border border-[#ece7df] rounded px-1.5 py-0.5">aw_cargo.cargo</code> (shipment ↔ invoice link via <code>invoice_ids</code>),
-                <code class="text-[11px] bg-[#faf8f5] border border-[#ece7df] rounded px-1.5 py-0.5">aw_cargo.equipment / aw_vehicule.vehicule / aw_bois.bois</code> (line items, source of <code>scanned_date</code>).
-            </div>
-            <div>
-                <span class="font-semibold text-[#1e3d44]">Period anchor</span> — invoice volume and credit-note rate filter on <code class="text-[11px] bg-[#faf8f5] border border-[#ece7df] rounded px-1.5 py-0.5">invoice_date</code> (the actual billing event). Time-to-Invoice computes <code>invoice_date − MAX(scanned_date)</code> per shipment.
-            </div>
-            <div>
-                <span class="font-semibold text-[#1e3d44]">Why MAX(scanned_date)</span> — the moment the operation is complete on the last container/vehicle/wood line in the cargo. Earliest defensible point at which billing can be issued. Negative latency = advance billing; we surface it rather than mask it.
-            </div>
-            <div>
-                <span class="font-semibold text-[#1e3d44]">Distinct from Receivables</span> — Receivables answers "what's outstanding and how aged". Billing answers "are we issuing invoices on time, in volume, accurately?". The two together cover the full O2C cycle without overlap.
-            </div>
-        </div>
-    </div>
 @endsection
