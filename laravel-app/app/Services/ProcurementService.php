@@ -317,9 +317,12 @@ final class ProcurementService
             $pyCount  = $this->countVendorBills($pyFrom, $pyTo);
             // Net of taxes — uses amount_untaxed_signed instead of
             // amount_total_signed so the figure represents pure goods/
-            // services spend without VAT distortion.
-            $cyAmount = $this->sumVendorBillAmount($cyFrom, $cyTo);
-            $pyAmount = $this->sumVendorBillAmount($pyFrom, $pyTo);
+            // services spend without VAT distortion. abs() applied because
+            // amount_untaxed_signed is *negative* for vendor bills (P&L
+            // direction signed) — we want positive numbers throughout the
+            // user-facing report.
+            $cyAmount = abs($this->sumVendorBillAmount($cyFrom, $cyTo));
+            $pyAmount = abs($this->sumVendorBillAmount($pyFrom, $pyTo));
 
             if ($cyCount === 0) {
                 return [
@@ -331,15 +334,15 @@ final class ProcurementService
 
             return [
                 // Disclose the absolute value (not the M/K abbreviated form
-                // — we want exact spend visible). Use abs() to neutralise
-                // sign convention inversions on credit-note-heavy periods.
-                'value'   => number_format(abs($cyAmount)) . ' XAF',
+                // — we want exact spend visible).
+                'value'   => number_format($cyAmount) . ' XAF',
                 'sub'     => sprintf('%s bills posted · net of taxes', number_format($cyCount)),
                 'pending' => false,
-                // Going up = more spend; not strictly bad/good, but flag positive
-                // as red on the assumption that controlling spend is the default
-                // posture. Slight nudge — easy to flip if user prefers.
-                'vsPy'    => $pyAmount > 0 ? -1.0 * 100.0 * ($cyAmount - $pyAmount) / $pyAmount : null,
+                // Going up = more spend → flag negative (red) on the
+                // assumption that controlling spend is the default posture.
+                'vsPy'    => $pyAmount > 0
+                    ? -1.0 * 100.0 * ($cyAmount - $pyAmount) / $pyAmount
+                    : null,
             ];
         } catch (\Throwable $e) {
             return $this->failed('Total spend', $e);
@@ -352,6 +355,12 @@ final class ProcurementService
      * recorded against — answers "what kind of spend is this?".
      *
      * Used as the dropdown detail next to the Total Spend card.
+     *
+     * Sorting & sign handling:
+     *   amount_untaxed_signed on vendor bills is *negative* by convention
+     *   (signed in P&L direction). To get "biggest spend first" robustly,
+     *   we fetch all groups and sort in PHP by abs() desc — this
+     *   is independent of any future Odoo sign-convention surprise.
      */
     private function topSuppliersBySpend(\DateTimeImmutable $from, \DateTimeImmutable $to, int $topN): array
     {
@@ -365,28 +374,48 @@ final class ProcurementService
                 ],
                 'fields'  => ['partner_id', 'amount_untaxed_signed:sum'],
                 'groupby' => ['partner_id'],
-                'orderby' => 'amount_untaxed_signed desc',
                 'lazy'    => false,
-                'limit'   => $topN,
+                // No orderby/limit at Odoo level — sort & slice in PHP.
             ]);
-            $out = [];
+
+            $all = [];
             foreach ($rows as $r) {
                 $partnerArr  = $r['partner_id'] ?? null;
                 $partnerId   = is_array($partnerArr) ? (int) $partnerArr[0] : null;
                 $partnerName = is_array($partnerArr) ? (string) $partnerArr[1] : '—';
+                $amountRaw   = (float) ($r['amount_untaxed_signed'] ?? 0);
 
-                $accountName = $partnerId
-                    ? $this->dominantExpenseAccount($partnerId, $from, $to)
-                    : null;
+                // Odoo's read_group returns the group count under __count
+                // when lazy=false; older versions surface it as
+                // <field>_count. Try both.
+                $count = (int) ($r['__count'] ?? $r['partner_id_count'] ?? 0);
 
-                $out[] = [
-                    'partner' => $partnerName,
-                    'count'   => (int) ($r['partner_id_count'] ?? 0),
-                    'amount'  => (float) ($r['amount_untaxed_signed'] ?? 0),
-                    'account' => $accountName,
+                $all[] = [
+                    'partner_id' => $partnerId,
+                    'partner'    => $partnerName,
+                    'count'      => $count,
+                    'amount'     => abs($amountRaw),  // positive for display
+                    'account'    => null,             // filled below
                 ];
             }
-            return $out;
+
+            // Biggest spend first, regardless of sign convention.
+            usort($all, fn ($a, $b) => $b['amount'] <=> $a['amount']);
+            $top = array_slice($all, 0, $topN);
+
+            // Look up dominant expense account only for the top N — keeps
+            // total query cost bounded even on tenants with hundreds of
+            // suppliers.
+            foreach ($top as &$s) {
+                if ($s['partner_id']) {
+                    $s['account'] = $this->dominantExpenseAccount(
+                        $s['partner_id'], $from, $to
+                    );
+                }
+            }
+            unset($s);
+
+            return $top;
         } catch (\Throwable $e) {
             return [];
         }
