@@ -278,13 +278,21 @@ final class ProcurementService
                 ];
             }
 
-            usort($rows, fn ($a, $b) => $b['age_days'] <=> $a['age_days']);
+            // Two views over the same set:
+            //   oldest        — sorted by age desc (chase-list)
+            //   top_by_amount — sorted by amount desc (where the money is)
+            $byAge    = $rows;
+            usort($byAge, fn ($a, $b) => $b['age_days'] <=> $a['age_days']);
+
+            $byAmount = $rows;
+            usort($byAmount, fn ($a, $b) => $b['amount'] <=> $a['amount']);
 
             return [
                 'count'           => count($pos),
                 'avg_age_days'    => empty($ages) ? null : array_sum($ages) / count($ages),
                 'oldest_age_days' => empty($ages) ? null : max($ages),
-                'oldest'          => array_slice($rows, 0, 10),
+                'oldest'          => array_slice($byAge, 0, 10),
+                'top_by_amount'   => array_slice($byAmount, 0, 10),
             ];
         } catch (\Throwable $e) {
             return [
@@ -292,6 +300,7 @@ final class ProcurementService
                 'avg_age_days'    => null,
                 'oldest_age_days' => null,
                 'oldest'          => [],
+                'top_by_amount'   => [],
                 'error'           => $e->getMessage(),
             ];
         }
@@ -306,6 +315,9 @@ final class ProcurementService
         try {
             $cyCount  = $this->countVendorBills($cyFrom, $cyTo);
             $pyCount  = $this->countVendorBills($pyFrom, $pyTo);
+            // Net of taxes — uses amount_untaxed_signed instead of
+            // amount_total_signed so the figure represents pure goods/
+            // services spend without VAT distortion.
             $cyAmount = $this->sumVendorBillAmount($cyFrom, $cyTo);
             $pyAmount = $this->sumVendorBillAmount($pyFrom, $pyTo);
 
@@ -318,8 +330,11 @@ final class ProcurementService
             }
 
             return [
-                'value'   => ea_money_short($cyAmount, 'XAF'),
-                'sub'     => sprintf('%s bills posted', number_format($cyCount)),
+                // Disclose the absolute value (not the M/K abbreviated form
+                // — we want exact spend visible). Use abs() to neutralise
+                // sign convention inversions on credit-note-heavy periods.
+                'value'   => number_format(abs($cyAmount)) . ' XAF',
+                'sub'     => sprintf('%s bills posted · net of taxes', number_format($cyCount)),
                 'pending' => false,
                 // Going up = more spend; not strictly bad/good, but flag positive
                 // as red on the assumption that controlling spend is the default
@@ -332,8 +347,11 @@ final class ProcurementService
     }
 
     /**
-     * Top-N suppliers by billed spend in window. Used as the dropdown
-     * detail next to the Total Spend card.
+     * Top-N suppliers by billed spend (net of taxes) in window. For each
+     * supplier, also returns the dominant expense account their bills are
+     * recorded against — answers "what kind of spend is this?".
+     *
+     * Used as the dropdown detail next to the Total Spend card.
      */
     private function topSuppliersBySpend(\DateTimeImmutable $from, \DateTimeImmutable $to, int $topN): array
     {
@@ -345,24 +363,81 @@ final class ProcurementService
                     ['invoice_date', '>=', $from->format('Y-m-d')],
                     ['invoice_date', '<=', $to->format('Y-m-d')],
                 ],
-                'fields'  => ['partner_id', 'amount_total_signed:sum'],
+                'fields'  => ['partner_id', 'amount_untaxed_signed:sum'],
                 'groupby' => ['partner_id'],
-                'orderby' => 'amount_total_signed desc',
+                'orderby' => 'amount_untaxed_signed desc',
                 'lazy'    => false,
                 'limit'   => $topN,
             ]);
             $out = [];
             foreach ($rows as $r) {
-                $partner = is_array($r['partner_id'] ?? null) ? $r['partner_id'][1] : '—';
+                $partnerArr  = $r['partner_id'] ?? null;
+                $partnerId   = is_array($partnerArr) ? (int) $partnerArr[0] : null;
+                $partnerName = is_array($partnerArr) ? (string) $partnerArr[1] : '—';
+
+                $accountName = $partnerId
+                    ? $this->dominantExpenseAccount($partnerId, $from, $to)
+                    : null;
+
                 $out[] = [
-                    'partner' => (string) $partner,
+                    'partner' => $partnerName,
                     'count'   => (int) ($r['partner_id_count'] ?? 0),
-                    'amount'  => (float) ($r['amount_total_signed'] ?? 0),
+                    'amount'  => (float) ($r['amount_untaxed_signed'] ?? 0),
+                    'account' => $accountName,
                 ];
             }
             return $out;
         } catch (\Throwable $e) {
             return [];
+        }
+    }
+
+    /**
+     * For a given supplier, return the name of the expense account where
+     * the largest share of their bills (by debit amount) is posted in the
+     * window. Returns null if no expense lines were found.
+     *
+     * Approach: pull all this supplier's posted vendor-bill IDs in the
+     * window, then group their move lines by account_id taking only the
+     * debit (expense) side, and pick the account with the highest sum.
+     */
+    private function dominantExpenseAccount(
+        int $partnerId,
+        \DateTimeImmutable $from,
+        \DateTimeImmutable $to
+    ): ?string {
+        try {
+            $bills = $this->odoo->searchRead(
+                'account.move',
+                [
+                    ['move_type', '=', 'in_invoice'],
+                    ['state', '=', 'posted'],
+                    ['invoice_date', '>=', $from->format('Y-m-d')],
+                    ['invoice_date', '<=', $to->format('Y-m-d')],
+                    ['partner_id', '=', $partnerId],
+                ],
+                ['id'],
+                ['limit' => self::FETCH_CAP]
+            );
+            $moveIds = array_column($bills, 'id');
+            if (empty($moveIds)) return null;
+
+            $rows = $this->odoo->callModel('account.move.line', 'read_group', [
+                'domain' => [
+                    ['move_id', 'in', $moveIds],
+                    ['debit', '>', 0], // expense leg of a vendor bill
+                ],
+                'fields'  => ['account_id', 'debit:sum'],
+                'groupby' => ['account_id'],
+                'orderby' => 'debit desc',
+                'lazy'    => false,
+                'limit'   => 1,
+            ]);
+            if (empty($rows)) return null;
+            $accField = $rows[0]['account_id'] ?? null;
+            return is_array($accField) ? (string) $accField[1] : null;
+        } catch (\Throwable $e) {
+            return null;
         }
     }
 
@@ -384,16 +459,17 @@ final class ProcurementService
                 ];
             }
 
-            $cyNonComplianceRate = 100.0 * $cy['unlinked'] / $cy['total'];
-            $pyNonComplianceRate = $py['total'] > 0 ? 100.0 * $py['unlinked'] / $py['total'] : null;
+            // Headline = compliance rate (% of bills WITH a linked PO).
+            // Higher is better; vs-PY direction is naturally positive=good.
+            $cyComplianceRate = 100.0 * $cy['linked'] / $cy['total'];
+            $pyComplianceRate = $py['total'] > 0 ? 100.0 * $py['linked'] / $py['total'] : null;
 
             return [
-                'value'   => number_format($cyNonComplianceRate, 1) . '%',
-                'sub'     => sprintf('%d of %d bills booked without a PO', $cy['unlinked'], $cy['total']),
+                'value'   => number_format($cyComplianceRate, 1) . '%',
+                'sub'     => sprintf('%d of %d bills have a PO', $cy['linked'], $cy['total']),
                 'pending' => false,
-                // Lower is better — invert sign so green = improvement.
-                'vsPy'    => $pyNonComplianceRate !== null
-                    ? -1.0 * ($cyNonComplianceRate - $pyNonComplianceRate)
+                'vsPy'    => $pyComplianceRate !== null
+                    ? ($cyComplianceRate - $pyComplianceRate)
                     : null,
                 'breakdown' => [
                     'total'    => $cy['total'],
@@ -588,6 +664,10 @@ final class ProcurementService
         ]);
     }
 
+    /**
+     * Sum of vendor bills in the window — net of taxes.
+     * (amount_untaxed_signed = bill subtotal in company currency.)
+     */
     private function sumVendorBillAmount(\DateTimeImmutable $from, \DateTimeImmutable $to): float
     {
         try {
@@ -598,11 +678,11 @@ final class ProcurementService
                     ['invoice_date', '>=', $from->format('Y-m-d')],
                     ['invoice_date', '<=', $to->format('Y-m-d')],
                 ],
-                'fields'  => ['amount_total_signed:sum'],
+                'fields'  => ['amount_untaxed_signed:sum'],
                 'groupby' => [],
                 'lazy'    => false,
             ]);
-            return (float) ($rows[0]['amount_total_signed'] ?? 0);
+            return (float) ($rows[0]['amount_untaxed_signed'] ?? 0);
         } catch (\Throwable $e) {
             return 0.0;
         }
