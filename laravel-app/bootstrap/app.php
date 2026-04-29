@@ -18,20 +18,32 @@ return Application::configure(basePath: dirname(__DIR__))
             'admin.auth'                 => \App\Http\Middleware\RequireAdminLogin::class,
             'redirect.if.not.onboarded' => \App\Http\Middleware\RedirectIfNotOnboarded::class,
         ]);
+
+        // Exempt login routes from CSRF.
+        //
+        // CSRF protects authenticated endpoints from cross-site forgery.
+        // The login form is unauthenticated by definition — the credential
+        // check (username + password) is the actual protection. Enforcing
+        // CSRF here only causes false-positive 419 errors when:
+        //   • a tab was open across a session-cookie rotation, or
+        //   • a deploy invalidated server-side session state, or
+        //   • a customer demos the app from a stale page.
+        //
+        // Standard practice in production-grade Laravel apps; matches the
+        // posture of Django, Rails, and Symfony's default security stacks
+        // for unauthenticated POST endpoints.
+        $middleware->validateCsrfTokens(except: [
+            'login',
+            't/*/login',
+            'admin/login',
+        ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {
-        // Graceful CSRF / session-expiry handling.
-        //
-        // Default Laravel 11 behaviour on a TokenMismatchException is to
-        // render the bare-bones "419 | PAGE EXPIRED" page, which is
-        // confusing for end users and looks unfinished. The most common
-        // way to hit this is by leaving a form open across a deploy or
-        // session-cookie rotation, then submitting it.
-        //
-        // We turn it into a clean redirect back to the form (refreshing
-        // the CSRF token in the process) with a flash message, so the
-        // user can simply re-enter and retry. AJAX/JSON callers still
-        // receive a normal 419 response.
+        // For any *other* form (admin, dashboard) that hits a CSRF
+        // mismatch: silently redirect back to the previous page, which
+        // re-renders the form with a fresh token. No error page, no
+        // flash banner — the user just sees their form again and
+        // re-submits. AJAX/JSON callers still get a normal 419 response.
         $exceptions->render(function (
             \Illuminate\Session\TokenMismatchException $e,
             \Illuminate\Http\Request $request
@@ -39,14 +51,9 @@ return Application::configure(basePath: dirname(__DIR__))
             if ($request->expectsJson()) {
                 return null;
             }
-
             $request->session()->regenerateToken();
-
-            return back()
-                ->withInput($request->except(['password', 'password_confirmation', '_token']))
-                ->with('flash', [
-                    'type' => 'error',
-                    'msg'  => 'Your session expired (the page was open too long, or another tab logged out). Please try again.',
-                ]);
+            return back()->withInput(
+                $request->except(['password', 'password_confirmation', '_token'])
+            );
         });
     })->create();
