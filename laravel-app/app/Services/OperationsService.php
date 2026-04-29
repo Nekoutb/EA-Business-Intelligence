@@ -70,16 +70,27 @@ final class OperationsService
 
     // "Autres" pricing (non-container scans).
     //
-    //   The grid distinguishes 4 vehicle categories (voiture 50K / camion
-    //   ≥4t 95K / bulldozer 105K / OGG 105K) but aw_vehicule.vehicule has
-    //   no reliable classifier today — `goods_group` is unpopulated in the
-    //   live data, and `manufacturer` shows mixed values like "SACS" /
-    //   "COOKWARE" that aren't even vehicles. We deliberately do NOT
-    //   assume a vehicle rate; revenue stays null until either the
-    //   upstream data is enriched OR we read the actual rate per type
-    //   from the invoice catalogue (next probe iteration).
+    //   Vehicle classification — discovered via deep probe v3:
+    //     aw_vehicule.vehicule.cylinders mirrors the `size` codes used in
+    //     aw_cargo_invoice.product (the official billing legend), giving
+    //     us a clean four-way split:
     //
-    //   Bois has a single rate per truck so the constant is safe.
+    //       cylinders ∈ {4, 6}  → Voiture (size 4 = small, size 6 = larger)
+    //       cylinders == 8       → CAMION / TRUCK (size 8 in the invoice grid)
+    //       cylinders == 12      → BULLDOZE / heavy machinery (size 12)
+    //       cylinders ∉ above   → unclassified — mostly *non-vehicle* cargo
+    //                             (the table also stores rows like "CARTONS",
+    //                             "SACS", "COOKWARE", "X40'HC" — see probe).
+    //                             We do NOT bill the residual; it's flagged
+    //                             so the count is visible without inflating
+    //                             revenue.
+    //
+    //   Rates come straight from the customer's Grille Tarifaire. They are
+    //   editable per scenario in the Expected Revenue Simulation block on
+    //   the page, but these constants are the canonical defaults.
+    private const PRICE_HT_VOITURE           = 50_000;
+    private const PRICE_HT_CAMION            = 95_000;
+    private const PRICE_HT_BULLDOZE          = 105_000;
     private const PRICE_HT_WOOD_PER_TRUCK    = 35_000;
 
     /**
@@ -644,23 +655,32 @@ final class OperationsService
 
             // ── "Autres" (non-container) sources from the price grid ──
             //
-            // Vehicles: aw_vehicule.vehicule contains heterogeneous
-            // non-container goods (cars, bags, cookware, …). Without a
-            // reliable type classifier we bill all at the voiture rate
-            // (50K HT). Trucks/heavy/OGG would justify 95-105K — that
-            // delta is a known revenue understatement, surfaced as a
-            // caveat in the breakdown table.
-            $vehiclesScanned = 0;
-            try {
-                $vehiclesScanned = $this->odoo->searchCount('aw_vehicule.vehicule', [
-                    ['scanned', '=', true],
-                    ['scanned_date', '>=', $from->format('Y-m-d 00:00:00')],
-                    ['scanned_date', '<=', $to->format('Y-m-d 23:59:59')],
-                    ['active', '=', true],
-                ]);
-            } catch (\Throwable $e) {
-                // model unreachable / unknown — leave count at 0
-            }
+            // Vehicles — classified by `cylinders` field, which mirrors the
+            // `size` codes in aw_cargo_invoice.product (the invoice billing
+            // legend). See the comment on PRICE_HT_WOOD_PER_TRUCK for the
+            // mapping and why the residual bucket is non-billable.
+            $vehBase = [
+                ['scanned', '=', true],
+                ['scanned_date', '>=', $from->format('Y-m-d 00:00:00')],
+                ['scanned_date', '<=', $to->format('Y-m-d 23:59:59')],
+                ['active', '=', true],
+            ];
+            $vehCount = function (array $extra) use ($vehBase) {
+                try {
+                    return $this->odoo->searchCount(
+                        'aw_vehicule.vehicule',
+                        array_merge($vehBase, $extra)
+                    );
+                } catch (\Throwable $e) {
+                    // model unreachable / unknown — leave at 0
+                    return 0;
+                }
+            };
+
+            $voitureScanned   = $vehCount([['cylinders', 'in', [4, 6]]]);
+            $camionScanned    = $vehCount([['cylinders', '=', 8]]);
+            $bulldozeScanned  = $vehCount([['cylinders', '=', 12]]);
+            $vehResidual      = $vehCount([['cylinders', 'not in', [4, 6, 8, 12]]]);
 
             // Bois: tariff is per camion/wagon, not per piece of wood.
             // Best proxy: count distinct cargo_id values that contain at
@@ -712,13 +732,34 @@ final class OperationsService
                     'price'   => self::PRICE_HT_EXPORT_FULL_20,
                     'revenue' => $expFull20 * self::PRICE_HT_EXPORT_FULL_20,
                 ],
+                // Vehicles — split into the four billing categories from
+                // aw_cargo_invoice.product, keyed off cylinders. Rates from
+                // the Grille Tarifaire (editable in the simulation block).
+                'voiture' => [
+                    'label'   => 'Voiture (4 / 6 cyl)',
+                    'count'   => $voitureScanned,
+                    'price'   => self::PRICE_HT_VOITURE,
+                    'revenue' => $voitureScanned * self::PRICE_HT_VOITURE,
+                ],
+                'camion' => [
+                    'label'   => 'Camion / Truck (8 cyl)',
+                    'count'   => $camionScanned,
+                    'price'   => self::PRICE_HT_CAMION,
+                    'revenue' => $camionScanned * self::PRICE_HT_CAMION,
+                ],
+                'bulldoze' => [
+                    'label'   => 'Bulldoze / heavy (12 cyl)',
+                    'count'   => $bulldozeScanned,
+                    'price'   => self::PRICE_HT_BULLDOZE,
+                    'revenue' => $bulldozeScanned * self::PRICE_HT_BULLDOZE,
+                ],
                 'vehicles_unclassified' => [
-                    'label'   => 'Vehicles / Voitures *',
-                    'count'   => $vehiclesScanned,
-                    // Rate intentionally null — the schema doesn't classify
-                    // vehicle type, so we refuse to invent a price. The
-                    // invoice catalogue (probe v3) will give us the
-                    // ground-truth rate per type.
+                    // Residual — mostly non-vehicle cargo dumped in the
+                    // vehicule table (cartons, sacks, cookware, even loose
+                    // 40' HC containers — see probe samples). Counted for
+                    // visibility but NOT billed.
+                    'label'   => 'Other / non-vehicle items *',
+                    'count'   => $vehResidual,
                     'price'   => null,
                     'revenue' => null,
                     'caveat'  => true,
