@@ -80,6 +80,7 @@ final class ProcurementService
             'open_pos'          => $this->openPOsSandbox(),
             'unlinked_bills'    => $this->topUnlinkedBills($cyFrom, $cyTo, 10),
             'top_suppliers'     => $this->topSuppliersBySpend($cyFrom, $cyTo, 10),
+            'trend'             => $this->procurementTrend($today),
             'pending_overall'   => array_reduce(
                 $kpis,
                 fn ($acc, $k) => $acc && !empty($k['pending']),
@@ -715,6 +716,159 @@ final class ProcurementService
         } catch (\Throwable $e) {
             return 0.0;
         }
+    }
+
+    // ─── Trend chart (top of page) ───────────────────────────────────────────
+
+    /**
+     * 12-month trailing trend for the chart at the top of /procurement.
+     * Three switchable series:
+     *
+     *   po_compliance — % of bills WITH a PO in the month
+     *   total_spend   — sum of abs(amount_untaxed_signed) of in_invoice posted
+     *                   in the month (net of taxes)
+     *   open_pos      — count of POs that were open at month-end (date_order
+     *                   ≤ end-of-month AND (effective_date IS NULL OR > eom))
+     *
+     * Always 12 monthly buckets regardless of period filter — the trend chart
+     * is a strategic view; the period filter still applies to the KPI cards
+     * below.
+     */
+    private function procurementTrend(\DateTimeImmutable $today): array
+    {
+        // Build the 12-month axis. months[0] = oldest (11 months ago),
+        // months[11] = current month.
+        $months = [];
+        for ($i = 11; $i >= 0; $i--) {
+            $months[] = $today->modify("first day of -{$i} months")->setTime(0, 0, 0);
+        }
+        $monthIndexByKey = [];
+        $labels = [];
+        foreach ($months as $i => $m) {
+            $monthIndexByKey[$m->format('Y-m')] = $i;
+            $labels[] = ['label' => $m->format('M Y')];
+        }
+
+        $start = $months[0];
+
+        // Series 1 + 2: bills, with-PO, total spend per month
+        $compliancePct = array_fill(0, 12, null);
+        $spend         = array_fill(0, 12, 0.0);
+        $billCount     = array_fill(0, 12, 0);
+        $linkedCount   = array_fill(0, 12, 0);
+
+        try {
+            $bills = $this->odoo->searchRead(
+                'account.move',
+                [
+                    ['move_type', '=', 'in_invoice'],
+                    ['state', '=', 'posted'],
+                    ['invoice_date', '>=', $start->format('Y-m-d')],
+                    ['invoice_date', '<=', $today->format('Y-m-d')],
+                ],
+                ['id', 'invoice_date', 'amount_untaxed_signed'],
+                ['limit' => self::FETCH_CAP]
+            );
+
+            $billIds   = array_column($bills, 'id');
+            $linkedSet = array_flip($this->resolveLinkedBillIds($billIds));
+
+            foreach ($bills as $b) {
+                $bDate = (string) ($b['invoice_date'] ?? '');
+                if ($bDate === '') continue;
+                $ym  = substr($bDate, 0, 7);
+                $idx = $monthIndexByKey[$ym] ?? null;
+                if ($idx === null) continue;
+
+                $billCount[$idx]++;
+                if (isset($linkedSet[$b['id']])) {
+                    $linkedCount[$idx]++;
+                }
+                $spend[$idx] += abs((float) ($b['amount_untaxed_signed'] ?? 0));
+            }
+            foreach ($billCount as $i => $cnt) {
+                $compliancePct[$i] = $cnt > 0
+                    ? round(100.0 * $linkedCount[$i] / $cnt, 1)
+                    : null;
+            }
+        } catch (\Throwable $e) {
+            // leave arrays as nulls/zeros — chart still renders empty axes
+        }
+
+        // Series 3: Open POs at end of each month.
+        // Approach: pull POs created at any time up to today, then for each
+        // month-end check if it was still open (no effective_date or
+        // effective_date > month-end).
+        $openPOs = array_fill(0, 12, 0);
+        try {
+            $pos = $this->odoo->searchRead(
+                'purchase.order',
+                [
+                    ['state', 'in', ['purchase', 'done']],
+                    ['date_order', '<=', $today->format('Y-m-d 23:59:59')],
+                ],
+                ['id', 'date_order', 'effective_date'],
+                ['limit' => self::FETCH_CAP]
+            );
+
+            // Pre-parse dates once.
+            $parsed = [];
+            foreach ($pos as $p) {
+                $do = (string) ($p['date_order'] ?? '');
+                if ($do === '') continue;
+                try {
+                    $doDt = new \DateTimeImmutable($do);
+                } catch (\Throwable $e) { continue; }
+                $ed = $p['effective_date'] ?? null;
+                $edDt = null;
+                if (!empty($ed) && $ed !== false) {
+                    try {
+                        $edDt = new \DateTimeImmutable((string) $ed);
+                    } catch (\Throwable $e) { /* leave null */ }
+                }
+                $parsed[] = ['order' => $doDt, 'eff' => $edDt];
+            }
+
+            foreach ($months as $i => $m) {
+                $monthEnd = $m->modify('last day of this month')->setTime(23, 59, 59);
+                $count = 0;
+                foreach ($parsed as $p) {
+                    if ($p['order'] > $monthEnd) continue;        // not yet created
+                    if ($p['eff'] !== null && $p['eff'] <= $monthEnd) continue; // already received
+                    $count++;
+                }
+                $openPOs[$i] = $count;
+            }
+        } catch (\Throwable $e) {
+            // leave at zeros
+        }
+
+        return [
+            'granularity' => 'month',
+            'buckets'     => $labels,
+            'series'      => [
+                'po_compliance' => $compliancePct,
+                'total_spend'   => $spend,
+                'open_pos'      => $openPOs,
+            ],
+            'meta' => [
+                'po_compliance' => [
+                    'label'  => 'PO Compliance %',
+                    'format' => 'pct',
+                    'unit'   => '%',
+                ],
+                'total_spend' => [
+                    'label'  => 'Total Vendor Spend',
+                    'format' => 'money',
+                    'unit'   => 'XAF',
+                ],
+                'open_pos' => [
+                    'label'  => 'Open POs',
+                    'format' => 'count',
+                    'unit'   => '',
+                ],
+            ],
+        ];
     }
 
     private function failed(string $sub, \Throwable $e): array

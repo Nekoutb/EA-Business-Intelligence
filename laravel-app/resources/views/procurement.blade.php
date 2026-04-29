@@ -39,6 +39,163 @@
         </div>
     @endif
 
+    {{-- ── Trend chart ─────────────────────────────────────────────────────
+         12-month strategic view — three switchable series:
+           PO Compliance %  ·  Total Vendor Spend  ·  Open POs
+         Always monthly granularity (independent of YTD/MTD period filter
+         on the cards below). Vanilla JS, no chart library. --}}
+    @php
+        $trend = $procurement['trend'] ?? null;
+        $hasTrend = is_array($trend)
+            && !empty($trend['buckets'])
+            && !empty($trend['series']);
+        $defaultTrendKey = 'po_compliance';
+    @endphp
+
+    @if ($hasTrend)
+      <div class="bg-white border border-[#e8e4de] rounded-xl p-5 mb-6"
+           data-trend='@json($trend, JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_HEX_TAG)'
+           id="proc-trend-card">
+          <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+              <div>
+                  <h3 class="text-sm font-semibold text-[#1e3d44]">Trend</h3>
+                  <div class="text-[11px] text-[#7c7466] mt-0.5">
+                      Monthly buckets · {{ count($trend['buckets']) }} points · click a tab to switch series
+                  </div>
+              </div>
+              <div class="flex flex-wrap gap-1 text-[11px]" id="proc-trend-tabs">
+                  @foreach ($trend['meta'] as $key => $meta)
+                      <button type="button"
+                              data-trend-key="{{ $key }}"
+                              class="px-3 py-1.5 rounded-md border transition
+                                     {{ $key === $defaultTrendKey
+                                        ? 'bg-brand-600 text-white border-brand-600 shadow-sm'
+                                        : 'bg-white text-[#5a6a70] border-[#e8e4de] hover:bg-[#faf8f5]' }}">
+                          {{ $meta['label'] }}
+                      </button>
+                  @endforeach
+              </div>
+          </div>
+
+          <div class="relative">
+              <svg id="proc-trend-svg" viewBox="0 0 800 220" preserveAspectRatio="none"
+                   class="w-full h-[220px] block">
+              </svg>
+              <div id="proc-trend-readout"
+                   class="absolute top-0 right-0 text-[11px] text-[#5a6a70] bg-white/80 backdrop-blur-sm rounded px-2 py-1 hidden">
+              </div>
+          </div>
+      </div>
+
+      <script>
+      (function () {
+          const card = document.getElementById('proc-trend-card');
+          if (!card) return;
+          const svg  = document.getElementById('proc-trend-svg');
+          const tabs = document.getElementById('proc-trend-tabs');
+          const readout = document.getElementById('proc-trend-readout');
+          let trend;
+          try { trend = JSON.parse(card.dataset.trend); } catch (e) { return; }
+          if (!trend || !trend.series) return;
+
+          const W = 800, H = 220;
+          const PAD_L = 56, PAD_R = 16, PAD_T = 16, PAD_B = 32;
+          const PLOT_W = W - PAD_L - PAD_R;
+          const PLOT_H = H - PAD_T - PAD_B;
+
+          const formatValue = (v, fmt, unit) => {
+              if (typeof v !== 'number' || !isFinite(v)) return '—';
+              if (fmt === 'pct')   return v.toFixed(1) + '%';
+              if (fmt === 'money') {
+                  if (Math.abs(v) >= 1e9) return (v / 1e9).toFixed(2) + 'B ' + (unit||'');
+                  if (Math.abs(v) >= 1e6) return (v / 1e6).toFixed(2) + 'M ' + (unit||'');
+                  if (Math.abs(v) >= 1e3) return (v / 1e3).toFixed(1) + 'K ' + (unit||'');
+                  return Math.round(v).toLocaleString() + ' ' + (unit||'');
+              }
+              return Math.round(v).toLocaleString();
+          };
+
+          const draw = (key) => {
+              // Some buckets may have null (no data) — for plotting we treat
+              // null as 0 for layout, but skip the dot so the gap is visible.
+              const seriesRaw = trend.series[key] || [];
+              const series    = seriesRaw.map(v => (v === null || v === undefined) ? 0 : v);
+              const buckets   = trend.buckets || [];
+              const meta      = (trend.meta || {})[key] || {label: key, format: 'count', unit: ''};
+              if (!series.length) return;
+
+              let maxV = Math.max(...series, 0);
+              let minV = Math.min(...series, 0);
+              if (maxV === minV) maxV = minV + 1;
+              const range = maxV - minV;
+              const yMax = maxV + range * 0.1;
+              const yMin = minV < 0 ? minV - range * 0.1 : 0;
+
+              const xFor = i => PAD_L + (series.length === 1 ? PLOT_W / 2 : (i / (series.length - 1)) * PLOT_W);
+              const yFor = v => PAD_T + PLOT_H - ((v - yMin) / (yMax - yMin)) * PLOT_H;
+
+              const linePath = series.map((v, i) => `${i === 0 ? 'M' : 'L'} ${xFor(i).toFixed(1)} ${yFor(v).toFixed(1)}`).join(' ');
+              const areaPath = linePath + ` L ${xFor(series.length - 1).toFixed(1)} ${yFor(yMin).toFixed(1)} L ${xFor(0).toFixed(1)} ${yFor(yMin).toFixed(1)} Z`;
+
+              const gridLines = [];
+              for (let i = 0; i <= 4; i++) {
+                  const y = PAD_T + (PLOT_H * i / 4);
+                  const v = yMax - (yMax - yMin) * i / 4;
+                  gridLines.push(`<line x1="${PAD_L}" y1="${y}" x2="${W - PAD_R}" y2="${y}" stroke="#f1ede5" stroke-width="1"/>`);
+                  gridLines.push(`<text x="${PAD_L - 6}" y="${y + 3}" text-anchor="end" font-size="10" fill="#a09d95" font-family="ui-sans-serif, system-ui">${formatValue(v, meta.format, meta.unit).replace(' ' + (meta.unit||''), '')}</text>`);
+              }
+
+              const xLabels = buckets.map((b, i) => {
+                  const x = xFor(i);
+                  return `<text x="${x.toFixed(1)}" y="${H - 10}" text-anchor="middle" font-size="10" fill="#7c7466" font-family="ui-sans-serif, system-ui">${b.label}</text>`;
+              }).join('');
+
+              // Skip dots where original raw series was null — preserves
+              // the "no data" intent visually.
+              const dots = seriesRaw.map((rawV, i) => {
+                  if (rawV === null || rawV === undefined) return '';
+                  const v = series[i];
+                  return `<circle cx="${xFor(i).toFixed(1)}" cy="${yFor(v).toFixed(1)}" r="3.5" fill="white" stroke="#0d6e6e" stroke-width="2" data-i="${i}" data-v="${v}" class="cursor-pointer"/>`;
+              }).join('');
+
+              svg.innerHTML = [
+                  `<defs><linearGradient id="proc-trend-grad" x1="0" x2="0" y1="0" y2="1">
+                      <stop offset="0%"   stop-color="#0d6e6e" stop-opacity="0.18"/>
+                      <stop offset="100%" stop-color="#0d6e6e" stop-opacity="0"/>
+                  </linearGradient></defs>`,
+                  gridLines.join(''),
+                  `<path d="${areaPath}" fill="url(#proc-trend-grad)"/>`,
+                  `<path d="${linePath}" fill="none" stroke="#0d6e6e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>`,
+                  dots,
+                  xLabels,
+              ].join('');
+
+              svg.querySelectorAll('circle').forEach(c => {
+                  c.addEventListener('mouseenter', () => {
+                      const i = parseInt(c.dataset.i, 10);
+                      const v = parseFloat(c.dataset.v);
+                      readout.textContent = (buckets[i] ? buckets[i].label : '') + ' · ' + formatValue(v, meta.format, meta.unit);
+                      readout.classList.remove('hidden');
+                  });
+                  c.addEventListener('mouseleave', () => readout.classList.add('hidden'));
+              });
+          };
+
+          tabs.addEventListener('click', (e) => {
+              const btn = e.target.closest('[data-trend-key]');
+              if (!btn) return;
+              tabs.querySelectorAll('[data-trend-key]').forEach(b => {
+                  b.className = 'px-3 py-1.5 rounded-md border transition bg-white text-[#5a6a70] border-[#e8e4de] hover:bg-[#faf8f5]';
+              });
+              btn.className = 'px-3 py-1.5 rounded-md border transition bg-brand-600 text-white border-brand-600 shadow-sm';
+              draw(btn.dataset.trendKey);
+          });
+
+          draw('{{ $defaultTrendKey }}');
+      })();
+      </script>
+    @endif
+
     {{-- ── KPI metadata ────────────────────────────────────────────────── --}}
     @php
         $proposedKpis = [
