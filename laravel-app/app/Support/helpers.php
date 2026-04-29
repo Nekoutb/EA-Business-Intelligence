@@ -139,9 +139,19 @@ if (!function_exists('ea_resolve_period')) {
             case 'yoy':
             case 'ytd':
             default:
-                $from = $today->modify('first day of January')->setTime(0, 0, 0);
-                $to   = $today->setTime(23, 59, 59);
-                return [$from, $to, 'Year-to-date ' . $today->format('Y'), 'ytd'];
+                // Year is selectable. For the current year the window
+                // closes at "today"; for past years it closes at Dec 31.
+                $todayYear = (int) $today->format('Y');
+                $y         = (int) ($period['year'] ?? $todayYear);
+                $from      = new \DateTimeImmutable(sprintf('%04d-01-01 00:00:00', $y));
+                if ($y >= $todayYear) {
+                    $to    = $today->setTime(23, 59, 59);
+                    $label = 'Year-to-date ' . $y;
+                } else {
+                    $to    = new \DateTimeImmutable(sprintf('%04d-12-31 23:59:59', $y));
+                    $label = 'Year ' . $y;
+                }
+                return [$from, $to, $label, 'ytd'];
         }
     }
 }

@@ -23,10 +23,16 @@ class ProcurementController extends Controller
     {
         $today  = new \DateTimeImmutable();
         $type   = strtolower((string) $request->query('period', 'ytd'));
-        if (!in_array($type, ['ytd', 'mtd'], true)) {
+        if (!in_array($type, ['ytd', 'mtd', 'month'], true)) {
             $type = 'ytd';
         }
-        $period = ['type' => $type];
+
+        // Year/month optional — only ytd/month consume year, only month
+        // consumes month. ea_resolve_period clamps to safe ranges.
+        $year  = (int) $request->query('year',  $today->format('Y'));
+        $month = (int) $request->query('month', $today->format('m'));
+        $period = ['type' => $type, 'year' => $year, 'month' => $month];
+
         [, , $periodLabel] = ea_resolve_period($today, $period);
 
         $procurement = null;
@@ -34,8 +40,11 @@ class ProcurementController extends Controller
 
         try {
             $client = OdooFactory::fromConfig();
+            // Cache key embeds year/month so different selections are
+            // memoised separately within a session.
+            $cacheKey = "procurement_{$type}_{$year}_{$month}";
             $procurement = ea_cached(
-                "procurement_{$type}",
+                $cacheKey,
                 fn () => (new ProcurementService($client))->analyze(null, $period)
             );
         } catch (\Throwable $e) {

@@ -14,7 +14,7 @@
 @endsection
 
 @section('content')
-    <x-period-filter :period="$period" :options="[['ytd','YTD'],['mtd','MTD']]" />
+    <x-period-filter :period="$period" :options="[['ytd','YTD'],['mtd','MTD'],['month','Month']]" />
 
     @if ($error)
         <div class="bg-coral-50 border border-coral-200 text-coral-800 rounded-xl p-4 text-sm mb-6">
@@ -60,7 +60,7 @@
               <div>
                   <h3 class="text-sm font-semibold text-[#1e3d44]">Trend</h3>
                   <div class="text-[11px] text-[#7c7466] mt-0.5">
-                      Monthly buckets · {{ count($trend['buckets']) }} points · click a tab to switch series
+                      {{ ($trend['granularity'] ?? 'month') === 'week' ? 'Weekly' : 'Monthly' }} buckets · {{ count($trend['buckets']) }} points · click a tab to switch series
                   </div>
               </div>
               <div class="flex flex-wrap gap-1 text-[11px]" id="proc-trend-tabs">

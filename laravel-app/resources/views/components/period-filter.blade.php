@@ -34,12 +34,20 @@
         @endforeach
     </div>
 
-    @if ($hasMonthOption && $type === 'month')
+    {{-- Year selector — shown on Month (always) and YTD (when the page
+         supports the multi-period set, i.e. exposes the Month option).
+         Hidden on MTD because MTD is always "current month, current year"
+         by definition. --}}
+    @if ($hasMonthOption && ($type === 'ytd' || $type === 'month'))
       <select name="year" onchange="this.form.submit()" class="text-xs bg-white border border-slate-200 rounded px-2 py-1.5">
         @for ($y = (int) date('Y'); $y >= (int) date('Y') - 3; $y--)
           <option value="{{ $y }}" {{ $year == $y ? 'selected' : '' }}>{{ $y }}</option>
         @endfor
       </select>
+    @endif
+
+    {{-- Month selector — only on Month type. --}}
+    @if ($hasMonthOption && $type === 'month')
       <select name="month" onchange="this.form.submit()" class="text-xs bg-white border border-slate-200 rounded px-2 py-1.5">
         @foreach (range(1,12) as $m)
           <option value="{{ $m }}" {{ $month == $m ? 'selected' : '' }}>{{ date('M', mktime(0,0,0,$m,1)) }}</option>
