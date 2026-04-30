@@ -659,10 +659,28 @@ final class OperationsService
             // `size` codes in aw_cargo_invoice.product (the invoice billing
             // legend). See the comment on PRICE_HT_WOOD_PER_TRUCK for the
             // mapping and why the residual bucket is non-billable.
+            //
+            // IMPORTANT — vehicle activity is NOT tracked via the `scanned`
+            // flag the way containers are (that flag stays false on
+            // aw_vehicule.vehicule even after physical processing). The
+            // operational reality on this customer's workflow is captured
+            // in the `state` field instead, with values:
+            //
+            //   draft     "En attente"  — not yet processed
+            //   invoiced  "Facturée"    — billed
+            //   paid      "Payée"       — billed and paid
+            //   notify    notified      — post-billing dispatch
+            //   close     closed        — fully reconciled
+            //   cancel    cancelled     — exclude
+            //
+            // We anchor on create_date (the import timestamp from the
+            // Manual EDI feed), which is the closest stable proxy for
+            // "when this vehicle's scan event occurred". scanned_date is
+            // empty on the vehicule model so it can't be used.
             $vehBase = [
-                ['scanned', '=', true],
-                ['scanned_date', '>=', $from->format('Y-m-d 00:00:00')],
-                ['scanned_date', '<=', $to->format('Y-m-d 23:59:59')],
+                ['state', 'in', ['invoiced', 'paid', 'notify', 'close']],
+                ['create_date', '>=', $from->format('Y-m-d 00:00:00')],
+                ['create_date', '<=', $to->format('Y-m-d 23:59:59')],
                 ['active', '=', true],
             ];
             $vehCount = function (array $extra) use ($vehBase) {
