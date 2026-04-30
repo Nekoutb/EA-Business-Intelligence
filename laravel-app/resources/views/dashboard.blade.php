@@ -133,6 +133,21 @@
                 ? ((float) $prev['total'] / $workingDaysSoFar) * $fullPeriodWorkingDays
                 : null;
 
+            // Plan figure projected to the same horizon as the run-rate.
+            // $planMetrics['total'] is the period-to-date plan (matches
+            // what the Revenue KPI compares against), so we scale it the
+            // same way we scaled $cur['total']: divide by working_days
+            // elapsed, multiply by the full-period working_days. The
+            // resulting $runRatePlan answers "where would the plan have
+            // us land at full-period close?" and the variance against
+            // $runRate answers "if pace continues, will we beat plan?".
+            // For a perfectly linear plan this matches the % variance
+            // shown on Revenue YTD/MTD; for a seasonal plan they diverge,
+            // which is the useful signal.
+            $runRatePlan = is_numeric($planMetrics['total'] ?? null)
+                ? ((float) $planMetrics['total'] / $workingDaysSoFar) * $fullPeriodWorkingDays
+                : null;
+
             // Period-aware copy.
             $revenueTitle = $isMtd ? 'Revenue MTD' : 'Revenue YTD';
             $runRateTitle = $isMtd ? 'Monthly Run-Rate' : 'Annualised Run-Rate';
@@ -238,6 +253,7 @@
                        :value="ea_money_short($runRate, $ccy)"
                        :sub="$runRateSub"
                        :vsPy="$variance($runRate, $runRatePy)"
+                       :vsPlan="$variance($runRate, $runRatePlan)"
                        color="brand"
                        icon="M3 17l6-6 4 4 8-8M14 7h7v7"/>
                 @endif
