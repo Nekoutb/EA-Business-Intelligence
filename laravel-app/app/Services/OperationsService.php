@@ -660,28 +660,33 @@ final class OperationsService
             // legend). See the comment on PRICE_HT_WOOD_PER_TRUCK for the
             // mapping and why the residual bucket is non-billable.
             //
-            // IMPORTANT — vehicle activity is NOT tracked via the `scanned`
-            // flag the way containers are (that flag stays false on
-            // aw_vehicule.vehicule even after physical processing). The
-            // operational reality on this customer's workflow is captured
-            // in the `state` field instead, with values:
+            // Vehicle scan filter — the same shape we use for containers
+            // and bois: `scanned=true` with `scanned_date` in the period.
             //
-            //   draft     "En attente"  — not yet processed
-            //   invoiced  "Facturée"    — billed
-            //   paid      "Payée"       — billed and paid
-            //   notify    notified      — post-billing dispatch
-            //   close     closed        — fully reconciled
-            //   cancel    cancelled     — exclude
+            // History note: PR #33 swapped this for a state-in-[invoiced,
+            // paid,...] filter on the assumption that the `scanned` flag
+            // wasn't being maintained on this customer's workflow. That
+            // was based on a misleading sample (the probe's "latest 1000
+            // by id desc" census skews to fresh imports still in draft).
+            // The Vehicle Scan Analyzer (PR #37) showed the truth: April
+            // 2026 alone had 3,167 vehicles with scanned=true — sitting
+            // mostly at state=draft because this workflow scans BEFORE
+            // billing, so the state-based filter was excluding every
+            // scanned-but-not-yet-billed record (the majority).
             //
-            // We anchor on create_date (the import timestamp from the
-            // Manual EDI feed), which is the closest stable proxy for
-            // "when this vehicle's scan event occurred". scanned_date is
-            // empty on the vehicule model so it can't be used.
+            // PR #33 also added `['active', '=', true]`, but
+            // aw_vehicule.vehicule has NO `active` field — Odoo throws
+            // "Invalid field" on every search, the try/catch in vehCount
+            // swallowed it, and the dashboard rows silently rendered 0.
+            // That's why /operations has been showing 0 / 0 / 0 since
+            // PR #33 shipped.
+            //
+            // Reverting to the original literal-scan filter. The
+            // categorisation by cylinders below is unchanged.
             $vehBase = [
-                ['state', 'in', ['invoiced', 'paid', 'notify', 'close']],
-                ['create_date', '>=', $from->format('Y-m-d 00:00:00')],
-                ['create_date', '<=', $to->format('Y-m-d 23:59:59')],
-                ['active', '=', true],
+                ['scanned', '=', true],
+                ['scanned_date', '>=', $from->format('Y-m-d 00:00:00')],
+                ['scanned_date', '<=', $to->format('Y-m-d 23:59:59')],
             ];
             $vehCount = function (array $extra) use ($vehBase) {
                 try {

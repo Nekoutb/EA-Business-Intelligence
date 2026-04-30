@@ -798,9 +798,15 @@ Route::prefix('admin')->group(function () {
                  *   - domain: the Odoo search domain (period filter applied)
                  *   - description: plain-English meaning
                  */
+                // NOTE — `aw_vehicule.vehicule` does NOT have an `active`
+                // field. Including ['active','=',true] in the domain
+                // causes Odoo to throw "Invalid field" and the strategy
+                // returns 0 with an error blob. (Confirmed via PR #37
+                // first run: B/C/D all errored out for this exact reason.)
+                // None of the domains below filter on `active`.
                 $strategies = [
                     'A_literal_scanned' => [
-                        'description' => 'Literal scan: scanned=true AND scanned_date in period. Matches the customer\'s "scanned" checkbox column directly. Expected to be near zero on this customer because the field is rarely maintained for vehicles.',
+                        'description' => 'Literal scan: scanned=true AND scanned_date in period. Matches the customer\'s "scanned" checkbox column directly. CONFIRMED to be the correct definition — April 2026 returned 3,167 records with proper cylinders breakdown.',
                         'domain'      => [
                             ['scanned', '=', true],
                             ['scanned_date', '>=', $fromS],
@@ -809,31 +815,28 @@ Route::prefix('admin')->group(function () {
                         'date_field'  => 'scanned_date',
                     ],
                     'B_state_writedate' => [
-                        'description' => 'Billing-state proxy anchored on write_date: state in [invoiced, paid, notify, close] AND write_date in period. "Vehicle whose billing lifecycle changed in the period."',
+                        'description' => 'Billing-state proxy anchored on write_date: state in [invoiced, paid, notify, close] AND write_date in period. Excludes scanned-but-still-draft records (the majority on this workflow), so will under-count vs strategy A.',
                         'domain'      => [
                             ['state', 'in', ['invoiced', 'paid', 'notify', 'close']],
                             ['write_date', '>=', $fromS],
                             ['write_date', '<=', $toS],
-                            ['active', '=', true],
                         ],
                         'date_field'  => 'write_date',
                     ],
                     'C_state_createdate' => [
-                        'description' => 'Billing-state proxy anchored on create_date (current PR #33 logic in OperationsService): state in [invoiced, paid, notify, close] AND create_date in period. "Vehicle imported AND past draft within the period." Restrictive.',
+                        'description' => 'Billing-state proxy anchored on create_date (the PR #33 production logic that broke /operations vehicle rows): state in [invoiced, paid, notify, close] AND create_date in period. Most restrictive — vehicle must be both imported AND past draft within the same window.',
                         'domain'      => [
                             ['state', 'in', ['invoiced', 'paid', 'notify', 'close']],
                             ['create_date', '>=', $fromS],
                             ['create_date', '<=', $toS],
-                            ['active', '=', true],
                         ],
                         'date_field'  => 'create_date',
                     ],
-                    'D_any_active_writedate' => [
-                        'description' => 'Broadest: any active vehicle record touched in the period (write_date in range). Useful as an upper bound — includes draft transitions too.',
+                    'D_any_writedate' => [
+                        'description' => 'Broadest: any vehicle record touched in the period (write_date in range, no state filter). Useful as an upper bound — includes draft-only records that have never been scanned.',
                         'domain'      => [
                             ['write_date', '>=', $fromS],
                             ['write_date', '<=', $toS],
-                            ['active', '=', true],
                         ],
                         'date_field'  => 'write_date',
                     ],
@@ -913,6 +916,64 @@ Route::prefix('admin')->group(function () {
                         array_keys($results)
                     ),
                 ];
+
+                /*
+                 * Cylinders / tariff cross-reference.
+                 *
+                 * The `cylinders` field on aw_vehicule.vehicule holds the
+                 * values used to bucket records into Voiture / Camion /
+                 * Bulldoze for billing. The tariff structure itself —
+                 * which says "this cylinder code maps to this XAF price"
+                 * — lives in aw_cargo_invoice.product (the customer's
+                 * Grille Tarifaire). This section dumps both so the
+                 * mapping is auditable in one place:
+                 *
+                 *   1. Cylinders distribution across vehicles SCANNED in
+                 *      the chosen period.
+                 *   2. aw_cargo_invoice.product full schema + every record
+                 *      so the customer can confirm exactly which code →
+                 *      label → price triplet defines each tariff class.
+                 */
+                $cyl = [
+                    'note' => 'Cylinders → tariff mapping. Section 1 is what we see on scanned vehicles in the period; section 2 is the customer\'s billing legend (Grille Tarifaire) from aw_cargo_invoice.product.',
+                ];
+                try {
+                    $rows = $client->callModel('aw_vehicule.vehicule', 'read_group', [
+                        'domain'  => [
+                            ['scanned', '=', true],
+                            ['scanned_date', '>=', $fromS],
+                            ['scanned_date', '<=', $toS],
+                        ],
+                        'fields'  => [],
+                        'groupby' => ['cylinders'],
+                        'lazy'    => false,
+                        'limit'   => 50,
+                    ]);
+                    $cyl['scanned_cylinders_distribution_in_period'] = array_map(fn ($r) => [
+                        'cylinders' => $r['cylinders'] ?? null,
+                        'count'     => (int) ($r['__count'] ?? 0),
+                    ], $rows);
+                } catch (\Throwable $e) {
+                    $cyl['scanned_cylinders_error'] = $e->getMessage();
+                }
+
+                try {
+                    $tariffFields = $client->callModel('aw_cargo_invoice.product', 'fields_get', [
+                        'attributes' => ['string', 'type', 'help', 'selection'],
+                    ]);
+                    $cyl['tariff_table_field_schema'] = $tariffFields;
+
+                    $cyl['tariff_table_records'] = $client->searchRead(
+                        'aw_cargo_invoice.product',
+                        [],
+                        array_slice(array_keys($tariffFields), 0, 60),
+                        ['limit' => 100, 'order' => 'id asc']
+                    );
+                } catch (\Throwable $e) {
+                    $cyl['tariff_table_error'] = $e->getMessage();
+                }
+
+                $report['cylinders_tariff'] = $cyl;
             } catch (\Throwable $e) {
                 $report['error'] = $e->getMessage();
             } finally {
