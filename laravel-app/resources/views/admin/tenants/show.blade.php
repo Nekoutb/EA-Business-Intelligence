@@ -44,6 +44,19 @@
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65" stroke-linecap="round"/></svg>
                 Odoo probe
             </a>
+            {{-- Vehicle scan analyzer — runs four candidate filter
+                 strategies (literal scanned, state+writedate,
+                 state+createdate, any-active+writedate) for a chosen
+                 period and returns a side-by-side count comparison so
+                 we can see which definition matches the customer's
+                 expectation. Defaults to current month. --}}
+            <a href="/admin/tenants/{{ $tenant->id }}/vehicle-scan-analyzer?period=current_month"
+               target="_blank" rel="noopener"
+               class="text-xs font-medium text-slate-600 hover:text-slate-900 px-3 py-2 rounded-lg border border-slate-300 inline-flex items-center gap-1.5"
+               title="Compare four candidate filter strategies for vehicle scan counts (current month) — opens a JSON page in a new tab. Read-only diagnostic.">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="3" width="15" height="13" rx="1"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
+                Vehicle scan analyzer
+            </a>
             <a href="/admin/tenants/{{ $tenant->id }}/settings"
                class="text-xs font-medium text-indigo-600 hover:text-indigo-800 px-3 py-2 rounded-lg border border-indigo-200">
                 Settings →

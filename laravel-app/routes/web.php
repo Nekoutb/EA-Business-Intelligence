@@ -691,6 +691,240 @@ Route::prefix('admin')->group(function () {
             );
         });
 
+        /*
+         * Vehicle Scan Analyzer
+         * ─────────────────────
+         * Lightweight diagnostic that runs FOUR candidate filter strategies
+         * against `aw_vehicule.vehicule` for a chosen period and returns
+         * per-category counts + sample rows side-by-side. Lets the operator
+         * (and the BI team) see at a glance which definition of "scanned
+         * vehicle" matches the number they expect from the Odoo UI.
+         *
+         * Query params:
+         *   period = current_month (default) | last_month | current_week |
+         *            last_week | ytd | custom
+         *   from   = YYYY-MM-DD  (used with period=custom)
+         *   to     = YYYY-MM-DD  (used with period=custom)
+         *
+         * Categories follow the billing legend:
+         *   cylinders ∈ {4, 6}  → Voiture (50,000 XAF HT)
+         *   cylinders == 8       → Camion (95,000 XAF HT)
+         *   cylinders == 12      → Bulldoze (105,000 XAF HT)
+         *   anything else        → Other / unclassified (not billed)
+         */
+        Route::get('/tenants/{tenant}/vehicle-scan-analyzer', function (\App\Models\Tenant $tenant, \Illuminate\Http\Request $request) {
+            @set_time_limit(60);
+
+            $ctx = app(\App\Tenancy\TenantContext::class);
+            $previous = $ctx->has() ? $ctx->tenant() : null;
+            $ctx->set($tenant);
+
+            // ── Resolve the period ─────────────────────────────────────
+            $period = (string) $request->query('period', 'current_month');
+            $today  = new \DateTimeImmutable('today');
+            switch ($period) {
+                case 'current_week':
+                    // ISO week — Monday to Sunday containing today
+                    $monday = $today->modify('monday this week');
+                    $from = $monday;
+                    $to   = $monday->modify('+6 days');
+                    $label = 'Week of ' . $monday->format('M j, Y');
+                    break;
+                case 'last_week':
+                    $monday = $today->modify('monday last week');
+                    $from = $monday;
+                    $to   = $monday->modify('+6 days');
+                    $label = 'Week of ' . $monday->format('M j, Y');
+                    break;
+                case 'last_month':
+                    $first = $today->modify('first day of last month');
+                    $from = $first;
+                    $to   = $first->modify('last day of this month');
+                    $label = $first->format('F Y');
+                    break;
+                case 'ytd':
+                    $from  = new \DateTimeImmutable($today->format('Y-01-01'));
+                    $to    = $today;
+                    $label = 'YTD ' . $today->format('Y');
+                    break;
+                case 'custom':
+                    $from = new \DateTimeImmutable((string) $request->query('from', $today->format('Y-m-01')));
+                    $to   = new \DateTimeImmutable((string) $request->query('to',   $today->format('Y-m-d')));
+                    $label = $from->format('Y-m-d') . ' to ' . $to->format('Y-m-d');
+                    break;
+                case 'current_month':
+                default:
+                    $first = $today->modify('first day of this month');
+                    $from = $first;
+                    $to   = $first->modify('last day of this month');
+                    $label = $first->format('F Y');
+                    break;
+            }
+
+            $fromS = $from->format('Y-m-d 00:00:00');
+            $toS   = $to->format('Y-m-d 23:59:59');
+
+            // ── Categorisation helper ──────────────────────────────────
+            $categorise = function ($cyl): string {
+                if ($cyl === 4 || $cyl === 6 || $cyl === '4' || $cyl === '6') return 'voiture';
+                if ($cyl === 8 || $cyl === '8') return 'camion';
+                if ($cyl === 12 || $cyl === '12') return 'bulldoze';
+                return 'other';
+            };
+
+            $report = [
+                'tenant'    => $tenant->slug,
+                'probed_at' => now()->toIso8601String(),
+                'period'    => [
+                    'mode'  => $period,
+                    'from'  => $from->format('Y-m-d'),
+                    'to'    => $to->format('Y-m-d'),
+                    'label' => $label,
+                ],
+                'billing_legend' => [
+                    'voiture'  => ['cylinders' => [4, 6], 'price_xaf_ht' => 50_000,  'label' => 'Voiture (4 / 6 cyl)'],
+                    'camion'   => ['cylinders' => [8],    'price_xaf_ht' => 95_000,  'label' => 'Camion / Truck (8 cyl)'],
+                    'bulldoze' => ['cylinders' => [12],   'price_xaf_ht' => 105_000, 'label' => 'Bulldoze / heavy (12 cyl)'],
+                    'other'    => ['cylinders' => 'anything else', 'price_xaf_ht' => null, 'label' => 'Non-vehicle / unclassified'],
+                ],
+            ];
+
+            try {
+                $client = \App\Odoo\OdooFactory::fromConfig();
+                $client->authenticate();
+
+                /*
+                 * Strategies to compare. Each defines:
+                 *   - domain: the Odoo search domain (period filter applied)
+                 *   - description: plain-English meaning
+                 */
+                $strategies = [
+                    'A_literal_scanned' => [
+                        'description' => 'Literal scan: scanned=true AND scanned_date in period. Matches the customer\'s "scanned" checkbox column directly. Expected to be near zero on this customer because the field is rarely maintained for vehicles.',
+                        'domain'      => [
+                            ['scanned', '=', true],
+                            ['scanned_date', '>=', $fromS],
+                            ['scanned_date', '<=', $toS],
+                        ],
+                        'date_field'  => 'scanned_date',
+                    ],
+                    'B_state_writedate' => [
+                        'description' => 'Billing-state proxy anchored on write_date: state in [invoiced, paid, notify, close] AND write_date in period. "Vehicle whose billing lifecycle changed in the period."',
+                        'domain'      => [
+                            ['state', 'in', ['invoiced', 'paid', 'notify', 'close']],
+                            ['write_date', '>=', $fromS],
+                            ['write_date', '<=', $toS],
+                            ['active', '=', true],
+                        ],
+                        'date_field'  => 'write_date',
+                    ],
+                    'C_state_createdate' => [
+                        'description' => 'Billing-state proxy anchored on create_date (current PR #33 logic in OperationsService): state in [invoiced, paid, notify, close] AND create_date in period. "Vehicle imported AND past draft within the period." Restrictive.',
+                        'domain'      => [
+                            ['state', 'in', ['invoiced', 'paid', 'notify', 'close']],
+                            ['create_date', '>=', $fromS],
+                            ['create_date', '<=', $toS],
+                            ['active', '=', true],
+                        ],
+                        'date_field'  => 'create_date',
+                    ],
+                    'D_any_active_writedate' => [
+                        'description' => 'Broadest: any active vehicle record touched in the period (write_date in range). Useful as an upper bound — includes draft transitions too.',
+                        'domain'      => [
+                            ['write_date', '>=', $fromS],
+                            ['write_date', '<=', $toS],
+                            ['active', '=', true],
+                        ],
+                        'date_field'  => 'write_date',
+                    ],
+                ];
+
+                $results = [];
+
+                foreach ($strategies as $key => $cfg) {
+                    $bucket = [
+                        'description' => $cfg['description'],
+                        'domain'      => $cfg['domain'],
+                        'by_category' => [
+                            'voiture' => 0, 'camion' => 0, 'bulldoze' => 0, 'other' => 0, 'total' => 0,
+                        ],
+                        'cylinders_distribution' => [],
+                        'samples'      => [],
+                        'error'        => null,
+                    ];
+
+                    try {
+                        // 1) Counts by cylinders via read_group.
+                        $rows = $client->callModel('aw_vehicule.vehicule', 'read_group', [
+                            'domain'  => $cfg['domain'],
+                            'fields'  => [],
+                            'groupby' => ['cylinders'],
+                            'lazy'    => false,
+                            'limit'   => 100,
+                        ]);
+                        foreach ($rows as $r) {
+                            $cyl = $r['cylinders'] ?? null;
+                            // Odoo returns false for null int fields; preserve that.
+                            $cylDisplay = ($cyl === false || $cyl === null) ? 'null' : (string) $cyl;
+                            $count = (int) ($r['__count'] ?? $r['cylinders_count'] ?? 0);
+                            $bucket['cylinders_distribution'][$cylDisplay] = $count;
+                            $cat = $categorise($cyl);
+                            $bucket['by_category'][$cat] += $count;
+                            $bucket['by_category']['total'] += $count;
+                        }
+
+                        // 2) Sample rows for eyeballing — top 8 by id desc.
+                        $bucket['samples'] = $client->searchRead(
+                            'aw_vehicule.vehicule',
+                            $cfg['domain'],
+                            ['id', 'name', 'cylinders', 'state', 'scanned', 'scanned_date',
+                             'create_date', 'write_date', 'cargo_id', 'manufacturer', 'model_code'],
+                            ['limit' => 8, 'order' => 'id desc']
+                        );
+                    } catch (\Throwable $e) {
+                        $bucket['error'] = $e->getMessage();
+                    }
+
+                    // Add billing-revenue projection from counts × price grid.
+                    $bucket['projected_revenue_xaf_ht'] = (
+                        $bucket['by_category']['voiture']  *  50_000
+                      + $bucket['by_category']['camion']   *  95_000
+                      + $bucket['by_category']['bulldoze'] * 105_000
+                    );
+
+                    $results[$key] = $bucket;
+                }
+
+                $report['strategies'] = $results;
+
+                // Headline comparison table — easier to scan than the full strategy blob.
+                $report['headline_comparison'] = [
+                    'header' => ['strategy', 'voiture', 'camion', 'bulldoze', 'other', 'total', 'rev_xaf_ht'],
+                    'rows'   => array_map(
+                        fn ($k) => [
+                            'strategy'    => $k,
+                            'voiture'     => $results[$k]['by_category']['voiture'],
+                            'camion'      => $results[$k]['by_category']['camion'],
+                            'bulldoze'    => $results[$k]['by_category']['bulldoze'],
+                            'other'       => $results[$k]['by_category']['other'],
+                            'total'       => $results[$k]['by_category']['total'],
+                            'rev_xaf_ht'  => $results[$k]['projected_revenue_xaf_ht'],
+                        ],
+                        array_keys($results)
+                    ),
+                ];
+            } catch (\Throwable $e) {
+                $report['error'] = $e->getMessage();
+            } finally {
+                if ($previous) $ctx->set($previous);
+            }
+
+            return response()->json(
+                $report, 200, [],
+                JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE
+            );
+        });
+
         // Platform-wide AI provider configuration (super-admin only).
         Route::get('/settings/ai',  [AdminAiSettingsController::class, 'show']);
         Route::post('/settings/ai', [AdminAiSettingsController::class, 'save']);
