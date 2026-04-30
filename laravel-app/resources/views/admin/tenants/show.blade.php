@@ -32,6 +32,18 @@
             </p>
         </div>
         <div class="flex items-center gap-2">
+            {{-- Odoo schema probe — diagnostic JSON of the tenant's Odoo
+                 schema. One-click access so the URL never has to be
+                 hand-constructed (curly-brace placeholders trip people
+                 up). Opens in a new tab so the JSON page doesn't replace
+                 the tenant detail view. --}}
+            <a href="/admin/tenants/{{ $tenant->id }}/odoo-probe"
+               target="_blank" rel="noopener"
+               class="text-xs font-medium text-slate-600 hover:text-slate-900 px-3 py-2 rounded-lg border border-slate-300 inline-flex items-center gap-1.5"
+               title="Run the Odoo schema probe — opens a JSON page in a new tab. Read-only diagnostic.">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65" stroke-linecap="round"/></svg>
+                Odoo probe
+            </a>
             <a href="/admin/tenants/{{ $tenant->id }}/settings"
                class="text-xs font-medium text-indigo-600 hover:text-indigo-800 px-3 py-2 rounded-lg border border-indigo-200">
                 Settings →
