@@ -916,6 +916,64 @@ Route::prefix('admin')->group(function () {
                         array_keys($results)
                     ),
                 ];
+
+                /*
+                 * Cylinders / tariff cross-reference.
+                 *
+                 * The `cylinders` field on aw_vehicule.vehicule holds the
+                 * values used to bucket records into Voiture / Camion /
+                 * Bulldoze for billing. The tariff structure itself —
+                 * which says "this cylinder code maps to this XAF price"
+                 * — lives in aw_cargo_invoice.product (the customer's
+                 * Grille Tarifaire). This section dumps both so the
+                 * mapping is auditable in one place:
+                 *
+                 *   1. Cylinders distribution across vehicles SCANNED in
+                 *      the chosen period.
+                 *   2. aw_cargo_invoice.product full schema + every record
+                 *      so the customer can confirm exactly which code →
+                 *      label → price triplet defines each tariff class.
+                 */
+                $cyl = [
+                    'note' => 'Cylinders → tariff mapping. Section 1 is what we see on scanned vehicles in the period; section 2 is the customer\'s billing legend (Grille Tarifaire) from aw_cargo_invoice.product.',
+                ];
+                try {
+                    $rows = $client->callModel('aw_vehicule.vehicule', 'read_group', [
+                        'domain'  => [
+                            ['scanned', '=', true],
+                            ['scanned_date', '>=', $fromS],
+                            ['scanned_date', '<=', $toS],
+                        ],
+                        'fields'  => [],
+                        'groupby' => ['cylinders'],
+                        'lazy'    => false,
+                        'limit'   => 50,
+                    ]);
+                    $cyl['scanned_cylinders_distribution_in_period'] = array_map(fn ($r) => [
+                        'cylinders' => $r['cylinders'] ?? null,
+                        'count'     => (int) ($r['__count'] ?? 0),
+                    ], $rows);
+                } catch (\Throwable $e) {
+                    $cyl['scanned_cylinders_error'] = $e->getMessage();
+                }
+
+                try {
+                    $tariffFields = $client->callModel('aw_cargo_invoice.product', 'fields_get', [
+                        'attributes' => ['string', 'type', 'help', 'selection'],
+                    ]);
+                    $cyl['tariff_table_field_schema'] = $tariffFields;
+
+                    $cyl['tariff_table_records'] = $client->searchRead(
+                        'aw_cargo_invoice.product',
+                        [],
+                        array_slice(array_keys($tariffFields), 0, 60),
+                        ['limit' => 100, 'order' => 'id asc']
+                    );
+                } catch (\Throwable $e) {
+                    $cyl['tariff_table_error'] = $e->getMessage();
+                }
+
+                $report['cylinders_tariff'] = $cyl;
             } catch (\Throwable $e) {
                 $report['error'] = $e->getMessage();
             } finally {
