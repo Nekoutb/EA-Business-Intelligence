@@ -84,9 +84,13 @@
             $tnt   = tenant();
             $kpiOn = fn (string $key) => $tnt ? $tnt->dashboardKpiEnabled($key) : true;
 
-            // Annualised run-rate — working-day basis (consistent with RpD).
+            // Run-rate — working-day basis (consistent with RpD).
             //
-            //   run_rate = (YTD revenue ÷ working_days_YTD) × annual_working_days
+            // Period-aware:
+            //   YTD: run_rate = (YTD revenue ÷ working_days_YTD) × annual_working_days
+            //                 → "Annualised Run-Rate" headline
+            //   MTD: run_rate = (MTD revenue ÷ working_days_so_far_in_month) × working_days_in_month
+            //                 → "Monthly Run-Rate" headline
             //
             // We use working days, not calendar days, because revenue is
             // generally posted only on trading days. CRITICAL: the basis
@@ -95,30 +99,44 @@
             // Mon-Sat (6-day week), excluding only Sundays — the company
             // trades on Saturdays. Mixing a 5-day denominator with a 6-day
             // numerator would inflate the projection by ~17%.
-            //
-            // Annual working days: count Mon-Sat in the current calendar
-            // year (no public-holiday adjustment — if the firm wants a
-            // holiday calendar later, it's a one-line subtraction).
-            // For 2026, this resolves to ~313.
-            $workingDaysYtd = max(1, (int) ($cur['working_days'] ?? 1));
+            $isMtd       = ($period['type'] ?? 'ytd') === 'mtd';
+            $workingDaysSoFar = max(1, (int) ($cur['working_days'] ?? 1));
 
-            $year = (int) date('Y');
-            $annualWorkingDays = 0;
-            for ($d = new \DateTimeImmutable("$year-01-01"); (int) $d->format('Y') === $year; $d = $d->modify('+1 day')) {
-                if ((int) $d->format('N') < 7) {  // Mon-Sat (6-day week — company trades Saturdays)
-                    $annualWorkingDays++;
+            // Full-period working days — annual when YTD, calendar-month when MTD.
+            $today  = new \DateTimeImmutable();
+            $year   = (int) $today->format('Y');
+            $fullPeriodWorkingDays = 0;
+            if ($isMtd) {
+                // Mon-Sat days in the current calendar month.
+                $monthStart = $today->modify('first day of this month');
+                $nextMonth  = $monthStart->modify('first day of next month');
+                for ($d = $monthStart; $d < $nextMonth; $d = $d->modify('+1 day')) {
+                    if ((int) $d->format('N') < 7) $fullPeriodWorkingDays++;
+                }
+            } else {
+                // Mon-Sat days in the current calendar year (no public-
+                // holiday adjustment — a one-line subtraction later if
+                // the firm wants a holiday calendar). For 2026 this is ~313.
+                for ($d = new \DateTimeImmutable("$year-01-01"); (int) $d->format('Y') === $year; $d = $d->modify('+1 day')) {
+                    if ((int) $d->format('N') < 7) $fullPeriodWorkingDays++;
                 }
             }
+            $fullPeriodWorkingDays = max(1, $fullPeriodWorkingDays);
 
-            $runRate = ((float) ($cur['total'] ?? 0) / $workingDaysYtd) * $annualWorkingDays;
+            $runRate = ((float) ($cur['total'] ?? 0) / $workingDaysSoFar) * $fullPeriodWorkingDays;
 
-            // Prior-year same-pace projection on the same working-day basis.
-            // Uses the SAME working_days_YTD denominator on the assumption
-            // that PY same-period had a similar working-day count (true to
-            // within ±1 day for most calendars).
+            // Prior-period same-pace projection on the same basis. Uses
+            // the SAME working-days denominator on the assumption that
+            // the PY same-period had a similar working-day count (true
+            // to within ±1 day for most calendars).
             $runRatePy = ($prev['total'] ?? null) !== null
-                ? ((float) $prev['total'] / $workingDaysYtd) * $annualWorkingDays
+                ? ((float) $prev['total'] / $workingDaysSoFar) * $fullPeriodWorkingDays
                 : null;
+
+            // Period-aware copy.
+            $revenueTitle = $isMtd ? 'Revenue MTD' : 'Revenue YTD';
+            $runRateTitle = $isMtd ? 'Monthly Run-Rate' : 'Annualised Run-Rate';
+            $runRateSub   = 'Working-day pace · ' . $workingDaysSoFar . ' / ' . $fullPeriodWorkingDays . ' WD';
         @endphp
 
         {{-- ── Section: Revenue & Profitability KPIs ─────────────────────── --}}
@@ -129,7 +147,7 @@
             </div>
             <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3">
                 @if ($kpiOn('revenue_ytd'))
-                <x-kpi title="Revenue YTD"
+                <x-kpi :title="$revenueTitle"
                        :value="ea_money_short((float)($cur['total'] ?? 0), $ccy)"
                        :delta="$yoy"
                        :vsPy="$variance($cur['total'] ?? null, $prev['total'] ?? null)"
@@ -216,9 +234,9 @@
                 @endif
 
                 @if ($kpiOn('run_rate'))
-                <x-kpi title="Annualised Run-Rate"
+                <x-kpi :title="$runRateTitle"
                        :value="ea_money_short($runRate, $ccy)"
-                       :sub="'Working-day pace · ' . $workingDaysYtd . ' / ' . $annualWorkingDays . ' WD'"
+                       :sub="$runRateSub"
                        :vsPy="$variance($runRate, $runRatePy)"
                        color="brand"
                        icon="M3 17l6-6 4 4 8-8M14 7h7v7"/>
