@@ -974,6 +974,92 @@ Route::prefix('admin')->group(function () {
                 }
 
                 $report['cylinders_tariff'] = $cyl;
+
+                /*
+                 * Verified-cylinder samples — one bucket per correctly
+                 * captured value (4, 6, 8, 12). For each, pull 5 recent
+                 * scanned records in the chosen period and dump every
+                 * scalar field on the record (excluding binary blobs and
+                 * one-to-many relations to keep the payload reasonable).
+                 *
+                 * Purpose: let the operator see records exactly as they
+                 * appear in Odoo for vehicles where the cylinders field
+                 * IS populated correctly. Useful for:
+                 *   - Confirming the categorisation is right (cyl=4 →
+                 *     Voiture really is a passenger car, etc.)
+                 *   - Comparing to the cylinders=0 records to identify
+                 *     what input step is missing on the unclassified ones
+                 */
+                $verified = [
+                    'note' => 'Sample scanned records grouped by correctly-captured cylinders value (4, 6, 8, 12). All scalar fields included; binary fields and o2m relations skipped.',
+                ];
+                try {
+                    // Build the field list ONCE — every scalar/relation
+                    // type except binary (pdf_img etc.) and one2many.
+                    $fieldSchema = $client->callModel('aw_vehicule.vehicule', 'fields_get', [
+                        'attributes' => ['type'],
+                    ]);
+                    $skipTypes = ['binary', 'one2many', 'many2many'];
+                    $readableFields = [];
+                    foreach ($fieldSchema as $fname => $fmeta) {
+                        if (in_array($fmeta['type'] ?? '', $skipTypes, true)) continue;
+                        $readableFields[] = $fname;
+                    }
+                    $verified['readable_field_count'] = count($readableFields);
+
+                    foreach ([4, 6, 8, 12] as $cylValue) {
+                        $bucketKey = "cyl_{$cylValue}";
+                        try {
+                            $samples = $client->searchRead(
+                                'aw_vehicule.vehicule',
+                                [
+                                    ['scanned', '=', true],
+                                    ['scanned_date', '>=', $fromS],
+                                    ['scanned_date', '<=', $toS],
+                                    ['cylinders', '=', $cylValue],
+                                ],
+                                $readableFields,
+                                ['limit' => 5, 'order' => 'scanned_date desc']
+                            );
+                            // Strip any false / null fields from each
+                            // record so the JSON shows only what's
+                            // actually populated (cleaner reading).
+                            foreach ($samples as &$s) {
+                                $s = array_filter(
+                                    $s,
+                                    fn ($v) => $v !== false && $v !== null && $v !== ''
+                                );
+                            }
+                            unset($s);
+
+                            $category = match ($cylValue) {
+                                4, 6 => 'Voiture',
+                                8    => 'Camion',
+                                12   => 'Bulldoze',
+                                default => 'Other',
+                            };
+                            $tariff = match ($cylValue) {
+                                4, 6 => 50_000,
+                                8    => 95_000,
+                                12   => 105_000,
+                                default => 0,
+                            };
+
+                            $verified[$bucketKey] = [
+                                'category'         => $category,
+                                'tariff_xaf_ht'    => $tariff,
+                                'sample_count'     => count($samples),
+                                'samples'          => $samples,
+                            ];
+                        } catch (\Throwable $e) {
+                            $verified[$bucketKey] = ['error' => $e->getMessage()];
+                        }
+                    }
+                } catch (\Throwable $e) {
+                    $verified['error'] = $e->getMessage();
+                }
+
+                $report['verified_cylinder_samples'] = $verified;
             } catch (\Throwable $e) {
                 $report['error'] = $e->getMessage();
             } finally {
