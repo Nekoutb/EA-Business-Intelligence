@@ -28,19 +28,14 @@ use App\Odoo\OdooClient;
  *     'error'   => ?string,  // present when an Odoo call threw
  *   ]
  *
- * Period anchor (containers/cargo/stopovers): every KPI uses `create_date`
- * as the period filter because:
+ * Period anchor: every KPI uses `create_date` as the period filter
+ * because:
  *   - aw_cargo.stopover.eta is often null in the data (sample showed
  *     2 of 2 records with eta=false)
  *   - aw_cargo.cargo.eta same story
  *   - create_date is set by Odoo automatically and approximates "when
  *     this container/voyage was registered in the system" which is the
  *     closest proxy to "handled this period"
- *
- * Period anchor (vehicles, in scanRevenueBreakdown): `write_date` instead
- * of create_date, because the operational scan event is the state
- * transition from draft → invoiced/paid, not the import timestamp. See
- * the long comment in scanRevenueBreakdown() for the full rationale.
  *
  * If a future deploy wants ETA-based filtering once the data quality
  * improves, swap the field name in the `periodDomain()` calls below.
@@ -666,13 +661,9 @@ final class OperationsService
             // mapping and why the residual bucket is non-billable.
             //
             // IMPORTANT — vehicle activity is NOT tracked via the `scanned`
-            // flag the way containers are. Manual-EDI-probe v4 confirmed:
-            // out of the latest 1000 aw_vehicule.vehicule records, only 1
-            // had `scanned=true` and only 1 had `scanned_date` populated.
-            // (For comparison, aw_bois.bois maintains both fields properly,
-            // so this is workflow-specific to vehicles, not a global bug.)
-            //
-            // The operational reality on this customer's workflow is captured
+            // flag the way containers are (that flag stays false on
+            // aw_vehicule.vehicule even after physical processing). The
+            // operational reality on this customer's workflow is captured
             // in the `state` field instead, with values:
             //
             //   draft     "En attente"  — not yet processed
@@ -682,20 +673,14 @@ final class OperationsService
             //   close     closed        — fully reconciled
             //   cancel    cancelled     — exclude
             //
-            // Population check (full table): draft=14388, invoiced=1400,
-            // paid=7120 — so ~37% of vehicles have moved past draft and
-            // those state transitions ARE the de-facto scan/billing events.
-            //
-            // Period anchor: `write_date`, NOT create_date. write_date is
-            // updated by Odoo on every record modification, so the moment
-            // the state flips from draft → invoiced/paid is captured there.
-            // create_date would only catch vehicles imported in the period,
-            // missing those imported earlier and billed later (which is the
-            // vast majority — older imports get processed in waves).
+            // We anchor on create_date (the import timestamp from the
+            // Manual EDI feed), which is the closest stable proxy for
+            // "when this vehicle's scan event occurred". scanned_date is
+            // empty on the vehicule model so it can't be used.
             $vehBase = [
                 ['state', 'in', ['invoiced', 'paid', 'notify', 'close']],
-                ['write_date', '>=', $from->format('Y-m-d 00:00:00')],
-                ['write_date', '<=', $to->format('Y-m-d 23:59:59')],
+                ['create_date', '>=', $from->format('Y-m-d 00:00:00')],
+                ['create_date', '<=', $to->format('Y-m-d 23:59:59')],
                 ['active', '=', true],
             ];
             $vehCount = function (array $extra) use ($vehBase) {
