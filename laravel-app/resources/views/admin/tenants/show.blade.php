@@ -200,13 +200,13 @@
         <div class="mt-6 panel">
             <div class="px-5 pt-5 pb-3">
                 <div class="flex items-baseline justify-between gap-3">
-                    <h2 class="text-sm font-semibold text-slate-900">Dashboard KPIs</h2>
+                    <h2 class="text-sm font-semibold text-slate-900">KPI &amp; section toggles</h2>
                     <span class="text-[10px] uppercase tracking-widest text-slate-500 font-medium">
-                        Business Intelligence · Dashboard
+                        Business Intelligence · Dashboard &amp; Revenue
                     </span>
                 </div>
                 <p class="text-xs text-slate-500 mt-0.5">
-                    Toggle individual KPI cards shown on the tenant's Dashboard. Disabled cards are hidden from the tenant view but the underlying data calculation continues to run.
+                    Toggle individual KPI cards or table sections for this tenant. A single switch affects both the Dashboard and the Revenue Analysis page when the same KPI appears on both. Disabled items are hidden from the tenant view but the underlying data calculation continues to run.
                 </p>
             </div>
 

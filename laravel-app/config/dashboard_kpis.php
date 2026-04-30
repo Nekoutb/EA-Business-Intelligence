@@ -25,11 +25,15 @@ return [
     'sections' => [
         'revenue_profitability' => [
             'label'       => 'Revenue & Profitability',
-            'description' => 'Volume, frequency, and per-unit revenue / discount KPIs.',
+            'description' => 'Volume, frequency, and per-unit revenue / discount KPIs. These toggles affect both the Dashboard and the Revenue Analysis page — the same KPI shown on both pages obeys a single switch.',
         ],
         'margin_structure' => [
             'label'       => 'Margin Structure',
             'description' => 'Profitability layers from gross profit through net.',
+        ],
+        'revenue_tables' => [
+            'label'       => 'Revenue · Tables',
+            'description' => 'Optional product-level tables on the Revenue Analysis page. Hide for tenants where product breakdowns aren\'t relevant.',
         ],
     ],
 
@@ -126,6 +130,15 @@ return [
             'label'       => 'OpEx',
             'description' => 'Operating expenses (class 6 except direct costs and D&A).',
             'section'     => 'margin_structure',
+            'default'     => true,
+        ],
+
+        // ── Revenue · Tables ─────────────────────────────────────────────
+        [
+            'key'         => 'top_profitable_products',
+            'label'       => 'Top 5 Profitable Products',
+            'description' => 'Side-by-side tables showing the most and least profitable products by margin (sales price vs standard cost). Disable for tenants whose business model isn\'t product-driven (e.g. pure services).',
+            'section'     => 'revenue_tables',
             'default'     => true,
         ],
     ],
