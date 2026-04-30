@@ -433,6 +433,248 @@ Route::prefix('admin')->group(function () {
                 }
 
                 $report['deep_vehicle_probe'] = $deep;
+
+                /* ── Manual EDI probe (v4) ─────────────────────────────────
+                 * Vehicle scan counts on /operations are still 0 because the
+                 * `scanned` flag on aw_vehicule.vehicule is never set on
+                 * this customer's data. The webmaster says the scan info
+                 * lives under the "Manual EDI" menu. This section dumps:
+                 *
+                 *   1. Manual EDI menu tree + resolved models
+                 *   2. Full field schema for aw_edi.* / aw.edi.* models
+                 *   3. Sample records (with text bodies truncated)
+                 *   4. Datetime-field census on aw_vehicule.vehicule —
+                 *      for each datetime field, what % of the live
+                 *      population has a non-null value (so we can spot
+                 *      the "real" scan timestamp if there is one)
+                 *   5. ir.model.fields search for anything linking the EDI
+                 *      models back to aw_vehicule.vehicule
+                 * ─────────────────────────────────────────────────────── */
+                $edi = [];
+
+                // 1. Manual EDI menu walk
+                try {
+                    $ediRoots = $client->searchRead('ir.ui.menu',
+                        [
+                            '|','|',
+                            ['name', 'ilike', 'Manual EDI'],
+                            ['name', 'ilike', 'EDI Manuel'],
+                            ['name', 'ilike', 'Manual'],
+                        ],
+                        ['id', 'name', 'parent_id', 'sequence', 'action'],
+                        ['limit' => 30, 'order' => 'sequence']
+                    );
+                    foreach ($ediRoots as &$root) {
+                        $children = $client->searchRead('ir.ui.menu',
+                            [['parent_id', '=', $root['id']]],
+                            ['id', 'name', 'sequence', 'action'],
+                            ['limit' => 50, 'order' => 'sequence']
+                        );
+                        foreach ($children as &$ch) {
+                            $grand = $client->searchRead('ir.ui.menu',
+                                [['parent_id', '=', $ch['id']]],
+                                ['id', 'name', 'sequence', 'action'],
+                                ['limit' => 50, 'order' => 'sequence']
+                            );
+                            $ch['children'] = $grand;
+                        }
+                        unset($ch);
+                        $root['children'] = $children;
+                    }
+                    unset($root);
+                    $edi['manual_edi_menu_candidates'] = $ediRoots;
+
+                    // Resolve the menu actions to their res_model
+                    $ediActionIds = [];
+                    $walk2 = function (array $items) use (&$walk2, &$ediActionIds) {
+                        foreach ($items as $it) {
+                            if (!empty($it['action']) && is_string($it['action']) && str_starts_with($it['action'], 'ir.actions.act_window,')) {
+                                $ediActionIds[] = (int) substr($it['action'], strlen('ir.actions.act_window,'));
+                            }
+                            if (!empty($it['children'])) $walk2($it['children']);
+                        }
+                    };
+                    $walk2($ediRoots);
+                    $ediActionIds = array_values(array_unique(array_filter($ediActionIds)));
+                    if ($ediActionIds) {
+                        $actions = $client->searchRead('ir.actions.act_window',
+                            [['id', 'in', $ediActionIds]],
+                            ['id', 'name', 'res_model'],
+                            ['limit' => 200]
+                        );
+                        $edi['manual_edi_resolved_models'] = collect($actions)
+                            ->mapWithKeys(fn ($a) => [(string) ($a['res_model'] ?? '?') => (string) ($a['name'] ?? '?')])
+                            ->all();
+                    }
+                } catch (\Throwable $e) {
+                    $edi['menu_walk_error'] = $e->getMessage();
+                }
+
+                // 2. Full field schema + samples for the candidate EDI models
+                $ediModels = [
+                    'aw_edi.message',
+                    'aw_edi.message.history',
+                    'aw_edi.message.type',
+                    'aw.edi.history',
+                    'aw.edi.processed.file',
+                ];
+                foreach ($ediModels as $model) {
+                    $bucket = [];
+                    try {
+                        $bucket['count'] = $client->searchCount($model, []);
+                    } catch (\Throwable $e) {
+                        $bucket['count_error'] = $e->getMessage();
+                    }
+                    try {
+                        $bucket['fields'] = $client->callModel($model, 'fields_get', [
+                            'attributes' => ['type', 'string', 'help', 'relation', 'required'],
+                        ]);
+                    } catch (\Throwable $e) {
+                        $bucket['fields_error'] = $e->getMessage();
+                    }
+                    try {
+                        // Avoid pulling huge binary/text bodies — pick a
+                        // small set of "metadata-like" field names if
+                        // available, else fall back to default columns.
+                        $candidateCols = ['id', 'name', 'create_date', 'write_date', 'state', 'message_type', 'partner_id', 'cargo_id', 'vehicule_id', 'vehicule_ids', 'reference', 'filename', 'direction', 'received_at', 'processed_at', 'count'];
+                        $available = array_keys($bucket['fields'] ?? []);
+                        $cols = array_values(array_intersect($candidateCols, $available));
+                        if (empty($cols)) $cols = ['id'];
+                        $rows = $client->searchRead($model, [], $cols, ['limit' => 8, 'order' => 'id desc']);
+                        $bucket['samples'] = $rows;
+                    } catch (\Throwable $e) {
+                        $bucket['samples_error'] = $e->getMessage();
+                    }
+                    $edi[$model] = $bucket;
+                }
+
+                // 3. ir.model.fields hunt — find anything that LINKS an EDI
+                //    model TO aw_vehicule.vehicule, OR sits ON
+                //    aw_vehicule.vehicule and references an EDI table.
+                try {
+                    $linkHits = $client->searchRead('ir.model.fields',
+                        [
+                            '|','|','|','|','|',
+                            ['model', 'ilike', 'aw_edi'],
+                            ['relation', '=', 'aw_vehicule.vehicule'],
+                            ['model', '=', 'aw_vehicule.vehicule'],
+                            ['name', 'ilike', 'edi_'],
+                            ['name', 'ilike', 'scan_'],
+                            ['field_description', 'ilike', 'scan'],
+                        ],
+                        ['model', 'name', 'field_description', 'ttype', 'relation', 'help'],
+                        ['limit' => 300, 'order' => 'model, name']
+                    );
+                    // Trim noise: keep only AW + relevant standard models.
+                    $linkHits = array_values(array_filter($linkHits, function ($h) {
+                        $m = (string) ($h['model'] ?? '');
+                        if ($m === '') return false;
+                        if (str_starts_with($m, 'mail.'))  return false;
+                        if (str_starts_with($m, 'ir.'))    return false;
+                        if (str_starts_with($m, 'res.'))   return false;
+                        if (str_starts_with($m, 'utm.'))   return false;
+                        if (str_starts_with($m, 'web_'))   return false;
+                        if (str_starts_with($m, 'mrp.'))   return false;
+                        if (str_starts_with($m, 'bus.'))   return false;
+                        return true;
+                    }));
+                    $edi['edi_vehicle_link_field_hits'] = $linkHits;
+                } catch (\Throwable $e) {
+                    $edi['edi_vehicle_link_field_hits_error'] = $e->getMessage();
+                }
+
+                // 4. Datetime-field census on aw_vehicule.vehicule.
+                //    For a sample of 1000 most-recent vehicles, count which
+                //    datetime fields are populated. This shows whether
+                //    there's a "real" scan timestamp we missed
+                //    (e.g. gate_check_date, inspection_date, qr_at, …).
+                try {
+                    $vehFields = $deep['aw_vehicule.vehicule_full_fields'] ?? null;
+                    if (!is_array($vehFields)) {
+                        $vehFields = $client->callModel('aw_vehicule.vehicule', 'fields_get', [
+                            'attributes' => ['type'],
+                        ]);
+                    }
+                    $datetimeFields = [];
+                    foreach ($vehFields as $fname => $fmeta) {
+                        if (($fmeta['type'] ?? null) === 'datetime') $datetimeFields[] = $fname;
+                    }
+                    $boolFields = [];
+                    foreach ($vehFields as $fname => $fmeta) {
+                        if (($fmeta['type'] ?? null) === 'boolean') $boolFields[] = $fname;
+                    }
+
+                    $sampleSize = 1000;
+                    $sample = $client->searchRead('aw_vehicule.vehicule',
+                        [],
+                        array_values(array_unique(array_merge($datetimeFields, $boolFields, ['id', 'state']))),
+                        ['limit' => $sampleSize, 'order' => 'id desc']
+                    );
+                    $populated = [];
+                    foreach ($datetimeFields as $f) {
+                        $cnt = 0;
+                        foreach ($sample as $r) {
+                            $v = $r[$f] ?? null;
+                            if ($v !== null && $v !== false && $v !== '') $cnt++;
+                        }
+                        $populated[$f] = ['type' => 'datetime', 'non_null' => $cnt, 'sample_size' => count($sample)];
+                    }
+                    foreach ($boolFields as $f) {
+                        $cnt = 0;
+                        foreach ($sample as $r) {
+                            if (!empty($r[$f])) $cnt++;
+                        }
+                        $populated[$f] = ['type' => 'boolean', 'non_null' => $cnt, 'sample_size' => count($sample)];
+                    }
+                    $edi['aw_vehicule_datetime_and_bool_census'] = [
+                        'sample_size' => count($sample),
+                        'fields'      => $populated,
+                        'note'        => 'Within the latest '.count($sample).' vehicles, this is how many records have a populated value per field. The "scan" column the customer sees in the UI is whichever bool/datetime is non-zero on most rows. Use this to spot it.',
+                    ];
+
+                    // Bonus: state distribution on the SAME sample, so we
+                    // can correlate "vehicles with state=paid/invoiced"
+                    // with "vehicles with this datetime non-null".
+                    $byState = [];
+                    foreach ($sample as $r) {
+                        $s = (string) ($r['state'] ?? '?');
+                        $byState[$s] = ($byState[$s] ?? 0) + 1;
+                    }
+                    $edi['aw_vehicule_sample_state_distribution'] = $byState;
+                } catch (\Throwable $e) {
+                    $edi['aw_vehicule_datetime_census_error'] = $e->getMessage();
+                }
+
+                // 5. Whatever the customer DOES see as "scanned" in the
+                //    Vehicles list view — let's grab the act_window's
+                //    domain filter and the tree-view definition. That'll
+                //    tell us which fields drive the visible columns.
+                try {
+                    $vehViews = $client->searchRead('ir.actions.act_window',
+                        [['res_model', '=', 'aw_vehicule.vehicule']],
+                        ['id', 'name', 'domain', 'context', 'view_mode'],
+                        ['limit' => 20]
+                    );
+                    $edi['aw_vehicule_act_windows'] = $vehViews;
+
+                    $treeViews = $client->searchRead('ir.ui.view',
+                        [['model', '=', 'aw_vehicule.vehicule'], ['type', '=', 'tree']],
+                        ['id', 'name', 'arch_db'],
+                        ['limit' => 5]
+                    );
+                    // Trim arch_db to first 4000 chars (it's XML)
+                    foreach ($treeViews as &$v) {
+                        if (isset($v['arch_db']) && is_string($v['arch_db']) && strlen($v['arch_db']) > 4000) {
+                            $v['arch_db'] = substr($v['arch_db'], 0, 4000) . "\n... (truncated)";
+                        }
+                    }
+                    unset($v);
+                    $edi['aw_vehicule_tree_views'] = $treeViews;
+                } catch (\Throwable $e) {
+                    $edi['aw_vehicule_views_error'] = $e->getMessage();
+                }
+
+                $report['manual_edi_probe'] = $edi;
             } catch (\Throwable $e) {
                 $report['error'] = $e->getMessage();
             } finally {
