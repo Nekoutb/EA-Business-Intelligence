@@ -798,9 +798,15 @@ Route::prefix('admin')->group(function () {
                  *   - domain: the Odoo search domain (period filter applied)
                  *   - description: plain-English meaning
                  */
+                // NOTE — `aw_vehicule.vehicule` does NOT have an `active`
+                // field. Including ['active','=',true] in the domain
+                // causes Odoo to throw "Invalid field" and the strategy
+                // returns 0 with an error blob. (Confirmed via PR #37
+                // first run: B/C/D all errored out for this exact reason.)
+                // None of the domains below filter on `active`.
                 $strategies = [
                     'A_literal_scanned' => [
-                        'description' => 'Literal scan: scanned=true AND scanned_date in period. Matches the customer\'s "scanned" checkbox column directly. Expected to be near zero on this customer because the field is rarely maintained for vehicles.',
+                        'description' => 'Literal scan: scanned=true AND scanned_date in period. Matches the customer\'s "scanned" checkbox column directly. CONFIRMED to be the correct definition — April 2026 returned 3,167 records with proper cylinders breakdown.',
                         'domain'      => [
                             ['scanned', '=', true],
                             ['scanned_date', '>=', $fromS],
@@ -809,31 +815,28 @@ Route::prefix('admin')->group(function () {
                         'date_field'  => 'scanned_date',
                     ],
                     'B_state_writedate' => [
-                        'description' => 'Billing-state proxy anchored on write_date: state in [invoiced, paid, notify, close] AND write_date in period. "Vehicle whose billing lifecycle changed in the period."',
+                        'description' => 'Billing-state proxy anchored on write_date: state in [invoiced, paid, notify, close] AND write_date in period. Excludes scanned-but-still-draft records (the majority on this workflow), so will under-count vs strategy A.',
                         'domain'      => [
                             ['state', 'in', ['invoiced', 'paid', 'notify', 'close']],
                             ['write_date', '>=', $fromS],
                             ['write_date', '<=', $toS],
-                            ['active', '=', true],
                         ],
                         'date_field'  => 'write_date',
                     ],
                     'C_state_createdate' => [
-                        'description' => 'Billing-state proxy anchored on create_date (current PR #33 logic in OperationsService): state in [invoiced, paid, notify, close] AND create_date in period. "Vehicle imported AND past draft within the period." Restrictive.',
+                        'description' => 'Billing-state proxy anchored on create_date (the PR #33 production logic that broke /operations vehicle rows): state in [invoiced, paid, notify, close] AND create_date in period. Most restrictive — vehicle must be both imported AND past draft within the same window.',
                         'domain'      => [
                             ['state', 'in', ['invoiced', 'paid', 'notify', 'close']],
                             ['create_date', '>=', $fromS],
                             ['create_date', '<=', $toS],
-                            ['active', '=', true],
                         ],
                         'date_field'  => 'create_date',
                     ],
-                    'D_any_active_writedate' => [
-                        'description' => 'Broadest: any active vehicle record touched in the period (write_date in range). Useful as an upper bound — includes draft transitions too.',
+                    'D_any_writedate' => [
+                        'description' => 'Broadest: any vehicle record touched in the period (write_date in range, no state filter). Useful as an upper bound — includes draft-only records that have never been scanned.',
                         'domain'      => [
                             ['write_date', '>=', $fromS],
                             ['write_date', '<=', $toS],
-                            ['active', '=', true],
                         ],
                         'date_field'  => 'write_date',
                     ],
