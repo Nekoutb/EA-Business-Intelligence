@@ -63,6 +63,12 @@
                 }
                 return (($current - $reference) / abs($reference)) * 100.0;
             };
+
+            // Per-tenant KPI on/off — same registry as the Dashboard
+            // (config/dashboard_kpis.php). Managed in /admin/tenants/{id}.
+            // Falls back to the registry's `default` value if no DB row exists.
+            $tnt   = tenant();
+            $kpiOn = fn (string $key) => $tnt ? $tnt->dashboardKpiEnabled($key) : true;
         @endphp
 
         {{-- KPI Strip --}}
@@ -72,12 +78,16 @@
                 <h2 class="text-xs font-semibold uppercase tracking-wider text-[#5a6a70]">Revenue KPIs</h2>
             </div>
             <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3">
+                @if ($kpiOn('revenue_ytd'))
                 <x-kpi title="Total Revenue"
                        :value="ea_money_short((float)($cur['total'] ?? 0), $ccy)"
                        :delta="$yoy"
                        :vsPy="$variance($cur['total'] ?? null, $prev['total'] ?? null)"
                        :vsPlan="$variance($cur['total'] ?? null, $planMetrics['total'])"
                        color="brand"/>
+                @endif
+
+                @if ($kpiOn('rpd'))
                 <div title="Revenue per day can be highlighted">
                     <x-kpi title="RpD"
                            :value="ea_money_short((float)($cur['rpd'] ?? 0), $ccy)"
@@ -86,6 +96,9 @@
                            :vsPlan="$variance($cur['rpd'] ?? null, $planMetrics['rpd'])"
                            color="sage"/>
                 </div>
+                @endif
+
+                @if ($kpiOn('rpo'))
                 <div title="Revenue per day can be highlighted">
                     <x-kpi title="RpO"
                            :value="ea_money_short((float)($cur['rpo'] ?? 0), $ccy)"
@@ -94,18 +107,27 @@
                            :vsPlan="$variance($cur['rpo'] ?? null, $planMetrics['rpo'])"
                            color="brand"/>
                 </div>
+                @endif
+
+                @if ($kpiOn('opd'))
                 <x-kpi title="OpD"
                        :value="number_format((float)($cur['opd'] ?? 0),1)"
                        :sub="'Outfits / working day'"
                        :vsPy="$variance($cur['opd'] ?? null, $prev['opd'] ?? null)"
                        :vsPlan="$variance($cur['opd'] ?? null, $planMetrics['opd'])"
                        color="slate"/>
+                @endif
+
+                @if ($kpiOn('rpc'))
                 <x-kpi title="RpC"
                        :value="ea_money_short((float)($cur['per_customer'] ?? 0), $ccy)"
                        :sub="number_format((int)($cur['customers'] ?? 0)).' customers'"
                        :vsPy="$variance($cur['per_customer'] ?? null, $prev['per_customer'] ?? null)"
                        :vsPlan="$variance($cur['per_customer'] ?? null, $planMetrics['rpc'])"
                        color="coral"/>
+                @endif
+
+                @if ($kpiOn('dpot'))
                 <x-kpi title="DpOT"
                        :value="ea_money_short((float)($cur['dp_ot'] ?? 0), $ccy)"
                        :sub="'Discount per outfit'"
@@ -113,6 +135,9 @@
                        :vsPlan="$variance($cur['dp_ot'] ?? null, $planMetrics['dp_ot'])"
                        prefer="down"
                        color="warm"/>
+                @endif
+
+                @if ($kpiOn('dpc'))
                 <x-kpi title="DpC"
                        :value="ea_money_short((float)($cur['dp_c'] ?? 0), $ccy)"
                        :sub="'Discount per customer'"
@@ -120,6 +145,9 @@
                        :vsPlan="$variance($cur['dp_c'] ?? null, $planMetrics['dp_c'])"
                        prefer="down"
                        color="warm"/>
+                @endif
+
+                @if ($kpiOn('cpo'))
                 <x-kpi title="CpO"
                        :value="ea_money_short((float)($cur['cpo'] ?? 0), $ccy)"
                        :sub="'603 + 7019 basis'"
@@ -127,6 +155,7 @@
                        :vsPlan="$variance($cur['cpo'] ?? null, $planMetrics['cpo'])"
                        prefer="down"
                        color="sage"/>
+                @endif
             </div>
         </div>
 
@@ -192,7 +221,7 @@
                 };
             @endphp
 
-            @if (!empty($mostProfitable) || !empty($leastProfitable))
+            @if ($kpiOn('top_profitable_products') && (!empty($mostProfitable) || !empty($leastProfitable)))
             <div class="grid lg:grid-cols-2 gap-4">
                 {{-- Most Profitable --}}
                 @if (!empty($mostProfitable))
