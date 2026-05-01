@@ -49,10 +49,74 @@
     @else
 
         @php
-            $tiao = $data['tiao']        ?? [];
-            $tax  = $data['income_tax']  ?? [];
-            $src  = $data['data_source'] ?? [];
+            $tiao  = $data['tiao']              ?? [];
+            $tax   = $data['income_tax']        ?? [];
+            $src   = $data['data_source']       ?? [];
+            $fxXe  = $data['fx_xe']             ?? [];
+            $comp  = $data['trade_composition'] ?? [];
+            $tps   = $data['top_partners']      ?? [];
         @endphp
+
+        {{-- ── FX explainer + live USD/XAF card ───────────────────────────
+             Educates the operator on how XAF/USD movement transmits to
+             trade volumes, and shows the current spot rate from xe.com. --}}
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-6">
+            <div class="md:col-span-2 bg-white border border-[#e8e4de] rounded-xl p-5">
+                <div class="flex items-center gap-2 mb-2">
+                    <div class="w-1 h-4 rounded bg-warm-500"></div>
+                    <h2 class="text-xs font-semibold uppercase tracking-wider text-[#5a6a70]">XAF / USD — How exchange-rate moves transmit to trade volume</h2>
+                </div>
+                <div class="text-[12px] text-[#5a6a70] leading-relaxed space-y-2">
+                    <div>
+                        <strong class="text-sage-700">XAF appreciates vs USD</strong> → 1 USD buys fewer XAF.
+                        Foreign goods become <strong>cheaper</strong> in local currency, so <strong>imports rise</strong>.
+                        But exports priced in USD convert into fewer XAF, so <strong>exporters lose margin</strong> and outbound trade can soften.
+                    </div>
+                    <div>
+                        <strong class="text-coral-700">XAF depreciates vs USD</strong> → 1 USD buys more XAF.
+                        Imports get <strong>more expensive</strong>; volumes typically fall.
+                        Exports become <strong>more competitive</strong> globally, exporters earn more XAF per USD shipped, so <strong>outbound trade benefits</strong>.
+                    </div>
+                    <div class="pt-2 border-t border-[#f1ede5]">
+                        <strong class="text-[#1e3d44]">For a port scanning operation</strong>, both directions of trade pass through scans, so what matters most is <strong>total trade volume</strong>, not the direction of the imbalance. Sustained currency volatility usually depresses overall trade, so <strong>stability is more favourable to scan revenue than any particular direction of the rate</strong>.
+                    </div>
+                    <div class="pt-2 border-t border-[#f1ede5] text-[#7c7466]">
+                        <strong class="text-[#1e3d44]">Note on XAF specifically:</strong> XAF is hard-pegged to EUR at <code class="text-[10px] bg-[#faf8f5] border border-[#ece7df] rounded px-1 py-0.5">655.957 XAF / EUR</code> since 1999, so XAF/USD movement is mechanically EUR/USD movement with a fixed multiplier. The effective driver is ECB / Fed monetary policy divergence, not local Cameroonian conditions.
+                    </div>
+                </div>
+            </div>
+
+            {{-- Live FX card --}}
+            <div class="bg-white border border-[#e8e4de] rounded-xl p-5">
+                <div class="flex items-center gap-2 mb-1">
+                    <div class="w-1 h-4 rounded bg-sage-500"></div>
+                    <h2 class="text-xs font-semibold uppercase tracking-wider text-[#5a6a70]">USD / XAF Live</h2>
+                    @php
+                        $fxLive = is_string($fxXe['source'] ?? '') && str_contains($fxXe['source'], 'xe.com');
+                    @endphp
+                    <span class="text-[9.5px] uppercase tracking-wider rounded px-1.5 py-0.5 border
+                        {{ $fxLive ? 'bg-sage-50 text-sage-700 border-sage-200' : 'bg-warm-50 text-warm-700 border-warm-200' }}">
+                        {{ $fxLive ? 'XE · LIVE' : ($fxXe['rate'] ?? null ? 'ECB · derived' : 'unavailable') }}
+                    </span>
+                </div>
+                @if (($fxXe['rate'] ?? null) !== null)
+                    <div class="flex items-baseline gap-2 mt-2">
+                        <div class="text-3xl font-bold text-[#2d3748] tabular-nums">{{ number_format((float)$fxXe['rate'], 2) }}</div>
+                        <div class="text-[11px] text-[#7c7466]">XAF per USD</div>
+                    </div>
+                    @if (!empty($fxXe['as_of']))
+                        <div class="text-[10.5px] text-[#7c7466] mt-1">As of {{ \Carbon\Carbon::parse($fxXe['as_of'])->diffForHumans() }}</div>
+                    @endif
+                @else
+                    <div class="text-2xl font-bold text-[#a09d95] mt-2 tabular-nums">— —</div>
+                    <div class="text-[10.5px] text-coral-700 mt-1">Live FX unavailable</div>
+                @endif
+                <div class="text-[10px] text-[#a09d95] mt-2 italic leading-snug">
+                    Source: <a href="{{ $fxXe['source_url'] ?? '#' }}" target="_blank" rel="noopener" class="text-brand-700 hover:text-brand-900 underline decoration-dotted">{{ parse_url($fxXe['source_url'] ?? '', PHP_URL_HOST) ?: 'xe.com' }}</a>.
+                    {{ $fxXe['note'] ?? '' }}
+                </div>
+            </div>
+        </div>
 
         {{-- ── Sandbox row: BEAC TIAO + Country Income Tax Rate ───────────
              Two side-by-side cards, both pulled from the same physical
@@ -242,6 +306,197 @@
             </div>
         </div>
 
+        {{-- ── Top 5 by nature of goods (imports + exports side by side) ── --}}
+        @php
+            $hasComp = !empty($comp['imports']) || !empty($comp['exports']);
+        @endphp
+        @if ($hasComp)
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-6">
+            @foreach ([
+                ['title' => 'Top 5 — Imports by nature of goods', 'rows' => $comp['imports'] ?? [], 'colour' => 'sage'],
+                ['title' => 'Top 5 — Exports by nature of goods', 'rows' => $comp['exports'] ?? [], 'colour' => 'brand'],
+            ] as $panel)
+                @php
+                    $rows = array_slice($panel['rows'], 0, 5);
+                    $maxPct = empty($rows) ? 1 : max(array_map(fn($r) => $r['pct'], $rows));
+                    $maxPct = $maxPct > 0 ? $maxPct : 1;
+                    $barClass = $panel['colour'] === 'sage' ? 'bg-sage-400' : 'bg-brand-400';
+                @endphp
+                <div class="bg-white border border-[#e8e4de] rounded-xl p-5">
+                    <div class="flex items-center justify-between mb-3 gap-2">
+                        <h3 class="text-sm font-semibold text-[#1e3d44]">{{ $panel['title'] }}</h3>
+                        @if (!empty($rows[0]['year']))
+                            <span class="text-[10px] uppercase tracking-wider text-[#a09d95] font-medium">{{ $rows[0]['year'] }}</span>
+                        @endif
+                    </div>
+                    @if (empty($rows))
+                        <div class="text-[12px] text-[#7c7466] py-3">No composition data available for {{ $data['country_label'] }} in the recent window.</div>
+                    @else
+                        <div class="space-y-2">
+                            @foreach ($rows as $r)
+                                <div class="flex items-center gap-3 text-[12px]">
+                                    <div class="w-44 text-[#2d3748] flex items-center gap-1.5 shrink-0">
+                                        <span class="text-base">{{ $r['icon'] }}</span>
+                                        <span>{{ $r['label'] }}</span>
+                                    </div>
+                                    <div class="flex-1 bg-[#faf8f5] rounded h-5 relative overflow-hidden border border-[#ece7df]">
+                                        <div class="absolute inset-y-0 left-0 {{ $barClass }} opacity-70" style="width: {{ (int)round(100 * $r['pct'] / $maxPct) }}%"></div>
+                                    </div>
+                                    <div class="w-16 text-right tabular-nums font-medium text-[#2d3748]">{{ number_format((float)$r['pct'], 1) }}%</div>
+                                </div>
+                            @endforeach
+                        </div>
+                        <div class="text-[10.5px] text-[#7c7466] mt-3 italic">% of total {{ $panel['colour'] === 'sage' ? 'merchandise imports' : 'merchandise exports' }} (World Bank trade-composition indicators).</div>
+                    @endif
+                </div>
+            @endforeach
+        </div>
+        @endif
+
+        {{-- ── Top trading partners + per-partner sandbox ────────────────── --}}
+        @php
+            $impPartners = $tps['imports_from'] ?? [];
+            $expPartners = $tps['exports_to']   ?? [];
+            $hasPartners = !empty($impPartners) || !empty($expPartners);
+        @endphp
+        @if ($hasPartners)
+        <div class="bg-white border border-[#e8e4de] rounded-xl p-5 mb-6">
+            <div class="flex items-center justify-between mb-3 gap-2 flex-wrap">
+                <div>
+                    <h3 class="text-sm font-semibold text-[#1e3d44]">Top trading partners — {{ $data['country_label'] }}</h3>
+                    @if (!empty($tps['as_of_year']))
+                        <p class="text-[11px] text-[#7c7466] mt-0.5">As-of {{ $tps['as_of_year'] }} · Source: {{ $tps['source'] ?? 'config' }}</p>
+                    @endif
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                @foreach ([
+                    ['title' => 'Top 5 — Import sources (where goods come FROM)', 'rows' => $impPartners, 'badge' => 'IMPORT', 'colour' => 'sage'],
+                    ['title' => 'Top 5 — Export destinations (where goods GO TO)', 'rows' => $expPartners, 'badge' => 'EXPORT', 'colour' => 'brand'],
+                ] as $panel)
+                    @php
+                        $maxPct = empty($panel['rows']) ? 1 : max(array_map(fn($r) => $r['pct'], $panel['rows']));
+                        $maxPct = $maxPct > 0 ? $maxPct : 1;
+                        $barClass    = $panel['colour'] === 'sage' ? 'bg-sage-400' : 'bg-brand-400';
+                        $badgeClass  = $panel['colour'] === 'sage' ? 'bg-sage-50 text-sage-700 border-sage-200' : 'bg-brand-50 text-brand-700 border-brand-200';
+                    @endphp
+                    <div>
+                        <h4 class="text-xs font-semibold text-[#1e3d44] mb-2 flex items-center gap-2">
+                            <span class="text-[9.5px] uppercase tracking-wider rounded px-1.5 py-0.5 border {{ $badgeClass }}">{{ $panel['badge'] }}</span>
+                            {{ $panel['title'] }}
+                        </h4>
+                        @if (empty($panel['rows']))
+                            <div class="text-[12px] text-[#7c7466] italic py-2">No partner data configured.</div>
+                        @else
+                            <div class="space-y-1.5">
+                                @foreach ($panel['rows'] as $i => $r)
+                                    <div class="flex items-center gap-2 text-[12px]">
+                                        <div class="w-7 text-right tabular-nums text-[#a09d95] shrink-0">#{{ $i + 1 }}</div>
+                                        <div class="w-32 text-[#2d3748] font-medium shrink-0 truncate" title="{{ $r['country_label'] ?? $r['name'] }}">{{ $r['country_label'] ?? $r['name'] }}</div>
+                                        <div class="flex-1 bg-[#faf8f5] rounded h-4 relative overflow-hidden border border-[#ece7df]">
+                                            <div class="absolute inset-y-0 left-0 {{ $barClass }} opacity-70" style="width: {{ (int)round(100 * $r['pct'] / $maxPct) }}%"></div>
+                                        </div>
+                                        <div class="w-12 text-right tabular-nums font-medium text-[#2d3748]">{{ number_format((float)$r['pct'], 1) }}%</div>
+                                    </div>
+                                @endforeach
+                            </div>
+                        @endif
+                    </div>
+                @endforeach
+            </div>
+
+            {{-- Per-partner sandbox: combined view of unique countries
+                 (a country can be both top import source and top export
+                 destination — China for Cameroon is a good example). --}}
+            @php
+                $allPartners = [];
+                foreach ($impPartners as $r) {
+                    $cc = $r['country'] ?? '';
+                    if (!isset($allPartners[$cc])) $allPartners[$cc] = $r + ['as_import' => null, 'as_export' => null, 'goods_import' => '', 'goods_export' => ''];
+                    $allPartners[$cc]['as_import']    = $r['pct']   ?? null;
+                    $allPartners[$cc]['goods_import'] = $r['goods'] ?? '';
+                }
+                foreach ($expPartners as $r) {
+                    $cc = $r['country'] ?? '';
+                    if (!isset($allPartners[$cc])) $allPartners[$cc] = $r + ['as_import' => null, 'as_export' => null, 'goods_import' => '', 'goods_export' => ''];
+                    $allPartners[$cc]['as_export']    = $r['pct']   ?? null;
+                    $allPartners[$cc]['goods_export'] = $r['goods'] ?? '';
+                }
+                // Order: highest combined share first.
+                usort($allPartners, function ($a, $b) {
+                    $sa = (float)($a['as_import'] ?? 0) + (float)($a['as_export'] ?? 0);
+                    $sb = (float)($b['as_import'] ?? 0) + (float)($b['as_export'] ?? 0);
+                    return $sb <=> $sa;
+                });
+            @endphp
+
+            @if (!empty($allPartners))
+            <div class="border-t border-[#f1ede5] pt-4">
+                <h4 class="text-xs font-semibold text-[#1e3d44] mb-3">Per-partner sandbox — pertinent trade context</h4>
+                <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                    @foreach ($allPartners as $p)
+                        @php
+                            $bothWays = $p['as_import'] !== null && $p['as_export'] !== null;
+                        @endphp
+                        <div class="bg-[#fcfbf8] border border-[#f1ede5] rounded-lg p-3">
+                            <div class="flex items-start justify-between gap-2 mb-2">
+                                <div>
+                                    <div class="text-[13px] font-semibold text-[#1e3d44]">{{ $p['country_label'] ?? $p['name'] }}</div>
+                                    <div class="flex items-center gap-1 mt-0.5 flex-wrap">
+                                        @if ($p['as_import'] !== null)
+                                            <span class="text-[9.5px] uppercase tracking-wider rounded px-1.5 py-0.5 border bg-sage-50 text-sage-700 border-sage-200">IMPORT · {{ number_format((float)$p['as_import'], 1) }}%</span>
+                                        @endif
+                                        @if ($p['as_export'] !== null)
+                                            <span class="text-[9.5px] uppercase tracking-wider rounded px-1.5 py-0.5 border bg-brand-50 text-brand-700 border-brand-200">EXPORT · {{ number_format((float)$p['as_export'], 1) }}%</span>
+                                        @endif
+                                        @if ($bothWays)
+                                            <span class="text-[9.5px] uppercase tracking-wider rounded px-1.5 py-0.5 border bg-warm-50 text-warm-700 border-warm-200">BOTH WAYS</span>
+                                        @endif
+                                    </div>
+                                </div>
+                                @if (($p['tax_rate'] ?? null) !== null)
+                                    <div class="text-right">
+                                        <div class="text-[9px] uppercase tracking-wider text-[#a09d95] font-medium">CIT</div>
+                                        <div class="text-sm font-bold text-[#2d3748] tabular-nums">{{ number_format((float)$p['tax_rate'], 0) }}%</div>
+                                    </div>
+                                @endif
+                            </div>
+
+                            @if (!empty($p['goods_import']))
+                                <div class="text-[11px] text-[#5a6a70] mb-1.5">
+                                    <strong class="text-sage-700">Imports from:</strong>
+                                    <span class="text-[#7c7466]">{{ $p['goods_import'] }}</span>
+                                </div>
+                            @endif
+                            @if (!empty($p['goods_export']))
+                                <div class="text-[11px] text-[#5a6a70]">
+                                    <strong class="text-brand-700">Exports to:</strong>
+                                    <span class="text-[#7c7466]">{{ $p['goods_export'] }}</span>
+                                </div>
+                            @endif
+
+                            {{-- Quick-jump to the partner's own macro page --}}
+                            @if (isset(\App\Services\MacroEconomicsService::COUNTRIES[$p['country'] ?? '']))
+                                <div class="mt-2 pt-2 border-t border-[#f1ede5]">
+                                    <a href="{{ tenant_url('/macro-economics?country=' . $p['country']) }}"
+                                       class="text-[10.5px] font-medium text-brand-700 hover:text-brand-900 inline-flex items-center gap-1">
+                                        View {{ $p['country_label'] ?? $p['name'] }} macro →
+                                    </a>
+                                </div>
+                            @endif
+                        </div>
+                    @endforeach
+                </div>
+            </div>
+            @endif
+
+            @if (!empty($tps['note']))
+                <div class="text-[10.5px] text-[#a09d95] mt-3 italic">{{ $tps['note'] }}</div>
+            @endif
+        </div>
+        @endif
+
         {{-- Source attribution + methodology --}}
         <div class="bg-white border border-[#e8e4de] rounded-xl p-5">
             <h3 class="text-sm font-semibold text-[#1e3d44] mb-2">Sources & methodology</h3>
@@ -269,6 +524,23 @@
                     <strong class="text-[#1e3d44]">Statutory income tax</strong> — Maintained in
                     <code class="text-[10px] bg-[#faf8f5] border border-[#ece7df] rounded px-1 py-0.5">config/macro.php</code>
                     because no free public API exists for global tax rates. Each entry references the source CGI / tax code.
+                </div>
+                <div>
+                    <strong class="text-[#1e3d44]">USD/XAF live rate</strong> — Scraped from
+                    <a href="https://www.xe.com" target="_blank" rel="noopener" class="text-brand-700 hover:text-brand-900 underline decoration-dotted">xe.com</a>
+                    (cached 1 h). Falls back to ECB-derived rate via
+                    <a href="https://www.frankfurter.app" target="_blank" rel="noopener" class="text-brand-700 hover:text-brand-900 underline decoration-dotted">frankfurter.app</a>
+                    × hard 655.957 XAF/EUR peg if xe.com is unreachable.
+                </div>
+                <div>
+                    <strong class="text-[#1e3d44]">Trade composition</strong> (top-5 by nature of goods) — World Bank
+                    <code class="text-[10px] bg-[#faf8f5] border border-[#ece7df] rounded px-1 py-0.5">TX/TM.VAL.{FOOD,AGRI,FUEL,MMTL,MANF}.ZS.UN</code>
+                    — % of merchandise total per category. SITC categories are coarse but cover all merchandise without double-counting.
+                </div>
+                <div>
+                    <strong class="text-[#1e3d44]">Top trading partners</strong> — Curated from each country's national trade-statistics agency (most recent full year). Maintained in
+                    <code class="text-[10px] bg-[#faf8f5] border border-[#ece7df] rounded px-1 py-0.5">config/macro.php</code>.
+                    The free World Bank API doesn't expose bilateral trade flows ergonomically; UN Comtrade / WITS is the upgrade path for live data.
                 </div>
                 <div>
                     Data refreshed: {{ \Carbon\Carbon::parse($data['fetched_at'])->diffForHumans() }} ·
