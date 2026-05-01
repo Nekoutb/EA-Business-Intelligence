@@ -396,9 +396,11 @@
           <div class="text-[11px] text-[#7c7466] mt-3 leading-relaxed space-y-1.5">
               <div><strong>Note:</strong> Empty (vide) and Transit containers are scanned systematically and free of charge per the price grid. 45' containers are billed at the 40' tariff (the grid only enumerates 20"/40"). Vehicles are classified via <code class="text-[10px] bg-[#faf8f5] border border-[#ece7df] rounded px-1 py-0.5">aw_vehicule.vehicule.cylinders</code> (4/6 → Voiture, 8 → Camion, 12 → Bulldoze); rates per the Grille Tarifaire. Period anchor for revenue is <code class="text-[10px] bg-[#faf8f5] border border-[#ece7df] rounded px-1 py-0.5">scanned_date</code> — the moment the fee is earned.</div>
               <div>
-                <strong>*</strong> <em>Other / non-vehicle items</em>: the
+                <strong>*</strong> <em>Other / unclassified (assumed Voiture)</em>: scanned vehicles whose
+                <code class="text-[10px] bg-[#faf8f5] border border-[#ece7df] rounded px-1 py-0.5">cylinders</code>
+                field on
                 <code class="text-[10px] bg-[#faf8f5] border border-[#ece7df] rounded px-1 py-0.5">aw_vehicule.vehicule</code>
-                model also stores rows that aren't vehicles at all — sample data shows <em>CARTONS</em>, <em>SACS</em>, <em>COOKWARE</em>, even loose 40' containers. These have no cylinders match, are not billed here, and are surfaced count-only so the source-data quirk is visible rather than swept under the rug.
+                wasn't filled in at scan time (mostly <code class="text-[10px] bg-[#faf8f5] border border-[#ece7df] rounded px-1 py-0.5">cylinders=0</code>, plus a small tail at 9). Sample names confirm these are real cars (Toyota Corolla, Avensis, Yaris …), so they're billed at the Voiture rate (the cheapest of the four) to project revenue without over-claiming. Categorise them in Odoo for an exact figure.
               </div>
               <div>
                 <strong>**</strong> <em>Bois</em>: tariff is 35,000 HT <em>per truck or wagon</em>, not per piece of wood. Approximated by counting distinct cargos with at least one scanned bois record in the period (each cargo ≈ one truckload). The
@@ -417,6 +419,7 @@
                 'import_full_40', 'import_full_20',
                 'export_full_40', 'export_full_20',
                 'voiture', 'camion', 'bulldoze',
+                'vehicles_unclassified',  // assumed Voiture (see footnote *)
                 'wood_per_truckload',
             ];
             $simRows = [];
@@ -446,7 +449,7 @@
                       <span class="text-[10px] uppercase tracking-wider text-[#a09d95] font-medium ml-1">FCFA · HT · what-if · {{ $period['type'] === 'mtd' ? 'MTD' : 'YTD' }}</span>
                   </h3>
                   <p class="text-[11px] text-[#7c7466] mt-1.5 leading-relaxed max-w-3xl">
-                      Volumes default to the current period's scanned counts; unit prices default to the Grille Tarifaire. Edit any field to model a scenario — subtotals and the grand total recompute instantly. Empty / Transit (free) and unclassified vehicle-table residue are excluded by design.
+                      Volumes default to the current period's scanned counts; unit prices default to the Grille Tarifaire. Edit any field to model a scenario — subtotals and the grand total recompute instantly. Empty / Transit (free) are excluded by design. Unclassified vehicles (see footnote *) are included at the Voiture rate — adjust below if your scenario differs.
                   </p>
               </div>
               <button type="button" id="ops-sim-reset"
