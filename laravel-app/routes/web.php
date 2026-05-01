@@ -8,6 +8,7 @@ use App\Http\Controllers\ReceivablesController;
 use App\Http\Controllers\ProfitLossController;
 use App\Http\Controllers\PayablesController;
 use App\Http\Controllers\TreasuryController;
+use App\Http\Controllers\WorkingCapitalController;
 use App\Http\Controllers\FixedAssetsController;
 use App\Http\Controllers\InventoryController;
 use App\Http\Controllers\OperationsController;
@@ -1114,6 +1115,9 @@ Route::prefix('t/{tenant}')
                 Route::get('/billing/reconciliation-export',
                     [BillingController::class, 'reconciliationExcel'])->middleware('module:billing');
                 Route::get('/procurement',       [ProcurementController::class, 'index'])->middleware('module:procurement');
+
+                // ── Financial Planning service ────────────────────────────────
+                Route::get('/working-capital',   [WorkingCapitalController::class, 'index'])->middleware('module:working_capital');
 
                 // ── Financial Reporting service ───────────────────────────────
                 Route::get('/general-ledger-quality', [GLQualityController::class, 'index'])->middleware('module:gl_quality');
