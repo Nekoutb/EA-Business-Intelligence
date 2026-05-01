@@ -14,7 +14,7 @@
 @endsection
 
 @section('content')
-    <x-period-filter :period="$period" :options="[['ytd','YTD'],['mtd','MTD']]" />
+    <x-period-filter :period="$period" :options="[['ytd','YTD'],['mtd','MTD'],['month','Month']]" />
 
     @if ($error)
         <div class="bg-coral-50 border border-coral-200 text-coral-800 rounded-xl p-4 text-sm mb-6">
@@ -141,6 +141,264 @@
             </div>
         </div>
     @endforeach
+
+    {{-- ── Revenue Reconciliation (Expected → Billed → Collected) ────────── --}}
+    @php
+        $recon = $billing['reconciliation'] ?? null;
+        $reconHasError = $recon && !empty($recon['error']);
+        $reconHas = $recon && !$reconHasError && (
+            ($recon['headline']['expected'] ?? 0) > 0 ||
+            ($recon['headline']['billed']   ?? 0) > 0 ||
+            ($recon['headline']['collected'] ?? 0) > 0
+        );
+
+        // Pre-format headline numbers so the table doesn't re-call helpers.
+        if ($reconHas) {
+            $h = $recon['headline'];
+            $reconRows = [
+                [
+                    'label'    => 'Expected',
+                    'sub'      => 'From operational scans (containers + vehicles + bois)',
+                    'value'    => $h['expected'],
+                    'pctOfExp' => 100.0,
+                    'color'    => 'sage',
+                ],
+                [
+                    'label'    => 'Billed',
+                    'sub'      => 'Posted out_invoices in period (HT)',
+                    'value'    => $h['billed'],
+                    'pctOfExp' => $h['billing_realisation_pct'],
+                    'color'    => 'brand',
+                ],
+                [
+                    'label'    => 'Collected',
+                    'sub'      => 'Billed × payment progress (HT, pro-rata)',
+                    'value'    => $h['collected'],
+                    'pctOfExp' => $h['expected'] > 0 ? 100.0 * $h['collected'] / $h['expected'] : null,
+                    'color'    => 'warm',
+                ],
+            ];
+
+            // Build the JSON payload for the chart in one shot — labels +
+            // three series stacked or grouped depending on view choice.
+            $chartLabels = [];
+            $chartExpected = [];
+            $chartBilled = [];
+            $chartCollected = [];
+            foreach (($recon['buckets'] ?? []) as $b) {
+                $chartLabels[]    = $b['label'];
+                $chartExpected[]  = round((float) $b['expected'],  0);
+                $chartBilled[]    = round((float) $b['billed'],    0);
+                $chartCollected[] = round((float) $b['collected'], 0);
+            }
+            $chartPayload = [
+                'labels'    => $chartLabels,
+                'expected'  => $chartExpected,
+                'billed'    => $chartBilled,
+                'collected' => $chartCollected,
+                'currency'  => 'XAF',
+            ];
+        }
+    @endphp
+    @if ($reconHas)
+      <div class="bg-white border border-[#e8e4de] rounded-xl p-5 mb-6">
+          <div class="flex items-center justify-between gap-3 mb-4 flex-wrap">
+              <div>
+                  <h3 class="text-sm font-semibold text-[#1e3d44]">
+                      Revenue Reconciliation
+                      <span class="text-[10px] uppercase tracking-wider text-[#a09d95] font-medium ml-1">FCFA · HT · {{ $period['type'] === 'ytd' ? 'YTD' : ($period['type'] === 'mtd' ? 'MTD' : 'Month') }}</span>
+                  </h3>
+                  <p class="text-[11px] text-[#7c7466] mt-1.5 leading-relaxed max-w-3xl">
+                      Walks revenue across three operational stages:
+                      <strong>Expected</strong> (scan-derived, from /operations) →
+                      <strong>Billed</strong> (posted invoices) →
+                      <strong>Collected</strong> (paid portion). Gaps surface
+                      missed billings and outstanding receivables in one view.
+                  </p>
+              </div>
+          </div>
+
+          {{-- Stacked headline cards --}}
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-5">
+              @foreach ($reconRows as $row)
+                  @php
+                      $palette = [
+                          'sage'  => ['bar' => 'bg-sage-500',  'bg' => 'bg-sage-50',  'bdr' => 'border-sage-100',  'txt' => 'text-sage-700'],
+                          'brand' => ['bar' => 'bg-brand-500', 'bg' => 'bg-brand-50', 'bdr' => 'border-brand-100', 'txt' => 'text-brand-700'],
+                          'warm'  => ['bar' => 'bg-warm-500',  'bg' => 'bg-warm-50',  'bdr' => 'border-warm-100',  'txt' => 'text-warm-700'],
+                      ][$row['color']];
+                  @endphp
+                  <div class="bg-white rounded-lg border border-[#e8e4de] flex overflow-hidden shadow-sm">
+                      <div class="w-1 {{ $palette['bar'] }} shrink-0"></div>
+                      <div class="flex-1 min-w-0 p-3">
+                          <div class="text-[10px] uppercase tracking-wider text-[#8a8578] font-medium">{{ $row['label'] }}</div>
+                          <div class="text-xl font-bold text-[#2d3748] mt-1 tabular-nums truncate">
+                              {{ ea_money_short($row['value'], 'XAF') }}
+                          </div>
+                          <div class="text-[10.5px] text-[#7c7466] mt-0.5 leading-snug">{{ $row['sub'] }}</div>
+                          @if ($row['pctOfExp'] !== null)
+                              <div class="mt-2 inline-flex items-center text-[10.5px] font-semibold rounded {{ $palette['bg'] }} {{ $palette['bdr'] }} {{ $palette['txt'] }} border px-1.5 py-0.5">
+                                  {{ number_format($row['pctOfExp'], 1) }}% of Expected
+                              </div>
+                          @endif
+                      </div>
+                  </div>
+              @endforeach
+          </div>
+
+          {{-- Sandbox table: gaps with the maths exposed --}}
+          @php
+              $h = $recon['headline'];
+              $billGap = $h['billing_gap'];
+              $collGap = $h['collection_gap'];
+              $billGapPct = $h['expected'] > 0 ? 100.0 * abs($billGap) / $h['expected'] : null;
+              $collGapPct = $h['billed']   > 0 ? 100.0 * abs($collGap) / $h['billed']   : null;
+          @endphp
+          <div class="overflow-x-auto mb-5">
+              <table class="w-full text-xs">
+                  <thead>
+                      <tr class="text-[10px] uppercase tracking-wider text-[#8a8578] border-b border-[#e8e4de]">
+                          <th class="text-left  py-2 pr-3 font-medium">Stage</th>
+                          <th class="text-right py-2 px-3 font-medium">Amount (XAF HT)</th>
+                          <th class="text-right py-2 px-3 font-medium">% of Expected</th>
+                          <th class="text-left  py-2 pl-3 font-medium">Reading</th>
+                      </tr>
+                  </thead>
+                  <tbody class="divide-y divide-[#f1ede5] text-[#2d3748]">
+                      <tr>
+                          <td class="py-2 pr-3 font-medium">Expected (scans × tariff)</td>
+                          <td class="py-2 px-3 text-right tabular-nums">{{ number_format($h['expected']) }}</td>
+                          <td class="py-2 px-3 text-right tabular-nums">100.0%</td>
+                          <td class="py-2 pl-3 text-[#7c7466]">Operational baseline</td>
+                      </tr>
+                      <tr class="bg-[#fcfbf8]">
+                          <td class="py-2 pr-3 pl-3 italic text-[#a37020]">— Billing gap (Expected − Billed)</td>
+                          <td class="py-2 px-3 text-right tabular-nums {{ abs($billGap) > 0 ? 'text-coral-700 font-semibold' : 'text-[#7c7466]' }}">
+                              {{ ($billGap >= 0 ? '−' : '+') . number_format(abs($billGap)) }}
+                          </td>
+                          <td class="py-2 px-3 text-right tabular-nums text-[#7c7466]">
+                              {{ $billGapPct !== null ? number_format($billGapPct, 1) . '%' : '—' }}
+                          </td>
+                          <td class="py-2 pl-3 text-[#7c7466]">{{ $billGap > 0 ? 'Earned but not invoiced' : ($billGap < 0 ? 'Invoiced more than scanned (prior-period catch-up)' : 'Invoicing matches operations') }}</td>
+                      </tr>
+                      <tr>
+                          <td class="py-2 pr-3 font-medium">Billed (out_invoice posted)</td>
+                          <td class="py-2 px-3 text-right tabular-nums">{{ number_format($h['billed']) }}</td>
+                          <td class="py-2 px-3 text-right tabular-nums">{{ $h['billing_realisation_pct'] !== null ? number_format($h['billing_realisation_pct'], 1) . '%' : '—' }}</td>
+                          <td class="py-2 pl-3 text-[#7c7466]">Posted out_invoices · invoice_date in period</td>
+                      </tr>
+                      <tr class="bg-[#fcfbf8]">
+                          <td class="py-2 pr-3 pl-3 italic text-[#a37020]">— Collection gap (Billed − Collected)</td>
+                          <td class="py-2 px-3 text-right tabular-nums {{ abs($collGap) > 0 ? 'text-coral-700 font-semibold' : 'text-[#7c7466]' }}">
+                              −{{ number_format(abs($collGap)) }}
+                          </td>
+                          <td class="py-2 px-3 text-right tabular-nums text-[#7c7466]">
+                              {{ $collGapPct !== null ? number_format($collGapPct, 1) . '% of Billed' : '—' }}
+                          </td>
+                          <td class="py-2 pl-3 text-[#7c7466]">Outstanding receivables on this period's invoices</td>
+                      </tr>
+                      <tr>
+                          <td class="py-2 pr-3 font-medium">Collected (HT, pro-rata)</td>
+                          <td class="py-2 px-3 text-right tabular-nums">{{ number_format($h['collected']) }}</td>
+                          <td class="py-2 px-3 text-right tabular-nums">
+                              {{ $h['expected'] > 0 ? number_format(100.0 * $h['collected'] / $h['expected'], 1) . '%' : '—' }}
+                          </td>
+                          <td class="py-2 pl-3 text-[#7c7466]">Billed × payment_progress per invoice</td>
+                      </tr>
+                  </tbody>
+              </table>
+          </div>
+
+          {{-- Chart: grouped bars per bucket (month or week) --}}
+          @if (!empty($recon['buckets']))
+            <div class="border-t border-[#f1ede5] pt-4">
+                <div class="flex items-center justify-between gap-3 mb-2 flex-wrap">
+                    <h4 class="text-xs font-semibold text-[#1e3d44]">
+                        Trend
+                        <span class="text-[10px] uppercase tracking-wider text-[#a09d95] font-medium ml-1">{{ $recon['granularity'] === 'month' ? 'Monthly' : 'Weekly' }} · FCFA HT</span>
+                    </h4>
+                    <div class="flex items-center gap-3 text-[10.5px] text-[#7c7466]">
+                        <span class="inline-flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-sm bg-sage-500"></span>Expected</span>
+                        <span class="inline-flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-sm bg-brand-500"></span>Billed</span>
+                        <span class="inline-flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-sm bg-warm-500"></span>Collected</span>
+                    </div>
+                </div>
+                <div id="ea-recon-chart"
+                     class="bg-[#faf8f5] border border-[#ece7df] rounded-lg p-3 min-h-[260px]"
+                     data-recon='@json($chartPayload)'></div>
+            </div>
+
+            <script>
+            (function () {
+                const root = document.getElementById('ea-recon-chart');
+                if (!root) return;
+                let payload;
+                try { payload = JSON.parse(root.dataset.recon || '{}'); } catch (e) { return; }
+                const labels = payload.labels || [];
+                if (labels.length === 0) {
+                    root.innerHTML = '<div class="text-xs text-[#7c7466] text-center py-8">No data in this period</div>';
+                    return;
+                }
+                const series = [
+                    { key: 'expected',  label: 'Expected',  color: '#7eaa8e', values: payload.expected  || [] },
+                    { key: 'billed',    label: 'Billed',    color: '#5a7e8a', values: payload.billed    || [] },
+                    { key: 'collected', label: 'Collected', color: '#c89e58', values: payload.collected || [] },
+                ];
+                const W = 760, H = 230, padL = 60, padR = 12, padT = 14, padB = 30;
+                const innerW = W - padL - padR, innerH = H - padT - padB;
+                const all = series.flatMap(s => s.values);
+                const max = Math.max(1, ...all);
+                const niceMax = Math.ceil(max / Math.pow(10, Math.floor(Math.log10(max)))) * Math.pow(10, Math.floor(Math.log10(max)));
+                const groupW = innerW / labels.length;
+                const barW = Math.max(4, (groupW - 8) / series.length);
+                const fmtAxis = v => {
+                    if (v >= 1e9) return (v / 1e9).toFixed(1) + 'B';
+                    if (v >= 1e6) return (v / 1e6).toFixed(0) + 'M';
+                    if (v >= 1e3) return (v / 1e3).toFixed(0) + 'K';
+                    return String(v);
+                };
+                const fmtFull = v => new Intl.NumberFormat('en-US').format(Math.round(v));
+
+                let svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" class="w-full h-auto" style="font-family:inherit;">`;
+                // Y-axis grid + labels
+                for (let i = 0; i <= 4; i++) {
+                    const y = padT + (innerH * i) / 4;
+                    const v = niceMax * (1 - i / 4);
+                    svg += `<line x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}" stroke="#e8e4de" stroke-width="1" stroke-dasharray="2,3"/>`;
+                    svg += `<text x="${padL - 6}" y="${y + 3}" text-anchor="end" font-size="9" fill="#8a8578">${fmtAxis(v)}</text>`;
+                }
+                // Bars
+                labels.forEach((label, i) => {
+                    const xBase = padL + i * groupW + 4;
+                    series.forEach((s, j) => {
+                        const v = s.values[i] || 0;
+                        const h = (v / niceMax) * innerH;
+                        const x = xBase + j * (barW + 1);
+                        const y = padT + innerH - h;
+                        svg += `<rect x="${x}" y="${y}" width="${barW}" height="${h}" fill="${s.color}" rx="1"><title>${s.label}: ${fmtFull(v)} XAF (${label})</title></rect>`;
+                    });
+                    // X-axis label
+                    const cx = padL + (i + 0.5) * groupW;
+                    svg += `<text x="${cx}" y="${H - 10}" text-anchor="middle" font-size="10" fill="#5a6a70">${label}</text>`;
+                });
+                // Y-axis line
+                svg += `<line x1="${padL}" y1="${padT}" x2="${padL}" y2="${padT + innerH}" stroke="#cbc7be" stroke-width="1"/>`;
+                svg += `<line x1="${padL}" y1="${padT + innerH}" x2="${W - padR}" y2="${padT + innerH}" stroke="#cbc7be" stroke-width="1"/>`;
+                svg += '</svg>';
+                root.innerHTML = svg;
+            })();
+            </script>
+          @endif
+
+          <div class="text-[11px] text-[#7c7466] mt-4 leading-relaxed">
+              <strong>Reading:</strong> Expected = scans × tariff (HT). Billed = posted out_invoice amount_untaxed_signed in period. Collected = Billed × payment_progress (where payment_progress = (amount_total − amount_residual) / amount_total). All figures HT to keep the comparison apples-to-apples.
+          </div>
+      </div>
+    @elseif ($reconHasError)
+      <div class="bg-coral-50 border border-coral-200 text-coral-800 rounded-xl p-3 text-xs mb-6">
+          <strong>Reconciliation unavailable:</strong> {{ $recon['error'] }}
+      </div>
+    @endif
 
     {{-- ── Time-to-Invoice distribution + slowest billings ──────────────── --}}
     @php

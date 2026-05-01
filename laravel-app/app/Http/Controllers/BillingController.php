@@ -20,10 +20,16 @@ class BillingController extends Controller
     {
         $today  = new \DateTimeImmutable();
         $type   = strtolower((string) $request->query('period', 'ytd'));
-        if (!in_array($type, ['ytd', 'mtd'], true)) {
+        if (!in_array($type, ['ytd', 'mtd', 'month'], true)) {
             $type = 'ytd';
         }
-        $period = ['type' => $type];
+
+        // Year/month optional — only ytd/month consume year, only month
+        // consumes month. ea_resolve_period clamps to safe ranges.
+        $year  = (int) $request->query('year',  $today->format('Y'));
+        $month = (int) $request->query('month', $today->format('m'));
+        $period = ['type' => $type, 'year' => $year, 'month' => $month];
+
         [, , $periodLabel] = ea_resolve_period($today, $period);
 
         $billing = null;
@@ -31,8 +37,9 @@ class BillingController extends Controller
 
         try {
             $client = OdooFactory::fromConfig();
-            $billing = ea_cached(
-                "billing_{$type}",
+            $cacheKey = "billing_{$type}_{$year}_{$month}";
+            $billing  = ea_cached(
+                $cacheKey,
                 fn () => (new BillingService($client))->analyze(null, $period)
             );
         } catch (\Throwable $e) {
