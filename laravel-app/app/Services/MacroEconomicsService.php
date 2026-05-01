@@ -44,37 +44,45 @@ final class MacroEconomicsService
 {
     /**
      * Six indicators, ordered by relevance to scanning operations.
-     * `code` is the World Bank Open Data indicator id.
-     * `tradingeconomics_code` is the TE API equivalent (used when key set).
+     *
+     * Trade indicators are MERCHANDISE (goods) only — services are
+     * deliberately excluded because scan revenue depends on physical
+     * containers and vehicles. Petroleum / fuel is excluded too, since
+     * crude oil moves through dedicated terminals and pipelines that
+     * bypass the customer's scanning operation. We pull total
+     * merchandise then subtract the fuel share (TX.VAL.FUEL.ZS.UN /
+     * TM.VAL.FUEL.ZS.UN) to derive a fuel-ex headline figure that
+     * actually correlates with scan volume.
+     *
+     * `code` is the World Bank Open Data indicator id (or 'derived' for
+     * computed series). Fuel-share codes feed the derivation but aren't
+     * displayed as standalone cards.
      */
     public const INDICATORS = [
-        'imports' => [
-            'label'         => 'Imports of Goods & Services',
-            'sub'           => 'Direct driver of inbound container & vehicle scans',
-            'code'          => 'NE.IMP.GNFS.CD',
-            'tradingeconomics_code' => 'imports',
+        'imports_goods_ex_fuel' => [
+            'label'         => 'Merchandise Imports (ex-fuel)',
+            'sub'           => 'Goods only, excluding petroleum — direct driver of inbound scans',
+            'code'          => 'derived', // computed: TM.VAL.MRCH × (1 − TM.VAL.FUEL%)
             'unit'          => 'USD',
             'unit_short'    => 'USD',
             'better_when'   => 'higher',
             'colour'        => 'sage',
             'order'         => 10,
         ],
-        'exports' => [
-            'label'         => 'Exports of Goods & Services',
-            'sub'           => 'Direct driver of outbound container & bois scans',
-            'code'          => 'NE.EXP.GNFS.CD',
-            'tradingeconomics_code' => 'exports',
+        'exports_goods_ex_fuel' => [
+            'label'         => 'Merchandise Exports (ex-fuel)',
+            'sub'           => 'Goods only, excluding petroleum — drives outbound scans',
+            'code'          => 'derived', // computed: TX.VAL.MRCH × (1 − TX.VAL.FUEL%)
             'unit'          => 'USD',
             'unit_short'    => 'USD',
             'better_when'   => 'higher',
             'colour'        => 'brand',
             'order'         => 20,
         ],
-        'trade_balance' => [
-            'label'         => 'Trade Balance',
-            'sub'           => 'Net flow — Exports − Imports',
-            'code'          => 'NE.RSB.GNFS.CD',
-            'tradingeconomics_code' => 'balance-of-trade',
+        'trade_balance_goods_ex_fuel' => [
+            'label'         => 'Trade Balance (goods, ex-fuel)',
+            'sub'           => 'Net merchandise flow ex-petroleum — Exports − Imports',
+            'code'          => 'derived', // computed from above
             'unit'          => 'USD',
             'unit_short'    => 'USD',
             'better_when'   => 'mixed',
@@ -85,7 +93,6 @@ final class MacroEconomicsService
             'label'         => 'GDP Growth Rate',
             'sub'           => 'Macro envelope — overall economic momentum',
             'code'          => 'NY.GDP.MKTP.KD.ZG',
-            'tradingeconomics_code' => 'gdp-growth-annual',
             'unit'          => '%',
             'unit_short'    => '%',
             'better_when'   => 'higher',
@@ -96,7 +103,6 @@ final class MacroEconomicsService
             'label'         => 'Inflation Rate (CPI)',
             'sub'           => 'Affects pricing — including the customer\'s tariff grid',
             'code'          => 'FP.CPI.TOTL.ZG',
-            'tradingeconomics_code' => 'inflation-cpi',
             'unit'          => '%',
             'unit_short'    => '%',
             'better_when'   => 'lower',
@@ -107,7 +113,6 @@ final class MacroEconomicsService
             'label'         => 'Exchange Rate (LCU per USD)',
             'sub'           => 'XAF/USD — affects revenue conversion on USD-priced trade',
             'code'          => 'PA.NUS.FCRF',
-            'tradingeconomics_code' => 'currency',
             'unit'          => 'LCU/USD',
             'unit_short'    => '',
             'better_when'   => 'mixed',
@@ -115,6 +120,15 @@ final class MacroEconomicsService
             'order'         => 60,
         ],
     ];
+
+    /**
+     * World Bank indicator codes for the merchandise-trade derivation.
+     * Pulled separately and combined into the *_ex_fuel headline series.
+     */
+    private const WB_GOODS_IMPORTS_TOTAL = 'TM.VAL.MRCH.CD.WT';   // current US$
+    private const WB_GOODS_EXPORTS_TOTAL = 'TX.VAL.MRCH.CD.WT';   // current US$
+    private const WB_FUEL_IMPORTS_PCT    = 'TM.VAL.FUEL.ZS.UN';   // % of merch imports
+    private const WB_FUEL_EXPORTS_PCT    = 'TX.VAL.FUEL.ZS.UN';   // % of merch exports
 
     /**
      * Curated country list — CEMAC bloc by default, plus key trade
@@ -146,28 +160,71 @@ final class MacroEconomicsService
             $country = 'CMR';
         }
 
-        // Use last full year as the most-recent actual. World Bank typically
-        // publishes year-end data in Q1 of the following year, so a value
-        // for "this year" is rarely available — pull last 5 full years
-        // ending at last year, project the next 2 years (this year +
-        // next year).
+        // Last 5 full years of actuals + 2 forward projections.
         $thisYear      = (int) date('Y');
         $lastFullYear  = $thisYear - 1;
-        $startYear     = $lastFullYear - 4; // 5 years inclusive
+        $startYear     = $lastFullYear - 4;
         $projectYears  = [$thisYear, $thisYear + 1];
+        $forecastEnd   = $thisYear + 1;
+
+        // Pre-fetch all the merchandise/fuel components so we can derive
+        // the goods-ex-fuel headline series in PHP. Each call is cached
+        // 24 h, so this only hits the WB API once per country/window.
+        $goodsImports = $this->fetchWorldBankIndicator($country, self::WB_GOODS_IMPORTS_TOTAL, $startYear, $lastFullYear);
+        $goodsExports = $this->fetchWorldBankIndicator($country, self::WB_GOODS_EXPORTS_TOTAL, $startYear, $lastFullYear);
+        $fuelImpsPct  = $this->fetchWorldBankIndicator($country, self::WB_FUEL_IMPORTS_PCT,    $startYear, $lastFullYear);
+        $fuelExpsPct  = $this->fetchWorldBankIndicator($country, self::WB_FUEL_EXPORTS_PCT,    $startYear, $lastFullYear);
+
+        // Derived series — goods × (1 − fuel_share/100) per year. If we
+        // don't have a fuel % for a given year, fall back to total goods
+        // unmodified (so the line keeps moving even with sparse data).
+        $importsExFuel = [];
+        foreach ($goodsImports as $y => $v) {
+            $pct = $fuelImpsPct[$y] ?? null;
+            $importsExFuel[$y] = $pct !== null
+                ? $v * max(0.0, 1.0 - ((float) $pct) / 100.0)
+                : $v;
+        }
+        $exportsExFuel = [];
+        foreach ($goodsExports as $y => $v) {
+            $pct = $fuelExpsPct[$y] ?? null;
+            $exportsExFuel[$y] = $pct !== null
+                ? $v * max(0.0, 1.0 - ((float) $pct) / 100.0)
+                : $v;
+        }
+        $tradeBalanceExFuel = [];
+        foreach ($exportsExFuel as $y => $exp) {
+            $imp = $importsExFuel[$y] ?? null;
+            if ($imp !== null) $tradeBalanceExFuel[$y] = $exp - $imp;
+        }
+
+        $derivedSeries = [
+            'imports_goods_ex_fuel'        => $importsExFuel,
+            'exports_goods_ex_fuel'        => $exportsExFuel,
+            'trade_balance_goods_ex_fuel'  => $tradeBalanceExFuel,
+        ];
 
         $indicators = [];
         foreach (self::INDICATORS as $key => $meta) {
+            $isDerived = ($meta['code'] ?? null) === 'derived';
+
             try {
-                $series = $this->fetchWorldBankIndicator($country, $meta['code'], $startYear, $lastFullYear);
+                $series = $isDerived
+                    ? ($derivedSeries[$key] ?? [])
+                    : $this->fetchWorldBankIndicator($country, $meta['code'], $startYear, $lastFullYear);
             } catch (\Throwable $e) {
                 $series = [];
                 Log::warning("Macro: World Bank fetch failed for {$country}/{$meta['code']}: " . $e->getMessage());
             }
 
-            $projection = $this->projectLinear($series, $projectYears);
+            // Try World Bank for forecast years first; if WB returns no
+            // future data (most series only carry actuals), fall back to
+            // linear regression on the historical points.
+            [$projection, $projectionSource] = $this->fetchProjection(
+                $country, $meta, $series, $projectYears, $forecastEnd, $derivedSeries
+            );
 
-            $allPoints = $series + $projection; // year => value, sorted later
+            $allPoints = $series + $projection;
             ksort($allPoints);
 
             $latestYear  = !empty($series) ? max(array_keys($series)) : null;
@@ -175,14 +232,15 @@ final class MacroEconomicsService
             $yoy         = $this->yoyChange($series);
 
             $indicators[$key] = [
-                'meta'         => $meta,
-                'series'       => $series,        // [year => value] historical
-                'projection'   => $projection,    // [year => value] forward
-                'all_points'   => $allPoints,     // merged, sorted
-                'latest_year'  => $latestYear,
-                'latest_value' => $latestValue,
-                'yoy_pct'      => $yoy,
-                'pending'      => empty($series),
+                'meta'              => $meta,
+                'series'            => $series,
+                'projection'        => $projection,
+                'projection_source' => $projectionSource, // 'worldbank' | 'linear'
+                'all_points'        => $allPoints,
+                'latest_year'       => $latestYear,
+                'latest_value'      => $latestValue,
+                'yoy_pct'           => $yoy,
+                'pending'           => empty($series),
             ];
         }
 
@@ -193,9 +251,91 @@ final class MacroEconomicsService
             'history_window'    => ['from' => $startYear, 'to' => $lastFullYear],
             'projection_years'  => $projectYears,
             'tiao'              => $this->getTiao(),
+            'income_tax'        => $this->getIncomeTaxRate($country),
             'data_source'       => $this->detectSource(),
             'fetched_at'        => now()->toIso8601String(),
         ];
+    }
+
+    /**
+     * Try the World Bank API for forecast years; on miss, fall back to
+     * linear regression on the historical points. Returns [projection,
+     * source] where source is 'worldbank' or 'linear' (or '' if empty).
+     *
+     * For derived series (imports_ex_fuel etc.) the WB fetch is on the
+     * underlying components so the projection inherits the same fuel-
+     * exclusion treatment.
+     *
+     * @return array{0: array<int,float>, 1: string}
+     */
+    private function fetchProjection(
+        string $country,
+        array $meta,
+        array $historicalSeries,
+        array $projectYears,
+        int $forecastEnd,
+        array $derivedSeries
+    ): array {
+        $isDerived = ($meta['code'] ?? null) === 'derived';
+        $minYear   = !empty($historicalSeries) ? max(array_keys($historicalSeries)) + 1 : ($projectYears[0] ?? 0);
+
+        // For native indicators, ask WB for the forecast years range.
+        // For derived series, fetch the components for the forward years
+        // and recompute fuel-excluded values.
+        $wbProjection = [];
+        try {
+            if (!$isDerived) {
+                $wbProjection = $this->fetchWorldBankIndicator(
+                    $country, $meta['code'], $minYear, $forecastEnd
+                );
+            } else {
+                // Re-fetch components for the forecast window. WB rarely
+                // has merchandise forecasts, but try anyway — if it ever
+                // adds them via GEP we get the better data automatically.
+                $impFwd  = $this->fetchWorldBankIndicator($country, self::WB_GOODS_IMPORTS_TOTAL, $minYear, $forecastEnd);
+                $expFwd  = $this->fetchWorldBankIndicator($country, self::WB_GOODS_EXPORTS_TOTAL, $minYear, $forecastEnd);
+                $fImpFwd = $this->fetchWorldBankIndicator($country, self::WB_FUEL_IMPORTS_PCT,    $minYear, $forecastEnd);
+                $fExpFwd = $this->fetchWorldBankIndicator($country, self::WB_FUEL_EXPORTS_PCT,    $minYear, $forecastEnd);
+                $key     = array_search($meta['label'], array_column(self::INDICATORS, 'label'), true) !== false ? null : null;
+                // Recompute the right derived series for this indicator.
+                if (str_contains($meta['label'], 'Imports')) {
+                    foreach ($impFwd as $y => $v) {
+                        $p = $fImpFwd[$y] ?? null;
+                        $wbProjection[$y] = $p !== null ? $v * max(0.0, 1.0 - ((float)$p)/100.0) : $v;
+                    }
+                } elseif (str_contains($meta['label'], 'Exports')) {
+                    foreach ($expFwd as $y => $v) {
+                        $p = $fExpFwd[$y] ?? null;
+                        $wbProjection[$y] = $p !== null ? $v * max(0.0, 1.0 - ((float)$p)/100.0) : $v;
+                    }
+                } elseif (str_contains($meta['label'], 'Trade Balance')) {
+                    $impEx = []; $expEx = [];
+                    foreach ($impFwd as $y => $v) { $p = $fImpFwd[$y] ?? null; $impEx[$y] = $p !== null ? $v * max(0.0, 1.0 - ((float)$p)/100.0) : $v; }
+                    foreach ($expFwd as $y => $v) { $p = $fExpFwd[$y] ?? null; $expEx[$y] = $p !== null ? $v * max(0.0, 1.0 - ((float)$p)/100.0) : $v; }
+                    foreach ($expEx as $y => $exp) {
+                        if (isset($impEx[$y])) $wbProjection[$y] = $exp - $impEx[$y];
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            $wbProjection = [];
+        }
+
+        // Restrict to the requested project years and drop nulls.
+        $filtered = [];
+        foreach ($projectYears as $y) {
+            if (isset($wbProjection[$y]) && is_numeric($wbProjection[$y])) {
+                $filtered[$y] = (float) $wbProjection[$y];
+            }
+        }
+
+        if (!empty($filtered)) {
+            return [$filtered, 'worldbank'];
+        }
+
+        // Fallback to linear extrapolation on the historical points
+        $linear = $this->projectLinear($historicalSeries, $projectYears);
+        return [$linear, empty($linear) ? '' : 'linear'];
     }
 
     /**
@@ -278,57 +418,120 @@ final class MacroEconomicsService
     }
 
     /**
-     * BEAC TIAO rate. Best-effort scrape of beac.int with config
-     * fallback. The value is published by the Comité de Politique
-     * Monétaire and changes a few times a year.
+     * BEAC TIAO rate, scraped directly from beac.int.
+     *
+     * BEAC publishes the rate in a "Taux d'intérêt" widget on the
+     * homepage with a stable HTML pattern of the form:
+     *
+     *    Taux d'intérêt des appels d'offres   4.75 %
+     *
+     * (verified live against beac.int — homepage widget). We anchor the
+     * regex on the long French label so we don't accidentally match
+     * one of the OTHER policy rates BEAC also publishes (marginal
+     * lending facility, deposit facility). Cache 6 h so we don't hammer
+     * beac.int — the rate only changes when the Comité de Politique
+     * Monétaire meets (every quarter, give or take).
+     *
+     * On scrape failure (network down, BEAC redesign, etc.) we fall
+     * back to env values — admin can set BEAC_TIAO_RATE / BEAC_TIAO_AS_OF.
      */
     private function getTiao(): array
     {
         $configRate  = (float)  (config('macro.tiao.rate')  ?? 5.00);
         $configAsOf  = (string) (config('macro.tiao.as_of') ?? '2025-01-01');
 
-        $cached = Cache::remember('macro_beac_tiao_scrape', now()->addHours(6), function () {
+        $scraped = Cache::remember('macro_beac_tiao_scrape', now()->addHours(6), function () {
             try {
-                $response = Http::timeout(8)
+                $response = Http::timeout(10)
                     ->withHeaders(['User-Agent' => 'EA-BI/1.0 (logistics-bi-readonly)'])
                     ->get('https://www.beac.int/');
                 if (!$response->ok()) return null;
                 $html = $response->body();
 
-                // Best-effort: find the TIAO percent on the homepage. The
-                // rate sits near labels like "TIAO" or "Taux d'Intérêt
-                // des Appels d'Offres" with a percentage like "5,00 %".
-                // Pattern is brittle by design — fall back to config on
-                // miss instead of trying to parse the whole page.
-                if (preg_match('/TIAO[^%]{0,200}?(\d+[.,]\d+)\s*%/iu', $html, $m)) {
+                // Anchor on the FULL French label "Taux d'intérêt des
+                // appels d'offres" so we don't match the marginal-lending
+                // or deposit-facility rates that sit alongside in the
+                // same widget. Allow up to 200 chars of HTML between the
+                // label and the percent (accommodates table-cell markup,
+                // span tags, whitespace, etc). Accept both "4.75 %" and
+                // "4,75 %" (French decimal comma).
+                $pattern = "/Taux d['\u{2019}]int[ée]r[ée]t\\s+des\\s+appels\\s+d['\u{2019}]offres[^%]{0,200}?(\\d+[.,]\\d{1,2})\\s*%/iu";
+                if (preg_match($pattern, $html, $m)) {
                     $rate = (float) str_replace(',', '.', $m[1]);
                     if ($rate > 0 && $rate < 30) {
                         return [
                             'rate'   => $rate,
                             'as_of'  => date('Y-m-d'),
-                            'source' => 'scraped',
+                        ];
+                    }
+                }
+                // Backup pattern — short label "TIAO" near a percent.
+                $alt = "/TIAO[^%]{0,150}?(\\d+[.,]\\d{1,2})\\s*%/iu";
+                if (preg_match($alt, $html, $m)) {
+                    $rate = (float) str_replace(',', '.', $m[1]);
+                    if ($rate > 0 && $rate < 30) {
+                        return [
+                            'rate'   => $rate,
+                            'as_of'  => date('Y-m-d'),
                         ];
                     }
                 }
                 return null;
             } catch (\Throwable $e) {
+                Log::warning('Macro: BEAC TIAO scrape failed: ' . $e->getMessage());
                 return null;
             }
         });
 
-        $rate   = is_array($cached) ? $cached['rate']  : $configRate;
-        $asOf   = is_array($cached) ? $cached['as_of'] : $configAsOf;
-        $source = is_array($cached) ? 'live'           : 'config';
+        $isLive = is_array($scraped);
+        $rate   = $isLive ? $scraped['rate']  : $configRate;
+        $asOf   = $isLive ? $scraped['as_of'] : $configAsOf;
 
         return [
             'rate'        => $rate,
             'as_of'       => $asOf,
-            'source'      => $source,
+            'source'      => $isLive ? 'live' : 'config',
             'source_url'  => 'https://www.beac.int',
             'description' => 'TIAO — Taux d\'Intérêt des Appels d\'Offres (CEMAC central-bank policy rate)',
-            'note'        => $source === 'live'
-                ? 'Pulled from beac.int homepage via best-effort scrape; cached 6 h.'
-                : 'BEAC does not publish a public API. Value sourced from config (env BEAC_TIAO_RATE / BEAC_TIAO_AS_OF) — update when the Comité de Politique Monétaire publishes a new rate.',
+            'note'        => $isLive
+                ? 'Pulled live from the beac.int homepage widget ("Taux d\'intérêt des appels d\'offres"). Cached 6 h; auto-refreshes when BEAC updates its homepage.'
+                : 'BEAC scrape failed — falling back to env (BEAC_TIAO_RATE / BEAC_TIAO_AS_OF). Will retry the live source on next cache expiry.',
+        ];
+    }
+
+    /**
+     * Statutory corporate income tax rate (national standard rate, not
+     * SME / sector-specific reductions). Keyed by ISO 3166-1 alpha-3.
+     *
+     * Maintained as a static table because no free public API exists for
+     * statutory tax rates (TradingEconomics has it but requires a key,
+     * KPMG and PWC publish PDF tables). Values reflect 2025 rates per
+     * each country's CGI / Code Général des Impôts. Update via the
+     * `tax_rates` block in config/macro.php when rates change.
+     *
+     * @return array{country:string, rate:float, year:int, source:string, note:string}
+     */
+    private function getIncomeTaxRate(string $country): array
+    {
+        $rates = (array) (config('macro.tax_rates') ?? []);
+        $entry = $rates[$country] ?? null;
+
+        if (!is_array($entry)) {
+            return [
+                'country' => $country,
+                'rate'    => null,
+                'year'    => null,
+                'source'  => 'unknown',
+                'note'    => 'No statutory tax rate configured for this country — add it in config/macro.php.',
+            ];
+        }
+
+        return [
+            'country' => $country,
+            'rate'    => (float)  ($entry['rate']   ?? 0),
+            'year'    => (int)    ($entry['year']   ?? 0),
+            'source'  => (string) ($entry['source'] ?? 'config'),
+            'note'    => (string) ($entry['note']   ?? 'Statutory corporate income tax rate (national standard).'),
         ];
     }
 
