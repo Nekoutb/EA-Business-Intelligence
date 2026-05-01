@@ -777,15 +777,26 @@ final class OperationsService
                     'revenue' => $bulldozeScanned * self::PRICE_HT_BULLDOZE,
                 ],
                 'vehicles_unclassified' => [
-                    // Residual — mostly non-vehicle cargo dumped in the
-                    // vehicule table (cartons, sacks, cookware, even loose
-                    // 40' HC containers — see probe samples). Counted for
-                    // visibility but NOT billed.
-                    'label'   => 'Other / non-vehicle items *',
+                    // Residual = scanned vehicles whose cylinders field
+                    // wasn't filled in (cylinders ∉ {4, 6, 8, 12} — almost
+                    // all are cylinders=0, with a small tail at 9). The
+                    // analyzer (PR #37/39) confirmed these are real cars
+                    // — sample names show TOYOTA Corolla / RAV / Avensis /
+                    // Yaris — they just haven't been categorised in Odoo.
+                    //
+                    // We default to the Voiture rate (the cheapest of the
+                    // four) so the projection includes them WITHOUT
+                    // over-claiming. The `caveat: true` flag keeps the
+                    // table footnote ("assumed Voiture") visible so the
+                    // operator knows we made an assumption — and so the
+                    // customer is nudged to fix the categorisation in
+                    // Odoo for an exact figure.
+                    'label'   => 'Other / unclassified (assumed Voiture) *',
                     'count'   => $vehResidual,
-                    'price'   => null,
-                    'revenue' => null,
+                    'price'   => self::PRICE_HT_VOITURE,
+                    'revenue' => $vehResidual * self::PRICE_HT_VOITURE,
                     'caveat'  => true,
+                    'assumed' => true,
                 ],
                 'wood_per_truckload' => [
                     'label'   => 'Bois (per truck/wagon) **',
