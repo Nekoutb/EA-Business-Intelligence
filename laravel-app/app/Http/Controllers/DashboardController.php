@@ -12,22 +12,27 @@ class DashboardController extends Controller
 {
     public function index(Request $request)
     {
-        // Accept ?period=ytd|mtd via the period-filter component. Default
-        // YTD because that's the cumulative read most users want first.
-        // We deliberately don't expose Month/YoY here (Revenue page is the
-        // power-user surface) — keep the dashboard's filter to the two
-        // primary timeframes that matter for "how is the year going so far?"
-        // (YTD) vs "how is this month tracking?" (MTD).
+        // Accept ?period=ytd|mtd|month via the period-filter component.
+        // Default YTD (cumulative read most users want first). Month gives
+        // power-users access to historical full-month figures (e.g. April
+        // 2026) without leaving the dashboard.
         $today  = new \DateTimeImmutable();
         $type   = strtolower((string) $request->query('period', 'ytd'));
-        if (!in_array($type, ['ytd', 'mtd'], true)) {
+        if (!in_array($type, ['ytd', 'mtd', 'month'], true)) {
             $type = 'ytd';
         }
-        $period = ['type' => $type];
+
+        // Year/month optional — only ytd/month consume year, only month
+        // consumes month. ea_resolve_period clamps to safe ranges.
+        $year  = (int) $request->query('year',  $today->format('Y'));
+        $month = (int) $request->query('month', $today->format('m'));
+        $period = ['type' => $type, 'year' => $year, 'month' => $month];
+
         [, , $periodLabel] = ea_resolve_period($today, $period);
 
-        // Period-scoped cache keys so YTD and MTD don't clobber each other.
-        $cacheTag = $type;
+        // Period-scoped cache keys so different selections don't clobber
+        // each other within a session.
+        $cacheTag = "{$type}_{$year}_{$month}";
 
         $source       = (string) config_env('REVENUE_SOURCE', 'invoice');
         $data         = null;

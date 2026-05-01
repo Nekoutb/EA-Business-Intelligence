@@ -26,7 +26,7 @@
     {{-- YTD / MTD timeframe selector. Limited to those two tabs (Month/YoY
          live on the Revenue page) so the dashboard stays a fast read of
          "year-to-date" vs "this month so far". --}}
-    <x-period-filter :period="$period" :options="[['ytd','YTD'],['mtd','MTD']]" />
+    <x-period-filter :period="$period" :options="[['ytd','YTD'],['mtd','MTD'],['month','Month']]" />
 
     @if ($error)
         <div class="bg-coral-50 border border-coral-200 text-coral-800 rounded-xl p-4 text-sm mb-6">
@@ -99,17 +99,31 @@
             // Mon-Sat (6-day week), excluding only Sundays — the company
             // trades on Saturdays. Mixing a 5-day denominator with a 6-day
             // numerator would inflate the projection by ~17%.
-            $isMtd       = ($period['type'] ?? 'ytd') === 'mtd';
+            // "Monthly view" = either MTD (current calendar month, partial)
+            // OR Month (a specific year+month, complete or partial). Both
+            // anchor to a single calendar month, so the run-rate basis and
+            // KPI titles are identical for both.
+            $periodType    = $period['type'] ?? 'ytd';
+            $isMtd         = in_array($periodType, ['mtd', 'month'], true);
             $workingDaysSoFar = max(1, (int) ($cur['working_days'] ?? 1));
 
-            // Full-period working days — annual when YTD, calendar-month when MTD.
+            // Full-period working days — annual when YTD, calendar-month when MTD/Month.
             $today  = new \DateTimeImmutable();
             $year   = (int) $today->format('Y');
             $fullPeriodWorkingDays = 0;
             if ($isMtd) {
-                // Mon-Sat days in the current calendar month.
-                $monthStart = $today->modify('first day of this month');
-                $nextMonth  = $monthStart->modify('first day of next month');
+                // Mon-Sat days in the relevant calendar month. For type=mtd
+                // that's the current month; for type=month it's the
+                // year+month selected via the filter (so April 2026 picks
+                // up April's full WD count regardless of today's date).
+                if ($periodType === 'month' && !empty($period['year']) && !empty($period['month'])) {
+                    $monthStart = new \DateTimeImmutable(sprintf(
+                        '%04d-%02d-01', (int) $period['year'], (int) $period['month']
+                    ));
+                } else {
+                    $monthStart = $today->modify('first day of this month');
+                }
+                $nextMonth = $monthStart->modify('first day of next month');
                 for ($d = $monthStart; $d < $nextMonth; $d = $d->modify('+1 day')) {
                     if ((int) $d->format('N') < 7) $fullPeriodWorkingDays++;
                 }
