@@ -531,14 +531,18 @@ final class PLForecastService
      *   PY (same month last year actual)
      *   CY (current year, this month actual to date — partial if mid-month)
      *   Forecast (full-month forecast: SMLY w/ trailing-3 fallback)
-     *   Budget (PY × growth factor)
+     *   Budget (uploaded budget if present, else PY × growth factor)
      * Plus variances: CY vs PY, Forecast vs Budget.
      *
-     * @param int  $year   Selected year (defaults to current)
-     * @param int  $month  Month 1-12 (defaults to current month)
+     * @param int   $year   Selected year (defaults to current)
+     * @param int   $month  Month 1-12 (defaults to current month)
      * @param float $budgetGrowth Multiplier applied to PY for Budget. Default 1.0.
+     * @param ?array $uploadedBudget Optional uploaded budget. Shape:
+     *                                ['revenue' => [1=>x, 2=>y, …], …]
+     *                                When present, overrides PY×growth for the
+     *                                Budget column.
      */
-    public function analyzeMtd(?int $year = null, ?int $month = null, float $budgetGrowth = 1.0): array
+    public function analyzeMtd(?int $year = null, ?int $month = null, float $budgetGrowth = 1.0, ?array $uploadedBudget = null): array
     {
         $today = new \DateTimeImmutable('today');
         $year  = $year  ?? (int) $today->format('Y');
@@ -628,6 +632,28 @@ final class PLForecastService
         $finE  = $vec('fin_expense');
         $tax   = $vec('income_tax');
 
+        // Apply uploaded budget (line-level override). This replaces the
+        // per-account PY×growth budget with the user-provided figure for
+        // each top-level line. fin_revenue + fin_expense aggregate into
+        // 'net_financial' on the upload — set finR['budget'] directly,
+        // leave finE['budget'] at zero so the sum still works.
+        if (is_array($uploadedBudget)) {
+            $applyMonth = function (string $key) use ($uploadedBudget, $month): ?float {
+                $vec = $uploadedBudget[$key] ?? null;
+                if (!is_array($vec)) return null;
+                return isset($vec[$month]) ? (float) $vec[$month] : null;
+            };
+            if (($v = $applyMonth('revenue'))      !== null) $rev['budget']  = $v;
+            if (($v = $applyMonth('direct_costs')) !== null) $dc['budget']   = $v;
+            if (($v = $applyMonth('opex'))         !== null) $opex['budget'] = $v;
+            if (($v = $applyMonth('depreciation')) !== null) $da['budget']   = $v;
+            if (($v = $applyMonth('income_tax'))   !== null) $tax['budget']  = $v;
+            if (($v = $applyMonth('net_financial')) !== null) {
+                $finR['budget'] = $v;
+                $finE['budget'] = 0.0;
+            }
+        }
+
         $addV = fn (array $a, array $b) => [
             'py'       => $a['py']       + $b['py'],
             'cy'       => $a['cy']       + $b['cy'],
@@ -669,16 +695,17 @@ final class PLForecastService
         $rows[] = $this->compRow('net_margin',    'Net Margin %',                $marginV($net, $rev),    'margin', 'slate');
 
         return [
-            'view'           => 'mtd',
-            'currency'       => 'XAF',
-            'year'           => $year,
-            'month'          => $month,
-            'month_label'    => $this->monthName($month),
-            'is_service'     => $isService,
-            'cogs_basis'     => $isService ? 'Class 60+61+62' : 'Class 60',
-            'budget_growth'  => $budgetGrowth,
-            'lines'          => $rows,
-            'fetched_at'     => now()->toIso8601String(),
+            'view'             => 'mtd',
+            'currency'         => 'XAF',
+            'year'             => $year,
+            'month'            => $month,
+            'month_label'      => $this->monthName($month),
+            'is_service'       => $isService,
+            'cogs_basis'       => $isService ? 'Class 60+61+62' : 'Class 60',
+            'budget_growth'    => $budgetGrowth,
+            'budget_uploaded'  => is_array($uploadedBudget),
+            'lines'            => $rows,
+            'fetched_at'       => now()->toIso8601String(),
         ];
     }
 
@@ -687,9 +714,9 @@ final class PLForecastService
      *   PY YTD          = sum of same months last year
      *   CY YTD          = sum of months this year up to thruMonth
      *   Forecast (full year) = full-year forecast (CY actual + future SMLY)
-     *   Budget (full year)   = PY full year × growth factor
+     *   Budget (full year)   = uploaded budget if present, else PY × growth
      */
-    public function analyzeYtd(?int $year = null, float $budgetGrowth = 1.0): array
+    public function analyzeYtd(?int $year = null, float $budgetGrowth = 1.0, ?array $uploadedBudget = null): array
     {
         $today      = new \DateTimeImmutable('today');
         $year       = $year ?? (int) $today->format('Y');
@@ -770,6 +797,25 @@ final class PLForecastService
         $finE  = $vec('fin_expense');
         $tax   = $vec('income_tax');
 
+        // Apply uploaded budget — for YTD the Budget column is "Full Year",
+        // so sum 12 months from the upload per line.
+        if (is_array($uploadedBudget)) {
+            $sumYear = function (string $key) use ($uploadedBudget): ?float {
+                $v = $uploadedBudget[$key] ?? null;
+                if (!is_array($v)) return null;
+                return array_sum($v);
+            };
+            if (($v = $sumYear('revenue'))      !== null) $rev['budget']  = $v;
+            if (($v = $sumYear('direct_costs')) !== null) $dc['budget']   = $v;
+            if (($v = $sumYear('opex'))         !== null) $opex['budget'] = $v;
+            if (($v = $sumYear('depreciation')) !== null) $da['budget']   = $v;
+            if (($v = $sumYear('income_tax'))   !== null) $tax['budget']  = $v;
+            if (($v = $sumYear('net_financial')) !== null) {
+                $finR['budget'] = $v;
+                $finE['budget'] = 0.0;
+            }
+        }
+
         $addV = fn (array $a, array $b) => [
             'py'       => $a['py']       + $b['py'],
             'cy'       => $a['cy']       + $b['cy'],
@@ -810,15 +856,16 @@ final class PLForecastService
         $rows[] = $this->compRow('net_margin',    'Net Margin %',                $marginV($net, $rev),    'margin', 'slate');
 
         return [
-            'view'           => 'ytd',
-            'currency'       => 'XAF',
-            'year'           => $year,
-            'thru_month'     => $thruMonth,
-            'is_service'     => $isService,
-            'cogs_basis'     => $isService ? 'Class 60+61+62' : 'Class 60',
-            'budget_growth'  => $budgetGrowth,
-            'lines'          => $rows,
-            'fetched_at'     => now()->toIso8601String(),
+            'view'             => 'ytd',
+            'currency'         => 'XAF',
+            'year'             => $year,
+            'thru_month'       => $thruMonth,
+            'is_service'       => $isService,
+            'cogs_basis'       => $isService ? 'Class 60+61+62' : 'Class 60',
+            'budget_growth'    => $budgetGrowth,
+            'budget_uploaded'  => is_array($uploadedBudget),
+            'lines'            => $rows,
+            'fetched_at'       => now()->toIso8601String(),
         ];
     }
 

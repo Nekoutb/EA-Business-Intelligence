@@ -8,7 +8,7 @@
                 <span class="text-[10px] uppercase tracking-[0.35em] text-[#8a8578] font-medium">{{ $year }} · Cameroon · {{ ea_last_sync_label() }}</span>
             </div>
             <h1 class="text-2xl font-bold text-[#1e3d44]">Cashflow Forecast</h1>
-            <div class="text-[11px] text-[#7c7466] mt-1">Indirect-method monthly cashflow — Operating / Investing / Financing. Closed months show actual figures from the GL; remaining months are forecast. Figures in million XAF.</div>
+            <div class="text-[11px] text-[#7c7466] mt-1">Direct-method monthly cashflow — built from actual cash movements (Class 5) categorised by the counter-account (customers / suppliers / employees / taxes / capex / financing). Closed months show actual figures; remaining months are SMLY forecast. Figures in million XAF.</div>
         </div>
         <form method="get" class="flex items-end gap-2">
             <div>
@@ -60,7 +60,7 @@
                     <span class="text-[#cbc7be]">·</span>
                     <span class="inline-flex items-center gap-1.5"><span class="inline-block w-3 h-3 rounded-sm bg-[#f4e2e3] border border-[#e0c5c7]"></span><span class="font-semibold {{ $budgetText }}">Forecast</span></span>
                 </div>
-                <div class="text-[10.5px] text-[#7c7466]">Opening cash {{ $year }}: <strong>{{ $fmtM($data['opening_cash'] ?? 0) }}</strong> million {{ $ccy }} · Indirect method (SYSCOHADA)</div>
+                <div class="text-[10.5px] text-[#7c7466]">Opening cash {{ $year }}: <strong>{{ $fmtM($data['opening_cash'] ?? 0) }}</strong> million {{ $ccy }} · Direct method (SYSCOHADA Class 5)</div>
             </div>
             <div class="overflow-x-auto">
                 <table class="w-full text-[11.5px]" style="min-width: 1100px;">
@@ -107,7 +107,7 @@
                 </table>
             </div>
             <div class="px-4 py-2.5 border-t border-[#e8e4de] bg-[#faf8f5] text-[10.5px] text-[#7c7466]">
-                Indirect-method cashflow. Operating CF starts from Net Result (P&L), adds back D&A, then adjusts for working capital changes (ΔAR, Δinventory, ΔAP). Investing CF = net Capex (Class 2 monthly deltas). Financing CF = ΔDebt (Class 1). Opening cash = Class 5 balance at year start. Numbers cross-check to the P&L Forecast page.
+                Direct-method cashflow. Each line tracks actual cash movements (Class 5 — banques + caisse) categorised by the dominant counter-account on the move: customers (41) / suppliers (40) / employees (42, 64) / taxes (43, 44) / income tax (89) / capex (Class 2) / financing (Class 1). Forecast = SMLY (same month last year) per bucket with trailing-3-month fallback.
             </div>
         </div>
     @endif

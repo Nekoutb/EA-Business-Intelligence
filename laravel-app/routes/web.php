@@ -8,6 +8,7 @@ use App\Http\Controllers\ReceivablesController;
 use App\Http\Controllers\ProfitLossController;
 use App\Http\Controllers\PayablesController;
 use App\Http\Controllers\TreasuryController;
+use App\Http\Controllers\BudgetUploadController;
 use App\Http\Controllers\CashflowForecastController;
 use App\Http\Controllers\InvestmentAnalysisController;
 use App\Http\Controllers\MacroEconomicsController;
@@ -1123,9 +1124,14 @@ Route::prefix('t/{tenant}')
                 // ── Financial Planning service ────────────────────────────────
                 Route::get('/macro-economics',   [MacroEconomicsController::class, 'index'])->middleware('module:macro_economics');
                 Route::get('/working-capital',   [WorkingCapitalController::class, 'index'])->middleware('module:working_capital');
-                Route::get('/pl-forecast',         [PLForecastController::class,         'index'])->middleware('module:pl_forecast');
+                Route::get('/pl-forecast',             [PLForecastController::class, 'index'])->middleware('module:pl_forecast');
+                Route::post('/pl-forecast/commentary', [PLForecastController::class, 'saveCommentary'])->middleware('module:pl_forecast');
                 Route::get('/cashflow-forecast',   [CashflowForecastController::class,   'index'])->middleware('module:cashflow_forecast');
                 Route::get('/investment-analysis', [InvestmentAnalysisController::class, 'index'])->middleware('module:investment_analysis');
+                Route::get ('/budget-upload',           [BudgetUploadController::class, 'index'])->middleware('module:pl_forecast');
+                Route::post('/budget-upload',           [BudgetUploadController::class, 'upload'])->middleware('module:pl_forecast');
+                Route::post('/budget-upload/delete',    [BudgetUploadController::class, 'delete'])->middleware('module:pl_forecast');
+                Route::get ('/budget-upload/template',  [BudgetUploadController::class, 'template'])->middleware('module:pl_forecast');
 
                 // ── Financial Reporting service ───────────────────────────────
                 Route::get('/general-ledger-quality', [GLQualityController::class, 'index'])->middleware('module:gl_quality');
