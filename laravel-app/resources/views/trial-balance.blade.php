@@ -143,22 +143,7 @@
                   </thead>
 
                   <tbody class="divide-y divide-[#f1ede5]">
-                      @php $currentClass = -1; @endphp
                       @foreach ($rows as $row)
-                          {{-- Class subtotal banner whenever we cross a class boundary --}}
-                          @if ($row['class'] !== $currentClass)
-                              @php
-                                  $currentClass = $row['class'];
-                                  $cls = collect($classTotals)->firstWhere('class', $currentClass);
-                              @endphp
-                              <tr class="bg-[#f4efe6] border-y border-[#cbc7be]">
-                                  <td colspan="8" class="py-1.5 pl-4 pr-2 text-[10.5px] font-semibold text-[#5a6a70] uppercase tracking-wider">
-                                      {{ $classLabels[$currentClass] ?? ('Class ' . $currentClass) }}
-                                      <span class="text-[10px] text-[#a09d95] ml-2 normal-case">({{ $cls['count'] ?? 0 }} accounts)</span>
-                                  </td>
-                              </tr>
-                          @endif
-
                           <tr class="hover:bg-[#faf8f5] transition-colors">
                               <td class="text-left pl-4 pr-2 py-1 sticky left-0 bg-white z-10 font-mono text-[11px] text-[#1e3d44]" style="width:6rem;">{{ $row['code'] }}</td>
                               <td class="text-left px-2 py-1 sticky bg-white z-10 text-[11px] text-[#2d3748] truncate" style="width:18rem;left:6rem;" title="{{ $row['name'] }}">{{ $row['name'] }}</td>
@@ -194,36 +179,5 @@
           </div>
       </div>
 
-      {{-- Class subtotals summary card --}}
-      @if (!empty($classTotals))
-          <div class="bg-white border border-[#e8e4de] rounded-xl p-5 mt-4">
-              <h3 class="text-sm font-semibold text-[#1e3d44] mb-3">Class subtotals · Soldes par classe</h3>
-              <div class="overflow-x-auto">
-                  <table class="w-full text-[11.5px]" style="min-width: 900px;">
-                      <thead class="border-b border-[#cbc7be]">
-                          <tr>
-                              <th class="text-left py-1.5 pl-2 pr-2 text-[10px] font-semibold text-[#5a6a70]" style="width:18rem;">Classe</th>
-                              <th class="py-1.5 px-2 text-right text-[10px] font-bold text-[#5a6a70] border-l border-[#e8e4de]" colspan="2">Opening Balance</th>
-                              <th class="py-1.5 px-2 text-right text-[10px] font-bold text-[#5a6a70] border-l border-[#e8e4de]" colspan="2">Movements</th>
-                              <th class="py-1.5 px-2 text-right text-[10px] font-bold text-[#5a6a70] border-l border-[#e8e4de]" colspan="2">Closing Balance</th>
-                          </tr>
-                      </thead>
-                      <tbody class="divide-y divide-[#f1ede5]">
-                          @foreach ($classTotals as $cls)
-                              <tr>
-                                  <td class="py-1.5 pl-2 pr-2 text-[#1e3d44] font-medium">{{ $classLabels[$cls['class']] ?? ('Class ' . $cls['class']) }}</td>
-                                  <td class="text-right tabular-nums px-2 py-1.5 border-l border-[#e8e4de] text-[#5a6a70]">{{ $fmt($cls['opening_dr']) }}</td>
-                                  <td class="text-right tabular-nums px-2 py-1.5 text-[#5a6a70]">{{ $fmt($cls['opening_cr']) }}</td>
-                                  <td class="text-right tabular-nums px-2 py-1.5 border-l border-[#e8e4de] text-[#5a6a70]">{{ $fmt($cls['movement_dr']) }}</td>
-                                  <td class="text-right tabular-nums px-2 py-1.5 text-[#5a6a70]">{{ $fmt($cls['movement_cr']) }}</td>
-                                  <td class="text-right tabular-nums px-2 py-1.5 border-l border-[#e8e4de] text-[#2d3748] font-semibold">{{ $fmt($cls['closing_dr']) }}</td>
-                                  <td class="text-right tabular-nums px-2 py-1.5 text-[#2d3748] font-semibold">{{ $fmt($cls['closing_cr']) }}</td>
-                              </tr>
-                          @endforeach
-                      </tbody>
-                  </table>
-              </div>
-          </div>
-      @endif
     @endif
 @endsection

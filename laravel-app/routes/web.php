@@ -8,10 +8,12 @@ use App\Http\Controllers\ReceivablesController;
 use App\Http\Controllers\ProfitLossController;
 use App\Http\Controllers\PayablesController;
 use App\Http\Controllers\TreasuryController;
+use App\Http\Controllers\BalanceSheetReviewController;
 use App\Http\Controllers\BudgetUploadController;
 use App\Http\Controllers\CashflowForecastController;
 use App\Http\Controllers\InvestmentAnalysisController;
 use App\Http\Controllers\MacroEconomicsController;
+use App\Http\Controllers\OhadaFinancialStatementsController;
 use App\Http\Controllers\PLForecastController;
 use App\Http\Controllers\TrialBalanceController;
 use App\Http\Controllers\WorkingCapitalController;
@@ -1135,7 +1137,9 @@ Route::prefix('t/{tenant}')
                 Route::get ('/budget-upload/template',  [BudgetUploadController::class, 'template'])->middleware('module:pl_forecast');
 
                 // ── Financial Reporting service ───────────────────────────────
-                Route::get('/trial-balance',          [TrialBalanceController::class, 'index'])->middleware('module:trial_balance');
+                Route::get('/trial-balance',                [TrialBalanceController::class,                'index'])->middleware('module:trial_balance');
+                Route::get('/balance-sheet-review',         [BalanceSheetReviewController::class,          'index'])->middleware('module:balance_sheet');
+                Route::get('/ohada-financial-statements',   [OhadaFinancialStatementsController::class,    'index'])->middleware('module:income_statement');
                 Route::get('/general-ledger-quality', [GLQualityController::class, 'index'])->middleware('module:gl_quality');
                 // Avoid a dotted extension in the URL — PHP's built-in dev server
                 // treats anything with a "." as a static file and serves a 404
