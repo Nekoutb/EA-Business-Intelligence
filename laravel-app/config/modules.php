@@ -57,11 +57,11 @@ return [
         [
             'key'         => 'financial_planning',
             'label'       => 'Financial Planning',
-            'description' => 'Budgeting, forecasting and scenario modelling on top of your live ledger.',
+            'description' => 'Working-capital ratios, budgeting, forecasting and scenario modelling on top of your live ledger.',
             'icon'        => 'M3 17l6-6 4 4 8-8M14 7h7v7',
             'order'       => 30,
-            'default'     => false,
-            'status'      => 'coming_soon',
+            'default'     => true,
+            'status'      => 'live',
         ],
         [
             'key'         => 'tax_compliance',
@@ -353,7 +353,18 @@ return [
             'status'  => 'coming_soon',
         ],
 
-        // ── Financial Planning (coming soon) ─────────────────────────────
+        // ── Financial Planning ───────────────────────────────────────────
+        [
+            'key'     => 'working_capital',
+            'service' => 'financial_planning',
+            'label'   => 'Working Capital',
+            'url'     => '/working-capital',
+            'active'  => 'working_capital',
+            'icon'    => 'M3 12h4l3-9 4 18 3-9h4',
+            'default' => true,
+            'core'    => false,
+            'status'  => 'live',
+        ],
         [
             'key'     => 'budgeting',
             'service' => 'financial_planning',
