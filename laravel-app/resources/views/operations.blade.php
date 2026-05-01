@@ -14,7 +14,7 @@
 @endsection
 
 @section('content')
-    <x-period-filter :period="$period" :options="[['ytd','YTD'],['mtd','MTD']]" />
+    <x-period-filter :period="$period" :options="[['ytd','YTD'],['mtd','MTD'],['month','Month']]" />
 
     @if ($error)
         {{-- Service-layer failure — usually a connection issue (Odoo
