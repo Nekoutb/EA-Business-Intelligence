@@ -355,6 +355,17 @@ return [
 
         // ── Financial Planning ───────────────────────────────────────────
         [
+            'key'     => 'macro_economics',
+            'service' => 'financial_planning',
+            'label'   => 'Macro Economics',
+            'url'     => '/macro-economics',
+            'active'  => 'macro_economics',
+            'icon'    => 'M2 12h2l2-7 4 14 3-10 4 8 3-5h4',
+            'default' => true,
+            'core'    => false,
+            'status'  => 'live',
+        ],
+        [
             'key'     => 'working_capital',
             'service' => 'financial_planning',
             'label'   => 'Working Capital',

@@ -8,6 +8,7 @@ use App\Http\Controllers\ReceivablesController;
 use App\Http\Controllers\ProfitLossController;
 use App\Http\Controllers\PayablesController;
 use App\Http\Controllers\TreasuryController;
+use App\Http\Controllers\MacroEconomicsController;
 use App\Http\Controllers\WorkingCapitalController;
 use App\Http\Controllers\FixedAssetsController;
 use App\Http\Controllers\InventoryController;
@@ -1117,6 +1118,7 @@ Route::prefix('t/{tenant}')
                 Route::get('/procurement',       [ProcurementController::class, 'index'])->middleware('module:procurement');
 
                 // ── Financial Planning service ────────────────────────────────
+                Route::get('/macro-economics',   [MacroEconomicsController::class, 'index'])->middleware('module:macro_economics');
                 Route::get('/working-capital',   [WorkingCapitalController::class, 'index'])->middleware('module:working_capital');
 
                 // ── Financial Reporting service ───────────────────────────────
