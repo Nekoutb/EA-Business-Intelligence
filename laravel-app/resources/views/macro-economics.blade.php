@@ -49,40 +49,75 @@
     @else
 
         @php
-            $tiao = $data['tiao'] ?? [];
+            $tiao = $data['tiao']        ?? [];
+            $tax  = $data['income_tax']  ?? [];
             $src  = $data['data_source'] ?? [];
         @endphp
 
-        {{-- ── BEAC TIAO Card ──────────────────────────────────────────────
-             Prominent, full-width because it's a single live number with
-             policy-rate semantics that affect the whole region. --}}
-        <div class="bg-white border border-[#e8e4de] rounded-xl p-5 mb-6">
-            <div class="flex items-start justify-between gap-4 flex-wrap">
-                <div class="flex-1 min-w-[14rem]">
-                    <div class="flex items-center gap-2 mb-1">
-                        <div class="w-1 h-4 rounded bg-brand-500"></div>
-                        <h2 class="text-xs font-semibold uppercase tracking-wider text-[#5a6a70]">BEAC TIAO — Central-Bank Policy Rate</h2>
-                        <span class="text-[9.5px] uppercase tracking-wider rounded px-1.5 py-0.5 border
-                            {{ ($tiao['source'] ?? 'config') === 'live'
-                                ? 'bg-sage-50 text-sage-700 border-sage-200'
-                                : 'bg-warm-50 text-warm-700 border-warm-200' }}">
-                            {{ ($tiao['source'] ?? 'config') === 'live' ? 'LIVE · scraped' : 'CONFIG · manual' }}
-                        </span>
-                    </div>
-                    <div class="text-3xl font-bold text-[#2d3748] mt-2 tabular-nums">
-                        {{ number_format((float)($tiao['rate'] ?? 0), 2) }}<span class="text-lg ml-0.5">%</span>
-                    </div>
-                    <div class="text-[11px] text-[#7c7466] mt-1">
-                        As of <strong>{{ $tiao['as_of'] ?? '—' }}</strong> ·
-                        {{ $tiao['description'] ?? '' }}
-                    </div>
-                </div>
+        {{-- ── Sandbox row: BEAC TIAO + Country Income Tax Rate ───────────
+             Two side-by-side cards, both pulled from the same physical
+             country selection. TIAO is region-wide (CEMAC); income tax
+             switches per country. --}}
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-6">
 
-                <div class="text-[11px] text-[#7c7466] max-w-md leading-relaxed">
-                    <strong class="text-[#1e3d44]">Source:</strong>
-                    <a href="{{ $tiao['source_url'] ?? '#' }}" target="_blank" rel="noopener"
-                       class="text-brand-700 hover:text-brand-900 underline decoration-dotted">{{ parse_url($tiao['source_url'] ?? '', PHP_URL_HOST) ?: 'beac.int' }}</a>.
-                    <div class="mt-1 text-[#a09d95] italic">{{ $tiao['note'] ?? '' }}</div>
+            {{-- BEAC TIAO --}}
+            <div class="bg-white border border-[#e8e4de] rounded-xl p-5">
+                <div class="flex items-center gap-2 mb-1">
+                    <div class="w-1 h-4 rounded bg-brand-500"></div>
+                    <h2 class="text-xs font-semibold uppercase tracking-wider text-[#5a6a70]">BEAC TIAO Rate</h2>
+                    <span class="text-[9.5px] uppercase tracking-wider rounded px-1.5 py-0.5 border
+                        {{ ($tiao['source'] ?? 'config') === 'live'
+                            ? 'bg-sage-50 text-sage-700 border-sage-200'
+                            : 'bg-warm-50 text-warm-700 border-warm-200' }}">
+                        {{ ($tiao['source'] ?? 'config') === 'live' ? 'LIVE · scraped' : 'CONFIG · fallback' }}
+                    </span>
+                </div>
+                <div class="text-3xl font-bold text-[#2d3748] mt-2 tabular-nums">
+                    {{ number_format((float)($tiao['rate'] ?? 0), 2) }}<span class="text-lg ml-0.5">%</span>
+                </div>
+                <div class="text-[11px] text-[#7c7466] mt-1">
+                    As of <strong>{{ $tiao['as_of'] ?? '—' }}</strong> ·
+                    Central-bank policy rate · CEMAC-wide
+                </div>
+                <div class="text-[10.5px] text-[#7c7466] mt-2 leading-relaxed">
+                    {{ $tiao['description'] ?? '' }}
+                </div>
+                <div class="text-[10px] text-[#a09d95] mt-2 italic leading-snug">
+                    {{ $tiao['note'] ?? '' }}
+                    Source: <a href="{{ $tiao['source_url'] ?? '#' }}" target="_blank" rel="noopener" class="text-brand-700 hover:text-brand-900 underline decoration-dotted">{{ parse_url($tiao['source_url'] ?? '', PHP_URL_HOST) ?: 'beac.int' }}</a>.
+                </div>
+            </div>
+
+            {{-- Statutory Country Income Tax Rate --}}
+            <div class="bg-white border border-[#e8e4de] rounded-xl p-5">
+                <div class="flex items-center gap-2 mb-1">
+                    <div class="w-1 h-4 rounded bg-coral-500"></div>
+                    <h2 class="text-xs font-semibold uppercase tracking-wider text-[#5a6a70]">
+                        Corporate Income Tax — {{ $data['country_label'] }}
+                    </h2>
+                    <span class="text-[9.5px] uppercase tracking-wider rounded px-1.5 py-0.5 border bg-warm-50 text-warm-700 border-warm-200">
+                        STATUTORY
+                    </span>
+                </div>
+                <div class="text-3xl font-bold text-[#2d3748] mt-2 tabular-nums">
+                    @if (($tax['rate'] ?? null) !== null)
+                        {{ number_format((float)$tax['rate'], 1) }}<span class="text-lg ml-0.5">%</span>
+                    @else
+                        <span class="text-[#a09d95]">—</span>
+                    @endif
+                </div>
+                <div class="text-[11px] text-[#7c7466] mt-1">
+                    @if (!empty($tax['year']))
+                        For tax year <strong>{{ $tax['year'] }}</strong> · Source: {{ $tax['source'] ?? 'config' }}
+                    @else
+                        Not configured for this country
+                    @endif
+                </div>
+                <div class="text-[10.5px] text-[#7c7466] mt-2 leading-relaxed">
+                    {{ $tax['note'] ?? '' }}
+                </div>
+                <div class="text-[10px] text-[#a09d95] mt-2 italic leading-snug">
+                    Statutory rate maintained in <code class="text-[10px] bg-[#faf8f5] border border-[#ece7df] rounded px-1 py-0.5">config/macro.php</code> — no free public API for global tax rates. Update when each country's CGI changes.
                 </div>
             </div>
         </div>
@@ -141,6 +176,7 @@
                             'color'        => $palette['line'],
                             'proj_color'   => $palette['proj'],
                             'unit'         => $meta['unit'],
+                            'unit_short'   => $meta['unit_short'] ?? '',
                         ];
 
                         // YoY pill colouring follows "better_when": green
@@ -180,6 +216,21 @@
                                     @endif
                                     <div class="text-[10.5px] text-[#7c7466] mt-1 leading-snug">{{ $meta['sub'] }}</div>
                                 @endif
+
+                                @if (!$ind['pending'] && !empty($ind['projection_source']))
+                                    @php
+                                        $projSrc = $ind['projection_source'];
+                                        $projTone = $projSrc === 'worldbank'
+                                            ? 'bg-sage-50 text-sage-700 border-sage-200'
+                                            : 'bg-warm-50 text-warm-700 border-warm-200';
+                                        $projLabel = $projSrc === 'worldbank'
+                                            ? 'Projection: World Bank'
+                                            : 'Projection: linear (no WB forecast)';
+                                    @endphp
+                                    <div class="mt-1.5 inline-flex items-center text-[9.5px] uppercase tracking-wider rounded px-1.5 py-0.5 border {{ $projTone }} font-semibold">
+                                        {{ $projLabel }}
+                                    </div>
+                                @endif
                             </div>
                         </div>
 
@@ -203,14 +254,21 @@
                     — {{ $src['note'] ?? '' }}
                 </div>
                 <div>
-                    <strong class="text-[#1e3d44]">BEAC</strong> — central-bank rate (TIAO) sourced from
-                    <a href="https://www.beac.int" target="_blank" rel="noopener" class="text-brand-700 hover:text-brand-900 underline decoration-dotted">beac.int</a>.
-                    Best-effort scrape with config fallback (env <code class="text-[10px] bg-[#faf8f5] border border-[#ece7df] rounded px-1 py-0.5">BEAC_TIAO_RATE</code> /
-                    <code class="text-[10px] bg-[#faf8f5] border border-[#ece7df] rounded px-1 py-0.5">BEAC_TIAO_AS_OF</code>).
+                    <strong class="text-[#1e3d44]">Goods (ex-fuel) derivation</strong> — Imports = total merchandise (<code class="text-[10px] bg-[#faf8f5] border border-[#ece7df] rounded px-1 py-0.5">TM.VAL.MRCH.CD.WT</code>) × (1 − fuel-share <code class="text-[10px] bg-[#faf8f5] border border-[#ece7df] rounded px-1 py-0.5">TM.VAL.FUEL.ZS.UN</code>); Exports = the same with <code class="text-[10px] bg-[#faf8f5] border border-[#ece7df] rounded px-1 py-0.5">TX.</code> codes. Petroleum is excluded because crude oil moves through dedicated terminals / pipelines, bypassing the customer's scanning operation. Services are excluded entirely — they don't produce physical scans.
                 </div>
                 <div>
-                    <strong class="text-[#1e3d44]">Projection</strong> — linear regression on the 5 historical points; future years shown with a dashed line.
-                    Linear projection is intentionally simple — for richer forecasts, connect TradingEconomics or IMF WEO.
+                    <strong class="text-[#1e3d44]">BEAC TIAO</strong> — Sourced live from
+                    <a href="https://www.beac.int" target="_blank" rel="noopener" class="text-brand-700 hover:text-brand-900 underline decoration-dotted">beac.int</a>.
+                    The scrape anchors on the full French label "Taux d'intérêt des appels d'offres" in the homepage interest-rate widget (verified Apr 2026). Cached 6 h, so a Comité de Politique Monétaire change reflects within at most 6 hours of BEAC updating their site. On scrape failure, falls back to <code class="text-[10px] bg-[#faf8f5] border border-[#ece7df] rounded px-1 py-0.5">BEAC_TIAO_RATE</code> /
+                    <code class="text-[10px] bg-[#faf8f5] border border-[#ece7df] rounded px-1 py-0.5">BEAC_TIAO_AS_OF</code> in env.
+                </div>
+                <div>
+                    <strong class="text-[#1e3d44]">Projection</strong> — Each indicator first asks World Bank for forward years (some series have GEP forecasts attached). If the World Bank has no forecast, the chart falls back to a linear extrapolation of the 5-year trend; the badge on each card says which path was used. The dashed line + hollow markers always mark forward / projected points.
+                </div>
+                <div>
+                    <strong class="text-[#1e3d44]">Statutory income tax</strong> — Maintained in
+                    <code class="text-[10px] bg-[#faf8f5] border border-[#ece7df] rounded px-1 py-0.5">config/macro.php</code>
+                    because no free public API exists for global tax rates. Each entry references the source CGI / tax code.
                 </div>
                 <div>
                     Data refreshed: {{ \Carbon\Carbon::parse($data['fetched_at'])->diffForHumans() }} ·
@@ -219,28 +277,45 @@
             </div>
         </div>
 
-        {{-- Vanilla SVG mini line-chart renderer. Pure JS, no library. --}}
+        {{-- Vanilla SVG mini line-chart renderer with visible value
+             labels at every point. Pure JS, no library dependency. --}}
         <script>
         (function () {
+            // Format a value compactly enough to fit above a data point
+            // without overlapping the next point's label. Currency-style
+            // uses K/M/B; percent shows one decimal; LCU/USD as integer.
+            function fmtValue(v, unit) {
+                const av = Math.abs(v);
+                if (unit === '%')         return v.toFixed(1) + '%';
+                if (unit === 'LCU/USD')   return v.toFixed(0);
+                if (av >= 1e9)            return (v / 1e9).toFixed(1) + 'B';
+                if (av >= 1e6)            return (v / 1e6).toFixed(0) + 'M';
+                if (av >= 1e3)            return (v / 1e3).toFixed(0) + 'K';
+                return v.toFixed(0);
+            }
+
             document.querySelectorAll('[id^="macro-chart-"]').forEach(function (root) {
                 let payload;
                 try { payload = JSON.parse(root.dataset.chart || '{}'); }
                 catch (e) { return; }
 
-                const labels   = payload.labels || [];
-                const values   = payload.values || [];
-                const isProj   = payload.is_projected || [];
+                const labels = payload.labels || [];
+                const values = payload.values || [];
+                const isProj = payload.is_projected || [];
                 if (labels.length < 2) return;
 
-                const W = 320, H = 90, padL = 30, padR = 8, padT = 8, padB = 18;
+                // Slightly taller (110 vs 90) to give the value labels
+                // breathing room above the data points; also wider left
+                // padding for axis numbers.
+                const W = 340, H = 120, padL = 32, padR = 12, padT = 18, padB = 26;
                 const innerW = W - padL - padR, innerH = H - padT - padB;
 
-                // Y-axis bounds with a small padding so the line doesn't
-                // touch the top/bottom edge.
                 const yMin = Math.min.apply(null, values);
                 const yMax = Math.max.apply(null, values);
-                const yPad = (yMax - yMin) * 0.1 || (Math.abs(yMax) * 0.1 || 1);
-                const yLo = yMin - yPad, yHi = yMax + yPad;
+                // Extra top headroom so the value-label tags don't clip.
+                const yPad = (yMax - yMin) * 0.18 || (Math.abs(yMax) * 0.18 || 1);
+                const yLo = yMin - yPad * 0.4;
+                const yHi = yMax + yPad;
                 const yRange = (yHi - yLo) || 1;
 
                 const xScale = i => padL + (i * innerW) / (labels.length - 1);
@@ -248,25 +323,15 @@
 
                 let svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" class="w-full h-auto" style="font-family:inherit;">`;
 
-                // Y-axis tick labels (just min, mid, max — keep it sparse)
+                // Y-axis grid (min, mid, max) with axis-tick labels
                 const ticks = [yMin, (yMin + yMax) / 2, yMax];
                 ticks.forEach(function (t) {
                     const y = yScale(t);
                     svg += `<line x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}" stroke="#e8e4de" stroke-width="1" stroke-dasharray="2,3"/>`;
-                    let label;
-                    const av = Math.abs(t);
-                    if (payload.unit === '%') label = t.toFixed(1) + '%';
-                    else if (payload.unit === 'LCU/USD') label = t.toFixed(0);
-                    else if (av >= 1e9) label = (t / 1e9).toFixed(1) + 'B';
-                    else if (av >= 1e6) label = (t / 1e6).toFixed(0) + 'M';
-                    else if (av >= 1e3) label = (t / 1e3).toFixed(0) + 'K';
-                    else label = t.toFixed(0);
-                    svg += `<text x="${padL - 4}" y="${y + 3}" text-anchor="end" font-size="8" fill="#a09d95">${label}</text>`;
+                    svg += `<text x="${padL - 4}" y="${y + 3}" text-anchor="end" font-size="8" fill="#a09d95">${fmtValue(t, payload.unit)}</text>`;
                 });
 
-                // Build path segments: actuals (solid) and projection (dashed).
-                // Find the boundary between actual and projection — first
-                // index where is_projected is true.
+                // Find boundary between actual and projection
                 let firstProjIdx = -1;
                 for (let i = 0; i < isProj.length; i++) {
                     if (isProj[i]) { firstProjIdx = i; break; }
@@ -282,7 +347,7 @@
                     svg += `<path d="${d.trim()}" stroke="${payload.color}" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`;
                 }
 
-                // Dashed projection line — connects from last actual through projections
+                // Dashed projection line, anchored to last actual
                 if (firstProjIdx >= 0 && firstProjIdx > 0) {
                     let d = 'M' + xScale(firstProjIdx - 1).toFixed(1) + ',' + yScale(values[firstProjIdx - 1]).toFixed(1) + ' ';
                     for (let i = firstProjIdx; i < values.length; i++) {
@@ -295,24 +360,45 @@
                 for (let i = 0; i < values.length; i++) {
                     const cx = xScale(i), cy = yScale(values[i]);
                     if (isProj[i]) {
-                        svg += `<circle cx="${cx}" cy="${cy}" r="2.5" fill="white" stroke="${payload.proj_color}" stroke-width="1.5"><title>${labels[i]} (proj.): ${values[i].toFixed(2)}</title></circle>`;
+                        svg += `<circle cx="${cx}" cy="${cy}" r="3" fill="white" stroke="${payload.proj_color}" stroke-width="1.5"><title>${labels[i]} (proj.): ${fmtValue(values[i], payload.unit)}</title></circle>`;
                     } else {
-                        svg += `<circle cx="${cx}" cy="${cy}" r="2.5" fill="${payload.color}"><title>${labels[i]}: ${values[i].toFixed(2)}</title></circle>`;
+                        svg += `<circle cx="${cx}" cy="${cy}" r="3" fill="${payload.color}"><title>${labels[i]}: ${fmtValue(values[i], payload.unit)}</title></circle>`;
                     }
                 }
 
-                // X-axis year labels — first, middle, last only to keep tidy
-                const xTickIdx = [0, Math.floor(labels.length / 2), labels.length - 1];
-                xTickIdx.forEach(function (i) {
+                // ── Visible value labels at every data point ────────────
+                // Position above the point unless the label would clip the
+                // top of the chart, in which case flip below. White stroke
+                // around the text gives a "halo" effect against any line
+                // that passes underneath.
+                for (let i = 0; i < values.length; i++) {
                     const cx = xScale(i);
-                    svg += `<text x="${cx}" y="${H - 5}" text-anchor="middle" font-size="9" fill="#5a6a70">${labels[i]}</text>`;
-                });
+                    const cy = yScale(values[i]);
+                    const labelText = fmtValue(values[i], payload.unit);
+                    const above = cy > padT + 14;
+                    const ly = above ? cy - 6 : cy + 12;
+                    const fill = isProj[i] ? '#7c7466' : '#1e3d44';
+                    const fontStyle = isProj[i] ? 'italic' : 'normal';
+                    // White halo / outline first, then the actual label on top.
+                    svg += `<text x="${cx}" y="${ly}" text-anchor="middle" font-size="9" font-weight="600" fill="white" stroke="white" stroke-width="3" stroke-linejoin="round" paint-order="stroke" font-style="${fontStyle}">${labelText}</text>`;
+                    svg += `<text x="${cx}" y="${ly}" text-anchor="middle" font-size="9" font-weight="600" fill="${fill}" font-style="${fontStyle}">${labelText}</text>`;
+                }
+
+                // X-axis year labels at every point (now that the chart
+                // is wider, all 7 fit cleanly).
+                for (let i = 0; i < labels.length; i++) {
+                    const cx = xScale(i);
+                    const isProjLabel = isProj[i];
+                    const fill = isProjLabel ? '#a09d95' : '#5a6a70';
+                    const style = isProjLabel ? 'italic' : 'normal';
+                    svg += `<text x="${cx}" y="${H - 8}" text-anchor="middle" font-size="9" fill="${fill}" font-style="${style}">${labels[i]}</text>`;
+                }
 
                 // Vertical separator at the actual/projection boundary
                 if (firstProjIdx > 0) {
                     const xSep = (xScale(firstProjIdx - 1) + xScale(firstProjIdx)) / 2;
                     svg += `<line x1="${xSep}" y1="${padT}" x2="${xSep}" y2="${padT + innerH}" stroke="#cbc7be" stroke-width="1" stroke-dasharray="1,2"/>`;
-                    svg += `<text x="${xSep + 2}" y="${padT + 8}" font-size="7.5" fill="#a09d95" font-style="italic">proj.</text>`;
+                    svg += `<text x="${xSep + 3}" y="${padT - 4}" font-size="7.5" fill="#a09d95" font-style="italic">proj.</text>`;
                 }
 
                 svg += '</svg>';
