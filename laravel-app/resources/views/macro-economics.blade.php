@@ -2,35 +2,18 @@
 @section('title', 'Macro Economics')
 
 @section('header')
-    <div class="flex flex-wrap items-end justify-between gap-4">
-        <div>
-            <div class="flex items-center gap-2 mb-1">
-                <span class="text-[10px] uppercase tracking-[0.35em] text-[#8a8578] font-medium">
-                    {{ $data['country_label'] ?? '—' }} · {{ ea_last_sync_label() }}
-                </span>
-            </div>
-            <h1 class="text-2xl font-bold text-[#1e3d44]">Macro Economics</h1>
-            <div class="text-xs text-[#7c7466] mt-1">
-                Six trade-focused indicators relevant to scanning operations — last
-                {{ ($data['history_window']['to'] ?? 0) - ($data['history_window']['from'] ?? 0) + 1 }}
-                years of actuals plus a 2-year linear projection. Plus the BEAC TIAO policy rate.
-            </div>
+    <div>
+        <div class="flex items-center gap-2 mb-1">
+            <span class="text-[10px] uppercase tracking-[0.35em] text-[#8a8578] font-medium">
+                Cameroon · {{ ea_last_sync_label() }}
+            </span>
         </div>
-
-        {{-- Country picker. Reloads the page; values keyed by ISO 3166-1
-             alpha-3 (CMR / TCD / etc) — what the World Bank API expects. --}}
-        <form method="get" class="flex items-end gap-2">
-            <div>
-                <label class="block text-[10px] uppercase tracking-wider text-[#8a8578] font-medium mb-1">Country</label>
-                <select name="country"
-                        class="text-xs border border-[#e8e4de] rounded-lg px-3 py-2 bg-white text-[#1e3d44] focus:ring-2 focus:ring-brand-300 focus:border-brand-300 outline-none min-w-[10rem]"
-                        onchange="this.form.submit()">
-                    @foreach ($countries as $code => $label)
-                        <option value="{{ $code }}" {{ $code === $country ? 'selected' : '' }}>{{ $label }}</option>
-                    @endforeach
-                </select>
-            </div>
-        </form>
+        <h1 class="text-2xl font-bold text-[#1e3d44]">Macro Economics</h1>
+        <div class="text-xs text-[#7c7466] mt-1">
+            Six trade-focused indicators relevant to scanning operations — last
+            {{ ($data['history_window']['to'] ?? 0) - ($data['history_window']['from'] ?? 0) + 1 }}
+            years of actuals plus a 2-year projection. Plus the BEAC TIAO policy rate.
+        </div>
     </div>
 @endsection
 
@@ -56,10 +39,9 @@
         @endphp
 
         {{-- ── Top-row sandbox: BEAC TIAO · Income Tax · USD/XAF Live ───
-             Three reference cards side-by-side. TIAO is region-wide
-             (CEMAC); income tax switches per selected country; FX is
-             always USD/XAF (XAF is hard-pegged to EUR so it doesn't
-             vary by country selection). --}}
+             Three Cameroon-specific reference cards side-by-side. TIAO
+             is the regional CEMAC central-bank rate; income tax is
+             Cameroon's standard CIT; FX is the USD/XAF spot. --}}
         <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-6">
 
             {{-- BEAC TIAO --}}
@@ -78,15 +60,10 @@
                     {{ number_format((float)($tiao['rate'] ?? 0), 2) }}<span class="text-lg ml-0.5">%</span>
                 </div>
                 <div class="text-[11px] text-[#7c7466] mt-1">
-                    As of <strong>{{ $tiao['as_of'] ?? '—' }}</strong> ·
-                    Central-bank policy rate · CEMAC-wide
+                    As of <strong>{{ $tiao['as_of'] ?? '—' }}</strong> · CEMAC central-bank policy rate
                 </div>
-                <div class="text-[10.5px] text-[#7c7466] mt-2 leading-relaxed">
-                    {{ $tiao['description'] ?? '' }}
-                </div>
-                <div class="text-[10px] text-[#a09d95] mt-2 italic leading-snug">
-                    {{ $tiao['note'] ?? '' }}
-                    Source: <a href="{{ $tiao['source_url'] ?? '#' }}" target="_blank" rel="noopener" class="text-brand-700 hover:text-brand-900 underline decoration-dotted">{{ parse_url($tiao['source_url'] ?? '', PHP_URL_HOST) ?: 'beac.int' }}</a>.
+                <div class="text-[10px] text-[#a09d95] mt-2 italic">
+                    Source: <a href="{{ $tiao['source_url'] ?? '#' }}" target="_blank" rel="noopener" class="text-brand-700 hover:text-brand-900 underline decoration-dotted">beac.int</a>
                 </div>
             </div>
 
@@ -95,7 +72,7 @@
                 <div class="flex items-center gap-2 mb-1">
                     <div class="w-1 h-4 rounded bg-coral-500"></div>
                     <h2 class="text-xs font-semibold uppercase tracking-wider text-[#5a6a70]">
-                        Corporate Income Tax — {{ $data['country_label'] }}
+                        Corporate Income Tax — Cameroon
                     </h2>
                     <span class="text-[9.5px] uppercase tracking-wider rounded px-1.5 py-0.5 border bg-warm-50 text-warm-700 border-warm-200">
                         STATUTORY
@@ -110,16 +87,13 @@
                 </div>
                 <div class="text-[11px] text-[#7c7466] mt-1">
                     @if (!empty($tax['year']))
-                        For tax year <strong>{{ $tax['year'] }}</strong> · Source: {{ $tax['source'] ?? 'config' }}
+                        For tax year <strong>{{ $tax['year'] }}</strong> · National standard rate
                     @else
-                        Not configured for this country
+                        Not configured
                     @endif
                 </div>
-                <div class="text-[10.5px] text-[#7c7466] mt-2 leading-relaxed">
-                    {{ $tax['note'] ?? '' }}
-                </div>
-                <div class="text-[10px] text-[#a09d95] mt-2 italic leading-snug">
-                    Statutory rate maintained in <code class="text-[10px] bg-[#faf8f5] border border-[#ece7df] rounded px-1 py-0.5">config/macro.php</code> — no free public API for global tax rates. Update when each country's CGI changes.
+                <div class="text-[10px] text-[#a09d95] mt-2 italic">
+                    Source: {{ $tax['source'] ?? 'CGI Cameroun' }}
                 </div>
             </div>
 
@@ -135,17 +109,14 @@
                         <div class="text-[11px] text-[#7c7466]">XAF per USD</div>
                     </div>
                     @if (!empty($fxXe['as_of']))
-                        <div class="text-[11px] text-[#7c7466] mt-1">As of {{ \Carbon\Carbon::parse($fxXe['as_of'])->diffForHumans() }}</div>
+                        <div class="text-[11px] text-[#7c7466] mt-1">As of {{ \Carbon\Carbon::parse($fxXe['as_of'])->diffForHumans() }} · Mid-market spot</div>
                     @endif
                 @else
                     <div class="text-3xl font-bold text-[#a09d95] mt-2 tabular-nums">— —</div>
                     <div class="text-[11px] text-coral-700 mt-1">Rate unavailable</div>
                 @endif
-                <div class="text-[10.5px] text-[#7c7466] mt-2 leading-relaxed">
-                    Mid-market spot rate.
-                </div>
-                <div class="text-[10px] text-[#a09d95] mt-2 italic leading-snug">
-                    Source: <a href="{{ $fxXe['source_url'] ?? 'https://www.xe.com' }}" target="_blank" rel="noopener" class="text-brand-700 hover:text-brand-900 underline decoration-dotted">xe.com</a>.
+                <div class="text-[10px] text-[#a09d95] mt-2 italic">
+                    Source: <a href="{{ $fxXe['source_url'] ?? 'https://www.xe.com' }}" target="_blank" rel="noopener" class="text-brand-700 hover:text-brand-900 underline decoration-dotted">xe.com</a>
                 </div>
             </div>
         </div>
@@ -154,7 +125,7 @@
         <div class="mb-6">
             <div class="flex items-center gap-2 mb-3">
                 <div class="w-1 h-4 rounded bg-sage-500"></div>
-                <h2 class="text-xs font-semibold uppercase tracking-wider text-[#5a6a70]">Trade-focused Indicators · {{ $data['country_label'] }}</h2>
+                <h2 class="text-xs font-semibold uppercase tracking-wider text-[#5a6a70]">Trade-focused Indicators · Cameroon</h2>
             </div>
 
             @php
@@ -243,20 +214,8 @@
                                         </div>
                                     @endif
                                     <div class="text-[10.5px] text-[#7c7466] mt-1 leading-snug">{{ $meta['sub'] }}</div>
-                                @endif
-
-                                @if (!$ind['pending'] && !empty($ind['projection_source']))
-                                    @php
-                                        $projSrc = $ind['projection_source'];
-                                        $projTone = $projSrc === 'worldbank'
-                                            ? 'bg-sage-50 text-sage-700 border-sage-200'
-                                            : 'bg-warm-50 text-warm-700 border-warm-200';
-                                        $projLabel = $projSrc === 'worldbank'
-                                            ? 'Projection: World Bank'
-                                            : 'Projection: linear (no WB forecast)';
-                                    @endphp
-                                    <div class="mt-1.5 inline-flex items-center text-[9.5px] uppercase tracking-wider rounded px-1.5 py-0.5 border {{ $projTone }} font-semibold">
-                                        {{ $projLabel }}
+                                    <div class="text-[10px] text-[#a09d95] mt-1.5 italic">
+                                        Source: <a href="https://data.worldbank.org" target="_blank" rel="noopener" class="text-brand-700 hover:text-brand-900 underline decoration-dotted">World Bank Open Data</a>
                                     </div>
                                 @endif
                             </div>
@@ -270,44 +229,11 @@
             </div>
         </div>
 
-        {{-- Source attribution + methodology --}}
-        <div class="bg-white border border-[#e8e4de] rounded-xl p-5">
-            <h3 class="text-sm font-semibold text-[#1e3d44] mb-2">Sources & methodology</h3>
-            <div class="text-[11.5px] text-[#7c7466] leading-relaxed space-y-1.5">
-                <div>
-                    <strong class="text-[#1e3d44]">{{ $src['name'] ?? 'World Bank Open Data' }}</strong> —
-                    <a href="{{ $src['url'] ?? '#' }}" target="_blank" rel="noopener" class="text-brand-700 hover:text-brand-900 underline decoration-dotted">
-                        {{ parse_url($src['url'] ?? '', PHP_URL_HOST) ?: 'data.worldbank.org' }}
-                    </a>
-                    — {{ $src['note'] ?? '' }}
-                </div>
-                <div>
-                    <strong class="text-[#1e3d44]">Goods (ex-fuel) derivation</strong> — Imports = total merchandise (<code class="text-[10px] bg-[#faf8f5] border border-[#ece7df] rounded px-1 py-0.5">TM.VAL.MRCH.CD.WT</code>) × (1 − fuel-share <code class="text-[10px] bg-[#faf8f5] border border-[#ece7df] rounded px-1 py-0.5">TM.VAL.FUEL.ZS.UN</code>); Exports = the same with <code class="text-[10px] bg-[#faf8f5] border border-[#ece7df] rounded px-1 py-0.5">TX.</code> codes. Petroleum is excluded because crude oil moves through dedicated terminals / pipelines, bypassing the customer's scanning operation. Services are excluded entirely — they don't produce physical scans.
-                </div>
-                <div>
-                    <strong class="text-[#1e3d44]">BEAC TIAO</strong> — Sourced live from
-                    <a href="https://www.beac.int" target="_blank" rel="noopener" class="text-brand-700 hover:text-brand-900 underline decoration-dotted">beac.int</a>.
-                    The scrape anchors on the full French label "Taux d'intérêt des appels d'offres" in the homepage interest-rate widget (verified Apr 2026). Cached 6 h, so a Comité de Politique Monétaire change reflects within at most 6 hours of BEAC updating their site. On scrape failure, falls back to <code class="text-[10px] bg-[#faf8f5] border border-[#ece7df] rounded px-1 py-0.5">BEAC_TIAO_RATE</code> /
-                    <code class="text-[10px] bg-[#faf8f5] border border-[#ece7df] rounded px-1 py-0.5">BEAC_TIAO_AS_OF</code> in env.
-                </div>
-                <div>
-                    <strong class="text-[#1e3d44]">Projection</strong> — Each indicator first asks World Bank for forward years (some series have GEP forecasts attached). If the World Bank has no forecast, the chart falls back to a linear extrapolation of the 5-year trend; the badge on each card says which path was used. The dashed line + hollow markers always mark forward / projected points.
-                </div>
-                <div>
-                    <strong class="text-[#1e3d44]">Statutory income tax</strong> — Maintained in
-                    <code class="text-[10px] bg-[#faf8f5] border border-[#ece7df] rounded px-1 py-0.5">config/macro.php</code>
-                    because no free public API exists for global tax rates. Each entry references the source CGI / tax code.
-                </div>
-                <div>
-                    <strong class="text-[#1e3d44]">USD/XAF live rate</strong> — Sourced from
-                    <a href="https://www.xe.com" target="_blank" rel="noopener" class="text-brand-700 hover:text-brand-900 underline decoration-dotted">xe.com</a> · cached 1 h.
-                </div>
-                <div>
-                    Data refreshed: {{ \Carbon\Carbon::parse($data['fetched_at'])->diffForHumans() }} ·
-                    Indicator series cached 24 h server-side · BEAC scrape cached 6 h.
-                </div>
-            </div>
-        </div>
+        {{-- NB: detailed source attribution & methodology lives in the
+             service docblocks (app/Services/MacroEconomicsService.php)
+             rather than client-facing UI — admins inspecting the code
+             still see the full provenance, but the page stays focused
+             on the numbers. Per-card source one-liners cover the basics. --}}
 
         {{-- Vanilla SVG mini line-chart renderer with visible value
              labels at every point. Pure JS, no library dependency. --}}
