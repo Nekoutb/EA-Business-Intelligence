@@ -49,6 +49,19 @@ use App\Odoo\OdooClient;
  *   MTD denominator with a balance-sheet snapshot would scale the days
  *   by 30:365 ≈ 12×). TTM keeps the annualisation honest regardless of
  *   the as-of date selected.
+ *
+ * Business-type detection (goods vs service):
+ *   The first thing analyze() does is check the inventory balance:
+ *
+ *     inventory > 0   → "goods"   business: COGS = Class 60 (Achats)
+ *     inventory == 0  → "service" business: COGS = Class 60+61+62+63+64+65+66+67
+ *                                         (every operating expense except
+ *                                          68 D&A and 69 HAO/income-tax)
+ *
+ *   For service businesses the Quick Ratio (= Current Ratio when inventory=0,
+ *   so adds no information) and DIO (= 0, meaningless without inventory)
+ *   are returned as null — the view hides those cards entirely. CCC for a
+ *   service business simplifies to DSO − DPO (no inventory term).
  */
 final class WorkingCapitalService
 {
@@ -71,8 +84,24 @@ final class WorkingCapitalService
     private const REVENUE_PREFIXES         = ['7'];
     private const REVENUE_EXCLUDE_PREFIXES = ['79'];
 
-    /** COGS / direct cost (Class 60 — Achats). */
-    private const COGS_PREFIXES = ['60'];
+    /** Goods-business COGS — SYSCOHADA Class 60 (Achats). */
+    private const COGS_GOODS_PREFIXES = ['60'];
+
+    /**
+     * Service-business "Cost of revenue" — entire operating-expense block
+     * except depreciation (68) and HAO/income tax (69). Captures personnel,
+     * sub-contracting, transport, external services, taxes, financial
+     * charges and other operating costs that drive a service operation.
+     */
+    private const COGS_SERVICE_PREFIXES         = ['6'];
+    private const COGS_SERVICE_EXCLUDE_PREFIXES = ['68', '69'];
+
+    /**
+     * Threshold (in XAF) below which inventory is treated as effectively
+     * zero. Catches small office-supply blips on services companies'
+     * balance sheets without flipping them to "goods business".
+     */
+    private const INVENTORY_ZERO_THRESHOLD = 1_000.0;
 
     private OdooClient $odoo;
 
@@ -86,7 +115,6 @@ final class WorkingCapitalService
         $asOf = $asOf ?? new \DateTimeImmutable('today');
 
         $balances = $this->fetchBalanceSheet($asOf);
-        $ttm      = $this->fetchTtm($asOf);
 
         $ar        = $balances['ar'];
         $ap        = $balances['ap'];
@@ -95,22 +123,66 @@ final class WorkingCapitalService
         $ca        = $balances['current_assets'];
         $cl        = $balances['current_liabilities'];
 
-        $revenue   = $ttm['revenue'];
-        $cogs      = $ttm['cogs'];
+        // ── Business-type detection ──────────────────────────────────
+        // Inventory == 0 (or near-zero) → service business. The COGS basis
+        // and the Quick Ratio / DIO display behaviour both depend on this
+        // flag. See class-doc for the full rationale.
+        $isService    = $inventory <= self::INVENTORY_ZERO_THRESHOLD;
+        $businessType = $isService ? 'service' : 'goods';
 
-        // Liquidity ratios
+        // ── TTM income-statement figures ────────────────────────────
+        // Revenue is universal. COGS basis depends on business type:
+        // service businesses use the broad "operating cost" basis (Class 6
+        // ex 68 D&A ex 69 HAO); goods businesses use Class 60 alone.
+        $ttm      = $this->fetchTtm($asOf, $isService);
+        $revenue  = $ttm['revenue'];
+        $cogs     = $ttm['cogs'];
+        $cogsAlt  = $ttm['cogs_alt']; // the OTHER basis, for transparency in the view
+
+        // ── Liquidity ratios ────────────────────────────────────────
         $currentRatio = $cl > 0 ? $ca / $cl : null;
-        $quickRatio   = $cl > 0 ? ($ca - $inventory) / $cl : null;
         $cashRatio    = $cl > 0 ? $cash / $cl : null;
         $workingCap   = $ca - $cl;
 
-        // Cycle ratios
+        // Quick Ratio is gated on real inventory presence. Without inventory,
+        // (CA − 0) / CL == Current Ratio, so showing both adds no info and
+        // mildly misleads ("the strict liquidity test is identical to the
+        // loose one — looks good!"). Return null + reason; view hides card.
+        $quickRatio       = null;
+        $quickRatioReason = null;
+        if ($isService) {
+            $quickRatioReason = 'Not applicable — service business carries no inventory.';
+        } elseif ($cl <= 0) {
+            $quickRatioReason = 'No current liabilities in period.';
+        } else {
+            $quickRatio = ($ca - $inventory) / $cl;
+        }
+
+        // ── Cycle ratios ────────────────────────────────────────────
         $dso = $revenue > 0 ? ($ar / $revenue) * 365.0 : null;
         $dpo = $cogs    > 0 ? ($ap / $cogs)    * 365.0 : null;
-        $dio = $cogs    > 0 ? ($inventory / $cogs) * 365.0 : null;
-        $ccc = ($dso !== null && $dpo !== null && $dio !== null)
-            ? $dso + $dio - $dpo
-            : null;
+
+        // DIO gated on inventory presence.
+        $dio       = null;
+        $dioReason = null;
+        if ($isService) {
+            $dioReason = 'Not applicable — service business carries no inventory.';
+        } elseif ($cogs <= 0) {
+            $dioReason = 'No COGS in trailing-12-month window.';
+        } else {
+            $dio = ($inventory / $cogs) * 365.0;
+        }
+
+        // CCC = DSO + DIO − DPO. For service businesses (no DIO), this
+        // simplifies to DSO − DPO — the cash gap from sale to supplier
+        // payment, with no inventory dwell time.
+        if ($isService) {
+            $ccc = ($dso !== null && $dpo !== null) ? $dso - $dpo : null;
+        } else {
+            $ccc = ($dso !== null && $dpo !== null && $dio !== null)
+                ? $dso + $dio - $dpo
+                : null;
+        }
 
         return [
             'currency' => $this->detectCurrency(),
@@ -120,28 +192,49 @@ final class WorkingCapitalService
                 'to'   => $asOf->format('Y-m-d'),
             ],
 
-            // Headline ratios
+            // Business-type metadata so the view can adjust the display
+            // and explain its choices to the operator.
+            'business_type' => $businessType,
+            'business_type_explainer' => $isService
+                ? sprintf(
+                    'No inventory on the balance sheet (≤ %s XAF threshold) → treated as a service business. '
+                    . 'COGS basis = SYSCOHADA classes 60+61+62+63+64+65+66+67 (every operating expense except depreciation and HAO/income tax). '
+                    . 'Quick Ratio and DIO are hidden because they require inventory to be meaningful. '
+                    . 'CCC simplifies to DSO − DPO.',
+                    number_format(self::INVENTORY_ZERO_THRESHOLD, 0)
+                )
+                : 'Inventory on the balance sheet → treated as a goods business. '
+                  . 'COGS basis = SYSCOHADA Class 60 (Achats — direct purchases). '
+                  . 'All eight working-capital ratios apply.',
+            'cogs_basis' => $isService
+                ? 'Class 60+61+62+63+64+65+66+67 (operating cost ex. D&A & HAO)'
+                : 'Class 60 (Achats — direct purchases)',
+
+            // Headline ratios — null where not applicable
             'ratios' => [
-                'current_ratio'   => $currentRatio,
-                'quick_ratio'     => $quickRatio,
-                'cash_ratio'      => $cashRatio,
-                'working_capital' => $workingCap,
-                'dso'             => $dso,
-                'dpo'             => $dpo,
-                'dio'             => $dio,
-                'ccc'             => $ccc,
+                'current_ratio'      => $currentRatio,
+                'quick_ratio'        => $quickRatio,
+                'quick_ratio_reason' => $quickRatioReason,
+                'cash_ratio'         => $cashRatio,
+                'working_capital'    => $workingCap,
+                'dso'                => $dso,
+                'dpo'                => $dpo,
+                'dio'                => $dio,
+                'dio_reason'         => $dioReason,
+                'ccc'                => $ccc,
             ],
 
             // Component balances (so the page can show how the ratios decompose)
             'components' => [
-                'current_assets'      => $ca,
-                'current_liabilities' => $cl,
+                'current_assets'       => $ca,
+                'current_liabilities'  => $cl,
                 'cash_and_equivalents' => $cash,
-                'accounts_receivable' => $ar,
-                'inventory'           => $inventory,
-                'accounts_payable'    => $ap,
-                'revenue_ttm'         => $revenue,
-                'cogs_ttm'            => $cogs,
+                'accounts_receivable'  => $ar,
+                'inventory'            => $inventory,
+                'accounts_payable'     => $ap,
+                'revenue_ttm'          => $revenue,
+                'cogs_ttm'             => $cogs,
+                'cogs_ttm_alt_basis'   => $cogsAlt, // narrow-basis figure if service, broad if goods
             ],
         ];
     }
@@ -282,14 +375,26 @@ final class WorkingCapitalService
     /**
      * Trailing-12-month revenue and COGS ending at $asOf.
      *
-     * @return array{revenue:float, cogs:float}
+     * Computes BOTH COGS bases in a single Odoo round-trip and returns the
+     * one that matches $isService as the headline `cogs`, with the other
+     * exposed as `cogs_alt` for transparency in the view (so the operator
+     * can sanity-check the basis choice).
+     *
+     *   isService=false → cogs = Class 60 (Achats);
+     *                     cogs_alt = full operating cost
+     *   isService=true  → cogs = full operating cost (Class 6 ex 68/69);
+     *                     cogs_alt = Class 60 narrow figure
+     *
+     * @return array{revenue:float, cogs:float, cogs_alt:float}
      */
-    private function fetchTtm(\DateTimeImmutable $asOf): array
+    private function fetchTtm(\DateTimeImmutable $asOf, bool $isService): array
     {
         $from = $asOf->modify('-1 year +1 day');
-        $result = ['revenue' => 0.0, 'cogs' => 0.0];
+        $result = ['revenue' => 0.0, 'cogs' => 0.0, 'cogs_alt' => 0.0];
 
         try {
+            // Pull every class-6 and class-7 account in one shot; we'll
+            // bucket each one into revenue / cogs_narrow / cogs_broad below.
             $accounts = $this->odoo->searchRead('account.account',
                 [
                     '|',
@@ -301,19 +406,34 @@ final class WorkingCapitalService
             );
             if (empty($accounts)) return $result;
 
-            $bucketOf = [];
+            $bucketsOf  = [];   // [aid => ['revenue'|'cogs_narrow'|'cogs_broad', ...]]
             $accountIds = [];
             foreach ($accounts as $a) {
                 $aid  = (int)    $a['id'];
                 $code = (string) ($a['code'] ?? '');
                 if ($code === '') continue;
+                $tags = [];
 
-                if ($this->codeStartsWithAny($code, self::COGS_PREFIXES)) {
-                    $bucketOf[$aid] = 'cogs';
-                    $accountIds[] = $aid;
-                } elseif ($this->codeStartsWithAny($code, self::REVENUE_PREFIXES)
-                       && !$this->codeStartsWithAny($code, self::REVENUE_EXCLUDE_PREFIXES)) {
-                    $bucketOf[$aid] = 'revenue';
+                // Revenue (Class 7 ex 79)
+                if ($this->codeStartsWithAny($code, self::REVENUE_PREFIXES)
+                 && !$this->codeStartsWithAny($code, self::REVENUE_EXCLUDE_PREFIXES)) {
+                    $tags[] = 'revenue';
+                }
+
+                // Narrow COGS — Class 60 only
+                if ($this->codeStartsWithAny($code, self::COGS_GOODS_PREFIXES)) {
+                    $tags[] = 'cogs_narrow';
+                }
+
+                // Broad "service-COGS" — every class-6 account except
+                // depreciation (68) and HAO/income tax (69)
+                if ($this->codeStartsWithAny($code, self::COGS_SERVICE_PREFIXES)
+                 && !$this->codeStartsWithAny($code, self::COGS_SERVICE_EXCLUDE_PREFIXES)) {
+                    $tags[] = 'cogs_broad';
+                }
+
+                if (!empty($tags)) {
+                    $bucketsOf[$aid] = $tags;
                     $accountIds[] = $aid;
                 }
             }
@@ -331,19 +451,21 @@ final class WorkingCapitalService
                 'lazy'    => false,
             ]);
 
-            $rev = 0.0; $cogs = 0.0;
+            $rev = 0.0; $cogsNarrow = 0.0; $cogsBroad = 0.0;
             foreach ($rows as $r) {
                 if (!isset($r['account_id']) || !is_array($r['account_id'])) continue;
                 $aid    = (int)   $r['account_id'][0];
                 $bal    = (float) ($r['balance'] ?? 0);
-                $bucket = $bucketOf[$aid] ?? null;
-                if ($bucket === 'revenue') $rev  += $bal;
-                if ($bucket === 'cogs')    $cogs += $bal;
+                $tags   = $bucketsOf[$aid] ?? [];
+                if (in_array('revenue',     $tags, true)) $rev        += $bal;
+                if (in_array('cogs_narrow', $tags, true)) $cogsNarrow += $bal;
+                if (in_array('cogs_broad',  $tags, true)) $cogsBroad  += $bal;
             }
 
             // Revenue is credit-positive → flip to magnitude.
-            $result['revenue'] = -$rev;
-            $result['cogs']    =  $cogs;
+            $result['revenue']  = -$rev;
+            $result['cogs']     = $isService ? $cogsBroad  : $cogsNarrow;
+            $result['cogs_alt'] = $isService ? $cogsNarrow : $cogsBroad;
         } catch (\Throwable $e) {
             // P&L not reachable — leave at zero.
         }

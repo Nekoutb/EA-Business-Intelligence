@@ -51,6 +51,10 @@
           $r   = $wc['ratios']     ?? [];
           $c   = $wc['components'] ?? [];
           $ccy = $wc['currency']   ?? 'XAF';
+          $isService    = ($wc['business_type'] ?? 'goods') === 'service';
+          $businessType = $wc['business_type'] ?? 'goods';
+          $btExplainer  = $wc['business_type_explainer'] ?? '';
+          $cogsBasis    = $wc['cogs_basis'] ?? '';
 
           // Threshold-driven colour for each ratio (good = sage, fair = warm,
           // weak = coral, neutral / missing = slate). Tunable per industry.
@@ -85,13 +89,50 @@
           };
       @endphp
 
+      {{-- ── Business-type banner ──────────────────────────────────────────
+           Tells the operator how the dashboard auto-classified the company
+           (goods vs service) based on inventory presence, why it matters
+           for the COGS basis, and which SYSCOHADA classes feed each ratio.
+           Helps avoid the "why is Quick Ratio missing?" / "why is COGS so
+           high?" questions before they're asked. --}}
+      <div class="mb-7">
+          @php
+              $btTone   = $isService ? 'brand' : 'sage';
+              $btPalette = $palettes[$btTone];
+          @endphp
+          <div class="rounded-xl border {{ $btPalette['bdr'] }} {{ $btPalette['bg'] }} p-4 flex items-start gap-3">
+              <div class="w-8 h-8 rounded-lg bg-white border {{ $btPalette['bdr'] }} flex items-center justify-center shrink-0">
+                  @if ($isService)
+                    {{-- briefcase icon for services --}}
+                    <svg class="w-4 h-4 {{ $btPalette['txt'] }}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 012 2v12a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h2M9 4h6v4H9z"/></svg>
+                  @else
+                    {{-- box icon for goods --}}
+                    <svg class="w-4 h-4 {{ $btPalette['txt'] }}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16zM3.27 6.96L12 12.01l8.73-5.05M12 22.08V12"/></svg>
+                  @endif
+              </div>
+              <div class="flex-1">
+                  <div class="flex items-center gap-2 mb-1 flex-wrap">
+                      <h3 class="text-sm font-semibold {{ $btPalette['txt'] }}">
+                          Detected: {{ $isService ? 'Service business' : 'Goods business' }}
+                      </h3>
+                      <span class="inline-flex text-[9.5px] uppercase tracking-wider rounded {{ $btPalette['txt'] }} bg-white border {{ $btPalette['bdr'] }} px-1.5 py-0.5 font-semibold">
+                          COGS basis: {{ $cogsBasis }}
+                      </span>
+                  </div>
+                  <p class="text-[11.5px] text-[#5a6a70] leading-relaxed">
+                      {{ $btExplainer }}
+                  </p>
+              </div>
+          </div>
+      </div>
+
       {{-- ── Section 1: Liquidity Ratios ─────────────────────────────────── --}}
       <div class="mb-7">
           <div class="flex items-center gap-2 mb-3">
               <div class="w-1 h-4 rounded bg-brand-400"></div>
               <h2 class="text-xs font-semibold uppercase tracking-wider text-[#5a6a70]">Liquidity Ratios</h2>
           </div>
-          <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+          <div class="grid grid-cols-1 md:grid-cols-2 {{ $isService ? 'xl:grid-cols-3' : 'xl:grid-cols-4' }} gap-3">
 
               {{-- Current Ratio --}}
               @php
@@ -117,20 +158,22 @@
                   </div>
               </div>
 
-              {{-- Quick Ratio --}}
+              {{-- Quick Ratio — hidden for service businesses where it
+                   would mathematically equal Current Ratio. The banner
+                   above already explains why. --}}
+              @if (($r['quick_ratio'] ?? null) !== null)
               @php
-                  $colour = $tone($r['quick_ratio'] ?? null, [1.0, 0.7], true);
+                  $colour = $tone($r['quick_ratio'], [1.0, 0.7], true);
                   $p = $palettes[$colour];
               @endphp
               <div class="bg-white rounded-xl border border-[#e8e4de] shadow-sm flex overflow-hidden">
                   <div class="w-1 {{ $p['bar'] }} shrink-0"></div>
                   <div class="flex-1 p-4">
                       <div class="text-[11px] uppercase tracking-wider text-[#8a8578] font-medium">Quick Ratio (Acid Test)</div>
-                      <div class="text-2xl font-bold text-[#2d3748] mt-1 tabular-nums">{{ $fmt($r['quick_ratio'] ?? null, 2) }}</div>
+                      <div class="text-2xl font-bold text-[#2d3748] mt-1 tabular-nums">{{ $fmt($r['quick_ratio'], 2) }}</div>
                       <div class="text-[11px] text-[#7c7466] mt-0.5">(Current Assets − Inventory) ÷ Current Liabilities</div>
                       <div class="mt-2 inline-flex items-center text-[10px] font-semibold rounded {{ $p['bg'] }} {{ $p['bdr'] }} {{ $p['txt'] }} border px-1.5 py-0.5">
-                          @if (($r['quick_ratio'] ?? null) === null) — pending
-                          @elseif ($r['quick_ratio'] >= 1.0) Healthy (≥ 1.0)
+                          @if ($r['quick_ratio'] >= 1.0) Healthy (≥ 1.0)
                           @elseif ($r['quick_ratio'] >= 0.7) Adequate (0.7–1.0)
                           @else Caution (&lt; 0.7)
                           @endif
@@ -140,6 +183,7 @@
                       </div>
                   </div>
               </div>
+              @endif
 
               {{-- Cash Ratio --}}
               @php
@@ -197,7 +241,7 @@
               <div class="w-1 h-4 rounded bg-warm-400"></div>
               <h2 class="text-xs font-semibold uppercase tracking-wider text-[#5a6a70]">Cash Conversion Cycle</h2>
           </div>
-          <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+          <div class="grid grid-cols-1 md:grid-cols-2 {{ $isService ? 'xl:grid-cols-3' : 'xl:grid-cols-4' }} gap-3">
 
               {{-- DSO --}}
               @php
@@ -256,20 +300,21 @@
                   </div>
               </div>
 
-              {{-- DIO --}}
+              {{-- DIO — hidden when no inventory (service business). The
+                   banner at the top of the page already explains why. --}}
+              @if (($r['dio'] ?? null) !== null)
               @php
-                  $colour = $tone($r['dio'] ?? null, [45.0, 90.0], false);
+                  $colour = $tone($r['dio'], [45.0, 90.0], false);
                   $p = $palettes[$colour];
               @endphp
               <div class="bg-white rounded-xl border border-[#e8e4de] shadow-sm flex overflow-hidden">
                   <div class="w-1 {{ $p['bar'] }} shrink-0"></div>
                   <div class="flex-1 p-4">
                       <div class="text-[11px] uppercase tracking-wider text-[#8a8578] font-medium">DIO</div>
-                      <div class="text-2xl font-bold text-[#2d3748] mt-1 tabular-nums">{{ $fmtDays($r['dio'] ?? null) }}</div>
+                      <div class="text-2xl font-bold text-[#2d3748] mt-1 tabular-nums">{{ $fmtDays($r['dio']) }}</div>
                       <div class="text-[11px] text-[#7c7466] mt-0.5">(Inventory ÷ COGS<sub>TTM</sub>) × 365</div>
                       <div class="mt-2 inline-flex items-center text-[10px] font-semibold rounded {{ $p['bg'] }} {{ $p['bdr'] }} {{ $p['txt'] }} border px-1.5 py-0.5">
-                          @if (($r['dio'] ?? null) === null) — no COGS
-                          @elseif ($r['dio'] <= 45) Lean
+                          @if ($r['dio'] <= 45) Lean
                           @elseif ($r['dio'] <= 90) Average
                           @else Slow turn — review SKUs
                           @endif
@@ -279,6 +324,7 @@
                       </div>
                   </div>
               </div>
+              @endif
 
               {{-- CCC --}}
               @php
@@ -290,7 +336,7 @@
                   <div class="flex-1 p-4">
                       <div class="text-[11px] uppercase tracking-wider text-[#8a8578] font-medium">Cash Conversion Cycle</div>
                       <div class="text-2xl font-bold text-[#2d3748] mt-1 tabular-nums">{{ $fmtDays($r['ccc'] ?? null) }}</div>
-                      <div class="text-[11px] text-[#7c7466] mt-0.5">DSO + DIO − DPO</div>
+                      <div class="text-[11px] text-[#7c7466] mt-0.5">{{ $isService ? 'DSO − DPO (no DIO — service business)' : 'DSO + DIO − DPO' }}</div>
                       <div class="mt-2 inline-flex items-center text-[10px] font-semibold rounded {{ $p['bg'] }} {{ $p['bdr'] }} {{ $p['txt'] }} border px-1.5 py-0.5">
                           @if (($r['ccc'] ?? null) === null) — pending
                           @elseif ($r['ccc'] <= 30) Excellent
@@ -332,8 +378,8 @@
               </div>
               <div class="bg-[#fcfbf8] rounded-lg p-3 border border-[#f1ede5]">
                   <div class="text-[10px] uppercase tracking-wider text-[#8a8578] font-medium">Inventory</div>
-                  <div class="text-lg font-bold text-[#2d3748] mt-1 tabular-nums">{{ ea_money_short((float)($c['inventory'] ?? 0), $ccy) }}</div>
-                  <div class="text-[10px] text-[#7c7466] mt-0.5">Class 3* (stocks &amp; en-cours)</div>
+                  <div class="text-lg font-bold {{ ((float)($c['inventory'] ?? 0)) > 0 ? 'text-[#2d3748]' : 'text-[#a09d95]' }} mt-1 tabular-nums">{{ ea_money_short((float)($c['inventory'] ?? 0), $ccy) }}</div>
+                  <div class="text-[10px] text-[#7c7466] mt-0.5">{{ $isService ? 'No stock — service business' : 'Class 3* (stocks & en-cours)' }}</div>
               </div>
               <div class="bg-[#fcfbf8] rounded-lg p-3 border border-[#f1ede5]">
                   <div class="text-[10px] uppercase tracking-wider text-[#8a8578] font-medium">Accounts Payable</div>
@@ -346,30 +392,44 @@
                   <div class="text-[10px] text-[#7c7466] mt-0.5">Class 7 ex 79 · trailing 12 months</div>
               </div>
               <div class="bg-[#fcfbf8] rounded-lg p-3 border border-[#f1ede5]">
-                  <div class="text-[10px] uppercase tracking-wider text-[#8a8578] font-medium">COGS (TTM)</div>
+                  <div class="text-[10px] uppercase tracking-wider text-[#8a8578] font-medium">{{ $isService ? 'Cost of Revenue (TTM)' : 'COGS (TTM)' }}</div>
                   <div class="text-lg font-bold text-[#2d3748] mt-1 tabular-nums">{{ ea_money_short((float)($c['cogs_ttm'] ?? 0), $ccy) }}</div>
-                  <div class="text-[10px] text-[#7c7466] mt-0.5">Class 60 · trailing 12 months</div>
+                  <div class="text-[10px] text-[#7c7466] mt-0.5">{{ $cogsBasis }} · trailing 12 months</div>
+                  @if (!is_null($c['cogs_ttm_alt_basis'] ?? null) && abs((float)$c['cogs_ttm_alt_basis']) > 0)
+                    <div class="text-[9.5px] text-[#a09d95] mt-1 italic">
+                        Alt basis: {{ ea_money_short((float)$c['cogs_ttm_alt_basis'], $ccy) }}
+                        ({{ $isService ? 'Class 60 only' : 'all class-6 ex 68/69' }})
+                    </div>
+                  @endif
               </div>
           </div>
 
-          {{-- CCC visual decomposition --}}
-          @if (($r['dso'] ?? null) !== null && ($r['dpo'] ?? null) !== null && ($r['dio'] ?? null) !== null)
+          {{-- CCC visual decomposition. For service businesses we skip the
+               DIO row since it isn't part of the formula (CCC = DSO − DPO). --}}
+          @if (($r['dso'] ?? null) !== null && ($r['dpo'] ?? null) !== null)
             @php
                 $dso = (float) $r['dso'];
                 $dpo = (float) $r['dpo'];
-                $dio = (float) $r['dio'];
-                $ccc = (float) $r['ccc'];
-                $maxBar = max($dso, $dio, $dpo, abs($ccc), 1);
+                $dio = ($r['dio'] ?? null) !== null ? (float) $r['dio'] : null;
+                $ccc = (float) ($r['ccc'] ?? 0);
+                $maxBar = max($dso, $dpo, abs($ccc), $dio ?? 0, 1);
+
+                $rowsCcc = [['DSO', $dso, '+', 'sage']];
+                if ($dio !== null) {
+                    $rowsCcc[] = ['DIO', $dio, '+', 'brand'];
+                }
+                $rowsCcc[] = ['DPO', $dpo, '−', 'warm'];
+                $rowsCcc[] = ['CCC', $ccc, '=', $ccc <= 30 ? 'sage' : ($ccc <= 75 ? 'warm' : 'coral')];
             @endphp
             <div class="border-t border-[#f1ede5] pt-4">
-                <h4 class="text-xs font-semibold text-[#1e3d44] mb-3">Cash Conversion Cycle decomposition</h4>
+                <h4 class="text-xs font-semibold text-[#1e3d44] mb-3">
+                    Cash Conversion Cycle decomposition
+                    @if ($isService)
+                      <span class="text-[10px] text-[#7c7466] font-normal italic ml-1">— DSO − DPO (no inventory term)</span>
+                    @endif
+                </h4>
                 <div class="space-y-1.5">
-                    @foreach ([
-                        ['DSO',   $dso, '+', 'sage'],
-                        ['DIO',   $dio, '+', 'brand'],
-                        ['DPO',   $dpo, '−', 'warm'],
-                        ['CCC',   $ccc, '=', $ccc <= 30 ? 'sage' : ($ccc <= 75 ? 'warm' : 'coral')],
-                    ] as $row)
+                    @foreach ($rowsCcc as $row)
                         @php
                             [$label, $value, $sign, $colour] = $row;
                             $w = (int) round(100 * abs((float)$value) / $maxBar);
@@ -388,7 +448,11 @@
           @endif
 
           <div class="text-[11px] text-[#7c7466] mt-4 leading-relaxed">
-              <strong>Methodology:</strong> Balance-sheet items use SYSCOHADA code prefixes — Class 3 (inventory), 4 (tiers / counterparties; sub-class 40 = AP, 41 = AR), 5 (cash &amp; banks). Each balance is summed across posted move-lines with date ≤ {{ $asOf }}. P&amp;L denominators are trailing-12-month: revenue = −Σ class-7 (excl. 79), COGS = Σ class-60. Days metrics multiply by 365 to annualise.
+              <strong>Methodology:</strong>
+              Balance-sheet items use SYSCOHADA code prefixes — Class 3 (inventory), 4 (tiers / counterparties; sub-class 40 = AP, 41 = AR), 5 (cash &amp; banks). Each balance is summed across posted move-lines with date ≤ {{ $asOf }}. Revenue = −Σ class-7 (excl. 79), trailing 12 months. {{ $isService
+                  ? 'Cost of revenue = Σ classes 60+61+62+63+64+65+66+67 (every class-6 operating expense except 68 D&A and 69 HAO/income tax) — chosen automatically because no inventory was detected, so Class 60 alone would not capture the cost of services rendered.'
+                  : 'COGS = Σ class-60 (Achats — direct purchases), trailing 12 months. Quick Ratio and DIO are shown because inventory is present on the balance sheet.'
+              }} Days metrics multiply by 365 to annualise.
           </div>
       </div>
     @endif
