@@ -6,34 +6,77 @@ namespace App\Services;
 use App\Odoo\OdooClient;
 
 /**
- * Cashflow Forecast — monthly indirect-method cashflow with prior
- * months as actuals and remaining months as forecast (SMLY).
+ * Cashflow Forecast — DIRECT method.
  *
- * Indirect method (SYSCOHADA-aligned):
+ * Built from actual cash movements (Class 5 — banques + caisse) by
+ * inspecting the OTHER side of each cash move and bucketing the cash
+ * impact according to what the cash was for:
  *
  *   Operating CF
- *     Net Result (from P&L)
- *     + D&A (Class 68 — non-cash)
- *     − Δ AR  (Class 41 — increase in AR consumes cash)
- *     − Δ Inventory (Class 3)
- *     + Δ AP  (Class 40 — increase in AP releases cash)
+ *     + Cash receipts from customers      (counter-account class 41)
+ *     − Cash paid to suppliers            (class 40)
+ *     − Cash paid to employees / payroll  (class 64, 42)
+ *     − Cash paid for taxes (excl. CIT)   (class 43, 44)
+ *     − Cash paid for income tax           (class 89, 695)
+ *     ± Cash from / for other operating   (other class 6 / 7)
  *
  *   Investing CF
- *     − Capex (positive Class 2 movements — net additions to fixed assets)
+ *     − Capex (class 2)                   counter-account class 2
+ *     ± Disposals / proceeds              also class 2
  *
  *   Financing CF
- *     ± Δ LT Debt (Class 16-19 changes)
- *     ± Δ Equity / capital injections (Class 10 changes excl. retained earnings)
+ *     ± Debt drawdown / repayment         class 16-19
+ *     ± Equity injection / dividends      class 10
  *
  *   Net Change in Cash = Operating + Investing + Financing
- *   Ending Cash       = Opening cash + Net change
+ *   Ending Cash trajectory = cumulative from year-start opening balance
  *
- * For V1 we focus on Operating CF (the most significant component for
- * a service business) and a simplified Investing / Financing read.
- * Forecast follows the same SMLY logic as PLForecastService.
+ * Algorithm:
+ *   1. Pull all account.move.line on Class 5 accounts in the year
+ *   2. For each, find the move's other (non-cash) lines
+ *   3. Bucket the cash impact (signed: debit = inflow, credit = outflow)
+ *      by the dominant counter-account class
+ *
+ * Forecast for future months: SMLY (same month last year) for each
+ * bucket independently, with trailing-3 fallback when prior year is
+ * empty.
+ *
+ * V1 simplification: when a move has multiple non-cash lines (e.g. a
+ * payment that splits across customers + a fee account), we attribute
+ * 100% of the cash impact to the LARGEST-magnitude counter-line. For
+ * the vast majority of cash movements this is exactly right; multi-
+ * customer payments are the rare case where the categorisation is
+ * approximate.
  */
 final class CashflowForecastService
 {
+    /**
+     * Counter-account class prefixes → bucket key. Order matters
+     * (longest match wins) so 60..69 don't all collapse into "6".
+     */
+    private const BUCKETS = [
+        'customers'       => ['41'],
+        'suppliers'       => ['40'],
+        'employees'       => ['42', '64'],
+        'taxes_other'     => ['43', '44'],
+        'income_tax'      => ['89'],
+        'other_operating' => ['60', '61', '62', '63', '65', '66', '67', '68', '70', '71', '72', '73', '74', '75', '76', '77', '78'],
+        'capex'           => ['2'],
+        'financing'       => ['1'],
+    ];
+
+    /** Mapping of bucket → display row spec. */
+    private const BUCKET_DISPLAY = [
+        'customers'       => ['label' => '+ Cash receipts from customers',       'colour' => 'sage',  'group' => 'operating'],
+        'other_operating' => ['label' => '± Other operating cash flows',         'colour' => 'sage',  'group' => 'operating'],
+        'suppliers'       => ['label' => '− Cash paid to suppliers',             'colour' => 'coral', 'group' => 'operating'],
+        'employees'       => ['label' => '− Cash paid to employees',             'colour' => 'coral', 'group' => 'operating'],
+        'taxes_other'     => ['label' => '− Cash paid for taxes (excl. CIT)',    'colour' => 'coral', 'group' => 'operating'],
+        'income_tax'      => ['label' => '− Cash paid for income tax',           'colour' => 'coral', 'group' => 'operating'],
+        'capex'           => ['label' => '± Investing — Capex / disposals',      'colour' => 'warm',  'group' => 'investing'],
+        'financing'       => ['label' => '± Financing — debt / equity changes',  'colour' => 'warm',  'group' => 'financing'],
+    ];
+
     private OdooClient $odoo;
 
     public function __construct(OdooClient $odoo)
@@ -50,127 +93,214 @@ final class CashflowForecastService
             ? 12
             : ($year > (int) $today->format('Y') ? 0 : max(0, ((int) $today->format('n')) - 1));
 
-        // 1. Pull P&L net result + D&A monthly (reuse PLForecastService logic
-        //    by instantiating it). This keeps the cashflow's net-income
-        //    line consistent with the P&L page exactly.
-        $plData = (new PLForecastService($this->odoo))->analyze($year);
-        $plLines = collect($plData['lines'] ?? []);
+        // Build the bucket → monthly vector matrix for the year and PY.
+        $cyBuckets = $this->fetchBucketedCashflow($year);
+        $pyBuckets = $this->fetchBucketedCashflow($year - 1);
 
-        $netByMonth = $plLines->firstWhere('key', 'net_result')['monthly'] ?? array_fill(1, 12, 0.0);
-        $daByMonth  = $plLines->firstWhere('key', 'depreciation')['monthly'] ?? array_fill(1, 12, 0.0);
-        // D&A on the P&L is stored as negative (cost). For cashflow we
-        // ADD it back (it's a non-cash charge), so flip the sign.
-        $daAddBack = [];
-        foreach ($daByMonth as $m => $v) $daAddBack[$m] = -$v;
-
-        // 2. Working capital changes — Δ AR, Δ Inventory, Δ AP from
-        //    balance-sheet snapshots at month-end. Δ this month = month-end
-        //    balance − previous month-end balance.
-        $arDelta  = $this->fetchMonthlyBalanceDeltas('41', $year);
-        $invDelta = $this->fetchMonthlyBalanceDeltas('3',  $year);
-        $apDelta  = $this->fetchMonthlyBalanceDeltas('40', $year);
-
-        // For working capital: increase in AR or Inventory consumes cash;
-        // increase in AP releases cash. Sign convention for AR is debit-
-        // normal (positive delta = cash outflow → −1 sign), for AP credit-
-        // normal (negative delta = cash inflow → +1 sign).
-        $opCf = [];
-        for ($m = 1; $m <= 12; $m++) {
-            $opCf[$m] = ($netByMonth[$m] ?? 0)
-                      + ($daAddBack[$m] ?? 0)
-                      - ($arDelta[$m]   ?? 0)
-                      - ($invDelta[$m]  ?? 0)
-                      - ($apDelta[$m]   ?? 0);  // Class 40 balance is negative when liability; positive Δ = cash inflow → minus a negative = plus
+        // Forecast: for each bucket, fill future months with SMLY → trailing-3.
+        $bucketForecasted = [];
+        foreach (array_keys(self::BUCKETS) as $key) {
+            $cy = $cyBuckets[$key] ?? array_fill(1, 12, 0.0);
+            $py = $pyBuckets[$key] ?? array_fill(1, 12, 0.0);
+            $bucketForecasted[$key] = $this->fillForecast($cy, $py, $thruMonth);
         }
 
-        // 3. Investing CF — Class 2 (fixed assets) NET additions.
-        $capex = $this->fetchMonthlyBalanceDeltas('2', $year);
-        $invCf = [];
-        for ($m = 1; $m <= 12; $m++) $invCf[$m] = -($capex[$m] ?? 0);
+        // Build the rendered rows: leaf buckets + subtotals + cumulative ending cash.
+        $opCf  = array_fill(1, 12, 0.0);
+        $invCf = array_fill(1, 12, 0.0);
+        $finCf = array_fill(1, 12, 0.0);
 
-        // 4. Financing CF — Class 16-19 (LT debt) + Class 10 (capital).
-        $debtDelta   = $this->fetchMonthlyBalanceDeltas('1', $year);
-        $finCf = [];
-        for ($m = 1; $m <= 12; $m++) $finCf[$m] = -($debtDelta[$m] ?? 0); // class 1 credit-normal
-
-        // 5. Net change + ending cash trajectory
-        $netChange = [];
-        for ($m = 1; $m <= 12; $m++) {
-            $netChange[$m] = ($opCf[$m] ?? 0) + ($invCf[$m] ?? 0) + ($finCf[$m] ?? 0);
+        $rows = [];
+        // Operating section (sub-rows + subtotal)
+        foreach (['customers', 'suppliers', 'employees', 'taxes_other', 'income_tax', 'other_operating'] as $key) {
+            $disp = self::BUCKET_DISPLAY[$key];
+            $rows[] = [
+                'key' => $key, 'label' => $disp['label'], 'kind' => 'leaf', 'colour' => $disp['colour'],
+                'monthly' => $bucketForecasted[$key],
+            ];
+            for ($m = 1; $m <= 12; $m++) $opCf[$m] += $bucketForecasted[$key][$m] ?? 0.0;
         }
+        $rows[] = ['key' => 'op_cf', 'label' => 'Operating Cash Flow', 'kind' => 'subtotal', 'colour' => 'sage', 'monthly' => $opCf];
 
-        // Opening cash = Class 5 balance at start of year
+        // Investing
+        foreach (['capex'] as $key) {
+            $disp = self::BUCKET_DISPLAY[$key];
+            $rows[] = [
+                'key' => $key, 'label' => $disp['label'], 'kind' => 'leaf', 'colour' => $disp['colour'],
+                'monthly' => $bucketForecasted[$key],
+            ];
+            for ($m = 1; $m <= 12; $m++) $invCf[$m] += $bucketForecasted[$key][$m] ?? 0.0;
+        }
+        $rows[] = ['key' => 'inv_cf', 'label' => 'Investing Cash Flow', 'kind' => 'subtotal', 'colour' => 'brand', 'monthly' => $invCf];
+
+        // Financing
+        foreach (['financing'] as $key) {
+            $disp = self::BUCKET_DISPLAY[$key];
+            $rows[] = [
+                'key' => $key, 'label' => $disp['label'], 'kind' => 'leaf', 'colour' => $disp['colour'],
+                'monthly' => $bucketForecasted[$key],
+            ];
+            for ($m = 1; $m <= 12; $m++) $finCf[$m] += $bucketForecasted[$key][$m] ?? 0.0;
+        }
+        $rows[] = ['key' => 'fin_cf', 'label' => 'Financing Cash Flow', 'kind' => 'subtotal', 'colour' => 'warm', 'monthly' => $finCf];
+
+        // Net Change & Ending Cash
+        $netChange = array_fill(1, 12, 0.0);
+        for ($m = 1; $m <= 12; $m++) $netChange[$m] = $opCf[$m] + $invCf[$m] + $finCf[$m];
+
         $openingCash = $this->fetchClass5BalanceAt(new \DateTimeImmutable($year . '-01-01'));
-        $endingCash = [];
+        $endingCash = array_fill(1, 12, 0.0);
         $running = $openingCash;
         for ($m = 1; $m <= 12; $m++) {
-            $running += ($netChange[$m] ?? 0);
+            $running += $netChange[$m];
             $endingCash[$m] = $running;
         }
+        $rows[] = ['key' => 'net_change',  'label' => 'Net Change in Cash',   'kind' => 'subtotal', 'colour' => 'brand', 'monthly' => $netChange];
+        $rows[] = ['key' => 'ending_cash', 'label' => 'Ending Cash Position', 'kind' => 'subtotal', 'colour' => 'sage',  'monthly' => $endingCash];
 
         return [
-            'currency'    => 'XAF',
-            'year'        => $year,
-            'thru_month'  => $thruMonth,
-            'months'      => $this->buildMonthsHeader($year, $thruMonth),
-            'lines'       => [
-                ['key' => 'net_result',  'label' => 'Net Result',                 'monthly' => $netByMonth, 'kind' => 'leaf',     'colour' => 'sage'],
-                ['key' => 'da',          'label' => '+ Depreciation & amortisation', 'monthly' => $daAddBack, 'kind' => 'leaf',     'colour' => 'brand'],
-                ['key' => 'ar',          'label' => '− Δ Accounts Receivable',    'monthly' => $this->negate($arDelta),  'kind' => 'leaf',     'colour' => 'warm'],
-                ['key' => 'inv',         'label' => '− Δ Inventory',              'monthly' => $this->negate($invDelta), 'kind' => 'leaf',     'colour' => 'warm'],
-                ['key' => 'ap',          'label' => '− Δ Accounts Payable (signed)', 'monthly' => $this->negate($apDelta), 'kind' => 'leaf',     'colour' => 'warm'],
-                ['key' => 'op_cf',       'label' => 'Operating Cash Flow',        'monthly' => $opCf,        'kind' => 'subtotal', 'colour' => 'sage'],
-                ['key' => 'capex',       'label' => '− Capex (Class 2 net adds)',  'monthly' => $invCf,       'kind' => 'leaf',     'colour' => 'coral'],
-                ['key' => 'inv_cf',      'label' => 'Investing Cash Flow',        'monthly' => $invCf,       'kind' => 'subtotal', 'colour' => 'brand'],
-                ['key' => 'fin_cf',      'label' => 'Financing Cash Flow',        'monthly' => $finCf,       'kind' => 'subtotal', 'colour' => 'warm'],
-                ['key' => 'net_change',  'label' => 'Net Change in Cash',         'monthly' => $netChange,   'kind' => 'subtotal', 'colour' => 'brand'],
-                ['key' => 'ending_cash', 'label' => 'Ending Cash Position',       'monthly' => $endingCash,  'kind' => 'subtotal', 'colour' => 'sage'],
-            ],
+            'currency'     => 'XAF',
+            'year'         => $year,
+            'thru_month'   => $thruMonth,
+            'months'       => $this->buildMonthsHeader($year, $thruMonth),
+            'lines'        => $rows,
             'opening_cash' => $openingCash,
+            'method'       => 'direct',
             'fetched_at'   => now()->toIso8601String(),
         ];
     }
 
-    private function negate(array $vec): array
-    {
-        $out = [];
-        foreach ($vec as $k => $v) $out[$k] = -$v;
-        return $out;
-    }
-
     /**
-     * For each month of the year, compute the change in account balance
-     * (sum of class N) from start-of-month to end-of-month.
+     * For a given year, walk every cash-account (Class 5) move and
+     * categorise its cash impact by the dominant counter-account class.
+     * Returns bucket_key → [month1..12 => signed XAF amount].
+     *
+     * Sign: debit on Class 5 = cash inflow → positive
+     *       credit on Class 5 = cash outflow → negative
+     *
+     * @return array<string, array<int, float>>
      */
-    private function fetchMonthlyBalanceDeltas(string $classPrefix, int $year): array
+    private function fetchBucketedCashflow(int $year): array
     {
-        $deltas = array_fill(1, 12, 0.0);
-        try {
-            $accts = $this->odoo->searchRead('account.account',
-                [['code', '=like', $classPrefix . '%']], ['id'], []);
-            if (empty($accts)) return $deltas;
-            $ids = array_column($accts, 'id');
+        $bucketKeys = array_keys(self::BUCKETS);
+        $out = [];
+        foreach ($bucketKeys as $k) $out[$k] = array_fill(1, 12, 0.0);
 
-            $rows = $this->odoo->callModel('account.move.line', 'read_group', [
-                'domain'  => [
+        try {
+            // 1. Load Class 5 (cash) account ids
+            $cashAccts = $this->odoo->searchRead('account.account',
+                [['code', '=like', '5%']], ['id', 'code'], []);
+            if (empty($cashAccts)) return $out;
+            $cashAccountIds = array_column($cashAccts, 'id');
+
+            // 2. Pull every cash move-line in year
+            $cashLines = $this->odoo->searchRead('account.move.line',
+                [
                     ['parent_state', '=', 'posted'],
                     ['date', '>=', $year . '-01-01'],
                     ['date', '<=', $year . '-12-31'],
-                    ['account_id', 'in', $ids],
+                    ['account_id', 'in', $cashAccountIds],
                 ],
-                'fields'  => ['balance:sum'],
-                'groupby' => ['date:month'],
-                'lazy'    => false,
-            ]);
+                ['id', 'move_id', 'date', 'debit', 'credit'],
+                ['limit' => 100000]
+            );
+            if (empty($cashLines)) return $out;
 
-            foreach ($rows as $r) {
-                $label = (string) ($r['date:month'] ?? '');
-                $bal   = (float) ($r['balance'] ?? 0);
-                $month = $this->parseMonthLabel($label);
-                if ($month >= 1 && $month <= 12) $deltas[$month] = $bal;
+            // 3. Collect distinct move ids, then bulk-fetch ALL lines for
+            //    those moves so we can identify counter-accounts.
+            $moveIds = array_values(array_unique(array_map(
+                fn ($l) => is_array($l['move_id']) ? (int) $l['move_id'][0] : 0,
+                $cashLines
+            )));
+            $moveIds = array_values(array_filter($moveIds, fn ($i) => $i > 0));
+
+            $allMoveLines = $this->odoo->searchRead('account.move.line',
+                [
+                    ['move_id', 'in', $moveIds],
+                    ['parent_state', '=', 'posted'],
+                ],
+                ['id', 'move_id', 'account_id', 'debit', 'credit'],
+                ['limit' => 500000]
+            );
+
+            // 4. Build account.id → code map for bucket lookup
+            $allAccountIds = array_values(array_unique(array_map(
+                fn ($l) => is_array($l['account_id']) ? (int) $l['account_id'][0] : 0,
+                $allMoveLines
+            )));
+            $accounts = $this->odoo->searchRead('account.account',
+                [['id', 'in', $allAccountIds]], ['id', 'code'], []);
+            $codeByAcct = [];
+            foreach ($accounts as $a) $codeByAcct[(int) $a['id']] = (string) ($a['code'] ?? '');
+
+            // 5. Group all move lines by move_id
+            $linesByMove = [];
+            foreach ($allMoveLines as $l) {
+                $mid = is_array($l['move_id']) ? (int) $l['move_id'][0] : 0;
+                if ($mid === 0) continue;
+                $linesByMove[$mid][] = $l;
             }
-        } catch (\Throwable $e) { /* leave at zero */ }
-        return $deltas;
+
+            // 6. For each cash line, find the dominant counter-account
+            //    bucket and accumulate its (debit - credit) into that bucket.
+            foreach ($cashLines as $cashLine) {
+                $mid = is_array($cashLine['move_id']) ? (int) $cashLine['move_id'][0] : 0;
+                if ($mid === 0) continue;
+                $cashImpact = (float) ($cashLine['debit'] ?? 0) - (float) ($cashLine['credit'] ?? 0);
+                if ($cashImpact === 0.0) continue;
+
+                $month = $this->parseDateMonth((string) ($cashLine['date'] ?? ''));
+                if ($month < 1 || $month > 12) continue;
+
+                // Find dominant counter-line: largest-magnitude non-cash line
+                $counterBucket = $this->dominantCounterBucket(
+                    $linesByMove[$mid] ?? [], $cashAccountIds, $codeByAcct
+                );
+                if ($counterBucket === null) continue;
+
+                $out[$counterBucket][$month] += $cashImpact;
+            }
+        } catch (\Throwable $e) {
+            // GL not reachable — return zeros
+        }
+
+        return $out;
+    }
+
+    private function dominantCounterBucket(array $moveLines, array $cashAccountIds, array $codeByAcct): ?string
+    {
+        $bestBucket = null;
+        $bestAbs    = -1.0;
+        foreach ($moveLines as $l) {
+            $aid = is_array($l['account_id']) ? (int) $l['account_id'][0] : 0;
+            if ($aid === 0 || in_array($aid, $cashAccountIds, true)) continue; // skip cash leg
+            $code = $codeByAcct[$aid] ?? '';
+            if ($code === '') continue;
+            $bucket = $this->codeToBucket($code);
+            if ($bucket === null) continue;
+            $mag = abs((float) ($l['debit'] ?? 0)) + abs((float) ($l['credit'] ?? 0));
+            if ($mag > $bestAbs) {
+                $bestAbs = $mag;
+                $bestBucket = $bucket;
+            }
+        }
+        return $bestBucket;
+    }
+
+    private function codeToBucket(string $code): ?string
+    {
+        // Longest-prefix match wins to disambiguate e.g. 89 from generic 8/6.
+        $best = null;
+        $bestLen = 0;
+        foreach (self::BUCKETS as $bucket => $prefixes) {
+            foreach ($prefixes as $p) {
+                if (str_starts_with($code, $p) && strlen($p) > $bestLen) {
+                    $best = $bucket;
+                    $bestLen = strlen($p);
+                }
+            }
+        }
+        return $best;
     }
 
     /** Cash + bank balance at a specific date (Class 5 sum). */
@@ -197,16 +327,27 @@ final class CashflowForecastService
         }
     }
 
-    private function parseMonthLabel(string $label): int
+    /**
+     * SMLY forecast: future months take same-month-last-year value.
+     * Trailing-3 fallback when last year is empty for that month.
+     */
+    private function fillForecast(array $cy, array $py, int $thruMonth): array
     {
-        $months = [
-            'January'=>1,'February'=>2,'March'=>3,'April'=>4,'May'=>5,'June'=>6,
-            'July'=>7,'August'=>8,'September'=>9,'October'=>10,'November'=>11,'December'=>12,
-            'janvier'=>1,'février'=>2,'mars'=>3,'avril'=>4,'mai'=>5,'juin'=>6,
-            'juillet'=>7,'août'=>8,'septembre'=>9,'octobre'=>10,'novembre'=>11,'décembre'=>12,
-        ];
-        foreach ($months as $name => $m) if (stripos($label, $name) !== false) return $m;
-        return 0;
+        $out = $cy;
+        $tail = [];
+        for ($m = max(1, $thruMonth - 2); $m <= $thruMonth; $m++) $tail[] = (float) ($cy[$m] ?? 0);
+        $tailMean = empty($tail) ? 0.0 : array_sum($tail) / count($tail);
+        for ($m = $thruMonth + 1; $m <= 12; $m++) {
+            $smly = (float) ($py[$m] ?? 0);
+            $out[$m] = $smly !== 0.0 ? $smly : $tailMean;
+        }
+        return $out;
+    }
+
+    private function parseDateMonth(string $date): int
+    {
+        if ($date === '' || strlen($date) < 7) return 0;
+        return (int) substr($date, 5, 2);
     }
 
     private function buildMonthsHeader(int $year, int $thruMonth): array

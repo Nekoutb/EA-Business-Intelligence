@@ -62,6 +62,14 @@
 @endsection
 
 @section('content')
+    @if (session('flash'))
+        @php $flash = session('flash'); @endphp
+        <div class="rounded-xl p-3 text-xs mb-4 border
+            {{ ($flash['type'] ?? '') === 'success' ? 'bg-sage-50 border-sage-200 text-sage-800' : 'bg-warm-50 border-warm-200 text-warm-800' }}">
+            {{ $flash['msg'] ?? '' }}
+        </div>
+    @endif
+
     @if ($error)
         <div class="bg-coral-50 border border-coral-200 text-coral-800 rounded-xl p-4 text-sm mb-6">
             <strong>Could not fetch P&amp;L:</strong> {{ $error }}
@@ -377,8 +385,53 @@
             <div class="px-4 py-2.5 border-t border-[#e8e4de] bg-[#faf8f5] text-[10.5px] text-[#7c7466]">
                 {{ $data['is_service'] ? 'Service business — direct costs basis: ' : 'Goods business — direct costs basis: ' }}
                 <code class="text-[10px] bg-white border border-[#ece7df] rounded px-1 py-0.5">{{ $data['cogs_basis'] }}</code> ·
-                Budget = PY × {{ number_format(($data['budget_growth'] ?? 1.0), 2) }} (configurable in <code class="text-[10px] bg-white border border-[#ece7df] rounded px-1 py-0.5">macro.pl_budget_growth_factor</code>).
+                @if (!empty($data['budget_uploaded']))
+                    Budget = <strong class="text-sage-700">user-uploaded</strong> (manage at <a href="{{ tenant_url('/budget-upload?year=' . $data['year']) }}" class="text-brand-700 hover:text-brand-900 underline decoration-dotted">/budget-upload</a>).
+                @else
+                    Budget = PY × {{ number_format(($data['budget_growth'] ?? 1.0), 2) }} (no upload yet — <a href="{{ tenant_url('/budget-upload?year=' . $data['year']) }}" class="text-brand-700 hover:text-brand-900 underline decoration-dotted">upload one</a> for explicit figures).
+                @endif
             </div>
+        </div>
+
+        {{-- ── Commentary panel ─────────────────────────────────────────
+             Free-text notes saved per (tenant, year, view, month).
+             Loads back automatically when the user navigates to the
+             same selection later. --}}
+        @php
+            $commentText = $commentary['text']         ?? '';
+            $savedBy     = $commentary['saved_by']     ?? null;
+            $savedAtIso  = $commentary['saved_at_iso'] ?? null;
+            $monthSentinel = $isMtd ? $month : 0;
+            $periodLbl = $isMtd ? ($data['month_label'] ?? '') . ' ' . $data['year'] : 'YTD ' . $data['year'];
+        @endphp
+        <div class="bg-white border border-[#e8e4de] rounded-xl p-5 mt-4">
+            <div class="flex items-center justify-between gap-2 mb-3 flex-wrap">
+                <div>
+                    <h3 class="text-sm font-semibold text-[#1e3d44]">Commentary — {{ $periodLbl }}</h3>
+                    <p class="text-[10.5px] text-[#7c7466] mt-0.5">Free-text notes attached to this {{ $isMtd ? 'month' : 'YTD period' }}. Saved per period — change month/view to see other commentaries.</p>
+                </div>
+                @if ($savedAtIso)
+                    <span class="text-[10.5px] text-[#7c7466]">
+                        Last saved by <strong class="text-[#1e3d44]">{{ $savedBy }}</strong>
+                        · {{ \Carbon\Carbon::parse($savedAtIso)->diffForHumans() }}
+                    </span>
+                @endif
+            </div>
+            <form method="POST" action="{{ tenant_url('/pl-forecast/commentary') }}">
+                @csrf
+                <input type="hidden" name="year"  value="{{ $data['year'] }}">
+                <input type="hidden" name="view"  value="{{ $view }}">
+                <input type="hidden" name="month" value="{{ $monthSentinel }}">
+                <textarea name="commentary" rows="6" maxlength="8000"
+                          placeholder="What's driving the variance? Add context for next month's review …"
+                          class="block w-full text-[12px] text-[#1e3d44] border border-[#e8e4de] rounded-lg p-3 bg-white focus:ring-2 focus:ring-brand-300 focus:border-brand-300 outline-none resize-y leading-relaxed">{{ $commentText }}</textarea>
+                <div class="flex items-center justify-between mt-2">
+                    <p class="text-[10.5px] text-[#7c7466]">Up to 8,000 characters. Plain text — no Markdown.</p>
+                    <button type="submit" class="text-xs font-medium px-4 py-2 rounded-lg bg-brand-600 hover:bg-brand-700 text-white">
+                        Save commentary
+                    </button>
+                </div>
+            </form>
         </div>
       @endif
 
