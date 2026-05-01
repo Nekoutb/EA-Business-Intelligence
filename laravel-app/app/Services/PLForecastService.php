@@ -439,20 +439,37 @@ final class PLForecastService
     /**
      * Pack a row for the view. For 'leaf' rows, also flatten the
      * underlying account vectors for drill-down.
+     *
+     * Drill-down hygiene rules (per user spec):
+     *   1. Filter out accounts whose annual total rounds to zero in
+     *      millions XAF (|total| < 500,000 — i.e. would render as "0"
+     *      anyway given the no-decimals millions formatting). Truly
+     *      empty / dormant accounts disappear so the operator can
+     *      focus on real contributors.
+     *   2. Sort by absolute total descending so the biggest
+     *      contributors sit at the top — the operator sees what
+     *      moves the line first, then can scan further down for
+     *      detail.
      */
     private function row(string $key, string $label, array $monthly, string $kind, string $colour, array $accounts = []): array
     {
         $total = array_sum($monthly);
+        // Threshold matches the millions-with-no-decimals display: an
+        // account contributing < 0.5M for the year rounds to "0" and
+        // adds noise without information.
+        $minDisplayable = 500_000.0;
         $accountRows = [];
         foreach ($accounts as $a) {
+            $acctTotal = array_sum($a['monthly']);
+            if (abs($acctTotal) < $minDisplayable) continue;
             $accountRows[] = [
                 'code'    => $a['code'],
                 'name'    => $a['name'],
                 'monthly' => $a['monthly'],
-                'total'   => array_sum($a['monthly']),
+                'total'   => $acctTotal,
             ];
         }
-        // Sort accounts by absolute total desc — biggest contributors first
+        // Biggest contributors first.
         usort($accountRows, fn ($x, $y) => abs($y['total']) <=> abs($x['total']));
 
         return [
