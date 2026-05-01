@@ -157,11 +157,66 @@
             </div>
         </div>
 
+        {{-- TABLEAU DES FLUX DE TRESORERIE --}}
+        @if (!empty($data['tresorerie']))
+            <div class="bg-white border border-[#e8e4de] rounded-xl overflow-hidden mt-6">
+                <div class="bg-[#1e3d44] text-white px-4 py-2.5 text-sm font-bold">TABLEAU DES FLUX DE TRESORERIE</div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-[11.5px]">
+                        <thead class="border-b border-[#cbc7be] bg-[#fcfbf8]">
+                            <tr>
+                                <th class="text-left py-2 pl-4 pr-2 text-[10px] font-semibold text-[#5a6a70]" style="width:4rem;">Réf</th>
+                                <th class="text-left py-2 px-2 text-[10px] font-semibold text-[#5a6a70]">Libellés</th>
+                                <th class="text-right py-2 px-2 text-[10px] font-semibold text-[#5a6a70]" style="width:8rem;">Exercice {{ $year }}</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-[#f1ede5]">
+                            @foreach ($data['tresorerie']['rows'] as $row)
+                                @if ($row['kind'] === 'group')
+                                    <tr class="bg-[#f4efe6] border-y border-[#cbc7be]">
+                                        <td colspan="3" class="py-1.5 pl-4 pr-2 text-[10.5px] font-bold text-[#1e3d44] uppercase tracking-wider italic">{{ $row['label'] }}</td>
+                                    </tr>
+                                @elseif ($row['kind'] === 'subtotal')
+                                    <tr class="bg-[#fcfbf8] border-y border-[#cbc7be]">
+                                        <td class="py-1.5 pl-4 pr-2 font-mono text-[10.5px] font-bold text-[#1e3d44]">{{ $row['code'] }}</td>
+                                        <td class="py-1.5 px-2 font-bold text-[#1e3d44] text-[11px]">{{ $row['label'] }}</td>
+                                        <td class="py-1.5 px-2 text-right tabular-nums font-bold text-[#1e3d44]">{{ $fmt($row['amount']) }}</td>
+                                    </tr>
+                                @elseif ($row['kind'] === 'total')
+                                    <tr class="bg-[#1e3d44] text-white">
+                                        <td class="py-2 pl-4 pr-2 font-mono text-[11px] font-bold">{{ $row['code'] }}</td>
+                                        <td class="py-2 px-2 font-bold uppercase tracking-wider">{{ $row['label'] }}</td>
+                                        <td class="py-2 px-2 text-right tabular-nums font-bold">{{ $row['amount'] !== null ? $fmt($row['amount']) : '—' }}</td>
+                                    </tr>
+                                @elseif ($row['kind'] === 'header')
+                                    <tr class="hover:bg-[#faf8f5]">
+                                        <td class="py-1 pl-4 pr-2 font-mono text-[10px] text-[#a09d95]">{{ $row['code'] }}</td>
+                                        <td class="py-1 px-2 italic text-[#5a6a70]">{{ $row['label'] }}</td>
+                                        <td class="py-1 px-2 text-right tabular-nums text-[#a09d95]">{{ $row['amount'] !== null ? $fmt($row['amount']) : '—' }}</td>
+                                    </tr>
+                                @else
+                                    <tr class="hover:bg-[#faf8f5]">
+                                        <td class="py-1 pl-4 pr-2 font-mono text-[10px] text-[#a09d95]">{{ $row['code'] }}</td>
+                                        <td class="py-1 px-2 text-[#2d3748]">{{ $row['label'] }}</td>
+                                        <td class="py-1 px-2 text-right tabular-nums {{ abs($row['amount']) > 0.5 ? 'text-[#2d3748]' : 'text-[#a09d95]' }}">{{ $fmt($row['amount']) }}</td>
+                                    </tr>
+                                @endif
+                            @endforeach
+                        </tbody>
+                    </table>
+                </div>
+                @if (!empty($data['tresorerie']['note']))
+                    <div class="px-4 py-2 border-t border-[#e8e4de] bg-[#faf8f5] text-[10px] text-[#7c7466] italic">{{ $data['tresorerie']['note'] }}</div>
+                @endif
+            </div>
+        @endif
+
         <div class="bg-white border border-[#e8e4de] rounded-xl p-4 mt-4 text-[10.5px] text-[#7c7466] leading-relaxed">
-            <strong class="text-[#1e3d44]">Methodology:</strong>
-            Bilan = closing balances (Trial Balance closing_dr − closing_cr) mapped to OHADA Système Normal BS lines (AA..AM Actif, CA..DS Passif).
-            Compte de Résultat = period movements mapped to TA..RZ lines per AUDCIF; subtotals (Marge Commerciale, CA, Valeur Ajoutée, EBE, Résultat d'Exploitation, Résultat Financier, Résultat HAO, Résultat Avant Impôts, Résultat Net) computed from the leaves per OHADA convention.
-            Mapping table lives in <code class="text-[10px] bg-[#faf8f5] border border-[#ece7df] rounded px-1 py-0.5">app/Services/OhadaMappingService.php</code> — single point of update if the customer's chart of accounts deviates from SYSCOHADA conventions.
+            <strong class="text-[#1e3d44]">Méthodologie:</strong>
+            Bilan = soldes de fin (Trial Balance closing_dr − closing_cr) mappés sur les lignes du Système Normal AUDCIF (pages 980-982 / 1049). Sections: Immobilisations Incorporelles (AE-AH) · Corporelles (AJ-AN) · Avances (AP) · Financières (AR-AS) · Circulant (BA-BJ) · Trésorerie Actif (BQ-BS) côté Actif ; Capitaux Propres (CA-CM) · Dettes Financières (DA-DC) · Passif Circulant (DH-DN) · Trésorerie Passif (DQ-DR) côté Passif.
+            Compte de Résultat = mouvements de la période mappés sur les lignes TA-RS per page 986/1050 ; soldes intermédiaires de gestion (XA Marge Commerciale → XB CA → XC Valeur Ajoutée → XD EBE → XE Résultat d'Exploitation → XF Résultat Financier → XG Résultat AO → XH Résultat HAO → XI Résultat Net) calculés selon AUDCIF.
+            TFT = méthode indirecte basée sur la CAFG selon page 997. Variations de BFR et flux d'investissement/financement nécessitent comparaison N/N-1 — itération suivante.
+            Table de mapping centralisée dans <code class="text-[10px] bg-[#faf8f5] border border-[#ece7df] rounded px-1 py-0.5">app/Services/OhadaMappingService.php</code>.
         </div>
     @endif
 @endsection
