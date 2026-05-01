@@ -315,6 +315,116 @@
         </div>
         @endif
 
+        {{-- ── Section: Revenue Reconciliation Sandbox ──────────────────────
+             Compact summary of the Expected → Billed → Cash flow with the
+             two diagnostic gaps inline. Mirrors /billing's full panel but
+             trimmed for the dashboard's "quick read" purpose. Hidden if
+             reconciliation has no data (e.g. operations not reachable). --}}
+        @php
+            $rec = $reconciliation ?? null;
+            $recHas = $rec && empty($rec['error']) && (
+                (($rec['headline']['expected'] ?? 0)  > 0) ||
+                (($rec['headline']['billed']   ?? 0)  > 0) ||
+                (($rec['headline']['collected'] ?? 0) > 0)
+            );
+        @endphp
+        @if ($recHas)
+          @php
+              $h = $rec['headline'];
+              $billGap = (float) $h['billing_gap'];
+              $collGap = (float) $h['collection_gap'];
+              $billGapPct = $h['expected'] > 0 ? 100.0 * abs($billGap) / $h['expected'] : null;
+              $collGapPct = $h['billed']   > 0 ? 100.0 * abs($collGap) / $h['billed']   : null;
+              $billRealisationPct = $h['billing_realisation_pct'];
+              $collRealisationPct = $h['collection_realisation_pct'];
+          @endphp
+          <div class="section-card p-5 mb-7">
+              <div class="flex items-center justify-between mb-4 gap-3 flex-wrap">
+                  <div>
+                      <h2 class="text-[13px] font-semibold text-[#1e3d44]">Revenue Reconciliation Sandbox</h2>
+                      <p class="text-[11px] text-[#8a8578] mt-0.5">From Expected (scans) → Billed (invoices) → Cash (collected) · {{ $periodLabel }} · FCFA HT</p>
+                  </div>
+                  <a href="{{ tenant_url('/billing') }}?period={{ $period['type'] ?? 'ytd' }}&year={{ $period['year'] ?? now()->year }}&month={{ $period['month'] ?? now()->month }}"
+                     class="text-[10.5px] font-medium text-brand-700 hover:text-brand-900 border border-brand-200 hover:border-brand-400 rounded px-2 py-1 inline-flex items-center gap-1">
+                      View full reconciliation →
+                  </a>
+              </div>
+
+              {{-- Three pillars + two arrows on a single horizontal row.
+                   On small screens it stacks vertically and the arrows
+                   become "down arrows" naturally via flex-wrap. --}}
+              <div class="grid grid-cols-1 md:grid-cols-[1fr_auto_1fr_auto_1fr] gap-3 items-stretch">
+                  {{-- Expected --}}
+                  <div class="bg-sage-50 border border-sage-100 rounded-lg p-3 flex flex-col">
+                      <div class="text-[10px] uppercase tracking-wider text-sage-700 font-semibold">Expected</div>
+                      <div class="text-xl font-bold text-[#2d3748] mt-1 tabular-nums">{{ ea_money_short((float) $h['expected'], 'XAF') }}</div>
+                      <div class="text-[10px] text-[#7c7466] mt-0.5 leading-snug">Scan revenue × tariff (Operations)</div>
+                  </div>
+                  {{-- Arrow + billing gap --}}
+                  <div class="flex md:flex-col items-center justify-center gap-1 text-center md:px-1">
+                      <div class="text-[#a09d95] hidden md:block">
+                          <svg width="22" height="14" viewBox="0 0 22 14" fill="none" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" d="M1 7h19m0 0l-5-5m5 5l-5 5"/></svg>
+                      </div>
+                      <div class="text-[#a09d95] md:hidden">
+                          <svg width="14" height="22" viewBox="0 0 14 22" fill="none" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" d="M7 1v19m0 0l-5-5m5 5l5-5"/></svg>
+                      </div>
+                      <div class="text-[10px] uppercase tracking-wider text-warm-700 font-semibold">Billing gap</div>
+                      <div class="text-xs font-bold tabular-nums {{ abs($billGap) > 0 ? 'text-coral-700' : 'text-sage-700' }}">
+                          {{ ($billGap >= 0 ? '−' : '+') }}{{ ea_money_short(abs($billGap), 'XAF') }}
+                      </div>
+                      @if ($billGapPct !== null)
+                        <div class="text-[9.5px] text-[#7c7466]">{{ number_format($billGapPct, 1) }}% of Expected</div>
+                      @endif
+                  </div>
+                  {{-- Billed --}}
+                  <div class="bg-brand-50 border border-brand-100 rounded-lg p-3 flex flex-col">
+                      <div class="flex items-center justify-between gap-2">
+                          <div class="text-[10px] uppercase tracking-wider text-brand-700 font-semibold">Billed</div>
+                          @if ($billRealisationPct !== null)
+                            <div class="text-[9.5px] font-semibold rounded bg-white border border-brand-200 text-brand-700 px-1.5 py-0.5">{{ number_format($billRealisationPct, 1) }}%</div>
+                          @endif
+                      </div>
+                      <div class="text-xl font-bold text-[#2d3748] mt-1 tabular-nums">{{ ea_money_short((float) $h['billed'], 'XAF') }}</div>
+                      <div class="text-[10px] text-[#7c7466] mt-0.5 leading-snug">Posted out_invoices (HT)</div>
+                  </div>
+                  {{-- Arrow + collection gap --}}
+                  <div class="flex md:flex-col items-center justify-center gap-1 text-center md:px-1">
+                      <div class="text-[#a09d95] hidden md:block">
+                          <svg width="22" height="14" viewBox="0 0 22 14" fill="none" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" d="M1 7h19m0 0l-5-5m5 5l-5 5"/></svg>
+                      </div>
+                      <div class="text-[#a09d95] md:hidden">
+                          <svg width="14" height="22" viewBox="0 0 14 22" fill="none" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" d="M7 1v19m0 0l-5-5m5 5l5-5"/></svg>
+                      </div>
+                      <div class="text-[10px] uppercase tracking-wider text-warm-700 font-semibold">Collection gap</div>
+                      <div class="text-xs font-bold tabular-nums {{ abs($collGap) > 0 ? 'text-coral-700' : 'text-sage-700' }}">
+                          −{{ ea_money_short(abs($collGap), 'XAF') }}
+                      </div>
+                      @if ($collGapPct !== null)
+                        <div class="text-[9.5px] text-[#7c7466]">{{ number_format($collGapPct, 1) }}% of Billed</div>
+                      @endif
+                  </div>
+                  {{-- Cash collected --}}
+                  <div class="bg-warm-50 border border-warm-100 rounded-lg p-3 flex flex-col">
+                      <div class="flex items-center justify-between gap-2">
+                          <div class="text-[10px] uppercase tracking-wider text-warm-700 font-semibold">Cash</div>
+                          @if ($collRealisationPct !== null)
+                            <div class="text-[9.5px] font-semibold rounded bg-white border border-warm-200 text-warm-700 px-1.5 py-0.5">{{ number_format($collRealisationPct, 1) }}%</div>
+                          @endif
+                      </div>
+                      <div class="text-xl font-bold text-[#2d3748] mt-1 tabular-nums">{{ ea_money_short((float) $h['collected'], 'XAF') }}</div>
+                      <div class="text-[10px] text-[#7c7466] mt-0.5 leading-snug">Billed × payment progress (HT)</div>
+                  </div>
+              </div>
+
+              <div class="text-[11px] text-[#7c7466] mt-3 leading-relaxed">
+                  <strong>Reading:</strong>
+                  Billing gap = revenue earned operationally but not invoiced.
+                  Collection gap = invoiced but not yet received (open AR on this period's invoices).
+                  All figures HT to keep stages comparable.
+              </div>
+          </div>
+        @endif
+
         {{-- ── Section: Revenue Trend ────────────────────────────────────── --}}
         @if (!empty($cur['series']))
           <div class="grid lg:grid-cols-3 gap-4 mb-7">

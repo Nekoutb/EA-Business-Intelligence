@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Odoo\OdooFactory;
+use App\Services\BillingService;
 use App\Services\ProfitLossService;
 use App\Services\RevenueService;
 use App\Services\ReceivablesService;
@@ -38,6 +39,7 @@ class DashboardController extends Controller
         $data         = null;
         $pl           = null;
         $receivables  = null;
+        $reconciliation = null;
         $error        = null;
 
         try {
@@ -67,18 +69,30 @@ class DashboardController extends Controller
                     $receivables = null;
                 }
             }
+
+            // Revenue Reconciliation (Expected → Billed → Cash). Pulls from
+            // BillingService so the headline figures match /billing exactly.
+            // Cached separately so the dashboard reload is fast even if
+            // /billing hasn't been hit yet this session.
+            try {
+                $reconciliation = ea_cached("recon_{$cacheTag}",
+                    fn () => (new BillingService($client))->reconciliationOnly(null, $period));
+            } catch (\Throwable $e) {
+                $reconciliation = null;
+            }
         } catch (\Throwable $e) {
             $error = $e->getMessage();
         }
 
         return view('dashboard', [
-            'data'        => $data,
-            'pl'          => $pl,
-            'receivables' => $receivables,
-            'error'       => $error,
-            'active'      => 'dashboard',
-            'period'      => $period,
-            'periodLabel' => $periodLabel,
+            'data'           => $data,
+            'pl'             => $pl,
+            'receivables'    => $receivables,
+            'reconciliation' => $reconciliation,
+            'error'          => $error,
+            'active'         => 'dashboard',
+            'period'         => $period,
+            'periodLabel'    => $periodLabel,
         ]);
     }
 

@@ -393,6 +393,93 @@
           <div class="text-[11px] text-[#7c7466] mt-4 leading-relaxed">
               <strong>Reading:</strong> Expected = scans × tariff (HT). Billed = posted out_invoice amount_untaxed_signed in period. Collected = Billed × payment_progress (where payment_progress = (amount_total − amount_residual) / amount_total). All figures HT to keep the comparison apples-to-apples.
           </div>
+
+          {{-- ── Transaction details (expandable + CSV export) ─────────── --}}
+          @php
+              $details = $billing['reconciliation_details'] ?? null;
+              $detailRows = ($details && empty($details['error'])) ? ($details['rows'] ?? []) : [];
+              $detailCount = count($detailRows);
+              $previewRows = array_slice($detailRows, 0, 50);
+              $exportQuery = http_build_query([
+                  'period' => $period['type'] ?? 'ytd',
+                  'year'   => $period['year']  ?? now()->year,
+                  'month'  => $period['month'] ?? now()->month,
+              ]);
+          @endphp
+          @if ($detailCount > 0)
+            <details class="border-t border-[#f1ede5] mt-4 pt-4 group">
+                <summary class="cursor-pointer text-xs font-semibold text-[#1e3d44] hover:text-brand-700 select-none flex items-center justify-between gap-3 flex-wrap">
+                    <span class="inline-flex items-center gap-1.5">
+                        <svg class="w-3 h-3 transition-transform group-open:rotate-90" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" d="M9 6l6 6-6 6"/></svg>
+                        Reconciliation details — {{ number_format($detailCount) }} invoices
+                        <span class="text-[10px] uppercase tracking-wider text-[#a09d95] font-medium ml-1">{{ $period['type'] === 'ytd' ? 'YTD' : ($period['type'] === 'mtd' ? 'MTD' : 'Month') }}</span>
+                    </span>
+                    <a href="{{ tenant_url('/billing/reconciliation-export?' . $exportQuery) }}"
+                       class="text-[10.5px] font-medium text-brand-700 hover:text-brand-900 border border-brand-200 hover:border-brand-400 rounded px-2 py-1 inline-flex items-center gap-1 normal-case"
+                       onclick="event.stopPropagation();">
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3M3 17V8a2 2 0 012-2h6l2 2h5a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></svg>
+                        Download full CSV ({{ number_format($detailCount) }} rows)
+                    </a>
+                </summary>
+                <div class="overflow-x-auto mt-3">
+                    <table class="w-full text-[11px]">
+                        <thead>
+                            <tr class="text-[10px] uppercase tracking-wider text-[#8a8578] border-b border-[#e8e4de]">
+                                <th class="text-left  py-1.5 pr-3 font-medium">Invoice</th>
+                                <th class="text-left  py-1.5 px-3 font-medium">Date</th>
+                                <th class="text-left  py-1.5 px-3 font-medium">Customer</th>
+                                <th class="text-right py-1.5 px-3 font-medium">HT</th>
+                                <th class="text-right py-1.5 px-3 font-medium">Tax</th>
+                                <th class="text-right py-1.5 px-3 font-medium">TTC</th>
+                                <th class="text-right py-1.5 px-3 font-medium">Open</th>
+                                <th class="text-right py-1.5 px-3 font-medium">Coll. HT</th>
+                                <th class="text-right py-1.5 px-3 font-medium">% Coll.</th>
+                                <th class="text-left  py-1.5 px-3 font-medium">State</th>
+                                <th class="text-right py-1.5 pl-3 font-medium">Days OD</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-[#f1ede5] text-[#2d3748]">
+                            @foreach ($previewRows as $r)
+                                @php
+                                    $stateColor = match ($r['payment_state'] ?? '') {
+                                        'paid'        => 'bg-sage-50 text-sage-700 border-sage-200',
+                                        'in_payment'  => 'bg-brand-50 text-brand-700 border-brand-200',
+                                        'partial'     => 'bg-warm-50 text-warm-700 border-warm-200',
+                                        'not_paid'    => 'bg-coral-50 text-coral-700 border-coral-200',
+                                        'reversed'    => 'bg-slate-100 text-slate-600 border-slate-200',
+                                        default       => 'bg-slate-50 text-slate-600 border-slate-200',
+                                    };
+                                @endphp
+                                <tr>
+                                    <td class="py-1.5 pr-3 font-medium tabular-nums whitespace-nowrap">{{ $r['name'] ?: '#' . $r['id'] }}</td>
+                                    <td class="py-1.5 px-3 tabular-nums text-[#7c7466] whitespace-nowrap">{{ $r['invoice_date'] }}</td>
+                                    <td class="py-1.5 px-3 truncate max-w-[180px]" title="{{ $r['partner'] }}">{{ $r['partner'] ?: '—' }}</td>
+                                    <td class="py-1.5 px-3 text-right tabular-nums">{{ number_format($r['amount_untaxed']) }}</td>
+                                    <td class="py-1.5 px-3 text-right tabular-nums text-[#7c7466]">{{ number_format($r['amount_tax']) }}</td>
+                                    <td class="py-1.5 px-3 text-right tabular-nums">{{ number_format($r['amount_total']) }}</td>
+                                    <td class="py-1.5 px-3 text-right tabular-nums {{ $r['amount_residual'] > 0 ? 'text-coral-700 font-medium' : 'text-[#7c7466]' }}">{{ number_format($r['amount_residual']) }}</td>
+                                    <td class="py-1.5 px-3 text-right tabular-nums">{{ number_format($r['collected_ht']) }}</td>
+                                    <td class="py-1.5 px-3 text-right tabular-nums text-[#7c7466]">{{ number_format($r['collection_pct'], 1) }}%</td>
+                                    <td class="py-1.5 px-3">
+                                        <span class="inline-flex text-[9.5px] uppercase tracking-wider rounded px-1.5 py-0.5 border {{ $stateColor }}">
+                                            {{ str_replace('_', ' ', $r['payment_state'] ?: 'unknown') }}
+                                        </span>
+                                    </td>
+                                    <td class="py-1.5 pl-3 text-right tabular-nums {{ $r['days_overdue'] > 0 ? 'text-coral-700 font-semibold' : 'text-[#7c7466]' }}">
+                                        {{ $r['days_overdue'] > 0 ? $r['days_overdue'] : '—' }}
+                                    </td>
+                                </tr>
+                            @endforeach
+                        </tbody>
+                    </table>
+                    @if ($detailCount > count($previewRows))
+                      <div class="text-[11px] text-[#7c7466] mt-2 text-center italic">
+                          Showing first {{ count($previewRows) }} of {{ number_format($detailCount) }} invoices · download CSV for the full list
+                      </div>
+                    @endif
+                </div>
+            </details>
+          @endif
       </div>
     @elseif ($reconHasError)
       <div class="bg-coral-50 border border-coral-200 text-coral-800 rounded-xl p-3 text-xs mb-6">

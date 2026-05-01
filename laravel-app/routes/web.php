@@ -1111,6 +1111,8 @@ Route::prefix('t/{tenant}')
                 Route::get('/inventory',         [InventoryController::class, 'index'])->middleware('module:inventory');
                 Route::get('/operations',        [OperationsController::class, 'index'])->middleware('module:operations');
                 Route::get('/billing',           [BillingController::class, 'index'])->middleware('module:billing');
+                Route::get('/billing/reconciliation-export',
+                    [BillingController::class, 'reconciliationCsv'])->middleware('module:billing');
                 Route::get('/procurement',       [ProcurementController::class, 'index'])->middleware('module:procurement');
 
                 // ── Financial Reporting service ───────────────────────────────

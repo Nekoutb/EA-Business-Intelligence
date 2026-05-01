@@ -108,6 +108,105 @@ final class BillingService
     //   Month selected → weekly buckets within the chosen month
 
     /**
+     * Public wrapper — lets DashboardController (and future surfaces) call
+     * the reconciliation logic without going through analyze() which
+     * would also trigger KPI / latency work the dashboard doesn't need.
+     *
+     * @return array{
+     *   headline: array{expected:float, billed:float, collected:float, billing_gap:float, collection_gap:float, billing_realisation_pct:?float, collection_realisation_pct:?float},
+     *   buckets: array<int, array{label:string, from:string, to:string, expected:float, billed:float, collected:float}>,
+     *   error: ?string
+     * }
+     */
+    public function reconciliationOnly(?\DateTimeImmutable $today = null, array $period = []): array
+    {
+        $today = $today ?? new \DateTimeImmutable('today');
+        [$cyFrom, $cyTo] = ea_resolve_period($today, $period);
+        return $this->revenueReconciliation($cyFrom, $cyTo, $period);
+    }
+
+    /**
+     * Per-invoice transaction detail used by the "Reconciliation details"
+     * panel and CSV export on /billing. Single fetch — same domain as the
+     * headline reconciliation, but with all the fields needed for review:
+     * customer, dates, HT/Tax/TTC, residual, payment progress, days
+     * outstanding.
+     *
+     * @return array{rows: array<int, array<string, mixed>>, error: ?string}
+     */
+    public function reconciliationDetails(?\DateTimeImmutable $today = null, array $period = []): array
+    {
+        $today = $today ?? new \DateTimeImmutable('today');
+        [$from, $to] = ea_resolve_period($today, $period);
+
+        try {
+            $invoices = $this->odoo->searchRead(
+                'account.move',
+                [
+                    ['move_type', '=', 'out_invoice'],
+                    ['state', '=', 'posted'],
+                    ['invoice_date', '>=', $from->format('Y-m-d')],
+                    ['invoice_date', '<=', $to->format('Y-m-d')],
+                ],
+                [
+                    'id', 'name', 'invoice_date', 'invoice_date_due',
+                    'partner_id', 'currency_id',
+                    'amount_untaxed_signed', 'amount_tax_signed',
+                    'amount_total_signed', 'amount_residual_signed',
+                    'payment_state', 'state', 'ref',
+                ],
+                ['limit' => self::INVOICE_FETCH_CAP, 'order' => 'invoice_date desc, id desc']
+            );
+
+            $today = new \DateTimeImmutable('today');
+            $rows = [];
+            foreach ($invoices as $inv) {
+                $ht    = (float) ($inv['amount_untaxed_signed']  ?? 0);
+                $tax   = (float) ($inv['amount_tax_signed']      ?? 0);
+                $total = (float) ($inv['amount_total_signed']    ?? 0);
+                $resid = (float) ($inv['amount_residual_signed'] ?? 0);
+                $progress = $total > 0 ? max(0.0, min(1.0, ($total - $resid) / $total)) : 0.0;
+
+                // Days outstanding = today - due_date (if past due) else 0.
+                $daysOverdue = 0;
+                $dueStr = (string) ($inv['invoice_date_due'] ?? '');
+                if ($dueStr !== '') {
+                    try {
+                        $due = new \DateTimeImmutable($dueStr);
+                        if ($today > $due && $resid > 0) {
+                            $daysOverdue = (int) $today->diff($due)->days;
+                        }
+                    } catch (\Throwable $e) {
+                        // bad date — leave at 0
+                    }
+                }
+
+                $rows[] = [
+                    'id'             => (int) $inv['id'],
+                    'name'           => (string) ($inv['name'] ?? ''),
+                    'ref'            => (string) ($inv['ref']  ?? ''),
+                    'invoice_date'   => (string) ($inv['invoice_date']     ?? ''),
+                    'due_date'       => $dueStr,
+                    'partner'        => is_array($inv['partner_id'] ?? null) ? (string) $inv['partner_id'][1] : '',
+                    'partner_id'     => is_array($inv['partner_id'] ?? null) ? (int) $inv['partner_id'][0]    : null,
+                    'amount_untaxed' => $ht,
+                    'amount_tax'     => $tax,
+                    'amount_total'   => $total,
+                    'amount_residual' => $resid,
+                    'collected_ht'   => $ht * $progress,
+                    'collection_pct' => round($progress * 100.0, 1),
+                    'payment_state'  => (string) ($inv['payment_state'] ?? ''),
+                    'days_overdue'   => $daysOverdue,
+                ];
+            }
+
+            return ['rows' => $rows, 'error' => null];
+        } catch (\Throwable $e) {
+            return ['rows' => [], 'error' => $e->getMessage()];
+        }
+    }
+
+    /**
      * @return array{
      *   headline: array{expected:float, billed:float, collected:float, billing_gap:float, collection_gap:float, billing_realisation_pct:?float, collection_realisation_pct:?float},
      *   buckets: array<int, array{label:string, from:string, to:string, expected:float, billed:float, collected:float}>,
