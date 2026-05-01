@@ -418,7 +418,7 @@
                        class="text-[10.5px] font-medium text-brand-700 hover:text-brand-900 border border-brand-200 hover:border-brand-400 rounded px-2 py-1 inline-flex items-center gap-1 normal-case"
                        onclick="event.stopPropagation();">
                         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3M3 17V8a2 2 0 012-2h6l2 2h5a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></svg>
-                        Download full CSV ({{ number_format($detailCount) }} rows)
+                        Download Excel ({{ number_format($detailCount) }} rows)
                     </a>
                 </summary>
                 <div class="overflow-x-auto mt-3">
@@ -474,7 +474,7 @@
                     </table>
                     @if ($detailCount > count($previewRows))
                       <div class="text-[11px] text-[#7c7466] mt-2 text-center italic">
-                          Showing first {{ count($previewRows) }} of {{ number_format($detailCount) }} invoices · download CSV for the full list
+                          Showing first {{ count($previewRows) }} of {{ number_format($detailCount) }} invoices · download Excel for the full list
                       </div>
                     @endif
                 </div>
