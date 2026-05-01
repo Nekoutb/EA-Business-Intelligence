@@ -22,18 +22,24 @@
             </div>
         </div>
 
-        {{-- Filters: View mode + Year + (Month for MTD) --}}
-        <form method="get" class="flex items-end gap-2 flex-wrap">
-            <div>
-                <label class="block text-[10px] uppercase tracking-wider text-[#8a8578] font-medium mb-1">View</label>
-                <select name="view"
-                        class="text-xs border border-[#e8e4de] rounded-lg px-3 py-2 bg-white text-[#1e3d44] focus:ring-2 focus:ring-brand-300 focus:border-brand-300 outline-none"
-                        onchange="this.form.submit()">
-                    <option value="full_year" {{ $view === 'full_year' ? 'selected' : '' }}>Full Year</option>
-                    <option value="ytd"       {{ $view === 'ytd'       ? 'selected' : '' }}>YTD</option>
-                    <option value="mtd"       {{ $view === 'mtd'       ? 'selected' : '' }}>MTD</option>
-                </select>
-            </div>
+        {{-- Filters + budget management link --}}
+        <div class="flex items-end gap-3 flex-wrap">
+            <a href="{{ tenant_url('/budget-upload?year=' . $year) }}"
+               class="text-[11px] font-medium text-brand-700 hover:text-brand-900 border border-brand-200 hover:border-brand-400 rounded px-3 py-2 inline-flex items-center gap-1.5">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3M3 17V8a2 2 0 012-2h6l2 2h5a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></svg>
+                Manage Budget
+            </a>
+            <form method="get" class="flex items-end gap-2 flex-wrap">
+                <div>
+                    <label class="block text-[10px] uppercase tracking-wider text-[#8a8578] font-medium mb-1">View</label>
+                    <select name="view"
+                            class="text-xs border border-[#e8e4de] rounded-lg px-3 py-2 bg-white text-[#1e3d44] focus:ring-2 focus:ring-brand-300 focus:border-brand-300 outline-none"
+                            onchange="this.form.submit()">
+                        <option value="full_year" {{ $view === 'full_year' ? 'selected' : '' }}>Full Year</option>
+                        <option value="ytd"       {{ $view === 'ytd'       ? 'selected' : '' }}>YTD</option>
+                        <option value="mtd"       {{ $view === 'mtd'       ? 'selected' : '' }}>MTD</option>
+                    </select>
+                </div>
             @if ($view === 'mtd')
                 <div>
                     <label class="block text-[10px] uppercase tracking-wider text-[#8a8578] font-medium mb-1">Month</label>
@@ -46,18 +52,19 @@
                     </select>
                 </div>
             @endif
-            <div>
-                <label class="block text-[10px] uppercase tracking-wider text-[#8a8578] font-medium mb-1">Year</label>
-                <select name="year"
-                        class="text-xs border border-[#e8e4de] rounded-lg px-3 py-2 bg-white text-[#1e3d44] focus:ring-2 focus:ring-brand-300 focus:border-brand-300 outline-none"
-                        onchange="this.form.submit()">
-                    @php $thisYear = (int) date('Y'); @endphp
-                    @for ($y = $thisYear + 1; $y >= $thisYear - 3; $y--)
-                        <option value="{{ $y }}" {{ $y === $year ? 'selected' : '' }}>{{ $y }}</option>
-                    @endfor
-                </select>
-            </div>
-        </form>
+                <div>
+                    <label class="block text-[10px] uppercase tracking-wider text-[#8a8578] font-medium mb-1">Year</label>
+                    <select name="year"
+                            class="text-xs border border-[#e8e4de] rounded-lg px-3 py-2 bg-white text-[#1e3d44] focus:ring-2 focus:ring-brand-300 focus:border-brand-300 outline-none"
+                            onchange="this.form.submit()">
+                        @php $thisYear = (int) date('Y'); @endphp
+                        @for ($y = $thisYear + 1; $y >= $thisYear - 3; $y--)
+                            <option value="{{ $y }}" {{ $y === $year ? 'selected' : '' }}>{{ $y }}</option>
+                        @endfor
+                    </select>
+                </div>
+            </form>
+        </div>
     </div>
 @endsection
 
@@ -263,7 +270,7 @@
         </div>
 
       {{-- =============================================================
-           MTD / YTD VIEW — Comparison columns (PY · CY · Fcst · Bdg + variances)
+           MTD / YTD VIEW — Comparison columns (PY · CY · Fcst · Bdg + variances + Commentary)
            ============================================================ --}}
       @else
         @php
@@ -272,167 +279,147 @@
             $periodLabel = $isMtd
                 ? ($data['month_label'] ?? '') . ' ' . $data['year']
                 : 'YTD ' . $data['year'];
-        @endphp
-
-        <div class="bg-white border border-[#e8e4de] rounded-xl overflow-hidden">
-
-            <div class="flex items-center justify-between gap-3 px-4 py-2.5 border-b border-[#e8e4de] bg-[#faf8f5]">
-                <div class="text-[10.5px] text-[#7c7466]">
-                    Comparison view — <strong class="text-[#1e3d44]">{{ $periodLabel }}</strong>.
-                    {{ $isMtd
-                        ? 'PY = same month last year · CY = current month actual · Forecast = full-month projection · Budget = PY × growth.'
-                        : 'PY = same YTD window last year · CY = current YTD actual · Forecast = full-year projection · Budget = PY year × growth.' }}
-                </div>
-                <div class="text-[10.5px] text-[#7c7466]">
-                    Click ▸ to expand · figures in <strong>million XAF</strong>
-                </div>
-            </div>
-
-            <div class="overflow-x-auto">
-                <table class="w-full text-[11.5px]" style="min-width: 980px;">
-                    <thead class="bg-white">
-                        <tr class="border-b border-[#cbc7be] bg-[#fcfbf8]">
-                            <th class="text-left py-2 pl-4 pr-2 sticky left-0 bg-[#fcfbf8] z-10 w-[18rem]">
-                                <span class="text-[10px] uppercase tracking-wider text-[#5a6a70] font-semibold">P&amp;L Line · XAF (millions)</span>
-                            </th>
-                            <th class="py-2 px-2 text-right text-[11px] font-bold text-[#5a6a70]">Prior Year</th>
-                            <th class="py-2 px-2 text-right text-[11px] font-bold {{ $actualText }}">CY P&amp;L</th>
-                            <th class="py-2 px-2 text-right text-[11px] font-bold {{ $budgetText }}">Forecast</th>
-                            <th class="py-2 px-2 text-right text-[11px] font-bold text-[#5a6a70]">Budget</th>
-                            <th class="py-2 px-2 text-right text-[11px] font-semibold text-[#5a6a70] border-l border-[#e8e4de]">CY − PY</th>
-                            <th class="py-2 px-2 text-right text-[11px] font-semibold text-[#5a6a70]">CY/PY %</th>
-                            <th class="py-2 px-2 text-right text-[11px] font-semibold text-[#5a6a70] border-l border-[#e8e4de]">Fcst − Bdg</th>
-                            <th class="py-2 px-2 text-right text-[11px] font-semibold text-[#5a6a70]">Fcst/Bdg %</th>
-                        </tr>
-                    </thead>
-
-                    <tbody class="divide-y divide-[#f1ede5]">
-                        @foreach ($lines as $line)
-                            @php
-                                $style        = $kindStyle[$line['kind']];
-                                $isExpandable = $line['kind'] === 'leaf' && !empty($line['accounts']);
-                                $isMarginRow  = $line['kind'] === 'margin';
-                                $isSubtotal   = $line['kind'] === 'subtotal';
-                                $v            = $line['values'];
-                                $cyVsPy       = $line['variances']['cy_vs_py']    ?? ['abs' => null, 'pct' => null];
-                                $fcstVsBdg    = $line['variances']['fcst_vs_bdg'] ?? ['abs' => null, 'pct' => null];
-                                $betterHigh   = !in_array($line['key'], ['direct_costs', 'opex', 'depreciation', 'income_tax'], true);
-                                $varCyPyAbs   = $varColour($cyVsPy['abs'],    $betterHigh);
-                                $varCyPyPct   = $varColour($cyVsPy['pct'],    $betterHigh);
-                                $varFbAbs     = $varColour($fcstVsBdg['abs'], $betterHigh);
-                                $varFbPct     = $varColour($fcstVsBdg['pct'], $betterHigh);
-                            @endphp
-                            <tr class="{{ $style['bg'] }} hover:bg-[#faf8f5] transition-colors">
-                                <td class="text-left pl-4 pr-2 py-1.5 sticky left-0 {{ $style['bg'] }} z-10 w-[18rem]">
-                                    @if ($isExpandable)
-                                        <button type="button" class="pl-toggle inline-flex items-center gap-1.5 text-left text-[#1e3d44] hover:text-brand-700 {{ $style['font'] }} w-full" data-key="{{ $line['key'] }}">
-                                            <svg class="w-3 h-3 chevron transition-transform" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" d="M9 6l6 6-6 6"/></svg>
-                                            <span>{{ $line['label'] }}</span>
-                                            <span class="text-[9.5px] text-[#a09d95] font-normal">({{ count($line['accounts']) }})</span>
-                                        </button>
-                                    @else
-                                        <span class="{{ $style['font'] }} text-[#1e3d44] {{ $isMarginRow ? 'pl-[1rem]' : ($isSubtotal ? 'pl-[0.25rem]' : '') }}">{{ $line['label'] }}</span>
-                                    @endif
-                                </td>
-                                <td class="text-right tabular-nums px-2 py-1.5 {{ $style['font'] }} text-[#5a6a70]">
-                                    {{ $isMarginRow ? $fmtPct($v['py']       ?? null) : $fmtM($v['py']       ?? null) }}
-                                </td>
-                                <td class="text-right tabular-nums px-2 py-1.5 {{ $style['font'] }} {{ $actualText }}">
-                                    {{ $isMarginRow ? $fmtPct($v['cy']       ?? null) : $fmtM($v['cy']       ?? null) }}
-                                </td>
-                                <td class="text-right tabular-nums px-2 py-1.5 {{ $style['font'] }} {{ $budgetText }}">
-                                    {{ $isMarginRow ? $fmtPct($v['forecast'] ?? null) : $fmtM($v['forecast'] ?? null) }}
-                                </td>
-                                <td class="text-right tabular-nums px-2 py-1.5 {{ $style['font'] }} text-[#5a6a70]">
-                                    {{ $isMarginRow ? $fmtPct($v['budget']   ?? null) : $fmtM($v['budget']   ?? null) }}
-                                </td>
-                                <td class="text-right tabular-nums px-2 py-1.5 {{ $varCyPyAbs }} {{ $style['font'] }} border-l border-[#e8e4de]">
-                                    {{ $isMarginRow ? '—' : $fmtMVar($cyVsPy['abs']) }}
-                                </td>
-                                <td class="text-right tabular-nums px-2 py-1.5 {{ $varCyPyPct }} {{ $style['font'] }}">
-                                    {{ $fmtPctVar($cyVsPy['pct']) }}
-                                </td>
-                                <td class="text-right tabular-nums px-2 py-1.5 {{ $varFbAbs }} {{ $style['font'] }} border-l border-[#e8e4de]">
-                                    {{ $isMarginRow ? '—' : $fmtMVar($fcstVsBdg['abs']) }}
-                                </td>
-                                <td class="text-right tabular-nums px-2 py-1.5 {{ $varFbPct }} {{ $style['font'] }}">
-                                    {{ $fmtPctVar($fcstVsBdg['pct']) }}
-                                </td>
-                            </tr>
-                            @if ($isExpandable)
-                                @foreach ($line['accounts'] as $acct)
-                                    @php $aCyVsPy = $acct['cy_vs_py'] ?? ['abs' => null, 'pct' => null]; @endphp
-                                    <tr class="hidden pl-account-row bg-[#fdfcfa]" data-parent="{{ $line['key'] }}">
-                                        <td class="text-left pl-12 pr-2 py-1 sticky left-0 bg-[#fdfcfa] z-10 w-[18rem] text-[10.5px] text-[#5a6a70]">
-                                            <span class="font-mono text-[10px] text-[#a09d95] mr-1.5">{{ $acct['code'] }}</span>{{ $acct['name'] }}
-                                        </td>
-                                        <td class="text-right tabular-nums px-2 py-1 text-[10.5px] text-[#5a6a70]">{{ $fmtM($acct['py']) }}</td>
-                                        <td class="text-right tabular-nums px-2 py-1 text-[10.5px] {{ $actualText }} opacity-80">{{ $fmtM($acct['cy']) }}</td>
-                                        <td class="text-right tabular-nums px-2 py-1 text-[10.5px] {{ $budgetText }} opacity-80">{{ $fmtM($acct['forecast']) }}</td>
-                                        <td class="text-right tabular-nums px-2 py-1 text-[10.5px] text-[#5a6a70]">{{ $fmtM($acct['budget']) }}</td>
-                                        <td class="text-right tabular-nums px-2 py-1 text-[10.5px] text-[#7c7466] border-l border-[#e8e4de]">{{ $fmtMVar($aCyVsPy['abs']) }}</td>
-                                        <td class="text-right tabular-nums px-2 py-1 text-[10.5px] text-[#7c7466]">{{ $fmtPctVar($aCyVsPy['pct']) }}</td>
-                                        <td class="text-right tabular-nums px-2 py-1 text-[10.5px] text-[#7c7466] border-l border-[#e8e4de]">—</td>
-                                        <td class="text-right tabular-nums px-2 py-1 text-[10.5px] text-[#7c7466]">—</td>
-                                    </tr>
-                                @endforeach
-                            @endif
-                        @endforeach
-                    </tbody>
-                </table>
-            </div>
-
-            <div class="px-4 py-2.5 border-t border-[#e8e4de] bg-[#faf8f5] text-[10.5px] text-[#7c7466]">
-                {{ $data['is_service'] ? 'Service business — direct costs basis: ' : 'Goods business — direct costs basis: ' }}
-                <code class="text-[10px] bg-white border border-[#ece7df] rounded px-1 py-0.5">{{ $data['cogs_basis'] }}</code> ·
-                @if (!empty($data['budget_uploaded']))
-                    Budget = <strong class="text-sage-700">user-uploaded</strong> (manage at <a href="{{ tenant_url('/budget-upload?year=' . $data['year']) }}" class="text-brand-700 hover:text-brand-900 underline decoration-dotted">/budget-upload</a>).
-                @else
-                    Budget = PY × {{ number_format(($data['budget_growth'] ?? 1.0), 2) }} (no upload yet — <a href="{{ tenant_url('/budget-upload?year=' . $data['year']) }}" class="text-brand-700 hover:text-brand-900 underline decoration-dotted">upload one</a> for explicit figures).
-                @endif
-            </div>
-        </div>
-
-        {{-- ── Commentary panel ─────────────────────────────────────────
-             Free-text notes saved per (tenant, year, view, month).
-             Loads back automatically when the user navigates to the
-             same selection later. --}}
-        @php
-            $commentText = $commentary['text']         ?? '';
-            $savedBy     = $commentary['saved_by']     ?? null;
-            $savedAtIso  = $commentary['saved_at_iso'] ?? null;
             $monthSentinel = $isMtd ? $month : 0;
-            $periodLbl = $isMtd ? ($data['month_label'] ?? '') . ' ' . $data['year'] : 'YTD ' . $data['year'];
+            $commentaries  = $commentaries ?? [];
+            $commentaryMeta = $commentary_meta ?? null;
         @endphp
-        <div class="bg-white border border-[#e8e4de] rounded-xl p-5 mt-4">
-            <div class="flex items-center justify-between gap-2 mb-3 flex-wrap">
-                <div>
-                    <h3 class="text-sm font-semibold text-[#1e3d44]">Commentary — {{ $periodLbl }}</h3>
-                    <p class="text-[10.5px] text-[#7c7466] mt-0.5">Free-text notes attached to this {{ $isMtd ? 'month' : 'YTD period' }}. Saved per period — change month/view to see other commentaries.</p>
+
+        {{-- Wrap the entire table in a single form so all per-row
+             commentary textareas get saved with one click. --}}
+        <form method="POST" action="{{ tenant_url('/pl-forecast/commentary') }}" id="ea-pl-commentary-form">
+            @csrf
+            <input type="hidden" name="year"  value="{{ $data['year'] }}">
+            <input type="hidden" name="view"  value="{{ $view }}">
+            <input type="hidden" name="month" value="{{ $monthSentinel }}">
+
+            <div class="bg-white border border-[#e8e4de] rounded-xl overflow-hidden">
+
+                <div class="flex items-center justify-between gap-3 px-4 py-2.5 border-b border-[#e8e4de] bg-[#faf8f5]">
+                    <div class="text-[10.5px] text-[#7c7466]">
+                        Comparison view — <strong class="text-[#1e3d44]">{{ $periodLabel }}</strong>.
+                        {{ $isMtd
+                            ? 'PY = same month last year · CY = current month actual · Forecast = full-month projection · Budget = PY × growth or uploaded.'
+                            : 'PY = same YTD window last year · CY = current YTD actual · Forecast = full-year projection · Budget = full-year (PY × growth or uploaded).' }}
+                    </div>
+                    <div class="text-[10.5px] text-[#7c7466]">
+                        @if ($commentaryMeta)
+                            Commentaries last saved by <strong class="text-[#1e3d44]">{{ $commentaryMeta['by'] }}</strong>
+                            · {{ \Carbon\Carbon::parse($commentaryMeta['at'])->diffForHumans() }} ·
+                        @endif
+                        figures in <strong>million XAF</strong>
+                    </div>
                 </div>
-                @if ($savedAtIso)
-                    <span class="text-[10.5px] text-[#7c7466]">
-                        Last saved by <strong class="text-[#1e3d44]">{{ $savedBy }}</strong>
-                        · {{ \Carbon\Carbon::parse($savedAtIso)->diffForHumans() }}
-                    </span>
-                @endif
-            </div>
-            <form method="POST" action="{{ tenant_url('/pl-forecast/commentary') }}">
-                @csrf
-                <input type="hidden" name="year"  value="{{ $data['year'] }}">
-                <input type="hidden" name="view"  value="{{ $view }}">
-                <input type="hidden" name="month" value="{{ $monthSentinel }}">
-                <textarea name="commentary" rows="6" maxlength="8000"
-                          placeholder="What's driving the variance? Add context for next month's review …"
-                          class="block w-full text-[12px] text-[#1e3d44] border border-[#e8e4de] rounded-lg p-3 bg-white focus:ring-2 focus:ring-brand-300 focus:border-brand-300 outline-none resize-y leading-relaxed">{{ $commentText }}</textarea>
-                <div class="flex items-center justify-between mt-2">
-                    <p class="text-[10.5px] text-[#7c7466]">Up to 8,000 characters. Plain text — no Markdown.</p>
-                    <button type="submit" class="text-xs font-medium px-4 py-2 rounded-lg bg-brand-600 hover:bg-brand-700 text-white">
-                        Save commentary
+
+                <div class="overflow-x-auto">
+                    <table class="w-full text-[11.5px]" style="min-width: 1180px;">
+                        <thead class="bg-white">
+                            <tr class="border-b border-[#cbc7be] bg-[#fcfbf8]">
+                                <th class="text-left py-2 pl-4 pr-2 sticky left-0 bg-[#fcfbf8] z-10" style="width:14rem;">
+                                    <span class="text-[10px] uppercase tracking-wider text-[#5a6a70] font-semibold">P&amp;L Line</span>
+                                </th>
+                                <th class="py-2 px-1.5 text-right text-[10.5px] font-bold text-[#5a6a70]" style="width:4.5rem;">Prior Year</th>
+                                <th class="py-2 px-1.5 text-right text-[10.5px] font-bold {{ $actualText }}" style="width:4.5rem;">CY P&amp;L</th>
+                                <th class="py-2 px-1.5 text-right text-[10.5px] font-bold {{ $budgetText }}" style="width:4.5rem;">Forecast</th>
+                                <th class="py-2 px-1.5 text-right text-[10.5px] font-bold text-[#5a6a70]" style="width:4.5rem;">Budget</th>
+                                <th class="py-2 px-1.5 text-right text-[10.5px] font-semibold text-[#5a6a70] border-l border-[#e8e4de]" style="width:4.5rem;">CY − PY</th>
+                                <th class="py-2 px-1.5 text-right text-[10.5px] font-semibold text-[#5a6a70]" style="width:4rem;">CY/PY %</th>
+                                <th class="py-2 px-1.5 text-right text-[10.5px] font-semibold text-[#5a6a70] border-l border-[#e8e4de]" style="width:4.5rem;">Fcst − Bdg</th>
+                                <th class="py-2 px-1.5 text-right text-[10.5px] font-semibold text-[#5a6a70]" style="width:4.5rem;">Fcst/Bdg %</th>
+                                <th class="py-2 px-2 text-left text-[10.5px] font-semibold text-[#1e3d44] border-l-2 border-brand-200" style="width:18rem;">Commentary</th>
+                            </tr>
+                        </thead>
+
+                        <tbody class="divide-y divide-[#f1ede5]">
+                            @foreach ($lines as $line)
+                                @php
+                                    $style        = $kindStyle[$line['kind']];
+                                    $isExpandable = $line['kind'] === 'leaf' && !empty($line['accounts']);
+                                    $isMarginRow  = $line['kind'] === 'margin';
+                                    $isSubtotal   = $line['kind'] === 'subtotal';
+                                    $isLeaf       = $line['kind'] === 'leaf';
+                                    $v            = $line['values'];
+                                    $cyVsPy       = $line['variances']['cy_vs_py']    ?? ['abs' => null, 'pct' => null];
+                                    $fcstVsBdg    = $line['variances']['fcst_vs_bdg'] ?? ['abs' => null, 'pct' => null];
+                                    $betterHigh   = !in_array($line['key'], ['direct_costs', 'opex', 'depreciation', 'income_tax'], true);
+                                    $varCyPyAbs   = $varColour($cyVsPy['abs'],    $betterHigh);
+                                    $varCyPyPct   = $varColour($cyVsPy['pct'],    $betterHigh);
+                                    $varFbAbs     = $varColour($fcstVsBdg['abs'], $betterHigh);
+                                    $varFbPct     = $varColour($fcstVsBdg['pct'], $betterHigh);
+                                    $cellComment  = $commentaries[$line['key']] ?? '';
+                                @endphp
+                                <tr class="{{ $style['bg'] }} hover:bg-[#faf8f5] transition-colors">
+                                    <td class="text-left pl-4 pr-2 py-1.5 sticky left-0 {{ $style['bg'] }} z-10" style="width:14rem;">
+                                        @if ($isExpandable)
+                                            <button type="button" class="pl-toggle inline-flex items-center gap-1.5 text-left text-[#1e3d44] hover:text-brand-700 {{ $style['font'] }} w-full" data-key="{{ $line['key'] }}">
+                                                <svg class="w-3 h-3 chevron transition-transform" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" d="M9 6l6 6-6 6"/></svg>
+                                                <span>{{ $line['label'] }}</span>
+                                                <span class="text-[9.5px] text-[#a09d95] font-normal">({{ count($line['accounts']) }})</span>
+                                            </button>
+                                        @else
+                                            <span class="{{ $style['font'] }} text-[#1e3d44] {{ $isMarginRow ? 'pl-[1rem]' : ($isSubtotal ? 'pl-[0.25rem]' : '') }}">{{ $line['label'] }}</span>
+                                        @endif
+                                    </td>
+                                    <td class="text-right tabular-nums px-1.5 py-1.5 {{ $style['font'] }} text-[#5a6a70]">{{ $isMarginRow ? $fmtPct($v['py']       ?? null) : $fmtM($v['py']       ?? null) }}</td>
+                                    <td class="text-right tabular-nums px-1.5 py-1.5 {{ $style['font'] }} {{ $actualText }}">{{ $isMarginRow ? $fmtPct($v['cy']       ?? null) : $fmtM($v['cy']       ?? null) }}</td>
+                                    <td class="text-right tabular-nums px-1.5 py-1.5 {{ $style['font'] }} {{ $budgetText }}">{{ $isMarginRow ? $fmtPct($v['forecast'] ?? null) : $fmtM($v['forecast'] ?? null) }}</td>
+                                    <td class="text-right tabular-nums px-1.5 py-1.5 {{ $style['font'] }} text-[#5a6a70]">{{ $isMarginRow ? $fmtPct($v['budget']   ?? null) : $fmtM($v['budget']   ?? null) }}</td>
+                                    <td class="text-right tabular-nums px-1.5 py-1.5 {{ $varCyPyAbs }} {{ $style['font'] }} border-l border-[#e8e4de]">{{ $isMarginRow ? '—' : $fmtMVar($cyVsPy['abs']) }}</td>
+                                    <td class="text-right tabular-nums px-1.5 py-1.5 {{ $varCyPyPct }} {{ $style['font'] }}">{{ $fmtPctVar($cyVsPy['pct']) }}</td>
+                                    <td class="text-right tabular-nums px-1.5 py-1.5 {{ $varFbAbs }} {{ $style['font'] }} border-l border-[#e8e4de]">{{ $isMarginRow ? '—' : $fmtMVar($fcstVsBdg['abs']) }}</td>
+                                    <td class="text-right tabular-nums px-1.5 py-1.5 {{ $varFbPct }} {{ $style['font'] }}">{{ $fmtPctVar($fcstVsBdg['pct']) }}</td>
+                                    <td class="px-2 py-1 align-middle border-l-2 border-brand-100">
+                                        @if ($isLeaf)
+                                            <textarea name="commentaries[{{ $line['key'] }}]" rows="2" maxlength="8000"
+                                                      placeholder="Explain variance…"
+                                                      class="block w-full text-[11px] leading-snug text-[#1e3d44] border border-[#e8e4de] rounded p-1.5 bg-white focus:ring-2 focus:ring-brand-300 focus:border-brand-300 outline-none resize-y">{{ $cellComment }}</textarea>
+                                        @else
+                                            <span class="text-[10px] text-[#a09d95] italic">—</span>
+                                        @endif
+                                    </td>
+                                </tr>
+                                @if ($isExpandable)
+                                    @foreach ($line['accounts'] as $acct)
+                                        @php $aCyVsPy = $acct['cy_vs_py'] ?? ['abs' => null, 'pct' => null]; @endphp
+                                        <tr class="hidden pl-account-row bg-[#fdfcfa]" data-parent="{{ $line['key'] }}">
+                                            <td class="text-left pl-12 pr-2 py-1 sticky left-0 bg-[#fdfcfa] z-10 text-[10.5px] text-[#5a6a70]" style="width:14rem;">
+                                                <span class="font-mono text-[10px] text-[#a09d95] mr-1.5">{{ $acct['code'] }}</span>{{ $acct['name'] }}
+                                            </td>
+                                            <td class="text-right tabular-nums px-1.5 py-1 text-[10.5px] text-[#5a6a70]">{{ $fmtM($acct['py']) }}</td>
+                                            <td class="text-right tabular-nums px-1.5 py-1 text-[10.5px] {{ $actualText }} opacity-80">{{ $fmtM($acct['cy']) }}</td>
+                                            <td class="text-right tabular-nums px-1.5 py-1 text-[10.5px] {{ $budgetText }} opacity-80">{{ $fmtM($acct['forecast']) }}</td>
+                                            <td class="text-right tabular-nums px-1.5 py-1 text-[10.5px] text-[#5a6a70]">{{ $fmtM($acct['budget']) }}</td>
+                                            <td class="text-right tabular-nums px-1.5 py-1 text-[10.5px] text-[#7c7466] border-l border-[#e8e4de]">{{ $fmtMVar($aCyVsPy['abs']) }}</td>
+                                            <td class="text-right tabular-nums px-1.5 py-1 text-[10.5px] text-[#7c7466]">{{ $fmtPctVar($aCyVsPy['pct']) }}</td>
+                                            <td class="text-right tabular-nums px-1.5 py-1 text-[10.5px] text-[#7c7466] border-l border-[#e8e4de]">—</td>
+                                            <td class="text-right tabular-nums px-1.5 py-1 text-[10.5px] text-[#7c7466]">—</td>
+                                            <td class="px-2 py-1 border-l-2 border-brand-100"></td>
+                                        </tr>
+                                    @endforeach
+                                @endif
+                            @endforeach
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="flex items-center justify-between gap-3 px-4 py-3 border-t border-[#e8e4de] bg-[#faf8f5] flex-wrap">
+                    <div class="text-[10.5px] text-[#7c7466]">
+                        {{ $data['is_service'] ? 'Service business — direct costs basis: ' : 'Goods business — direct costs basis: ' }}
+                        <code class="text-[10px] bg-white border border-[#ece7df] rounded px-1 py-0.5">{{ $data['cogs_basis'] }}</code> ·
+                        @if (!empty($data['budget_uploaded']))
+                            Budget = <strong class="text-sage-700">user-uploaded</strong>
+                            (<a href="{{ tenant_url('/budget-upload?year=' . $data['year']) }}" class="text-brand-700 hover:text-brand-900 underline decoration-dotted">manage</a>)
+                        @else
+                            Budget = PY × {{ number_format(($data['budget_growth'] ?? 1.0), 2) }}
+                            (<a href="{{ tenant_url('/budget-upload?year=' . $data['year']) }}" class="text-brand-700 hover:text-brand-900 underline decoration-dotted">upload</a> a budget)
+                        @endif
+                    </div>
+                    <button type="submit" class="text-xs font-medium px-4 py-2 rounded-lg bg-brand-600 hover:bg-brand-700 text-white inline-flex items-center gap-1.5">
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+                        Save commentaries
                     </button>
                 </div>
-            </form>
-        </div>
+            </div>
+        </form>
       @endif
 
       <script>
