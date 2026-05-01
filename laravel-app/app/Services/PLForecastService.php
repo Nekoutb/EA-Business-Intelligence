@@ -41,6 +41,18 @@ use App\Odoo\OdooClient;
  * (Direct op costs, OpEx, D&A, Income tax) are stored as negative
  * numbers in the result so the row totals add up directly without
  * needing to subtract.
+ *
+ * View modes:
+ *   - 'full_year'  (default) — 12-month grid + year total + budget total
+ *   - 'mtd'        — single month: PY | CY | Forecast | Budget + variances
+ *   - 'ytd'        — Jan..closed-month: PY | CY | Forecast (full year) |
+ *                                       Budget (full year) + variances
+ *
+ * Budget definition: in V1 we don't pull from Odoo's `account.budget`
+ * (which the customer may or may not maintain). Instead we use a
+ * configurable `pl_budget_growth_factor` applied to prior-year actuals.
+ * Defaults to 1.0 (Budget = PY) — the most conservative neutral baseline
+ * for "did we hold the line?" reviews.
  */
 final class PLForecastService
 {
@@ -506,6 +518,376 @@ final class PLForecastService
             'is_service' => $isService,
             'cogs_basis' => $isService ? 'Class 60+61+62' : 'Class 60',
             'months'     => $this->buildMonthsHeader($year, $thruMonth),
+            'lines'      => [],
+            'fetched_at' => now()->toIso8601String(),
+            'error'      => 'No accounts in scope.',
+        ];
+    }
+
+    /* ───────────────── Comparison-mode views (MTD, YTD) ─────────────── */
+
+    /**
+     * MTD — single calendar month, four columns:
+     *   PY (same month last year actual)
+     *   CY (current year, this month actual to date — partial if mid-month)
+     *   Forecast (full-month forecast: SMLY w/ trailing-3 fallback)
+     *   Budget (PY × growth factor)
+     * Plus variances: CY vs PY, Forecast vs Budget.
+     *
+     * @param int  $year   Selected year (defaults to current)
+     * @param int  $month  Month 1-12 (defaults to current month)
+     * @param float $budgetGrowth Multiplier applied to PY for Budget. Default 1.0.
+     */
+    public function analyzeMtd(?int $year = null, ?int $month = null, float $budgetGrowth = 1.0): array
+    {
+        $today = new \DateTimeImmutable('today');
+        $year  = $year  ?? (int) $today->format('Y');
+        $month = $month ?? (int) $today->format('n');
+        $month = max(1, min(12, $month));
+
+        $isService       = $this->isServiceBusiness($year);
+        $accounts        = $this->fetchAccountsInScope();
+        if (empty($accounts)) return $this->emptyComparison($year, $month, 'mtd', $isService);
+        $bucketByAccount = $this->bucketAccounts($accounts, $isService);
+        if (empty($bucketByAccount)) return $this->emptyComparison($year, $month, 'mtd', $isService);
+
+        $accountIds = array_keys($bucketByAccount);
+        $monthly    = $this->fetchMonthlyBalances($accountIds, $year);
+        $monthlyPy  = $this->fetchMonthlyBalances($accountIds, $year - 1);
+
+        // For MTD we need 4 single-figure series per line (PY, CY, Fcst, Bdg).
+        // Compute at the account level, then aggregate.
+        $rowsByLine = [
+            'revenue' => [], 'direct_costs' => [], 'opex' => [],
+            'depreciation' => [], 'fin_revenue' => [], 'fin_expense' => [], 'income_tax' => [],
+        ];
+        $accountsByLine = [
+            'revenue' => [], 'direct_costs' => [], 'opex' => [],
+            'depreciation' => [], 'fin_revenue' => [], 'fin_expense' => [], 'income_tax' => [],
+        ];
+
+        // For forecast we need the trailing-3 mean from CY (or last year if
+        // we're projecting into the current month and CY itself is empty).
+        $thruMonth = $year < (int) $today->format('Y')
+            ? 12
+            : ($year > (int) $today->format('Y') ? 0 : max(0, ((int) $today->format('n')) - 1));
+
+        foreach ($accountIds as $aid) {
+            $b      = $bucketByAccount[$aid];
+            $sign   = $b['sign'];
+            $cy     = $monthly[$aid]   ?? array_fill(1, 12, 0.0);
+            $py     = $monthlyPy[$aid] ?? array_fill(1, 12, 0.0);
+
+            $pyVal  = ((float) ($py[$month] ?? 0)) * $sign;
+            $cyVal  = ((float) ($cy[$month] ?? 0)) * $sign;
+            // Forecast: if month is closed (≤ thruMonth) the forecast IS
+            // the actual; if not, derive via SMLY → trailing-3 fallback.
+            if ($month <= $thruMonth) {
+                $fcVal = $cyVal;
+            } else {
+                $smly = (float) ($py[$month] ?? 0);
+                if ($smly === 0.0) {
+                    // trailing-3 mean of CY (so far), to scale up
+                    $tail = [];
+                    for ($m = max(1, $thruMonth - 2); $m <= $thruMonth; $m++) {
+                        $tail[] = (float) ($cy[$m] ?? 0);
+                    }
+                    $smly = empty($tail) ? 0.0 : array_sum($tail) / count($tail);
+                }
+                $fcVal = $smly * $sign;
+            }
+            $bdgVal = $pyVal * $budgetGrowth;
+
+            $accountsByLine[$b['line']][] = [
+                'code' => $b['code'], 'name' => $b['name'],
+                'py' => $pyVal, 'cy' => $cyVal, 'forecast' => $fcVal, 'budget' => $bdgVal,
+            ];
+        }
+
+        // Aggregate per line
+        $sumLine = function (array $accts, string $field): float {
+            $s = 0.0;
+            foreach ($accts as $a) $s += (float) ($a[$field] ?? 0);
+            return $s;
+        };
+
+        $vec = function (string $line) use (&$accountsByLine, $sumLine): array {
+            return [
+                'py'       => $sumLine($accountsByLine[$line], 'py'),
+                'cy'       => $sumLine($accountsByLine[$line], 'cy'),
+                'forecast' => $sumLine($accountsByLine[$line], 'forecast'),
+                'budget'   => $sumLine($accountsByLine[$line], 'budget'),
+            ];
+        };
+
+        $rev   = $vec('revenue');
+        $dc    = $vec('direct_costs');
+        $opex  = $vec('opex');
+        $da    = $vec('depreciation');
+        $finR  = $vec('fin_revenue');
+        $finE  = $vec('fin_expense');
+        $tax   = $vec('income_tax');
+
+        $addV = fn (array $a, array $b) => [
+            'py'       => $a['py']       + $b['py'],
+            'cy'       => $a['cy']       + $b['cy'],
+            'forecast' => $a['forecast'] + $b['forecast'],
+            'budget'   => $a['budget']   + $b['budget'],
+        ];
+        $gp     = $addV($rev, $dc);
+        $ebitda = $addV($gp, $opex);
+        $ebit   = $addV($ebitda, $da);
+        $netFin = $addV($finR, $finE);
+        $pbt    = $addV($ebit, $netFin);
+        $net    = $addV($pbt, $tax);
+
+        $marginV = function (array $num, array $den): array {
+            return [
+                'py'       => $den['py']       != 0 ? 100.0 * $num['py']       / $den['py']       : null,
+                'cy'       => $den['cy']       != 0 ? 100.0 * $num['cy']       / $den['cy']       : null,
+                'forecast' => $den['forecast'] != 0 ? 100.0 * $num['forecast'] / $den['forecast'] : null,
+                'budget'   => $den['budget']   != 0 ? 100.0 * $num['budget']   / $den['budget']   : null,
+            ];
+        };
+
+        // Build the row list with optional drill-down (filtered + sorted).
+        $rows = [];
+        $rows[] = $this->compRow('revenue',       'Revenue',                     $rev,    'leaf',     'sage',  $accountsByLine['revenue']);
+        $rows[] = $this->compRow('direct_costs',  'Direct operating costs',      $dc,     'leaf',     'coral', $accountsByLine['direct_costs']);
+        $rows[] = $this->compRow('gross_profit',  'Gross Profit',                $gp,     'subtotal', 'sage');
+        $rows[] = $this->compRow('gross_margin',  'Gross Margin %',              $marginV($gp, $rev),     'margin', 'slate');
+        $rows[] = $this->compRow('opex',          'Operating expenses',          $opex,   'leaf',     'coral', $accountsByLine['opex']);
+        $rows[] = $this->compRow('ebitda',        'EBITDA',                      $ebitda, 'subtotal', 'brand');
+        $rows[] = $this->compRow('ebitda_margin', 'EBITDA Margin %',             $marginV($ebitda, $rev), 'margin', 'slate');
+        $rows[] = $this->compRow('depreciation',  'Depreciation & amortisation', $da,     'leaf',     'coral', $accountsByLine['depreciation']);
+        $rows[] = $this->compRow('ebit',          'EBIT',                        $ebit,   'subtotal', 'brand');
+        $rows[] = $this->compRow('ebit_margin',   'EBIT Margin %',               $marginV($ebit, $rev),   'margin', 'slate');
+        $rows[] = $this->compRow('net_financial', 'Net financial result',        $netFin, 'leaf',     'warm',  array_merge($accountsByLine['fin_revenue'], $accountsByLine['fin_expense']));
+        $rows[] = $this->compRow('pbt',           'Profit Before Tax',           $pbt,    'subtotal', 'brand');
+        $rows[] = $this->compRow('income_tax',    'Income tax',                  $tax,    'leaf',     'coral', $accountsByLine['income_tax']);
+        $rows[] = $this->compRow('net_result',    'Net Result',                  $net,    'subtotal', 'sage');
+        $rows[] = $this->compRow('net_margin',    'Net Margin %',                $marginV($net, $rev),    'margin', 'slate');
+
+        return [
+            'view'           => 'mtd',
+            'currency'       => 'XAF',
+            'year'           => $year,
+            'month'          => $month,
+            'month_label'    => $this->monthName($month),
+            'is_service'     => $isService,
+            'cogs_basis'     => $isService ? 'Class 60+61+62' : 'Class 60',
+            'budget_growth'  => $budgetGrowth,
+            'lines'          => $rows,
+            'fetched_at'     => now()->toIso8601String(),
+        ];
+    }
+
+    /**
+     * YTD — Jan..(current/closed month), four columns.
+     *   PY YTD          = sum of same months last year
+     *   CY YTD          = sum of months this year up to thruMonth
+     *   Forecast (full year) = full-year forecast (CY actual + future SMLY)
+     *   Budget (full year)   = PY full year × growth factor
+     */
+    public function analyzeYtd(?int $year = null, float $budgetGrowth = 1.0): array
+    {
+        $today      = new \DateTimeImmutable('today');
+        $year       = $year ?? (int) $today->format('Y');
+        $isService  = $this->isServiceBusiness($year);
+
+        $accounts = $this->fetchAccountsInScope();
+        if (empty($accounts)) return $this->emptyComparison($year, 0, 'ytd', $isService);
+        $bucketByAccount = $this->bucketAccounts($accounts, $isService);
+        if (empty($bucketByAccount)) return $this->emptyComparison($year, 0, 'ytd', $isService);
+
+        $accountIds = array_keys($bucketByAccount);
+        $monthly    = $this->fetchMonthlyBalances($accountIds, $year);
+        $monthlyPy  = $this->fetchMonthlyBalances($accountIds, $year - 1);
+
+        $thruMonth = $year < (int) $today->format('Y')
+            ? 12
+            : ($year > (int) $today->format('Y') ? 0 : max(0, ((int) $today->format('n')) - 1));
+
+        $accountsByLine = [
+            'revenue' => [], 'direct_costs' => [], 'opex' => [],
+            'depreciation' => [], 'fin_revenue' => [], 'fin_expense' => [], 'income_tax' => [],
+        ];
+
+        foreach ($accountIds as $aid) {
+            $b    = $bucketByAccount[$aid];
+            $sign = $b['sign'];
+            $cy   = $monthly[$aid]   ?? array_fill(1, 12, 0.0);
+            $py   = $monthlyPy[$aid] ?? array_fill(1, 12, 0.0);
+
+            // PY YTD = same Jan..thruMonth last year (full closed period)
+            $pyYtd = 0.0;
+            for ($m = 1; $m <= max(1, $thruMonth); $m++) {
+                $pyYtd += (float) ($py[$m] ?? 0);
+            }
+            $pyYtd *= $sign;
+
+            // CY YTD = Jan..thruMonth this year
+            $cyYtd = 0.0;
+            for ($m = 1; $m <= $thruMonth; $m++) {
+                $cyYtd += (float) ($cy[$m] ?? 0);
+            }
+            $cyYtd *= $sign;
+
+            // Forecast full year: actuals + SMLY for future months
+            $vec = $this->fillForecast($cy, $py, $thruMonth, $sign);
+            $forecastYear = array_sum($vec);
+
+            // Budget full year = PY full year × growth
+            $pyYear = 0.0;
+            for ($m = 1; $m <= 12; $m++) $pyYear += (float) ($py[$m] ?? 0);
+            $budgetYear = $pyYear * $sign * $budgetGrowth;
+
+            $accountsByLine[$b['line']][] = [
+                'code' => $b['code'], 'name' => $b['name'],
+                'py' => $pyYtd, 'cy' => $cyYtd, 'forecast' => $forecastYear, 'budget' => $budgetYear,
+            ];
+        }
+
+        $sumLine = function (array $accts, string $field): float {
+            $s = 0.0;
+            foreach ($accts as $a) $s += (float) ($a[$field] ?? 0);
+            return $s;
+        };
+        $vec = function (string $line) use (&$accountsByLine, $sumLine): array {
+            return [
+                'py'       => $sumLine($accountsByLine[$line], 'py'),
+                'cy'       => $sumLine($accountsByLine[$line], 'cy'),
+                'forecast' => $sumLine($accountsByLine[$line], 'forecast'),
+                'budget'   => $sumLine($accountsByLine[$line], 'budget'),
+            ];
+        };
+
+        $rev   = $vec('revenue');
+        $dc    = $vec('direct_costs');
+        $opex  = $vec('opex');
+        $da    = $vec('depreciation');
+        $finR  = $vec('fin_revenue');
+        $finE  = $vec('fin_expense');
+        $tax   = $vec('income_tax');
+
+        $addV = fn (array $a, array $b) => [
+            'py'       => $a['py']       + $b['py'],
+            'cy'       => $a['cy']       + $b['cy'],
+            'forecast' => $a['forecast'] + $b['forecast'],
+            'budget'   => $a['budget']   + $b['budget'],
+        ];
+        $gp     = $addV($rev, $dc);
+        $ebitda = $addV($gp, $opex);
+        $ebit   = $addV($ebitda, $da);
+        $netFin = $addV($finR, $finE);
+        $pbt    = $addV($ebit, $netFin);
+        $net    = $addV($pbt, $tax);
+
+        $marginV = function (array $num, array $den): array {
+            return [
+                'py'       => $den['py']       != 0 ? 100.0 * $num['py']       / $den['py']       : null,
+                'cy'       => $den['cy']       != 0 ? 100.0 * $num['cy']       / $den['cy']       : null,
+                'forecast' => $den['forecast'] != 0 ? 100.0 * $num['forecast'] / $den['forecast'] : null,
+                'budget'   => $den['budget']   != 0 ? 100.0 * $num['budget']   / $den['budget']   : null,
+            ];
+        };
+
+        $rows = [];
+        $rows[] = $this->compRow('revenue',       'Revenue',                     $rev,    'leaf',     'sage',  $accountsByLine['revenue']);
+        $rows[] = $this->compRow('direct_costs',  'Direct operating costs',      $dc,     'leaf',     'coral', $accountsByLine['direct_costs']);
+        $rows[] = $this->compRow('gross_profit',  'Gross Profit',                $gp,     'subtotal', 'sage');
+        $rows[] = $this->compRow('gross_margin',  'Gross Margin %',              $marginV($gp, $rev),     'margin', 'slate');
+        $rows[] = $this->compRow('opex',          'Operating expenses',          $opex,   'leaf',     'coral', $accountsByLine['opex']);
+        $rows[] = $this->compRow('ebitda',        'EBITDA',                      $ebitda, 'subtotal', 'brand');
+        $rows[] = $this->compRow('ebitda_margin', 'EBITDA Margin %',             $marginV($ebitda, $rev), 'margin', 'slate');
+        $rows[] = $this->compRow('depreciation',  'Depreciation & amortisation', $da,     'leaf',     'coral', $accountsByLine['depreciation']);
+        $rows[] = $this->compRow('ebit',          'EBIT',                        $ebit,   'subtotal', 'brand');
+        $rows[] = $this->compRow('ebit_margin',   'EBIT Margin %',               $marginV($ebit, $rev),   'margin', 'slate');
+        $rows[] = $this->compRow('net_financial', 'Net financial result',        $netFin, 'leaf',     'warm',  array_merge($accountsByLine['fin_revenue'], $accountsByLine['fin_expense']));
+        $rows[] = $this->compRow('pbt',           'Profit Before Tax',           $pbt,    'subtotal', 'brand');
+        $rows[] = $this->compRow('income_tax',    'Income tax',                  $tax,    'leaf',     'coral', $accountsByLine['income_tax']);
+        $rows[] = $this->compRow('net_result',    'Net Result',                  $net,    'subtotal', 'sage');
+        $rows[] = $this->compRow('net_margin',    'Net Margin %',                $marginV($net, $rev),    'margin', 'slate');
+
+        return [
+            'view'           => 'ytd',
+            'currency'       => 'XAF',
+            'year'           => $year,
+            'thru_month'     => $thruMonth,
+            'is_service'     => $isService,
+            'cogs_basis'     => $isService ? 'Class 60+61+62' : 'Class 60',
+            'budget_growth'  => $budgetGrowth,
+            'lines'          => $rows,
+            'fetched_at'     => now()->toIso8601String(),
+        ];
+    }
+
+    /**
+     * Pack a comparison-mode row (PY, CY, Forecast, Budget + variances).
+     * Filters out empty accounts and sorts drill-down by absolute CY desc.
+     */
+    private function compRow(string $key, string $label, array $values, string $kind, string $colour, array $accounts = []): array
+    {
+        // Variance helpers
+        $variances = [
+            'cy_vs_py'      => $this->varianceAbsPct($values['cy'] ?? 0, $values['py'] ?? 0),
+            'fcst_vs_bdg'   => $this->varianceAbsPct($values['forecast'] ?? 0, $values['budget'] ?? 0),
+            'cy_vs_bdg'     => $this->varianceAbsPct($values['cy'] ?? 0, $values['budget'] ?? 0),
+        ];
+
+        $minDisp = 500_000.0;
+        $accountRows = [];
+        foreach ($accounts as $a) {
+            $maxAbs = max(abs($a['py'] ?? 0), abs($a['cy'] ?? 0), abs($a['forecast'] ?? 0), abs($a['budget'] ?? 0));
+            if ($maxAbs < $minDisp) continue;
+            $accountRows[] = [
+                'code'      => $a['code'],
+                'name'      => $a['name'],
+                'py'        => $a['py'],
+                'cy'        => $a['cy'],
+                'forecast'  => $a['forecast'],
+                'budget'    => $a['budget'],
+                'cy_vs_py'  => $this->varianceAbsPct($a['cy'], $a['py']),
+            ];
+        }
+        usort($accountRows, fn ($x, $y) => abs($y['cy']) <=> abs($x['cy']));
+
+        return [
+            'key'       => $key,
+            'label'     => $label,
+            'values'    => $values,
+            'variances' => $variances,
+            'kind'      => $kind,
+            'colour'    => $colour,
+            'accounts'  => $accountRows,
+        ];
+    }
+
+    /** @return array{abs:float, pct:?float} */
+    private function varianceAbsPct(?float $a, ?float $b): array
+    {
+        $a = (float) ($a ?? 0);
+        $b = (float) ($b ?? 0);
+        $abs = $a - $b;
+        $pct = $b != 0.0 ? 100.0 * $abs / abs($b) : null;
+        return ['abs' => $abs, 'pct' => $pct];
+    }
+
+    private function monthName(int $m): string
+    {
+        $names = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        return $names[$m - 1] ?? '';
+    }
+
+    private function emptyComparison(int $year, int $month, string $view, bool $isService): array
+    {
+        return [
+            'view'       => $view,
+            'currency'   => 'XAF',
+            'year'       => $year,
+            'month'      => $month,
+            'is_service' => $isService,
+            'cogs_basis' => $isService ? 'Class 60+61+62' : 'Class 60',
             'lines'      => [],
             'fetched_at' => now()->toIso8601String(),
             'error'      => 'No accounts in scope.',

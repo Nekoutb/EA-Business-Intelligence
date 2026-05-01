@@ -40,6 +40,19 @@ return [
 
     /*
     |---------------------------------------------------------------------
+    | P&L Budget growth factor
+    |---------------------------------------------------------------------
+    |
+    | The P&L Forecast page's MTD / YTD comparison views render a "Budget"
+    | column. Until we wire up Odoo's `account.budget` (or load a
+    | management-supplied budget file), Budget = PY actual × this factor.
+    | 1.0 = "hold the line" (Budget = PY exact). Set to 1.05 for a 5%
+    | growth target, etc.
+    */
+    'pl_budget_growth_factor' => (float) env('PL_BUDGET_GROWTH_FACTOR', 1.0),
+
+    /*
+    |---------------------------------------------------------------------
     | Statutory corporate income tax rates (national standard)
     |---------------------------------------------------------------------
     |
