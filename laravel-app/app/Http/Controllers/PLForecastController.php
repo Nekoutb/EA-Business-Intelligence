@@ -57,41 +57,51 @@ class PLForecastController extends Controller
             $error = $e->getMessage();
         }
 
-        // Load saved commentary for this (year, view, month) so the
-        // textarea populates with whatever the user last saved.
-        $commentary = null;
+        // Load saved commentaries for this (year, view, month). Each
+        // P&L leaf line gets its own row in the table now, so the
+        // payload is keyed line_key → text. Most-recent-saved-at is
+        // also returned so the view can show a single "last saved"
+        // badge above the table.
+        $commentaries = [];
+        $latestSaved  = null;
         if ($tenantId && in_array($view, ['mtd', 'ytd'], true)) {
             $monthKey = $view === 'mtd' ? $month : 0;
-            $row = PLCommentary::with('saver')
+            $rows = PLCommentary::with('saver')
                 ->where('tenant_id', $tenantId)
                 ->where('year', $year)
                 ->where('month', $monthKey)
                 ->where('view', $view)
-                ->first();
-            if ($row) {
-                $commentary = [
-                    'text'         => (string) ($row->commentary ?? ''),
-                    'saved_by'     => $row->saver?->name ?? '—',
-                    'saved_at_iso' => $row->updated_at?->toIso8601String(),
-                ];
+                ->get();
+            foreach ($rows as $row) {
+                $commentaries[$row->line_key ?: 'overall'] = (string) ($row->commentary ?? '');
+                if (!$latestSaved || ($row->updated_at && $row->updated_at->gt(\Carbon\Carbon::parse($latestSaved['at'])))) {
+                    $latestSaved = [
+                        'by' => $row->saver?->name ?? '—',
+                        'at' => $row->updated_at?->toIso8601String(),
+                    ];
+                }
             }
         }
 
         return view('pl-forecast', [
-            'active'     => 'pl_forecast',
-            'year'       => $year,
-            'month'      => $month,
-            'view'       => $view,
-            'data'       => $data,
-            'error'      => $error,
-            'commentary' => $commentary,
+            'active'        => 'pl_forecast',
+            'year'          => $year,
+            'month'         => $month,
+            'view'          => $view,
+            'data'          => $data,
+            'error'         => $error,
+            'commentaries'  => $commentaries,
+            'commentary_meta' => $latestSaved,
         ]);
     }
 
     /**
-     * POST /pl-forecast/commentary — save the commentary textarea
-     * against the current (year, view, month) tuple. Upsert by the
-     * unique (tenant_id, year, month, view).
+     * POST /pl-forecast/commentary — accept a map of line_key → text and
+     * upsert one row per line. Empty strings are saved (so the user can
+     * clear a note).
+     *
+     * Allowed line keys are restricted to the leaf P&L lines that the
+     * MTD/YTD comparison views render with a Commentary cell.
      */
     public function saveCommentary(Request $request)
     {
@@ -100,31 +110,39 @@ class PLForecastController extends Controller
         $tenantId = $ctx->tenant()->id;
 
         $data = $request->validate([
-            'year'       => ['required', 'integer'],
-            'month'      => ['required', 'integer', 'min:0', 'max:12'],
-            'view'       => ['required', 'in:mtd,ytd'],
-            'commentary' => ['nullable', 'string', 'max:8000'],
+            'year'           => ['required', 'integer'],
+            'month'          => ['required', 'integer', 'min:0', 'max:12'],
+            'view'           => ['required', 'in:mtd,ytd'],
+            'commentaries'   => ['nullable', 'array'],
+            'commentaries.*' => ['nullable', 'string', 'max:8000'],
         ]);
 
-        PLCommentary::updateOrCreate(
-            [
-                'tenant_id' => $tenantId,
-                'year'      => (int) $data['year'],
-                'month'     => (int) $data['month'],
-                'view'      => $data['view'],
-            ],
-            [
-                'commentary' => $data['commentary'] ?? '',
-                'saved_by'   => optional($request->user())->id,
-            ]
-        );
+        $allowedLines = ['revenue', 'direct_costs', 'opex', 'depreciation', 'net_financial', 'income_tax'];
+        $userId = optional($request->user())->id;
+
+        foreach ((array) ($data['commentaries'] ?? []) as $lineKey => $text) {
+            if (!in_array($lineKey, $allowedLines, true)) continue;
+            PLCommentary::updateOrCreate(
+                [
+                    'tenant_id' => $tenantId,
+                    'year'      => (int) $data['year'],
+                    'month'     => (int) $data['month'],
+                    'view'      => $data['view'],
+                    'line_key'  => $lineKey,
+                ],
+                [
+                    'commentary' => (string) ($text ?? ''),
+                    'saved_by'   => $userId,
+                ]
+            );
+        }
 
         $back = tenant_url('/pl-forecast?view=' . $data['view'] . '&year=' . $data['year']
               . ($data['view'] === 'mtd' ? '&month=' . $data['month'] : ''));
 
         return redirect()->to($back)->with('flash', [
             'type' => 'success',
-            'msg'  => 'Commentary saved.',
+            'msg'  => 'Commentaries saved.',
         ]);
     }
 }

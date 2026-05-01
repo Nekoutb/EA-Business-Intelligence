@@ -10,7 +10,7 @@ class PLCommentary extends Model
     protected $table = 'pl_commentaries';
 
     protected $fillable = [
-        'tenant_id', 'year', 'month', 'view', 'commentary', 'saved_by',
+        'tenant_id', 'year', 'month', 'view', 'line_key', 'commentary', 'saved_by',
     ];
 
     protected $casts = [
