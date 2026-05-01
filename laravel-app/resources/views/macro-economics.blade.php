@@ -3,16 +3,14 @@
 
 @section('header')
     <div>
-        <div class="flex items-center gap-2 mb-1">
+        <div class="flex items-center gap-2 mb-0.5">
             <span class="text-[10px] uppercase tracking-[0.35em] text-[#8a8578] font-medium">
                 Cameroon · {{ ea_last_sync_label() }}
             </span>
         </div>
         <h1 class="text-2xl font-bold text-[#1e3d44]">Macro Economics</h1>
-        <div class="text-xs text-[#7c7466] mt-1">
-            Six trade-focused indicators relevant to scanning operations — last
-            {{ ($data['history_window']['to'] ?? 0) - ($data['history_window']['from'] ?? 0) + 1 }}
-            years of actuals plus a 2-year projection. Plus the BEAC TIAO policy rate.
+        <div class="text-[11px] text-[#7c7466] mt-0.5">
+            Trade-focused indicators relevant to scanning operations — {{ ($data['history_window']['to'] ?? 0) - ($data['history_window']['from'] ?? 0) + 1 }}y actuals + 2y projection · plus BEAC TIAO policy rate.
         </div>
     </div>
 @endsection
@@ -42,10 +40,10 @@
              Three Cameroon-specific reference cards side-by-side. TIAO
              is the regional CEMAC central-bank rate; income tax is
              Cameroon's standard CIT; FX is the USD/XAF spot. --}}
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-6">
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
 
             {{-- BEAC TIAO --}}
-            <div class="bg-white border border-[#e8e4de] rounded-xl p-5">
+            <div class="bg-white border border-[#e8e4de] rounded-xl p-4">
                 <div class="flex items-center gap-2 mb-1">
                     <div class="w-1 h-4 rounded bg-brand-500"></div>
                     <h2 class="text-xs font-semibold uppercase tracking-wider text-[#5a6a70]">BEAC TIAO Rate</h2>
@@ -68,7 +66,7 @@
             </div>
 
             {{-- Statutory Country Income Tax Rate --}}
-            <div class="bg-white border border-[#e8e4de] rounded-xl p-5">
+            <div class="bg-white border border-[#e8e4de] rounded-xl p-4">
                 <div class="flex items-center gap-2 mb-1">
                     <div class="w-1 h-4 rounded bg-coral-500"></div>
                     <h2 class="text-xs font-semibold uppercase tracking-wider text-[#5a6a70]">
@@ -98,7 +96,7 @@
             </div>
 
             {{-- Live USD/XAF spot --}}
-            <div class="bg-white border border-[#e8e4de] rounded-xl p-5">
+            <div class="bg-white border border-[#e8e4de] rounded-xl p-4">
                 <div class="flex items-center gap-2 mb-1">
                     <div class="w-1 h-4 rounded bg-sage-500"></div>
                     <h2 class="text-xs font-semibold uppercase tracking-wider text-[#5a6a70]">USD / XAF — Live</h2>
@@ -122,7 +120,7 @@
         </div>
 
         {{-- ── Six indicator cards with mini line charts ─────────────────── --}}
-        <div class="mb-6">
+        <div class="mb-4">
             <div class="flex items-center gap-2 mb-3">
                 <div class="w-1 h-4 rounded bg-sage-500"></div>
                 <h2 class="text-xs font-semibold uppercase tracking-wider text-[#5a6a70]">Trade-focused Indicators · Cameroon</h2>
@@ -222,7 +220,7 @@
                         </div>
 
                         @if (!$ind['pending'] && count($points) > 1)
-                            <div id="{{ $chartId }}" class="px-4 pb-4 pt-1" data-chart='@json($chartPayload)'></div>
+                            <div id="{{ $chartId }}" class="px-4 pb-3 pt-0.5" data-chart='@json($chartPayload)'></div>
                         @endif
                     </div>
                 @endforeach
@@ -262,10 +260,10 @@
                 const isProj = payload.is_projected || [];
                 if (labels.length < 2) return;
 
-                // Slightly taller (110 vs 90) to give the value labels
-                // breathing room above the data points; also wider left
-                // padding for axis numbers.
-                const W = 340, H = 120, padL = 32, padR = 12, padT = 18, padB = 26;
+                // Compact chart sized to fit the page without scrolling;
+                // value labels still get a top margin (padT) so they
+                // don't clip.
+                const W = 340, H = 100, padL = 32, padR = 12, padT = 16, padB = 22;
                 const innerW = W - padL - padR, innerH = H - padT - padB;
 
                 const yMin = Math.min.apply(null, values);
