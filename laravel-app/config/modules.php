@@ -377,6 +377,17 @@ return [
             'status'  => 'live',
         ],
         [
+            'key'     => 'pl_forecast',
+            'service' => 'financial_planning',
+            'label'   => 'P&L Forecast',
+            'url'     => '/pl-forecast',
+            'active'  => 'pl_forecast',
+            'icon'    => 'M4 4v16h16M8 14l3-4 3 3 4-6',
+            'default' => true,
+            'core'    => false,
+            'status'  => 'live',
+        ],
+        [
             'key'     => 'budgeting',
             'service' => 'financial_planning',
             'label'   => 'Budgeting',
