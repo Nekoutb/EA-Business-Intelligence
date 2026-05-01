@@ -3,6 +3,8 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use OpenSpout\Common\Entity\Cell\EmptyCell;
+use OpenSpout\Common\Entity\Cell\FormulaCell;
 use OpenSpout\Reader\XLSX\Reader as XlsxReader;
 use OpenSpout\Reader\CSV\Reader as CsvReader;
 
@@ -133,7 +135,19 @@ final class BudgetParser
         return ['data' => $data, 'warnings' => $warnings];
     }
 
-    /** @return array<int, array<int, mixed>> */
+    /**
+     * Read rows from the uploaded file as arrays of scalar cell values.
+     *
+     * openspout v5's Row class doesn't expose a getCells() iterator, so
+     * we go via toArray() (which calls Cell::getValue() per cell). For
+     * FormulaCell that returns the FORMULA TEXT, not the cached
+     * computed value — fine for plain budget files where users enter
+     * numbers directly, but breaks for spreadsheets with =SUM() in the
+     * total column. Reflection on the protected $cells lets us call
+     * getComputedValue() on formula cells and getValue() on the rest.
+     *
+     * @return array<int, array<int, mixed>>
+     */
     private function readRows(string $filePath, string $extension): array
     {
         $rows = [];
@@ -142,11 +156,7 @@ final class BudgetParser
             $reader->open($filePath);
             foreach ($reader->getSheetIterator() as $sheet) {
                 foreach ($sheet->getRowIterator() as $row) {
-                    $cells = [];
-                    foreach ($row->getCells() as $cell) {
-                        $cells[] = $cell->getValue();
-                    }
-                    $rows[] = $cells;
+                    $rows[] = $this->extractRowValues($row);
                 }
                 break; // first sheet only
             }
@@ -154,6 +164,43 @@ final class BudgetParser
             $reader->close();
         }
         return $rows;
+    }
+
+    /**
+     * Pull every cell out of a Row, returning the COMPUTED value for
+     * formula cells and the raw value for everything else.
+     *
+     * @return array<int, mixed>
+     */
+    private function extractRowValues(\OpenSpout\Common\Entity\Row $row): array
+    {
+        // Row::cells is protected; reach in via reflection. Cached so
+        // we don't reflect every row.
+        static $cellsProp = null;
+        if ($cellsProp === null) {
+            $rc = new \ReflectionClass(\OpenSpout\Common\Entity\Row::class);
+            if ($rc->hasProperty('cells')) {
+                $cellsProp = $rc->getProperty('cells');
+                $cellsProp->setAccessible(true);
+            }
+        }
+
+        $out = [];
+        if ($cellsProp !== null) {
+            $cells = $cellsProp->getValue($row);
+            foreach ($cells as $cell) {
+                if ($cell instanceof EmptyCell) { $out[] = null; continue; }
+                if ($cell instanceof FormulaCell) {
+                    $computed = $cell->getComputedValue();
+                    $out[] = $computed ?? $cell->getValue();
+                    continue;
+                }
+                $out[] = method_exists($cell, 'getValue') ? $cell->getValue() : null;
+            }
+            return $out;
+        }
+        // Fallback: toArray() — works for non-formula files
+        return $row->toArray();
     }
 
     /**
