@@ -7,33 +7,33 @@ use Illuminate\Http\Request;
 
 /**
  * Macro Economics module — six trade-focused indicators (5y actuals +
- * 2y projection) plus the BEAC TIAO rate. Defaults to Cameroon.
+ * 2y projection) plus the BEAC TIAO rate. Cameroon-only for this
+ * tenant; the country picker has been removed at the user's request.
  *
- * Country selection via ?country=CMR query param. Service-layer
- * caching is server-wide (Laravel Cache, 24 h on indicators, 6 h on
- * the BEAC scrape); no per-session cache key needed here.
+ * Underlying service still supports any ISO3 code via analyze($cc),
+ * so future tenants on other CEMAC countries can be enabled by
+ * passing a different code here without touching the service.
  */
 class MacroEconomicsController extends Controller
 {
+    /** ISO 3166-1 alpha-3 of the only country surfaced on this page. */
+    private const COUNTRY = 'CMR';
+
     public function index(Request $request)
     {
-        $country = strtoupper((string) $request->query('country', 'CMR'));
-
         $data  = null;
         $error = null;
 
         try {
-            $data = (new MacroEconomicsService())->analyze($country);
+            $data = (new MacroEconomicsService())->analyze(self::COUNTRY);
         } catch (\Throwable $e) {
             $error = $e->getMessage();
         }
 
         return view('macro-economics', [
-            'active'    => 'macro_economics',
-            'country'   => $country,
-            'data'      => $data,
-            'error'     => $error,
-            'countries' => MacroEconomicsService::COUNTRIES,
+            'active' => 'macro_economics',
+            'data'   => $data,
+            'error'  => $error,
         ]);
     }
 }
