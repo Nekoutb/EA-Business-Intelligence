@@ -22,15 +22,28 @@ class PLForecastController extends Controller
         $thisYear = (int) $today->format('Y');
         $year = max(2018, min($thisYear + 2, $year));
 
+        $view = strtolower((string) $request->query('view', 'full_year'));
+        if (!in_array($view, ['full_year', 'mtd', 'ytd'], true)) $view = 'full_year';
+
+        $month = (int) $request->query('month', $today->format('n'));
+        $month = max(1, min(12, $month));
+
+        $budgetGrowth = (float) (config('macro.pl_budget_growth_factor') ?? 1.0);
+
         $data  = null;
         $error = null;
 
         try {
             $client = OdooFactory::fromConfig();
-            $data = ea_cached(
-                "pl_forecast_{$year}",
-                fn () => (new PLForecastService($client))->analyze($year)
-            );
+            $cacheKey = "pl_forecast_{$view}_{$year}_{$month}";
+            $data = ea_cached($cacheKey, function () use ($client, $year, $month, $view, $budgetGrowth) {
+                $svc = new PLForecastService($client);
+                return match ($view) {
+                    'mtd' => $svc->analyzeMtd($year, $month, $budgetGrowth),
+                    'ytd' => $svc->analyzeYtd($year, $budgetGrowth),
+                    default => $svc->analyze($year),
+                };
+            });
         } catch (\Throwable $e) {
             $error = $e->getMessage();
         }
@@ -38,6 +51,8 @@ class PLForecastController extends Controller
         return view('pl-forecast', [
             'active' => 'pl_forecast',
             'year'   => $year,
+            'month'  => $month,
+            'view'   => $view,
             'data'   => $data,
             'error'  => $error,
         ]);
