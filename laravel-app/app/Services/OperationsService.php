@@ -592,13 +592,17 @@ final class OperationsService
         }
     }
 
-    /**
+/**
      * Compute the per-category container counts and HT revenue for scans
      * in the period, applying the official price grid.
      *
+     * Public so BillingService::revenueReconciliation can call it without
+     * having to re-implement the price-grid logic. Same return shape as
+     * before — total_revenue (XAF HT) is the headline figure.
+     *
      * @return array{categories: array<string,array{label:string,count:int,price:int,revenue:int}>, total_count:int, total_revenue:int, free_count:int, error:?string}
      */
-    private function scanRevenueBreakdown(\DateTimeImmutable $from, \DateTimeImmutable $to): array
+    public function scanRevenueBreakdown(\DateTimeImmutable $from, \DateTimeImmutable $to): array
     {
         $emptyResult = [
             'categories'    => [],

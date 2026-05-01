@@ -60,16 +60,223 @@ final class BillingService
             'credit_note_rate'  => $this->creditNoteRate($cyFrom, $cyTo, $pyFrom, $pyTo),
         ];
 
+        // Revenue reconciliation: Expected (scan-derived) → Billed (invoice
+        // total) → Collected (billed × payment progress). Bucketed by
+        // month (YTD) or week (MTD/Month) for the chart.
+        $reconciliation = $this->revenueReconciliation($cyFrom, $cyTo, $period);
+
         return [
             'kpis'             => $kpis,
             'period_label'     => $periodLabel,
             'slowest_billings' => $this->slowestBillingsFromData($latencyData, 5),
+            'reconciliation'   => $reconciliation,
             'pending_overall'  => array_reduce(
                 $kpis,
                 fn ($acc, $k) => $acc && !empty($k['pending']),
                 true
             ),
         ];
+    }
+
+    // ─── Revenue Reconciliation: Expected → Billed → Collected ───────────────
+    //
+    // Three figures, all on the same TAX-EXCLUSIVE (HT) basis so they can
+    // be subtracted directly:
+    //
+    //   Expected  = OperationsService.scanRevenueBreakdown.total_revenue
+    //               (sum across container/vehicle/bois categories of
+    //                count × tariff). This is what the customer SHOULD
+    //                have invoiced based on operational throughput.
+    //
+    //   Billed    = sum(account.move.amount_untaxed_signed)
+    //               where move_type='out_invoice', state='posted',
+    //               invoice_date in [from, to]. What was actually
+    //               invoiced in the period.
+    //
+    //   Collected = sum per invoice of amount_untaxed_signed × payment_progress,
+    //               where payment_progress = (amount_total - amount_residual) / amount_total.
+    //               How much of the billed amount has actually been received,
+    //               pro-rata across HT and taxes.
+    //
+    // Two diagnostic gaps:
+    //   billing_gap     = Expected − Billed   (revenue we earned but didn't invoice)
+    //   collection_gap  = Billed   − Collected (invoiced but not yet received)
+    //
+    // Trend buckets:
+    //   YTD selected → monthly buckets (Jan, Feb, …, current month)
+    //   MTD selected → weekly buckets within the current month
+    //   Month selected → weekly buckets within the chosen month
+
+    /**
+     * @return array{
+     *   headline: array{expected:float, billed:float, collected:float, billing_gap:float, collection_gap:float, billing_realisation_pct:?float, collection_realisation_pct:?float},
+     *   buckets: array<int, array{label:string, from:string, to:string, expected:float, billed:float, collected:float}>,
+     *   error: ?string
+     * }
+     */
+    private function revenueReconciliation(
+        \DateTimeImmutable $cyFrom,
+        \DateTimeImmutable $cyTo,
+        array $period
+    ): array {
+        $emptyHeadline = [
+            'expected' => 0.0, 'billed' => 0.0, 'collected' => 0.0,
+            'billing_gap' => 0.0, 'collection_gap' => 0.0,
+            'billing_realisation_pct'     => null,
+            'collection_realisation_pct'  => null,
+        ];
+
+        try {
+            // 1) Headline figures for the full period
+            $headline = $this->computeReconciliationFigures($cyFrom, $cyTo);
+
+            // 2) Bucketed series for the trend chart
+            $type = $period['type'] ?? 'ytd';
+            $granularity = $type === 'ytd' ? 'month' : 'week';
+            $buckets = $this->reconciliationBuckets($cyFrom, $cyTo, $granularity);
+
+            return [
+                'headline'    => $headline,
+                'buckets'     => $buckets,
+                'granularity' => $granularity,
+                'error'       => null,
+            ];
+        } catch (\Throwable $e) {
+            return [
+                'headline'    => $emptyHeadline,
+                'buckets'     => [],
+                'granularity' => 'month',
+                'error'       => $e->getMessage(),
+            ];
+        }
+    }
+
+    /**
+     * Compute (expected, billed, collected) HT for [from, to].
+     *
+     * @return array{expected:float, billed:float, collected:float, billing_gap:float, collection_gap:float, billing_realisation_pct:?float, collection_realisation_pct:?float}
+     */
+    private function computeReconciliationFigures(
+        \DateTimeImmutable $from,
+        \DateTimeImmutable $to
+    ): array {
+        // Expected — call OperationsService.scanRevenueBreakdown directly.
+        $expected = 0.0;
+        try {
+            $opsService = new OperationsService($this->odoo);
+            $opsBreakdown = $opsService->scanRevenueBreakdown($from, $to);
+            $expected = (float) ($opsBreakdown['total_revenue'] ?? 0);
+        } catch (\Throwable $e) {
+            // Operations not reachable / no aw_cargo schema — treat as 0
+        }
+
+        // Billed + Collected — single fetch of invoices in window.
+        // amount_untaxed_signed = HT, amount_total_signed = TTC,
+        // amount_residual_signed = open balance (TTC). Pro-rata payment
+        // progress to keep the basis consistent.
+        $billed    = 0.0;
+        $collected = 0.0;
+        try {
+            $invoices = $this->odoo->searchRead(
+                'account.move',
+                [
+                    ['move_type', '=', 'out_invoice'],
+                    ['state', '=', 'posted'],
+                    ['invoice_date', '>=', $from->format('Y-m-d')],
+                    ['invoice_date', '<=', $to->format('Y-m-d')],
+                ],
+                ['id', 'amount_untaxed_signed', 'amount_total_signed', 'amount_residual_signed', 'payment_state'],
+                ['limit' => self::INVOICE_FETCH_CAP, 'order' => 'invoice_date desc']
+            );
+
+            foreach ($invoices as $inv) {
+                $ht    = (float) ($inv['amount_untaxed_signed'] ?? 0);
+                $total = (float) ($inv['amount_total_signed']   ?? 0);
+                $resid = (float) ($inv['amount_residual_signed'] ?? 0);
+
+                $billed += $ht;
+
+                if ($total > 0) {
+                    $progress = max(0.0, min(1.0, ($total - $resid) / $total));
+                    $collected += $ht * $progress;
+                }
+            }
+        } catch (\Throwable $e) {
+            // Account.move not reachable — leave billed/collected at 0
+        }
+
+        $billingGap    = $expected - $billed;
+        $collectionGap = $billed   - $collected;
+
+        return [
+            'expected'                    => $expected,
+            'billed'                      => $billed,
+            'collected'                   => $collected,
+            'billing_gap'                 => $billingGap,
+            'collection_gap'              => $collectionGap,
+            // Realisation %: how close we got to the upstream stage.
+            // 100% = no gap; <100% = leakage; >100% = caught more than
+            // operations measured (happens when prior-period scans get
+            // billed in this period).
+            'billing_realisation_pct'     => $expected > 0 ? 100.0 * $billed / $expected : null,
+            'collection_realisation_pct'  => $billed   > 0 ? 100.0 * $collected / $billed : null,
+        ];
+    }
+
+    /**
+     * Generate per-bucket reconciliation data points for the chart.
+     *
+     * @return array<int, array{label:string, from:string, to:string, expected:float, billed:float, collected:float}>
+     */
+    private function reconciliationBuckets(
+        \DateTimeImmutable $from,
+        \DateTimeImmutable $to,
+        string $granularity
+    ): array {
+        $buckets = [];
+
+        if ($granularity === 'month') {
+            $cursor = new \DateTimeImmutable($from->format('Y-m-01'));
+            while ($cursor <= $to) {
+                $monthEnd = $cursor->modify('last day of this month')->setTime(23, 59, 59);
+                $bFrom = $cursor < $from ? $from : $cursor;
+                $bTo   = $monthEnd > $to ? $to : $monthEnd;
+                $figures = $this->computeReconciliationFigures($bFrom, $bTo);
+                $buckets[] = [
+                    'label'     => $cursor->format('M'),
+                    'from'      => $bFrom->format('Y-m-d'),
+                    'to'        => $bTo->format('Y-m-d'),
+                    'expected'  => $figures['expected'],
+                    'billed'    => $figures['billed'],
+                    'collected' => $figures['collected'],
+                ];
+                $cursor = $cursor->modify('first day of next month');
+            }
+        } else { // week (W1..W5 anchored to start of month)
+            $monthStart = new \DateTimeImmutable($from->format('Y-m-01'));
+            $cursor = $monthStart;
+            $weekIndex = 1;
+            while ($cursor <= $to) {
+                $weekEnd = $cursor->modify('+6 days')->setTime(23, 59, 59);
+                $bFrom = $cursor < $from ? $from : $cursor;
+                $bTo   = $weekEnd > $to ? $to : $weekEnd;
+                if ($bFrom <= $bTo) {
+                    $figures = $this->computeReconciliationFigures($bFrom, $bTo);
+                    $buckets[] = [
+                        'label'     => 'W' . $weekIndex,
+                        'from'      => $bFrom->format('Y-m-d'),
+                        'to'        => $bTo->format('Y-m-d'),
+                        'expected'  => $figures['expected'],
+                        'billed'    => $figures['billed'],
+                        'collected' => $figures['collected'],
+                    ];
+                }
+                $cursor = $cursor->modify('+7 days');
+                $weekIndex++;
+            }
+        }
+
+        return $buckets;
     }
 
     // ─── B1: Invoice Issuance Volume ─────────────────────────────────────────
