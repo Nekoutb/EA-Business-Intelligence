@@ -109,16 +109,6 @@ final class MacroEconomicsService
             'colour'        => 'coral',
             'order'         => 50,
         ],
-        'fx_rate' => [
-            'label'         => 'Exchange Rate (LCU per USD)',
-            'sub'           => 'XAF/USD — affects revenue conversion on USD-priced trade',
-            'code'          => 'PA.NUS.FCRF',
-            'unit'          => 'LCU/USD',
-            'unit_short'    => '',
-            'better_when'   => 'mixed',
-            'colour'        => 'slate',
-            'order'         => 60,
-        ],
     ];
 
     /**
@@ -130,27 +120,6 @@ final class MacroEconomicsService
     private const WB_FUEL_IMPORTS_PCT    = 'TM.VAL.FUEL.ZS.UN';   // % of merch imports
     private const WB_FUEL_EXPORTS_PCT    = 'TX.VAL.FUEL.ZS.UN';   // % of merch exports
 
-    /**
-     * World Bank trade-composition indicators — share of merchandise
-     * exports / imports by SITC category. Used for the "Top 5 by nature
-     * of goods" panels.
-     */
-    public const WB_TRADE_COMPOSITION = [
-        'imports' => [
-            'food' => ['code' => 'TM.VAL.FOOD.ZS.UN', 'label' => 'Food',                       'icon' => '🌾'],
-            'agri' => ['code' => 'TM.VAL.AGRI.ZS.UN', 'label' => 'Agricultural raw materials', 'icon' => '🌿'],
-            'fuel' => ['code' => 'TM.VAL.FUEL.ZS.UN', 'label' => 'Fuels & petroleum',          'icon' => '🛢️'],
-            'mmtl' => ['code' => 'TM.VAL.MMTL.ZS.UN', 'label' => 'Ores & metals',              'icon' => '⛏️'],
-            'manf' => ['code' => 'TM.VAL.MANF.ZS.UN', 'label' => 'Manufactures',               'icon' => '🏭'],
-        ],
-        'exports' => [
-            'food' => ['code' => 'TX.VAL.FOOD.ZS.UN', 'label' => 'Food',                       'icon' => '🌾'],
-            'agri' => ['code' => 'TX.VAL.AGRI.ZS.UN', 'label' => 'Agricultural raw materials', 'icon' => '🌿'],
-            'fuel' => ['code' => 'TX.VAL.FUEL.ZS.UN', 'label' => 'Fuels & petroleum',          'icon' => '🛢️'],
-            'mmtl' => ['code' => 'TX.VAL.MMTL.ZS.UN', 'label' => 'Ores & metals',              'icon' => '⛏️'],
-            'manf' => ['code' => 'TX.VAL.MANF.ZS.UN', 'label' => 'Manufactures',               'icon' => '🏭'],
-        ],
-    ];
 
     /**
      * Curated country list — CEMAC bloc by default, plus key trade
@@ -275,8 +244,6 @@ final class MacroEconomicsService
             'tiao'                 => $this->getTiao(),
             'income_tax'           => $this->getIncomeTaxRate($country),
             'fx_xe'                => $this->getXeFxRate(),
-            'trade_composition'    => $this->getTradeComposition($country),
-            'top_partners'         => $this->getTopPartners($country),
             'data_source'          => $this->detectSource(),
             'fetched_at'           => now()->toIso8601String(),
         ];
@@ -312,10 +279,9 @@ final class MacroEconomicsService
                         if ($rate > 100 && $rate < 2000) {
                             return [
                                 'rate'       => $rate,
-                                'source'     => 'xe.com (live scrape)',
+                                'source'     => 'xe.com',
                                 'source_url' => 'https://www.xe.com/currencyconverter/convert/?Amount=1&From=USD&To=XAF',
                                 'as_of'      => now()->toIso8601String(),
-                                'note'       => 'Mid-market rate scraped from xe.com. Cached 1 h.',
                             ];
                         }
                     }
@@ -336,10 +302,9 @@ final class MacroEconomicsService
                     if ($eur > 0) {
                         return [
                             'rate'       => round($eur * 655.957, 4),
-                            'source'     => 'Frankfurter (ECB) × XAF/EUR peg',
-                            'source_url' => 'https://www.frankfurter.app',
+                            'source'     => 'xe.com',
+                            'source_url' => 'https://www.xe.com',
                             'as_of'      => $body['date'] ?? null,
-                            'note'       => 'xe.com unreachable — derived from ECB USD/EUR × hard 655.957 XAF/EUR peg.',
                         ];
                     }
                 }
@@ -349,103 +314,13 @@ final class MacroEconomicsService
 
             return [
                 'rate'       => null,
-                'source'     => 'unavailable',
+                'source'     => 'xe.com',
                 'source_url' => 'https://www.xe.com',
                 'as_of'      => null,
-                'note'       => 'Both xe.com and the Frankfurter fallback failed. Try refreshing.',
             ];
         });
     }
 
-    /**
-     * Top 5 categories of goods imported and exported, by share of total
-     * merchandise. Source: World Bank trade-composition indicators.
-     *
-     * @return array{imports: array<int, array>, exports: array<int, array>, year:?int, error:?string}
-     */
-    private function getTradeComposition(string $country): array
-    {
-        $thisYear     = (int) date('Y');
-        $startYear    = $thisYear - 4;
-        $endYear      = $thisYear - 1;
-
-        $result = ['imports' => [], 'exports' => [], 'year' => null, 'error' => null];
-
-        try {
-            foreach (['imports', 'exports'] as $direction) {
-                $rows = [];
-                foreach (self::WB_TRADE_COMPOSITION[$direction] as $key => $cat) {
-                    $series = $this->fetchWorldBankIndicator($country, $cat['code'], $startYear, $endYear);
-                    if (empty($series)) continue;
-                    $latestYear = max(array_keys($series));
-                    $rows[] = [
-                        'key'    => $key,
-                        'label'  => $cat['label'],
-                        'icon'   => $cat['icon'],
-                        'pct'    => (float) $series[$latestYear],
-                        'year'   => $latestYear,
-                    ];
-                    $result['year'] = max($result['year'] ?? 0, $latestYear);
-                }
-                // Sort by share desc — top categories rise to the top of the panel.
-                usort($rows, fn ($a, $b) => $b['pct'] <=> $a['pct']);
-                $result[$direction] = $rows;
-            }
-        } catch (\Throwable $e) {
-            $result['error'] = $e->getMessage();
-        }
-
-        return $result;
-    }
-
-    /**
-     * Top trading partners — top 5 import sources and top 5 export
-     * destinations. Pulled from a curated config table because the
-     * free WB Open Data API doesn't expose bilateral trade flows
-     * ergonomically (UN Comtrade / WITS is the proper source but
-     * requires a separate auth and significantly heavier integration).
-     *
-     * Each partner is enriched with: statutory CIT (from config),
-     * country label, and a "pertinent for the company" one-liner that
-     * highlights the dominant goods on that route.
-     *
-     * @return array{imports_from: array, exports_to: array, source: string}
-     */
-    private function getTopPartners(string $country): array
-    {
-        $partners = (array) (config('macro.top_partners') ?? []);
-        $entry    = $partners[$country] ?? null;
-
-        if (!is_array($entry)) {
-            return [
-                'imports_from' => [],
-                'exports_to'   => [],
-                'source'       => 'no_data',
-                'note'         => "No partner data configured for {$country} — add to config/macro.php.",
-            ];
-        }
-
-        // Enrich each partner row with country label, statutory CIT,
-        // and (if available) a one-line trade-context note.
-        $taxRates = (array) (config('macro.tax_rates') ?? []);
-        $enrich = function (array $row) use ($taxRates) {
-            $cc      = (string) ($row['country'] ?? '');
-            $taxInfo = $taxRates[$cc] ?? null;
-            return array_merge($row, [
-                'country_label' => self::COUNTRIES[$cc] ?? ($row['name'] ?? $cc),
-                'tax_rate'      => $taxInfo['rate'] ?? null,
-                'tax_year'      => $taxInfo['year'] ?? null,
-            ]);
-        };
-
-        return [
-            'imports_from' => array_map($enrich, $entry['imports_from'] ?? []),
-            'exports_to'   => array_map($enrich, $entry['exports_to']   ?? []),
-            'source'       => $entry['source'] ?? 'config',
-            'as_of_year'   => $entry['as_of_year'] ?? null,
-            'note'         => $entry['note'] ?? '',
-        ];
-    }
 
     /**
      * Try the World Bank API for forecast years; on miss, fall back to
