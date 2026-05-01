@@ -298,6 +298,17 @@ return [
 
         // ── Financial Reporting ───────────────────────────────────────────
         [
+            'key'     => 'trial_balance',
+            'service' => 'financial_reporting',
+            'label'   => 'Trial Balance',
+            'url'     => '/trial-balance',
+            'active'  => 'trial_balance',
+            'icon'    => 'M3 6h18M3 12h18M3 18h18',
+            'default' => true,
+            'core'    => false,
+            'status'  => 'live',
+        ],
+        [
             'key'     => 'gl_quality',
             'service' => 'financial_reporting',
             'label'   => 'GL Quality',

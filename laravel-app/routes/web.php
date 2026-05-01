@@ -13,6 +13,7 @@ use App\Http\Controllers\CashflowForecastController;
 use App\Http\Controllers\InvestmentAnalysisController;
 use App\Http\Controllers\MacroEconomicsController;
 use App\Http\Controllers\PLForecastController;
+use App\Http\Controllers\TrialBalanceController;
 use App\Http\Controllers\WorkingCapitalController;
 use App\Http\Controllers\FixedAssetsController;
 use App\Http\Controllers\InventoryController;
@@ -1134,6 +1135,7 @@ Route::prefix('t/{tenant}')
                 Route::get ('/budget-upload/template',  [BudgetUploadController::class, 'template'])->middleware('module:pl_forecast');
 
                 // ── Financial Reporting service ───────────────────────────────
+                Route::get('/trial-balance',          [TrialBalanceController::class, 'index'])->middleware('module:trial_balance');
                 Route::get('/general-ledger-quality', [GLQualityController::class, 'index'])->middleware('module:gl_quality');
                 // Avoid a dotted extension in the URL — PHP's built-in dev server
                 // treats anything with a "." as a static file and serves a 404
