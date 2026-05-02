@@ -111,10 +111,16 @@ final class TrialBalanceService
 
         // 2) Opening balances — sum of (debit, credit) for all posted
         //    lines BEFORE period_start. read_group server-side.
-        $openingByAccount = $this->fetchAccountSums([
-            ['parent_state', '=', 'posted'],
-            ['date', '<',  $periodStart->format('Y-m-d')],
-        ]);
+        //    Skipped when filtering a single month: per spec, only the
+        //    in-period movements are shown. Saves one Odoo round trip.
+        if ($periodType === 'month') {
+            $openingByAccount = [];
+        } else {
+            $openingByAccount = $this->fetchAccountSums([
+                ['parent_state', '=', 'posted'],
+                ['date', '<',  $periodStart->format('Y-m-d')],
+            ]);
+        }
 
         // 3) Movement totals — sum of (debit, credit) for posted lines
         //    WITHIN [period_start, period_end].
