@@ -119,7 +119,13 @@ final class MonthlyTaxReturnService
         $sum = fn (string $prefix) => $this->sumBalanceWindow($idsByPrefix[$prefix] ?? [], $from, $to);
 
         $salesIds = $this->classSalesAccountIds();
-        $caHt     = abs($this->sumBalanceWindow($salesIds, $from, $to));
+
+        // §2 — split class 70 sales between L10 (with VAT) and L14 (exempt)
+        // by walking the sales journal. L10 + L14 reconciles to the total
+        // class 70 movement for the period.
+        $caSplit = $this->splitSalesByVat($salesIds, $from, $to);
+        $L10 = $caSplit['with_vat'];
+        $L14 = $caSplit['exempt'];
 
         // §3 — prefix-based auto-fill (per user spec):
         //   L18 ← all accounts whose code starts with 4452 (achats locaux)
@@ -127,26 +133,22 @@ final class MonthlyTaxReturnService
         $L18 = abs($sum('4452'));
         $L19 = abs($sum('4454'));
 
-        // §2 L14 — Chiffre d'affaires exonéré: sales journals where a 70X
-        // account was credited but NO 4431 (TVA facturée) credit appears on
-        // the same move. Indicates the sale carried no VAT.
-        $L14 = $this->computeExemptSales($salesIds, $from, $to);
-
         // L17 = prior month's L33 — computed inline from the same prefix
         // pools applied to the prior calendar month.
         $priorTo   = $from->modify('-1 day');
         $priorFrom = $priorTo->modify('first day of this month');
-        $priorCa   = $salesIds === [] ? 0.0 : abs($this->sumBalanceWindow($salesIds, $priorFrom, $priorTo));
+        $priorSplit = $this->splitSalesByVat($salesIds, $priorFrom, $priorTo);
+        $priorCaWithVat = $priorSplit['with_vat'];
         $prior4452 = abs($this->sumBalanceWindow($idsByPrefix['4452'] ?? [], $priorFrom, $priorTo));
         $prior4454 = abs($this->sumBalanceWindow($idsByPrefix['4454'] ?? [], $priorFrom, $priorTo));
-        $priorL22  = $prior4452 + $prior4454;       // L18+L19+L20+L21 (others = 0)
-        $priorL28  = $priorCa * 0.1925;             // TVA on L10 (assuming L11/L12 = 0)
+        $priorL22  = $prior4452 + $prior4454;            // L18+L19+L20+L21 (others = 0)
+        $priorL28  = $priorCaWithVat * 0.1925;           // TVA on L10 only (exempt stays out)
         $priorL32  = $priorL28 - $priorL22;
-        $priorL33  = max(-$priorL32, 0);            // = previous month's credit carry
+        $priorL33  = max(-$priorL32, 0);                 // = previous month's credit carry
 
         return [
-            'L10' => $caHt,            // CA opérations taxables au taux normal
-            'L14' => $L14,             // CA exonéré (sales without VAT)
+            'L10' => $L10,             // CA opérations taxables (sales WITH VAT)
+            'L14' => $L14,             // CA exonéré (sales WITHOUT VAT)
             'L17' => $priorL33,        // Report du crédit antérieur = L33 (mois précédent)
             'L18' => $L18,             // TVA déductible sur achats locaux (4452*)
             'L19' => $L19,             // TVA déductible sur services locaux (4454*)
@@ -158,20 +160,24 @@ final class MonthlyTaxReturnService
     }
 
     /**
-     * Compute "Chiffre d'affaires exonéré" (L14) by walking the sales journal:
-     * find moves that credit a class-70 account in the period, then exclude
-     * those whose move ALSO has a 4431 (TVA facturée) credit. The remaining
-     * 70X credits represent VAT-free sales.
+     * Walk the sales journal and split class-70 credit movements between:
+     *   - with_vat: the 70X credits live on a move that ALSO has a 443X credit
+     *               (sale carried VAT) — feeds §2 L10.
+     *   - exempt:   the 70X credits live on a move with NO 443X credit
+     *               (no VAT was charged) — feeds §2 L14.
+     *
+     * The two buckets are mutually exclusive; their sum reconciles to the
+     * absolute total of class-70 (ex 709) for the window.
      */
-    private function computeExemptSales(array $salesIds, \DateTimeImmutable $from, \DateTimeImmutable $to): float
+    private function splitSalesByVat(array $salesIds, \DateTimeImmutable $from, \DateTimeImmutable $to): array
     {
-        if ($salesIds === []) return 0.0;
+        if ($salesIds === []) return ['with_vat' => 0.0, 'exempt' => 0.0];
 
-        // Resolve all output-VAT accounts (code starts with 4431).
+        // Resolve all output-VAT accounts (code starts with 443).
         try {
             $vatAccts = $this->odoo->searchRead('account.account',
-                [['code', '=like', '4431%']], ['id'], []);
-        } catch (\Throwable $e) { return 0.0; }
+                [['code', '=like', '443%']], ['id'], []);
+        } catch (\Throwable $e) { return ['with_vat' => 0.0, 'exempt' => 0.0]; }
         $vatIds = array_map(fn ($r) => (int) $r['id'], $vatAccts);
 
         // All 70X credit lines in window.
@@ -183,11 +189,10 @@ final class MonthlyTaxReturnService
                 ['date', '>=', $from->format('Y-m-d')],
                 ['date', '<=', $to->format('Y-m-d')],
             ], ['move_id', 'credit'], []);
-        } catch (\Throwable $e) { return 0.0; }
-        if (empty($salesLines)) return 0.0;
+        } catch (\Throwable $e) { return ['with_vat' => 0.0, 'exempt' => 0.0]; }
+        if (empty($salesLines)) return ['with_vat' => 0.0, 'exempt' => 0.0];
 
-        // All 4431 credit lines in window — the moves these belong to are
-        // "VAT-applied" sales, which we exclude.
+        // Moves that ALSO have a 443X credit are the "VAT-applied" sales.
         $movesWithVat = [];
         if ($vatIds !== []) {
             try {
@@ -205,15 +210,22 @@ final class MonthlyTaxReturnService
             } catch (\Throwable $e) { /* fall through with empty set */ }
         }
 
-        // Sum credits on 70X lines whose move is NOT in $movesWithVat.
-        $exempt = 0.0;
+        // Bucket 70X credits by whether their move had VAT.
+        $withVat = 0.0;
+        $exempt  = 0.0;
         foreach ($salesLines as $r) {
-            $mid = is_array($r['move_id'] ?? null) ? (int) $r['move_id'][0] : (int) ($r['move_id'] ?? 0);
-            if (!isset($movesWithVat[$mid])) {
-                $exempt += (float) ($r['credit'] ?? 0);
+            $mid    = is_array($r['move_id'] ?? null) ? (int) $r['move_id'][0] : (int) ($r['move_id'] ?? 0);
+            $credit = (float) ($r['credit'] ?? 0);
+            if (isset($movesWithVat[$mid])) {
+                $withVat += $credit;
+            } else {
+                $exempt += $credit;
             }
         }
-        return round($exempt, 2);
+        return [
+            'with_vat' => round($withVat, 2),
+            'exempt'   => round($exempt, 2),
+        ];
     }
 
     /** Resolve an account.account by its exact `code` field. Returns id or null. */
@@ -456,23 +468,52 @@ final class MonthlyTaxReturnService
         ];
 
         // §9 IR — Liquidation
-        $L50 = 0; $L51 = 0; $L52 = $L49; $L53 = 0;
-        $L54 = ($L50 + $L51) - ($L52 + $L53);
-        $L55 = $L54 < 0 ? abs($L54) : 0;
-        $acompteIR = max($L54, 0);
-        $cacOnL54 = $acompteIR * 0.10;
+        // L50 = Acompte sur CA déclaré at 2 % of L15 (CA global hors taxes):
+        //   Base      = L15
+        //   Taux      = 2 %
+        //   Principal = L15 × 2 %
+        //   CAC       = 10 % × Principal
+        //   Total     = Principal + CAC
+        // L51-L55 propagate column-wise so L54 = (L50 + L51) − (L52 + L53)
+        // applies to each column independently and the row totals tie.
+        $L50base      = $L15;
+        $L50principal = $L15 * 0.02;
+        $L50cac       = $L50principal * 0.10;
+        $L50total     = $L50principal + $L50cac;
+
+        $L51base      = 0;             // loyers perçus (manual)
+        $L51principal = $L51base * 0.15;
+        $L51cac       = $L51principal * 0.10;
+        $L51total     = $L51principal + $L51cac;
+
+        $L52principal = $L49;          // = §8's L49 (déductions)
+        $L52cac       = 0;
+        $L52total     = $L49;
+
+        $L53principal = 0;             // crédit antérieur (= prior month's L55)
+        $L53cac       = 0;
+        $L53total     = 0;
+
+        $L54principal = $L50principal + $L51principal - $L52principal - $L53principal;
+        $L54cac       = $L50cac       + $L51cac       - $L52cac       - $L53cac;
+        $L54total     = $L50total     + $L51total     - $L52total     - $L53total;
+
+        $L55principal = $L54total < 0 ? abs($L54principal) : 0;
+        $L55cac       = $L54total < 0 ? abs($L54cac)       : 0;
+        $L55total     = $L54total < 0 ? abs($L54total)     : 0;
+
         $s9 = [
             'id' => 'ir_liq', 'code' => '9', 'title' => 'LIQUIDATION ACOMPTES IMPÔTS SUR LE REVENU',
-            'subtitle' => 'Acompte mensuel ou crédit à reporter',
+            'subtitle' => 'L50 base = L15 · taux 2 % · CAC 10 % du Principal',
             'lines' => [
-                $this->line('L50', 'Acompte sur CA déclaré (0,5 % / 2 % / 3 % / 5 %)', principal: $L50, cac: $L50 * 0.10),
-                $this->line('L51', 'Acompte de 15 % sur loyers perçus',                principal: $L51, cac: $L51 * 0.10),
-                $this->line('L52', 'Déductions à opérer = L49',                        principal: $L52),
-                $this->line('L53', 'Crédit antérieur = L55 déclaration précédente',     principal: $L53),
-                $this->line('L54', 'Acompte à payer = (L50 + L51) − (L52 + L53)',       principal: $L54, cac: $cacOnL54),
-                $this->line('L55', "Crédit d'impôt à reporter (solde négatif L54)",     principal: $L55),
+                $this->line('L50', 'Acompte sur CA déclaré',                        $L50base, '2 %',  principal: $L50principal, cac: $L50cac, total: $L50total),
+                $this->line('L51', 'Acompte de 15 % sur loyers perçus',             $L51base, '15 %', principal: $L51principal, cac: $L51cac, total: $L51total),
+                $this->line('L52', 'Déductions à opérer = L49',                                    principal: $L52principal,                  total: $L52total),
+                $this->line('L53', 'Crédit antérieur = L55 déclaration précédente',                principal: $L53principal,                  total: $L53total),
+                $this->line('L54', 'Acompte à payer = (L50 + L51) − (L52 + L53)',                  principal: $L54principal, cac: $L54cac,    total: $L54total),
+                $this->line('L55', "Crédit d'impôt à reporter (solde négatif L54)",                principal: $L55principal, cac: $L55cac,    total: $L55total),
             ],
-            'total' => $acompteIR + $cacOnL54,
+            'total' => max($L54total, 0),
         ];
 
         // §10 IRCM
