@@ -3,90 +3,28 @@ declare(strict_types=1);
 
 namespace App\Services\Tax;
 
+use App\Models\Tenant;
+use App\Models\TenantSetting;
 use App\Odoo\OdooClient;
 
 /**
- * Monthly Tax Return — DGI Cameroon monthly declaration.
+ * Monthly Tax Return — Cameroon DGI I/TVA-IR.
  *
- * Aggregates posted GL movements in the selected month into the categories
- * the DGI form requires. Each category returns a header + total + an array
- * of detail lines (sub-rates / sub-bases) so the view can render a
- * collapsible accordion (header + total visible, details expand on click).
+ * Builds the data structure for the official monthly declaration of taxes
+ * on turnover and income tax (form I/TVA-IR) for the selected month.
  *
- * Categories covered (per Cameroon Code Général des Impôts):
- *   1. PRÉLÈVEMENT SPÉCIAL SUR LES REVENUS VERSÉS À L'ÉTRANGER (TSR)
- *      — TSR retenu by rate band (1..4)
- *   2. IMPÔT SUR LE REVENU DES PERSONNES PHYSIQUES (IRPP)
- *      — IRPP salaires, RCM, revenus fonciers, BIC/BNC retenu
- *   3. IMPÔT SUR LES SOCIÉTÉS (IS) — acomptes mensuels, retenue à la source
- *   4. TAXE SUR LA VALEUR AJOUTÉE (TVA) — collectée, déductible, à décaisser
- *   5. CENTIMES ADDITIONNELS COMMUNAUX (CAC) — 10% sur impôts directs
- *   6. PRÉCOMPTE SUR LOYERS
- *   7. DROITS D'ENREGISTREMENT ET DE TIMBRE
- *   8. AUTRES TAXES (taxe spéciale produits pétroliers, redevance audiovisuelle, etc.)
- *
- * Sourcing
- *   Where the SYSCOHADA chart of accounts has a clear mapping (TVA → 4431/4452/
- *   4456, retenue IS → 4424, retenue IRPP → 4422, TSR → 4423 etc.), we sum the
- *   posted lines in the window. Where the firm has not configured separate
- *   sub-accounts for each rate band (e.g. TSR 5% / 7.5% / 10% / 15%), the line
- *   resolves to zero and the user can fill in manually before filing.
- *
- * Output shape
- *   [
- *     'currency'   => 'XAF',
- *     'period'     => [year, month, from, to, label, due_date, due_status],
- *     'categories' => [
- *         [
- *           'id'      => 'tsr',
- *           'code'    => 'TSR',
- *           'label'   => "PRÉLÈVEMENT SPÉCIAL SUR LES REVENUS VERSÉS À L'ÉTRANGER",
- *           'total'   => 0.0,
- *           'details' => [
- *               ['label' => 'TSR retenu 1 — base taux 1', 'amount' => 0, 'rate' => '5 %',   'account' => '4423'],
- *               ['label' => 'TSR retenu 2 — base taux 2', 'amount' => 0, 'rate' => '7,5 %', 'account' => '4423'],
- *               ['label' => 'TSR retenu 3 — base taux 3', 'amount' => 0, 'rate' => '10 %',  'account' => '4423'],
- *               ['label' => 'TSR retenu 4 — base taux 4', 'amount' => 0, 'rate' => '15 %',  'account' => '4423'],
- *           ],
- *           'note'    => 'Optional explanatory note',
- *         ],
- *         ...
- *     ],
- *     'total_due'  => 0.0,
- *     'available_months' => [...],
- *     'as_of'      => 'YYYY-MM-DD',
- *   ]
+ * The form has 14 numbered sections plus a recap, with line codes L0–L80.
+ * Each section returns lines with the form's columns (Base, Taux,
+ * Principal, CAC, Pénalités, Total). Where a line maps to a SYSCOHADA
+ * account prefix we auto-resolve from Odoo posted move lines in the month
+ * window; otherwise the line returns zero so the principal can fill it in
+ * before filing.
  */
 final class MonthlyTaxReturnService
 {
-    /** Account-prefix map per category. Sums posted balance over month window. */
-    private const ACCOUNT_MAP = [
-        // TVA (VAT)
-        'vat_output'        => ['4431'],   // TVA facturée (credit-positive)
-        'vat_input_capex'   => ['4452'],   // TVA déductible / immobilisations
-        'vat_input_opex'    => ['4456'],   // TVA déductible / autres B&S
-        'vat_credit_carry'  => ['4434'],   // TVA crédit reporté
-        // Retenues à la source
-        'irpp_salaires'     => ['4421'],   // IRPP retenu sur salaires
-        'irpp_rcm'          => ['4424'],   // IRPP / RCM retenu
-        'irpp_loyers'       => ['4426'],   // Précompte sur loyers
-        'irpp_bic_bnc'      => ['4422'],   // IRPP / BIC-BNC retenu à la source
-        'is_retenu'         => ['4441'],   // IS retenu à la source
-        'is_acompte'        => ['4442'],   // IS acompte mensuel
-        'tsr'               => ['4423'],   // TSR — taxe spéciale revenus versés étranger
-        'cac'               => ['4471'],   // CAC — centimes additionnels communaux
-        'enregistrement'    => ['4475'],   // Droits d'enregistrement / timbre
-        'autres_taxes'      => ['4477'],   // TSPP, redevance audiovisuelle, etc.
-        // Sales (taxable base for TVA)
-        'sales'             => ['70'],     // Class 70 minus 709
-    ];
-
     public function __construct(private OdooClient $odoo) {}
 
-    /**
-     * @param string|null $month  YYYY-MM. Defaults to current calendar month.
-     */
-    public function analyze(?string $month = null): array
+    public function analyze(?string $month = null, ?Tenant $tenant = null): array
     {
         $today = new \DateTimeImmutable('today');
         $month = $month && preg_match('/^\d{4}-\d{2}$/', $month) ? $month : $today->format('Y-m');
@@ -94,312 +32,474 @@ final class MonthlyTaxReturnService
         [$year, $m] = array_map('intval', explode('-', $month));
         $from = new \DateTimeImmutable(sprintf('%04d-%02d-01', $year, $m));
         $to   = $from->modify('last day of this month');
-        $dueDate = $from->modify('+1 month')->modify('+14 days'); // 15th of M+1
+        $dueDate = $from->modify('+1 month')->modify('+14 days');
         $dueStatus = match (true) {
-            $today < $from           => 'future',
-            $today <= $dueDate       => 'pending',
-            default                  => 'past_due',
+            $today < $from     => 'future',
+            $today <= $dueDate => 'pending',
+            default            => 'past_due',
         };
 
-        // Resolve all account ids in one Odoo call, grouped by prefix.
         $idsByPrefix = $this->resolveAccountIdsByPrefix();
-
-        // Category builders return the canonical structure consumed by the view.
-        $categories = [
-            $this->buildTsrCategory($idsByPrefix, $from, $to),
-            $this->buildIrppCategory($idsByPrefix, $from, $to),
-            $this->buildIsCategory($idsByPrefix, $from, $to),
-            $this->buildVatCategory($idsByPrefix, $from, $to),
-            $this->buildCacCategory($idsByPrefix, $from, $to),
-            $this->buildPrecompteLoyersCategory($idsByPrefix, $from, $to),
-            $this->buildEnregistrementCategory($idsByPrefix, $from, $to),
-            $this->buildAutresTaxesCategory($idsByPrefix, $from, $to),
-        ];
-
-        $totalDue = 0.0;
-        foreach ($categories as $c) {
-            $totalDue += (float) ($c['total'] ?? 0);
-        }
+        $auto        = $this->autoExtract($idsByPrefix, $from, $to);
+        $sections    = $this->buildSections($auto);
+        $recap       = $this->buildRecap($sections);
+        $totalAPayer = (float) $recap['total']['total'];
 
         return [
-            'currency' => $this->detectCurrency(),
-            'period'   => [
+            'declarant' => $this->loadDeclarant($tenant, $from),
+            'period'    => [
                 'year'       => $year,
                 'month'      => $m,
                 'from'       => $from->format('Y-m-d'),
                 'to'         => $to->format('Y-m-d'),
                 'label'      => $from->format('F Y'),
+                'mois_fr'    => $this->moisFr($m),
                 'due_date'   => $dueDate->format('Y-m-d'),
                 'due_status' => $dueStatus,
             ],
-            'categories'       => $categories,
-            'total_due'        => round($totalDue, 2),
+            'currency'         => $this->detectCurrency(),
+            'sections'         => $sections,
+            'recap'            => $recap,
+            'total_a_payer'    => round($totalAPayer, 2),
             'available_months' => $this->buildMonthOptions($today),
             'as_of'            => $today->format('Y-m-d'),
         ];
     }
 
-    /* ──────────────────────────────────────────────────────────────────
-       Category builders — each returns [id, code, label, total, details, note?]
-       ──────────────────────────────────────────────────────────────── */
+    /* ─── Declarant header (entity info from tenant settings) ─────────── */
 
-    private function buildTsrCategory(array $idsByPrefix, \DateTimeImmutable $from, \DateTimeImmutable $to): array
+    private function loadDeclarant(?Tenant $tenant, \DateTimeImmutable $from): array
     {
-        // TSR pool — all posted lines on accounts beginning with 4423.
-        $pool = $idsByPrefix['4423'] ?? [];
-        $total = abs($this->sumBalanceWindow($pool, $from, $to));
-
-        // Rate-band breakdown: most charts of accounts do not have separate
-        // sub-accounts per rate. We expose four rows so the user can review;
-        // amounts are evenly attributed when no sub-account split exists.
-        // If the firm has 4423.1, 4423.2, 4423.3, 4423.4 we resolve each.
-        $details = [];
-        $rates = ['1' => '5 %', '2' => '7,5 %', '3' => '10 %', '4' => '15 %'];
-        $hasSplit = false;
-        foreach ($rates as $band => $rate) {
-            $bandIds = $this->idsForExactPrefix($pool, '4423', '.' . $band);
-            if ($bandIds !== []) {
-                $hasSplit = true;
-                $amt = abs($this->sumBalanceWindow($bandIds, $from, $to));
-            } else {
-                $amt = 0.0;
+        $defaults = [
+            'dge_cri' => '', 'cdi_csi_cime' => '', 'regime' => '',
+            'niu' => '', 'raison_sociale' => '', 'sigle' => '',
+            'ville' => '', 'commune' => '', 'quartier' => '', 'lieu_dit' => '',
+            'bp' => '', 'tel_fixe' => '', 'tel_mobile' => '', 'email' => '', 'fax' => '',
+        ];
+        if ($tenant !== null) {
+            $keys = [
+                'TAX_DGE_CRI'         => 'dge_cri',
+                'TAX_CDI_CSI_CIME'    => 'cdi_csi_cime',
+                'TAX_REGIME'          => 'regime',
+                'TAX_NIU'             => 'niu',
+                'TAX_RAISON_SOCIALE'  => 'raison_sociale',
+                'TAX_SIGLE'           => 'sigle',
+                'TAX_VILLE'           => 'ville',
+                'TAX_COMMUNE'         => 'commune',
+                'TAX_QUARTIER'        => 'quartier',
+                'TAX_LIEU_DIT'        => 'lieu_dit',
+                'TAX_BP'              => 'bp',
+                'TAX_TEL_FIXE'        => 'tel_fixe',
+                'TAX_TEL_MOBILE'      => 'tel_mobile',
+                'TAX_EMAIL'           => 'email',
+                'TAX_FAX'             => 'fax',
+            ];
+            $rows = TenantSetting::where('tenant_id', $tenant->id)
+                ->whereIn('key', array_keys($keys))
+                ->get()->keyBy('key');
+            foreach ($keys as $k => $alias) {
+                if ($rows->has($k)) $defaults[$alias] = (string) $rows[$k]->value;
             }
-            $details[] = [
-                'label'   => "TSR retenu {$band}",
-                'amount'  => round($amt, 2),
-                'rate'    => $rate,
-                'account' => '4423.' . $band,
-            ];
         }
-        // If no split sub-accounts exist, attribute the pool to band 1 as the
-        // declared total and leave 2–4 at zero — the principal can re-allocate
-        // before filing if the firm received income across multiple bands.
-        if (!$hasSplit && $total > 0) {
-            $details[0]['amount'] = round($total, 2);
-            $details[0]['note']   = 'No sub-account split detected — total attributed to band 1';
-        }
-
-        return [
-            'id'      => 'tsr',
-            'code'    => 'TSR',
-            'label'   => "PRÉLÈVEMENT SPÉCIAL SUR LES REVENUS VERSÉS À L'ÉTRANGER",
-            'total'   => round($total, 2),
-            'details' => $details,
-            'note'    => 'TSR — retenue à la source sur prestations versées à des personnes non domiciliées (CGI art. 225). Taux 5 %, 7,5 %, 10 %, 15 % selon nature.',
-        ];
+        $defaults['exercice'] = (int) $from->format('Y');
+        $defaults['mois_fr']  = $this->moisFr((int) $from->format('n'));
+        return $defaults;
     }
 
-    private function buildIrppCategory(array $idsByPrefix, \DateTimeImmutable $from, \DateTimeImmutable $to): array
-    {
-        $details = [];
-        $defs = [
-            ['key' => '4421', 'label' => 'IRPP — retenu sur salaires (traitements et émoluments)'],
-            ['key' => '4424', 'label' => 'IRPP — retenu sur revenus de capitaux mobiliers (RCM)'],
-            ['key' => '4426', 'label' => 'IRPP — précompte sur loyers'],
-            ['key' => '4422', 'label' => 'IRPP — retenu sur BIC / BNC (prestataires)'],
-        ];
-        $total = 0.0;
-        foreach ($defs as $d) {
-            $ids = $idsByPrefix[$d['key']] ?? [];
-            $amt = abs($this->sumBalanceWindow($ids, $from, $to));
-            $total += $amt;
-            $details[] = [
-                'label'   => $d['label'],
-                'amount'  => round($amt, 2),
-                'account' => $d['key'],
-            ];
-        }
-        return [
-            'id'      => 'irpp',
-            'code'    => 'IRPP',
-            'label'   => 'IMPÔT SUR LE REVENU DES PERSONNES PHYSIQUES (RETENUES À LA SOURCE)',
-            'total'   => round($total, 2),
-            'details' => $details,
-            'note'    => 'Sommes retenues à la source au cours du mois et reversées au Trésor avant le 15 du mois suivant.',
-        ];
-    }
+    /* ─── Auto-extraction from Odoo (where SYSCOHADA mapping is unambiguous) ─── */
 
-    private function buildIsCategory(array $idsByPrefix, \DateTimeImmutable $from, \DateTimeImmutable $to): array
+    private function autoExtract(array $idsByPrefix, \DateTimeImmutable $from, \DateTimeImmutable $to): array
     {
-        $idsRetenu = $idsByPrefix['4441'] ?? [];
-        $idsAcompte = $idsByPrefix['4442'] ?? [];
-        $retenu = abs($this->sumBalanceWindow($idsRetenu, $from, $to));
-        $acompte = abs($this->sumBalanceWindow($idsAcompte, $from, $to));
-        $total = $retenu + $acompte;
-        return [
-            'id'      => 'is',
-            'code'    => 'IS',
-            'label'   => 'IMPÔT SUR LES SOCIÉTÉS',
-            'total'   => round($total, 2),
-            'details' => [
-                ['label' => 'IS — retenue à la source',  'amount' => round($retenu, 2),  'account' => '4441'],
-                ['label' => 'IS — acompte mensuel',      'amount' => round($acompte, 2), 'account' => '4442'],
-            ],
-            'note'    => 'IS retenu sur paiements aux prestataires (CGI art. 21) + acompte mensuel calculé sur le chiffre d\'affaires (taux conventionnel).',
-        ];
-    }
+        $sum = fn (string $prefix) => $this->sumBalanceWindow($idsByPrefix[$prefix] ?? [], $from, $to);
 
-    private function buildVatCategory(array $idsByPrefix, \DateTimeImmutable $from, \DateTimeImmutable $to): array
-    {
-        $output     = abs($this->sumBalanceWindow($idsByPrefix['4431'] ?? [], $from, $to));
-        $inputCapex = $this->sumBalanceWindow($idsByPrefix['4452'] ?? [], $from, $to);
-        $inputOpex  = $this->sumBalanceWindow($idsByPrefix['4456'] ?? [], $from, $to);
-        $creditCarry = abs($this->sumBalanceWindow($idsByPrefix['4434'] ?? [], $from, $to));
-        $netDue     = $output - ($inputCapex + $inputOpex);
+        $tvaCollectee   = abs($sum('4431'));
+        $tvaDedCapex    = abs($sum('4452'));
+        $tvaDedOpex     = abs($sum('4456'));
+        $tvaCreditCarry = abs($sum('4434'));
 
-        // Sales taxable base — class 70 except 709
         $salesIds = $this->classSalesAccountIds();
-        $salesBase = abs($this->sumBalanceWindow($salesIds, $from, $to));
+        $caHt     = abs($this->sumBalanceWindow($salesIds, $from, $to));
 
         return [
-            'id'      => 'vat',
-            'code'    => 'TVA',
-            'label'   => 'TAXE SUR LA VALEUR AJOUTÉE',
-            'total'   => round(max($netDue, 0), 2),    // only positive net is owed
-            'details' => [
-                ['label' => 'TVA collectée (output)',                 'amount' => round($output, 2),     'account' => '4431'],
-                ['label' => 'TVA déductible — immobilisations',      'amount' => round($inputCapex, 2), 'account' => '4452', 'sign' => 'deduction'],
-                ['label' => 'TVA déductible — autres B&S',            'amount' => round($inputOpex, 2),  'account' => '4456', 'sign' => 'deduction'],
-                ['label' => 'TVA crédit reporté du mois précédent',  'amount' => round($creditCarry, 2),'account' => '4434', 'sign' => 'deduction'],
-                ['label' => 'TVA nette à décaisser (4433)',           'amount' => round($netDue, 2),     'account' => '4433', 'sign' => 'subtotal'],
-                ['label' => 'Base imposable — chiffre d\'affaires',   'amount' => round($salesBase, 2),  'account' => '70',   'sign' => 'memo'],
-            ],
-            'note'    => 'Net VAT due = TVA collectée − (TVA déductible immobilisations + autres B&S + crédit reporté). Si négatif, crédit reportable.',
+            'L10' => $caHt,
+            'L18' => $tvaDedCapex + $tvaDedOpex,
+            'L28' => $tvaCollectee,
+            'L29' => $tvaDedCapex + $tvaDedOpex,
+            'L33' => $tvaCreditCarry,
+            'L67' => abs($sum('4421')),
+            'L42' => abs($sum('4426')),
+            'L0'  => abs($sum('4423')),
+            'L70' => abs($sum('4477')),
         ];
     }
 
-    private function buildCacCategory(array $idsByPrefix, \DateTimeImmutable $from, \DateTimeImmutable $to): array
+    /* ─── Section builders ──────────────────────────────────────────── */
+
+    private function line(string $code, string $label, float $base = 0, ?string $rate = null, float $principal = 0, float $cac = 0, float $penalites = 0, ?float $total = null): array
     {
-        $ids = $idsByPrefix['4471'] ?? [];
-        $total = abs($this->sumBalanceWindow($ids, $from, $to));
+        if ($total === null) $total = $principal + $cac + $penalites;
         return [
-            'id'      => 'cac',
-            'code'    => 'CAC',
-            'label'   => 'CENTIMES ADDITIONNELS COMMUNAUX',
-            'total'   => round($total, 2),
-            'details' => [
-                ['label' => 'CAC sur impôts et taxes — 10 %', 'amount' => round($total, 2), 'account' => '4471', 'rate' => '10 %'],
-            ],
-            'note'    => 'CAC = 10 % des impôts directs (IRPP, IS, IS retenu, etc.) reversé aux communes (CGI art. 9).',
+            'code'      => $code,
+            'label'     => $label,
+            'base'      => round($base, 2),
+            'rate'      => $rate,
+            'principal' => round($principal, 2),
+            'cac'       => round($cac, 2),
+            'penalites' => round($penalites, 2),
+            'total'     => round($total, 2),
         ];
     }
 
-    private function buildPrecompteLoyersCategory(array $idsByPrefix, \DateTimeImmutable $from, \DateTimeImmutable $to): array
+    private function buildSections(array $auto): array
     {
-        $ids = $idsByPrefix['4426'] ?? [];
-        $total = abs($this->sumBalanceWindow($ids, $from, $to));
-        return [
-            'id'      => 'precompte_loyers',
-            'code'    => 'PRECOMPTE',
-            'label'   => 'PRÉCOMPTE SUR LOYERS',
-            'total'   => round($total, 2),
-            'details' => [
-                ['label' => 'Précompte sur loyers — 10 % du loyer brut', 'amount' => round($total, 2), 'account' => '4426', 'rate' => '10 %'],
+        $L = fn (string $k) => (float) ($auto[$k] ?? 0);
+
+        // §0 TSR
+        $tsrTotal = $L('L0');
+        $s0 = [
+            'id' => 'tsr', 'code' => '0', 'title' => 'TAXE SPÉCIALE SUR LE REVENU (TSR)',
+            'subtitle' => "Rémunérations versées à l'étranger",
+            'lines' => [
+                $this->line('—',  'TSR retenue au taux de 15 %', 0, '15 %'),
+                $this->line('—',  'TSR retenue au taux de 10 %', 0, '10 %'),
+                $this->line('—',  'TSR retenue au taux de 7,5 %', 0, '7,5 %'),
+                $this->line('L0', 'TOTAL', principal: $tsrTotal),
             ],
-            'note'    => 'Précompte mensuel retenu par le locataire-personne morale sur loyer brut versé au bailleur (CGI art. 87).',
+            'total' => $tsrTotal,
         ];
-    }
 
-    private function buildEnregistrementCategory(array $idsByPrefix, \DateTimeImmutable $from, \DateTimeImmutable $to): array
-    {
-        $ids = $idsByPrefix['4475'] ?? [];
-        $total = abs($this->sumBalanceWindow($ids, $from, $to));
-        return [
-            'id'      => 'enregistrement',
-            'code'    => 'ENREG',
-            'label'   => "DROITS D'ENREGISTREMENT ET DE TIMBRE",
-            'total'   => round($total, 2),
-            'details' => [
-                ['label' => "Droits d'enregistrement payés dans le mois", 'amount' => round($total, 2), 'account' => '4475'],
+        // §1 Droits d'Accises
+        $L1 = 0; $L2 = 0; $L3 = $L1 + $L2; $L4 = 0; $L5 = $L3 + $L4; $L6 = 0; $L7 = $L5 - $L6;
+        $L8 = max($L5, $L7); $L9 = $L5 + $L7;
+        $s1 = [
+            'id' => 'da', 'code' => '1', 'title' => "DROITS D'ACCISES (DA)",
+            'subtitle' => "Chiffre d'affaires réalisé",
+            'lines' => [
+                $this->line('L1', 'CA taxable au taux général',                       $L1, '25 %'),
+                $this->line('L2', 'CA taxable au taux réduit',                        $L2, '12,5 %'),
+                $this->line('L3', "Droit d'accises ad valorem = L1 + L2",              principal: $L3),
+                $this->line('L4', "Droit d'accises spécifique (détails annexés)",      principal: $L4),
+                $this->line('L5', "Droits d'accises à reverser = L3 + L4",             principal: $L5),
+                $this->line('L6', "Droits d'accises payés à l'importation",            principal: $L6),
+                $this->line('L7', "Complément droits d'accises à payer = L5 − L6",     principal: $L7),
+                $this->line('L8', 'TOTAL — (L5) ou (L7)',                              principal: $L8),
+                $this->line('L9', 'TOTAL — (L5 + L7)',                                  principal: $L9),
             ],
-            'note'    => 'Sommes acquittées au titre des droits d\'enregistrement et de timbre (baux, mutations, marchés, etc.).',
+            'total' => $L8,
         ];
-    }
 
-    private function buildAutresTaxesCategory(array $idsByPrefix, \DateTimeImmutable $from, \DateTimeImmutable $to): array
-    {
-        $ids = $idsByPrefix['4477'] ?? [];
-        $total = abs($this->sumBalanceWindow($ids, $from, $to));
-        return [
-            'id'      => 'autres_taxes',
-            'code'    => 'AUTRES',
-            'label'   => 'AUTRES TAXES',
-            'total'   => round($total, 2),
-            'details' => [
-                ['label' => 'Taxe spéciale sur les produits pétroliers (TSPP)', 'amount' => 0, 'account' => '4477'],
-                ['label' => 'Redevance audiovisuelle',                          'amount' => 0, 'account' => '4477'],
-                ['label' => 'Taxe sur les jeux et divertissements',              'amount' => 0, 'account' => '4477'],
-                ['label' => 'Autres taxes ad valorem',                           'amount' => round($total, 2), 'account' => '4477', 'note' => 'pool total — split via sub-accounts to break out'],
+        // §2 TVA — CA réalisé
+        $L10 = $L('L10');
+        $L11 = $L8 ?: $L9;
+        $L12 = 0; $L13 = 0; $L14 = 0;
+        $L15 = $L10 + $L11 + $L12 + $L13;
+        $tvaSurL10 = $L10 * 0.1925;
+        $tvaSurL11 = $L11 * 0.1925;
+        $s2 = [
+            'id' => 'tva_ca', 'code' => '2', 'title' => "TAXE SUR LA VALEUR AJOUTÉE (TVA) — Chiffre d'affaires réalisé",
+            'subtitle' => 'CA et taxe collectée',
+            'lines' => [
+                $this->line('L10', 'Opérations taxables au taux normal',                  $L10, '19,25 %', principal: $tvaSurL10),
+                $this->line('L11', "Montant du droit d'accises (L8 ou L9)",                $L11, '19,25 %', principal: $tvaSurL11),
+                $this->line('L12', 'Autres opérations taxables (taux/bases spécifiques)', $L12),
+                $this->line('L13', 'Exportations (taxables au taux zéro)',                $L13, '0 %'),
+                $this->line('L14', "Chiffre d'affaires exonéré",                          $L14),
+                $this->line('L15', 'CA global hors taxes = L10 + L11 + L12 + L13',         principal: $L15),
             ],
-            'note'    => 'TSPP, redevance audiovisuelle, taxes spéciales et droits divers reversés mensuellement.',
+            'total' => $tvaSurL10 + $tvaSurL11,
         ];
+
+        // §3 TVA déductible
+        $L16 = 0; $L17 = 0; $L18 = $L('L18'); $L19 = 0; $L20 = 0; $L21 = 0;
+        $L22 = $L17 + $L18 + $L19 + $L20 + $L21;
+        $L23 = $L16 > 0 ? $L22 * ($L16 / 100) : 0;
+        $s3 = [
+            'id' => 'tva_ded', 'code' => '3', 'title' => 'TVA DÉDUCTIBLE',
+            'subtitle' => 'Achats, services, prorata',
+            'lines' => [
+                $this->line('L16', 'Prorata prévisionnel (assujettis partiels) — cf. DSF n−1',       $L16, '%'),
+                $this->line('L17', 'Report du crédit antérieur (L33 de la déclaration précédente)',  $L17),
+                $this->line('L18', 'TVA déductible sur achats locaux et services locaux',             principal: $L18),
+                $this->line('L19', "TVA déductible sur achats à l'étranger",                          $L19),
+                $this->line('L20', "TVA déductible sur services et autres rémunérations versés à l'étranger", $L20),
+                $this->line('L21', 'Total TVA déductible (intermédiaire)',                            $L21),
+                $this->line('L22', 'Total TVA déductible = L17 + L18 + L19 + L20 + L21',              principal: $L22),
+                $this->line('L23', 'TVA déductible au prorata prévisionnel = L16 × L22',              principal: $L23),
+            ],
+            'total' => $L22,
+        ];
+
+        // §4 TVA — Régularisations exceptionnelles
+        $L24 = 0; $L25 = 0; $L26 = 0; $L27 = 0;
+        $s4 = [
+            'id' => 'tva_reg', 'code' => '4', 'title' => 'RÉGULARISATIONS EXCEPTIONNELLES',
+            'subtitle' => 'TVA à reverser ou à déduire',
+            'lines' => [
+                $this->line('L24', 'Régularisation TVA déductible / TVA déjà retenue à la source (−)', principal: -$L24),
+                $this->line('L25', "Régularisation TVA prise en charge par l'État (−)",                 principal: -$L25),
+                $this->line('L26', "Régularisation sur cession d'éléments de l'actif immobilisé à reverser (+)", principal: $L26),
+                $this->line('L27', 'Régularisation TVA à reverser et autres (+)',                        principal: $L27),
+            ],
+            'total' => $L26 + $L27 - $L24 - $L25,
+        ];
+
+        // §5 TVA à payer ou crédit
+        $L28 = $L('L28');
+        $L29 = max($L22, $L23);
+        $L30 = $L24 + $L25;
+        $L31 = $L26 + $L27;
+        $L32 = $L28 - $L29 - $L30 + $L31;
+        $L33 = $L('L33') ?: max(-$L32, 0);
+        $L34 = 0; $L35 = $L33 - $L34;
+        $tvaAPayer = max($L32, 0);
+        $s5 = [
+            'id' => 'tva_pay', 'code' => '5', 'title' => 'TVA À PAYER OU CRÉDIT DE TVA',
+            'subtitle' => 'Liquidation de la TVA du mois',
+            'lines' => [
+                $this->line('L28', 'TVA collectée (L10 + L11 + L12)',           principal: $L28),
+                $this->line('L29', 'TVA déductible : (L22) ou (L23)',           principal: $L29),
+                $this->line('L30', 'Régularisation TVA à déduire : (L24 + L25)', principal: $L30),
+                $this->line('L31', 'Régularisation TVA à reverser : (L26 + L27)', principal: $L31),
+                $this->line('L32', 'TVA à payer : (L28 − L29 − L30 + L31)',     principal: $L32),
+                $this->line('L33', 'Crédit de TVA',                              principal: $L33),
+                $this->line('L34', 'Remboursement demandé (préciser le montant)', principal: $L34),
+                $this->line('L35', 'Crédit à reporter = L33 − L34',              principal: $L35),
+            ],
+            'total' => $tvaAPayer,
+        ];
+
+        // §6 Total TVA à payer
+        $L36 = $tvaAPayer; $L37 = 0; $L38 = 0;
+        $L39 = $L36 + $L37 + $L38;
+        $cacOnL36 = $L36 * 0.10;
+        $s6 = [
+            'id' => 'tva_total', 'code' => '6', 'title' => 'TOTAL DE TVA À PAYER',
+            'subtitle' => 'Avec CAC et retenues à la source',
+            'lines' => [
+                $this->line('L36', 'TVA à payer (L32)',                                    principal: $L36, cac: $cacOnL36),
+                $this->line('L37', 'TVA retenue à la source (entreprise habilitée)',        principal: $L37),
+                $this->line('L38', "TVA retenue sur rémunération versée à l'étranger",      principal: $L38),
+                $this->line('L39', 'Montant à payer = L36 + L37 + L38',                     principal: $L39, cac: $cacOnL36),
+            ],
+            'total' => $L39 + $cacOnL36,
+        ];
+
+        // §7 IR — Acomptes / précomptes à reverser
+        $L40 = 0; $L41 = 0; $L42 = $L('L42'); $L43 = 0;
+        $L44 = $L40 + $L41 + $L42 + $L43;
+        $cacOnL44 = $L44 * 0.10;
+        $s7 = [
+            'id' => 'ir_rev', 'code' => '7', 'title' => 'ACOMPTES ET PRÉCOMPTES À REVERSER',
+            'subtitle' => "Retenues effectuées par l'entreprise",
+            'lines' => [
+                $this->line('L40', 'Acompte sur CA retenu à la source',                              principal: $L40, cac: $L40 * 0.10),
+                $this->line('L41', 'Précomptes sur achats retenus (0,5 % / 1 % / 3 % / 5 % / 10 %)', principal: $L41, cac: $L41 * 0.10),
+                $this->line('L42', 'Précomptes sur loyers (15 %)',                                   principal: $L42, cac: $L42 * 0.10),
+                $this->line('L43', 'Précomptes sur rémunérations et honoraires (5 %)',               principal: $L43, cac: $L43 * 0.10),
+                $this->line('L44', 'TOTAL = L40 + L41 + L42 + L43',                                  principal: $L44, cac: $cacOnL44),
+            ],
+            'total' => $L44 + $cacOnL44,
+        ];
+
+        // §8 IR — Acomptes / précomptes à déduire
+        $L45 = 0; $L46 = 0; $L47 = 0; $L48 = 0;
+        $L49 = $L45 + $L46 + $L47 + $L48;
+        $s8 = [
+            'id' => 'ir_ded', 'code' => '8', 'title' => 'ACOMPTES ET PRÉCOMPTES À DÉDUIRE',
+            'subtitle' => "Retenues subies par l'entreprise (à imputer)",
+            'lines' => [
+                $this->line('L45', 'Acompte sur CA retenu à la source',                principal: $L45),
+                $this->line('L46', 'Précomptes sur achats (0,5 % / 1 % / 3 % / 5 %)',   principal: $L46),
+                $this->line('L47', 'Précomptes 15 % sur loyers (déductible sur IR)',    principal: $L47),
+                $this->line('L48', 'Précomptes sur rémunérations et honoraires (5 %)',  principal: $L48),
+                $this->line('L49', 'TOTAL = L45 + L46 + L47 + L48',                     principal: $L49),
+            ],
+            'total' => 0,
+        ];
+
+        // §9 IR — Liquidation
+        $L50 = 0; $L51 = 0; $L52 = $L49; $L53 = 0;
+        $L54 = ($L50 + $L51) - ($L52 + $L53);
+        $L55 = $L54 < 0 ? abs($L54) : 0;
+        $acompteIR = max($L54, 0);
+        $cacOnL54 = $acompteIR * 0.10;
+        $s9 = [
+            'id' => 'ir_liq', 'code' => '9', 'title' => 'LIQUIDATION ACOMPTES IMPÔTS SUR LE REVENU',
+            'subtitle' => 'Acompte mensuel ou crédit à reporter',
+            'lines' => [
+                $this->line('L50', 'Acompte sur CA déclaré (0,5 % / 2 % / 3 % / 5 %)', principal: $L50, cac: $L50 * 0.10),
+                $this->line('L51', 'Acompte de 15 % sur loyers perçus',                principal: $L51, cac: $L51 * 0.10),
+                $this->line('L52', 'Déductions à opérer = L49',                        principal: $L52),
+                $this->line('L53', 'Crédit antérieur = L55 déclaration précédente',     principal: $L53),
+                $this->line('L54', 'Acompte à payer = (L50 + L51) − (L52 + L53)',       principal: $L54, cac: $cacOnL54),
+                $this->line('L55', "Crédit d'impôt à reporter (solde négatif L54)",     principal: $L55),
+            ],
+            'total' => $acompteIR + $cacOnL54,
+        ];
+
+        // §10 IRCM
+        $L56 = 0; $L57 = 0; $L58 = 0; $L59 = 0; $L60 = 0; $L61 = 0;
+        $L62 = $L56 + $L57 + $L58 + $L59 + $L60 + $L61;
+        $cacOnL62 = $L62 * 0.15 * 0.10;
+        $s10 = [
+            'id' => 'ircm', 'code' => '10', 'title' => 'RETENUES SUR REVENUS DE CAPITAUX MOBILIERS',
+            'subtitle' => 'Principal 15 % · CAC 10 %',
+            'lines' => [
+                $this->line('L56', 'Revenus des actions, parts de capital et assimilés',  principal: $L56 * 0.15, cac: $L56 * 0.15 * 0.10),
+                $this->line('L57', 'Dividendes payés hors du Cameroun',                   principal: $L57 * 0.15, cac: $L57 * 0.15 * 0.10),
+                $this->line('L58', 'Rémunération des dirigeants et jetons de présence',   principal: $L58 * 0.15, cac: $L58 * 0.15 * 0.10),
+                $this->line('L59', 'Revenus des obligations',                             principal: $L59 * 0.15, cac: $L59 * 0.15 * 0.10),
+                $this->line('L60', 'Revenus créances, dépôts, cautionnements',            principal: $L60 * 0.15, cac: $L60 * 0.15 * 0.10),
+                $this->line('L61', "Gains sur cession d'actions, d'obligations",          principal: $L61 * 0.15, cac: $L61 * 0.15 * 0.10),
+                $this->line('L62', 'TOTAL = L56 + L57 + L58 + L59 + L60 + L61',           principal: $L62 * 0.15, cac: $cacOnL62),
+            ],
+            'total' => $L62 * 0.15 + $cacOnL62,
+        ];
+
+        // §11 IRNCS
+        $L63 = 0; $L64 = 0; $L65 = 0;
+        $L66 = $L63 + $L64 + $L65;
+        $cacOnL66 = $L66 * 0.15 * 0.10;
+        $s11 = [
+            'id' => 'irncs', 'code' => '11', 'title' => 'IMPÔTS SUR REVENUS NON COMMERCIAUX RETENUS À LA SOURCE',
+            'subtitle' => "Principal 15 % · CAC 10 % · joindre l'état nominatif",
+            'lines' => [
+                $this->line('L63', "Rémunérations des sessions des conseils d'administration", principal: $L63 * 0.15, cac: $L63 * 0.15 * 0.10),
+                $this->line('L64', 'Primes, gratifications, indemnités et perdiem (commissions, comités ad-hoc ou permanents)', principal: $L64 * 0.15, cac: $L64 * 0.15 * 0.10),
+                $this->line('L65', 'Rémunérations des artistes et sportifs',                   principal: $L65 * 0.15, cac: $L65 * 0.15 * 0.10),
+                $this->line('L66', 'TOTAL = L63 + L64 + L65',                                  principal: $L66 * 0.15, cac: $cacOnL66),
+            ],
+            'total' => $L66 * 0.15 + $cacOnL66,
+        ];
+
+        // §12 RTS
+        $L67 = $L('L67'); $L68 = 0; $L69 = 0; $L70 = $L('L70'); $L71 = 0; $L72 = 0;
+        $L73 = $L67 + $L68 + $L69 + $L70 + $L71 + $L72;
+        $cacOnL73 = $L73 * 0.10;
+        $s12 = [
+            'id' => 'rts', 'code' => '12', 'title' => 'IMPÔTS RETENUS SUR SALAIRES',
+            'subtitle' => 'Charges sociales et taxes salariales',
+            'lines' => [
+                $this->line('L67', 'IRPP sur traitements et salaires',           principal: $L67, cac: $L67 * 0.10),
+                $this->line('L68', 'Crédit Foncier du Cameroun (part salariale)', principal: $L68),
+                $this->line('L69', 'Crédit Foncier du Cameroun (part patronale)', principal: $L69),
+                $this->line('L70', "Fonds National de l'Emploi",                  principal: $L70),
+                $this->line('L71', 'Redevance audiovisuelle',                     principal: $L71),
+                $this->line('L72', 'Taxe de Développement Local (taxe communale)', principal: $L72),
+                $this->line('L73', 'TOTAL = L67 + L68 + L69 + L70 + L71 + L72',   principal: $L73, cac: $cacOnL73),
+            ],
+            'total' => $L73 + $cacOnL73,
+        ];
+
+        // §13 PV
+        $L74 = 0; $L75 = 0; $L76 = 0; $L77 = 0;
+        $s13 = [
+            'id' => 'pv', 'code' => '13', 'title' => 'IMPÔTS SUR LES PLUS-VALUES',
+            'subtitle' => "En cas de moins-values, pas d'imposition",
+            'lines' => [
+                $this->line('L74', "Cession d'immobilisations",                  principal: $L74),
+                $this->line('L75', 'Cession de titres négociables',               principal: $L75),
+                $this->line('L76', 'Plus-value immobilière par les particuliers', principal: $L76),
+                $this->line('L77', 'TOTAL plus-values',                            principal: $L77),
+            ],
+            'total' => $L77,
+        ];
+
+        // §14 Timbre d'aéroport
+        $L78 = 0; $L79 = 0;
+        $L80 = $L78 + $L79;
+        $s14 = [
+            'id' => 'timbre', 'code' => '14', 'title' => "DROITS DE TIMBRE D'AÉROPORT",
+            'subtitle' => 'Vols internationaux : 10 000 F · Vols nationaux : 1 000 F',
+            'lines' => [
+                $this->line('L78', 'Vols internationaux',  principal: $L78, rate: '10 000 F'),
+                $this->line('L79', 'Vols nationaux',       principal: $L79, rate: '1 000 F'),
+                $this->line('L80', 'TOTAL = L78 + L79',    principal: $L80),
+            ],
+            'total' => $L80,
+        ];
+
+        return [$s0, $s1, $s2, $s3, $s4, $s5, $s6, $s7, $s8, $s9, $s10, $s11, $s12, $s13, $s14];
     }
 
-    /* ──────────────────────────────────────────────────────────────────
-       Helpers
-       ──────────────────────────────────────────────────────────────── */
-
-    /** Build the YYYY-MM dropdown — last 12 months, newest first. */
-    private function buildMonthOptions(\DateTimeImmutable $today): array
+    private function buildRecap(array $sections): array
     {
-        $opts = [];
-        for ($i = 0; $i < 12; $i++) {
-            $d = $today->modify("first day of -{$i} month");
-            $opts[] = ['value' => $d->format('Y-m'), 'label' => $d->format('F Y')];
-        }
-        return $opts;
-    }
+        $byId = [];
+        foreach ($sections as $s) $byId[$s['id']] = $s;
 
-    /**
-     * Resolve all category-relevant account ids in one Odoo call.
-     * Returns a map: prefix-as-string => [account_id, ...].
-     *
-     * Important: prefixes are kept as a flat *list of strings* throughout.
-     * If they were used as array *keys*, PHP would coerce purely-numeric
-     * strings ('4421', '4423', …) into ints, and a subsequent
-     * `str_starts_with($code, $intPrefix)` would throw a TypeError because
-     * needle must be a string. We therefore never store prefixes as keys
-     * before iterating; only after all string-typed work is done do we
-     * use them as keys (PHP's int-coercion of the lookup is symmetric, so
-     * `$byPrefix['4431']` correctly reaches the same bucket).
-     */
-    private function resolveAccountIdsByPrefix(): array
-    {
-        // Collect all distinct prefixes as a flat string list (excluding the
-        // 'sales' synthetic key which uses class 70 lookup instead).
-        $prefixes = [];
-        foreach (self::ACCOUNT_MAP as $key => $list) {
-            if ($key === 'sales') continue;
-            foreach ($list as $p) {
-                $p = (string) $p;
-                if (!in_array($p, $prefixes, true)) {
-                    $prefixes[] = $p;
+        $rowFromSection = function (array $s) {
+            $principal = 0; $cac = 0; $penalites = 0;
+            foreach ($s['lines'] as $ln) {
+                $code = (string) ($ln['code'] ?? '');
+                if (str_starts_with($code, 'L')) {
+                    $principal += (float) ($ln['principal'] ?? 0);
+                    $cac       += (float) ($ln['cac']       ?? 0);
+                    $penalites += (float) ($ln['penalites'] ?? 0);
                 }
             }
-        }
-        if ($prefixes === []) return [];
+            return [
+                'principal' => round($principal, 2),
+                'cac'       => round($cac, 2),
+                'penalites' => round($penalites, 2),
+                'total'     => round($principal + $cac + $penalites, 2),
+            ];
+        };
 
-        // Build OR domain across all prefixes.
+        $rows = [
+            ['key' => 'tsr',     'label' => 'TSR (= L0)',                                    'section_id' => 'tsr'],
+            ['key' => 'da',      'label' => "Droit d'accises (= L8 ou L9)",                  'section_id' => 'da'],
+            ['key' => 'tva',     'label' => 'TVA (= L39)',                                   'section_id' => 'tva_total'],
+            ['key' => 'ac_ir',   'label' => 'AC / IR + Précomptes (= L44)',                  'section_id' => 'ir_rev'],
+            ['key' => 'acompte', 'label' => 'Acompte à payer (= L54)',                       'section_id' => 'ir_liq'],
+            ['key' => 'ircm',    'label' => 'IRCM (= L62)',                                  'section_id' => 'ircm'],
+            ['key' => 'irncs',   'label' => 'Impôts sur revenus non commerciaux (= L66)',    'section_id' => 'irncs'],
+            ['key' => 'rts',     'label' => 'RTS / salaires (= L73)',                        'section_id' => 'rts'],
+            ['key' => 'pv',      'label' => 'Impôts sur la plus-value (= L77)',              'section_id' => 'pv'],
+            ['key' => 'timbre',  'label' => "Droit de timbre d'aéroport (= L80)",            'section_id' => 'timbre'],
+        ];
+
+        $totals = ['principal' => 0, 'cac' => 0, 'penalites' => 0, 'total' => 0];
+        foreach ($rows as &$r) {
+            $sId = $r['section_id'];
+            $d = isset($byId[$sId]) ? $rowFromSection($byId[$sId]) : ['principal'=>0,'cac'=>0,'penalites'=>0,'total'=>0];
+            $r['principal'] = $d['principal'];
+            $r['cac']       = $d['cac'];
+            $r['penalites'] = $d['penalites'];
+            $r['total']     = $d['total'];
+            $totals['principal'] += $r['principal'];
+            $totals['cac']       += $r['cac'];
+            $totals['penalites'] += $r['penalites'];
+            $totals['total']     += $r['total'];
+        }
+        unset($r);
+
+        return [
+            'rows'  => $rows,
+            'total' => array_map(fn ($v) => round($v, 2), $totals),
+        ];
+    }
+
+    /* ─── Odoo helpers ──────────────────────────────────────────────── */
+
+    private function resolveAccountIdsByPrefix(): array
+    {
+        $prefixes = ['4421', '4423', '4426', '4431', '4434', '4452', '4456', '4477'];
+
         $domain = [];
         for ($i = 1; $i < count($prefixes); $i++) $domain[] = '|';
         foreach ($prefixes as $p) $domain[] = ['code', '=like', $p . '%'];
 
-        $rows = $this->odoo->searchRead('account.account', $domain, ['id', 'code'], []);
+        $rows = [];
+        try { $rows = $this->odoo->searchRead('account.account', $domain, ['id', 'code'], []); }
+        catch (\Throwable $e) { /* return empty buckets */ }
 
-        // Initialise empty buckets — keys here will be int-coerced by PHP for
-        // purely-numeric strings, but reads on the same string keys later
-        // coerce identically, so lookups still hit the right bucket.
         $byPrefix = [];
         foreach ($prefixes as $p) $byPrefix[$p] = [];
-
         foreach ($rows as $r) {
             $code = (string) ($r['code'] ?? '');
             if ($code === '') continue;
-            // Match the LONGEST prefix this code belongs to (so 4452 doesn't
-            // also get attributed to a hypothetical '44' prefix).
             $matched = null;
             foreach ($prefixes as $p) {
-                // $p is guaranteed to be a string by the construction above.
                 if (str_starts_with($code, $p)) {
                     if ($matched === null || strlen($p) > strlen($matched)) $matched = $p;
                 }
@@ -409,27 +509,10 @@ final class MonthlyTaxReturnService
         return $byPrefix;
     }
 
-    /**
-     * Filter a pool of account ids down to those whose code matches a sub-prefix.
-     * Used by TSR to find rate-band sub-accounts (e.g. 4423.1, 4423.2).
-     */
-    private function idsForExactPrefix(array $pool, string $base, string $sub): array
-    {
-        if ($pool === []) return [];
-        $rows = $this->odoo->searchRead('account.account',
-            [['id', 'in', $pool], ['code', '=like', $base . $sub . '%']],
-            ['id'], []
-        );
-        return array_map(fn ($r) => (int) $r['id'], $rows);
-    }
-
-    /** Class-70 sales accounts excluding 709 (rebates). One Odoo call. */
     private function classSalesAccountIds(): array
     {
-        $rows = $this->odoo->searchRead('account.account',
-            [['code', '=like', '70%']],
-            ['id', 'code'], []
-        );
+        try { $rows = $this->odoo->searchRead('account.account', [['code', '=like', '70%']], ['id', 'code'], []); }
+        catch (\Throwable $e) { return []; }
         $out = [];
         foreach ($rows as $r) {
             $code = (string) ($r['code'] ?? '');
@@ -442,18 +525,22 @@ final class MonthlyTaxReturnService
     private function sumBalanceWindow(array $accountIds, \DateTimeImmutable $from, \DateTimeImmutable $to): float
     {
         if ($accountIds === []) return 0.0;
-        $agg = $this->odoo->callModel('account.move.line', 'read_group', [
-            'domain' => [
-                ['account_id', 'in', $accountIds],
-                ['date', '>=', $from->format('Y-m-d')],
-                ['date', '<=', $to->format('Y-m-d')],
-                ['parent_state', '=', 'posted'],
-            ],
-            'fields'  => ['balance:sum'],
-            'groupby' => [],
-            'lazy'    => false,
-        ]);
-        return (float) ($agg[0]['balance'] ?? 0);
+        try {
+            $agg = $this->odoo->callModel('account.move.line', 'read_group', [
+                'domain' => [
+                    ['account_id', 'in', $accountIds],
+                    ['date', '>=', $from->format('Y-m-d')],
+                    ['date', '<=', $to->format('Y-m-d')],
+                    ['parent_state', '=', 'posted'],
+                ],
+                'fields'  => ['balance:sum'],
+                'groupby' => [],
+                'lazy'    => false,
+            ]);
+            return (float) ($agg[0]['balance'] ?? 0);
+        } catch (\Throwable $e) {
+            return 0.0;
+        }
     }
 
     private function detectCurrency(): string
@@ -465,5 +552,21 @@ final class MonthlyTaxReturnService
             }
         } catch (\Throwable $e) { /* fall through */ }
         return 'XAF';
+    }
+
+    private function buildMonthOptions(\DateTimeImmutable $today): array
+    {
+        $opts = [];
+        for ($i = 0; $i < 12; $i++) {
+            $d = $today->modify("first day of -{$i} month");
+            $opts[] = ['value' => $d->format('Y-m'), 'label' => $d->format('F Y')];
+        }
+        return $opts;
+    }
+
+    private function moisFr(int $m): string
+    {
+        $names = [1=>'Janvier',2=>'Février',3=>'Mars',4=>'Avril',5=>'Mai',6=>'Juin',7=>'Juillet',8=>'Août',9=>'Septembre',10=>'Octobre',11=>'Novembre',12=>'Décembre'];
+        return $names[$m] ?? '';
     }
 }
