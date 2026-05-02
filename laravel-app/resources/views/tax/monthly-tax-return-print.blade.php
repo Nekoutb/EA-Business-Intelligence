@@ -304,7 +304,8 @@
                         </tbody>
                     </table>
                 @elseif ($sLayout === 'amount')
-                    {{-- Form §5: Code · Libellé · Montant — single amount column --}}
+                    {{-- §3 / §5: Code · Libellé · Montant — single amount column.
+                         Lines with a 'unit' (e.g. '%') get the unit suffix. --}}
                     <table>
                         <thead>
                             <tr>
@@ -317,13 +318,18 @@
                             @foreach ($lines as $ln)
                                 @php
                                     $code = (string) ($ln['code'] ?? '');
-                                    $isTotal = in_array($code, ['L32', 'L36', 'L39', 'L44', 'L49', 'L62', 'L66', 'L73', 'L77', 'L80'], true)
+                                    $isTotal = in_array($code, ['L22', 'L32', 'L36', 'L39', 'L44', 'L49', 'L62', 'L66', 'L73', 'L77', 'L80'], true)
                                                || str_starts_with(strtoupper((string) ($ln['label'] ?? '')), 'TOTAL');
+                                    $unit    = (string) ($ln['unit'] ?? '');
+                                    $value   = (float)  ($ln['principal'] ?? 0);
+                                    $display = $unit === '%'
+                                        ? number_format($value, 2, ',', ' ') . ' %'
+                                        : ($value != 0 ? $fmt($value) : '');
                                 @endphp
                                 <tr class="{{ $isTotal ? 'total' : '' }}">
                                     <td class="code">{{ $code }}</td>
                                     <td>{{ $ln['label'] }}</td>
-                                    <td class="amount">{{ $ln['principal'] != 0 ? $fmt($ln['principal']) : '' }}</td>
+                                    <td class="amount">{{ $display }}</td>
                                 </tr>
                             @endforeach
                         </tbody>
