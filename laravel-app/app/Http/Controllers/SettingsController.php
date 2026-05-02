@@ -37,6 +37,12 @@ class SettingsController extends Controller
         'BUDGET_MONTHLY_DIRECT_COSTS', 'BUDGET_MONTHLY_INDIRECT_COSTS',
         'BUDGET_MONTHLY_DA', 'BUDGET_MONTHLY_INCOME_TAX',
         'BUDGET_MONTHLY_COST_OF_SALES',
+        // Tax declarant info (DGI I/TVA-IR header) — added 2026-05-02
+        'TAX_DGE_CRI', 'TAX_CDI_CSI_CIME',
+        'TAX_REGIME', 'TAX_NIU',
+        'TAX_RAISON_SOCIALE', 'TAX_SIGLE',
+        'TAX_VILLE', 'TAX_COMMUNE', 'TAX_QUARTIER', 'TAX_LIEU_DIT',
+        'TAX_BP', 'TAX_TEL_FIXE', 'TAX_TEL_MOBILE', 'TAX_EMAIL', 'TAX_FAX',
     ];
 
     public function show()

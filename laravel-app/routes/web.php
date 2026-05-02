@@ -1160,7 +1160,8 @@ Route::prefix('t/{tenant}')
                 Route::get ('/income-tax-compliance/donations/export',      [IncomeTaxComplianceController::class, 'exportDonations']) ->middleware('module:income_tax_compliance');
                 Route::get('/vat-compliance',         [VATComplianceController::class, 'index'])->middleware('module:vat_compliance');
                 Route::get('/vat-invoice-compliance', [VATInvoiceComplianceController::class, 'index'])->middleware('module:vat_invoice_compliance');
-                Route::get('/monthly-tax-return',     [MonthlyTaxReturnController::class, 'index'])->middleware('module:monthly_tax_return');
+                Route::get('/monthly-tax-return',       [MonthlyTaxReturnController::class, 'index'])    ->middleware('module:monthly_tax_return');
+                Route::get('/monthly-tax-return/print', [MonthlyTaxReturnController::class, 'printable'])->middleware('module:monthly_tax_return');
                 // Back-compat: old URL redirects to new one (preserves bookmarks).
                 Route::get('/monthly-vat-return', fn () => redirect()->to(tenant_url('/monthly-tax-return')));
                 // Backward-compat redirects (old URLs from prior to 2026-04-27 reshuffle)

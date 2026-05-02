@@ -170,8 +170,107 @@
             </div>
         </div>
 
-        {{-- Elite Advisor (AI Insights) is configured platform-wide by the super
-             admin. Nothing for tenants to manage here. --}}
+        {{-- ── Tax Declarant Information ──────────────────────────────────
+             Pre-filled into the DGI I/TVA-IR monthly declaration header so
+             the principal does not retype it every month. ─────────────── --}}
+        <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+            <h2 class="text-sm font-semibold text-slate-900 mb-1">Tax Declarant Information</h2>
+            <p class="text-xs text-slate-500 mb-4">Pre-filled into the monthly tax return (I/TVA-IR) header. Stored per workspace and shown on the printable declaration.</p>
+
+            {{-- Tax centre / regime --}}
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                <div>
+                    <label class="block text-xs font-medium text-slate-600 mb-1">D.G.E. / C.R.I.</label>
+                    <input name="TAX_DGE_CRI" value="{{ $values['TAX_DGE_CRI'] ?? '' }}" placeholder="e.g. DGE Yaoundé"
+                           class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-slate-600 mb-1">CDI / CSI / CIME</label>
+                    <input name="TAX_CDI_CSI_CIME" value="{{ $values['TAX_CDI_CSI_CIME'] ?? '' }}" placeholder="e.g. CIME Centre I"
+                           class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-slate-600 mb-1">Régime d'imposition</label>
+                    <select name="TAX_REGIME" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white">
+                        @foreach (['' => '— select —', 'reel' => 'Réel', 'simplifie' => 'Simplifié'] as $v => $l)
+                            <option value="{{ $v }}" {{ ($values['TAX_REGIME'] ?? '') === $v ? 'selected' : '' }}>{{ $l }}</option>
+                        @endforeach
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-slate-600 mb-1">N.I.U. (Numéro Identifiant Unique)</label>
+                    <input name="TAX_NIU" value="{{ $values['TAX_NIU'] ?? '' }}" placeholder="P000000000000A"
+                           class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm font-mono">
+                </div>
+            </div>
+
+            {{-- Identity --}}
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                <div class="md:col-span-2">
+                    <label class="block text-xs font-medium text-slate-600 mb-1">Nom ou Raison sociale</label>
+                    <input name="TAX_RAISON_SOCIALE" value="{{ $values['TAX_RAISON_SOCIALE'] ?? '' }}" placeholder="Société ABC SARL"
+                           class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-slate-600 mb-1">Sigle</label>
+                    <input name="TAX_SIGLE" value="{{ $values['TAX_SIGLE'] ?? '' }}" placeholder="ABC"
+                           class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+                </div>
+            </div>
+
+            {{-- Address --}}
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
+                <div>
+                    <label class="block text-xs font-medium text-slate-600 mb-1">Ville</label>
+                    <input name="TAX_VILLE" value="{{ $values['TAX_VILLE'] ?? '' }}" placeholder="Yaoundé"
+                           class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-slate-600 mb-1">Commune</label>
+                    <input name="TAX_COMMUNE" value="{{ $values['TAX_COMMUNE'] ?? '' }}" placeholder="Yaoundé I"
+                           class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-slate-600 mb-1">Quartier</label>
+                    <input name="TAX_QUARTIER" value="{{ $values['TAX_QUARTIER'] ?? '' }}" placeholder="Bastos"
+                           class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-slate-600 mb-1">Lieu-dit</label>
+                    <input name="TAX_LIEU_DIT" value="{{ $values['TAX_LIEU_DIT'] ?? '' }}" placeholder="—"
+                           class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+                </div>
+            </div>
+
+            {{-- Contact --}}
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                    <label class="block text-xs font-medium text-slate-600 mb-1">B.P.</label>
+                    <input name="TAX_BP" value="{{ $values['TAX_BP'] ?? '' }}" placeholder="1234"
+                           class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-slate-600 mb-1">Tél. fixe</label>
+                    <input name="TAX_TEL_FIXE" value="{{ $values['TAX_TEL_FIXE'] ?? '' }}" placeholder="+237 222 00 00 00"
+                           class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-slate-600 mb-1">Tél. mobile</label>
+                    <input name="TAX_TEL_MOBILE" value="{{ $values['TAX_TEL_MOBILE'] ?? '' }}" placeholder="+237 6 00 00 00 00"
+                           class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+                </div>
+                <div class="md:col-span-2">
+                    <label class="block text-xs font-medium text-slate-600 mb-1">Adresse électronique (e-mail)</label>
+                    <input name="TAX_EMAIL" type="email" value="{{ $values['TAX_EMAIL'] ?? '' }}" placeholder="contact@firm.cm"
+                           class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-slate-600 mb-1">FAX</label>
+                    <input name="TAX_FAX" value="{{ $values['TAX_FAX'] ?? '' }}" placeholder="+237 …"
+                           class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+                </div>
+            </div>
+        </div>
 
         <div class="flex justify-end">
             <button class="bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white font-medium px-5 py-2.5 rounded-lg text-sm shadow-lg shadow-indigo-900/20 transition">
