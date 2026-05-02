@@ -43,7 +43,7 @@ final class MonthlyTaxReturnService
         $auto        = $this->autoExtract($idsByPrefix, $from, $to);
         $sections    = $this->buildSections($auto);
         $recap       = $this->buildRecap($sections);
-        $totalAPayer = (float) $recap['total']['total'];
+        $totalAPayer = (float) ($recap['total'] ?? 0);
 
         return [
             'declarant' => $this->loadDeclarant($tenant, $from),
@@ -121,22 +121,24 @@ final class MonthlyTaxReturnService
         $salesIds = $this->classSalesAccountIds();
         $caHt     = abs($this->sumBalanceWindow($salesIds, $from, $to));
 
-        // §3 — exact-account auto-fill (per user spec)
-        //   L18 ← account 4452000 net movement for the month
-        //   L19 ← account 4454000 net movement for the month
-        $id4452000 = $this->resolveAccountIdByCode('4452000');
-        $id4454000 = $this->resolveAccountIdByCode('4454000');
-        $L18 = $id4452000 ? abs($this->sumBalanceWindow([$id4452000], $from, $to)) : 0.0;
-        $L19 = $id4454000 ? abs($this->sumBalanceWindow([$id4454000], $from, $to)) : 0.0;
+        // §3 — prefix-based auto-fill (per user spec):
+        //   L18 ← all accounts whose code starts with 4452 (achats locaux)
+        //   L19 ← all accounts whose code starts with 4454 (services locaux)
+        $L18 = abs($sum('4452'));
+        $L19 = abs($sum('4454'));
 
-        // L17 = prior month's L33 — computed inline from the same accounts
-        // applied to the prior calendar month. (Handles a clean sale of L33
-        // when the firm has no posting on account 4434.)
+        // §2 L14 — Chiffre d'affaires exonéré: sales journals where a 70X
+        // account was credited but NO 4431 (TVA facturée) credit appears on
+        // the same move. Indicates the sale carried no VAT.
+        $L14 = $this->computeExemptSales($salesIds, $from, $to);
+
+        // L17 = prior month's L33 — computed inline from the same prefix
+        // pools applied to the prior calendar month.
         $priorTo   = $from->modify('-1 day');
         $priorFrom = $priorTo->modify('first day of this month');
         $priorCa   = $salesIds === [] ? 0.0 : abs($this->sumBalanceWindow($salesIds, $priorFrom, $priorTo));
-        $prior4452 = $id4452000 ? abs($this->sumBalanceWindow([$id4452000], $priorFrom, $priorTo)) : 0.0;
-        $prior4454 = $id4454000 ? abs($this->sumBalanceWindow([$id4454000], $priorFrom, $priorTo)) : 0.0;
+        $prior4452 = abs($this->sumBalanceWindow($idsByPrefix['4452'] ?? [], $priorFrom, $priorTo));
+        $prior4454 = abs($this->sumBalanceWindow($idsByPrefix['4454'] ?? [], $priorFrom, $priorTo));
         $priorL22  = $prior4452 + $prior4454;       // L18+L19+L20+L21 (others = 0)
         $priorL28  = $priorCa * 0.1925;             // TVA on L10 (assuming L11/L12 = 0)
         $priorL32  = $priorL28 - $priorL22;
@@ -144,14 +146,74 @@ final class MonthlyTaxReturnService
 
         return [
             'L10' => $caHt,            // CA opérations taxables au taux normal
+            'L14' => $L14,             // CA exonéré (sales without VAT)
             'L17' => $priorL33,        // Report du crédit antérieur = L33 (mois précédent)
-            'L18' => $L18,             // TVA déductible sur achats locaux (account 4452000)
-            'L19' => $L19,             // TVA déductible sur services locaux (account 4454000)
+            'L18' => $L18,             // TVA déductible sur achats locaux (4452*)
+            'L19' => $L19,             // TVA déductible sur services locaux (4454*)
             'L67' => abs($sum('4421')),// IRPP retenu sur traitements et salaires
             'L42' => abs($sum('4426')),// Précomptes sur loyers (15 %)
             'L0'  => abs($sum('4423')),// TSR pool
             'L70' => abs($sum('4477')),// FNE (autres taxes)
         ];
+    }
+
+    /**
+     * Compute "Chiffre d'affaires exonéré" (L14) by walking the sales journal:
+     * find moves that credit a class-70 account in the period, then exclude
+     * those whose move ALSO has a 4431 (TVA facturée) credit. The remaining
+     * 70X credits represent VAT-free sales.
+     */
+    private function computeExemptSales(array $salesIds, \DateTimeImmutable $from, \DateTimeImmutable $to): float
+    {
+        if ($salesIds === []) return 0.0;
+
+        // Resolve all output-VAT accounts (code starts with 4431).
+        try {
+            $vatAccts = $this->odoo->searchRead('account.account',
+                [['code', '=like', '4431%']], ['id'], []);
+        } catch (\Throwable $e) { return 0.0; }
+        $vatIds = array_map(fn ($r) => (int) $r['id'], $vatAccts);
+
+        // All 70X credit lines in window.
+        try {
+            $salesLines = $this->odoo->searchRead('account.move.line', [
+                ['account_id', 'in', $salesIds],
+                ['credit', '>', 0],
+                ['parent_state', '=', 'posted'],
+                ['date', '>=', $from->format('Y-m-d')],
+                ['date', '<=', $to->format('Y-m-d')],
+            ], ['move_id', 'credit'], []);
+        } catch (\Throwable $e) { return 0.0; }
+        if (empty($salesLines)) return 0.0;
+
+        // All 4431 credit lines in window — the moves these belong to are
+        // "VAT-applied" sales, which we exclude.
+        $movesWithVat = [];
+        if ($vatIds !== []) {
+            try {
+                $vatLines = $this->odoo->searchRead('account.move.line', [
+                    ['account_id', 'in', $vatIds],
+                    ['credit', '>', 0],
+                    ['parent_state', '=', 'posted'],
+                    ['date', '>=', $from->format('Y-m-d')],
+                    ['date', '<=', $to->format('Y-m-d')],
+                ], ['move_id'], []);
+                foreach ($vatLines as $r) {
+                    $mid = is_array($r['move_id'] ?? null) ? (int) $r['move_id'][0] : (int) ($r['move_id'] ?? 0);
+                    if ($mid > 0) $movesWithVat[$mid] = true;
+                }
+            } catch (\Throwable $e) { /* fall through with empty set */ }
+        }
+
+        // Sum credits on 70X lines whose move is NOT in $movesWithVat.
+        $exempt = 0.0;
+        foreach ($salesLines as $r) {
+            $mid = is_array($r['move_id'] ?? null) ? (int) $r['move_id'][0] : (int) ($r['move_id'] ?? 0);
+            if (!isset($movesWithVat[$mid])) {
+                $exempt += (float) ($r['credit'] ?? 0);
+            }
+        }
+        return round($exempt, 2);
     }
 
     /** Resolve an account.account by its exact `code` field. Returns id or null. */
@@ -226,7 +288,8 @@ final class MonthlyTaxReturnService
         // amounts feed forward into §5 L28.
         $L10 = $L('L10');
         $L11 = $L8 ?: $L9;
-        $L12 = 0; $L13 = 0; $L14 = 0;
+        $L12 = 0; $L13 = 0;
+        $L14 = $L('L14');     // CA exonéré — sales journal walk (70X credit without 4431 credit)
         $L15 = $L10 + $L11 + $L12 + $L13;
         $tvaSurL10 = $L10 * 0.1925;
         $tvaSurL11 = $L11 * 0.1925;
@@ -330,33 +393,33 @@ final class MonthlyTaxReturnService
             'total' => $tvaAPayer,
         ];
 
-        // §6 Total TVA à payer
-        // The standard 19,25 % Cameroon TVA decomposes into 17,5 %
-        // (Principal) + 1,75 % (CAC, the 10 % surcharge on the principal).
-        // For §6 we apply that split directly to the L10 turnover, so that:
-        //   L36 Principal = L10 × 17,5 %
-        //   L36 CAC       = L10 × 1,75 %     ( = L36 Principal × 10 %)
-        //   L39 = L36 + L37 + L38   (column-wise: Principal, CAC, Pénalités)
-        // L37 / L38 (retenues à la source) remain at zero unless the
-        // taxpayer fills them in manually.
-        $L36principal = $L10 * 0.175;
-        $L36cac       = $L10 * 0.0175;
-        $L37principal = 0; $L37cac = 0;
-        $L38principal = 0; $L38cac = 0;
+        // §6 Total TVA à payer — L36 reports L32 (net VAT due from §5),
+        // decomposed column-wise:
+        //   L36 Total     = L32 (clamped at 0; credit case leaves §6 blank)
+        //   L36 CAC       = 10 % × L36 Total
+        //   L36 Principal = L36 Total − L36 CAC      (= 90 % × L36 Total)
+        //   L37 / L38 stay zero pending manual entry.
+        //   L39 = L36 + L37 + L38   column-wise.
+        $L36total     = max($L32, 0);
+        $L36cac       = $L36total * 0.10;
+        $L36principal = $L36total - $L36cac;
+        $L37principal = 0; $L37cac = 0; $L37total = 0;
+        $L38principal = 0; $L38cac = 0; $L38total = 0;
         $L39principal = $L36principal + $L37principal + $L38principal;
         $L39cac       = $L36cac       + $L37cac       + $L38cac;
+        $L39total     = $L36total     + $L37total     + $L38total;
         $s6 = [
             'id' => 'tva_total', 'code' => '6', 'title' => 'TOTAL DE TVA À PAYER',
-            'subtitle' => 'Principal 17,5 % · CAC 1,75 % · sur le CA L10',
+            'subtitle' => 'Total = L32 · CAC = 10 % du Total · Principal = Total − CAC',
             // Form §6 columns: Principal · CAC · Pénalités · Total — no Base/Taux.
             'layout' => 'tax_due',
             'lines' => [
-                $this->line('L36', 'TVA à payer (= L10 × 17,5 %)',                          principal: $L36principal, cac: $L36cac),
-                $this->line('L37', 'TVA retenue à la source (entreprise habilitée)',         principal: $L37principal, cac: $L37cac),
-                $this->line('L38', "TVA retenue sur rémunération versée à l'étranger",       principal: $L38principal, cac: $L38cac),
-                $this->line('L39', 'Montant à payer = L36 + L37 + L38',                      principal: $L39principal, cac: $L39cac),
+                $this->line('L36', 'TVA à payer (= L32)',                                    principal: $L36principal, cac: $L36cac, total: $L36total),
+                $this->line('L37', 'TVA retenue à la source (entreprise habilitée)',          principal: $L37principal, cac: $L37cac, total: $L37total),
+                $this->line('L38', "TVA retenue sur rémunération versée à l'étranger",        principal: $L38principal, cac: $L38cac, total: $L38total),
+                $this->line('L39', 'Montant à payer = L36 + L37 + L38',                       principal: $L39principal, cac: $L39cac, total: $L39total),
             ],
-            'total' => $L39principal + $L39cac,
+            'total' => $L39total,
         ];
 
         // §7 IR — Acomptes / précomptes à reverser
@@ -497,60 +560,61 @@ final class MonthlyTaxReturnService
         return [$s0, $s1, $s2, $s3, $s4, $s5, $s6, $s7, $s8, $s9, $s10, $s11, $s12, $s13, $s14];
     }
 
+    /**
+     * Build the TOTAL RÉCAPITULATIF — single Total column per category, with
+     * each row's value sourced from the specific reference line on the form
+     * (not summed across the section). Per user spec: drop Principal / CAC /
+     * Pénalités columns; just disclose the balance at the referenced L-code.
+     */
     private function buildRecap(array $sections): array
     {
+        // Index sections by id for O(1) lookup.
         $byId = [];
         foreach ($sections as $s) $byId[$s['id']] = $s;
 
-        $rowFromSection = function (array $s) {
-            $principal = 0; $cac = 0; $penalites = 0;
-            foreach ($s['lines'] as $ln) {
-                $code = (string) ($ln['code'] ?? '');
-                if (str_starts_with($code, 'L')) {
-                    $principal += (float) ($ln['principal'] ?? 0);
-                    $cac       += (float) ($ln['cac']       ?? 0);
-                    $penalites += (float) ($ln['penalites'] ?? 0);
-                }
+        // Helper: locate a single line in a section by code.
+        $find = function (string $sectionId, string $lineCode) use ($byId) {
+            $s = $byId[$sectionId] ?? null;
+            if ($s === null) return null;
+            foreach ($s['lines'] ?? [] as $ln) {
+                if (($ln['code'] ?? '') === $lineCode) return $ln;
             }
-            return [
-                'principal' => round($principal, 2),
-                'cac'       => round($cac, 2),
-                'penalites' => round($penalites, 2),
-                'total'     => round($principal + $cac + $penalites, 2),
-            ];
+            return null;
         };
 
-        $rows = [
-            ['key' => 'tsr',     'label' => 'TSR (= L0)',                                    'section_id' => 'tsr'],
-            ['key' => 'da',      'label' => "Droit d'accises (= L8 ou L9)",                  'section_id' => 'da'],
-            ['key' => 'tva',     'label' => 'TVA (= L39)',                                   'section_id' => 'tva_total'],
-            ['key' => 'ac_ir',   'label' => 'AC / IR + Précomptes (= L44)',                  'section_id' => 'ir_rev'],
-            ['key' => 'acompte', 'label' => 'Acompte à payer (= L54)',                       'section_id' => 'ir_liq'],
-            ['key' => 'ircm',    'label' => 'IRCM (= L62)',                                  'section_id' => 'ircm'],
-            ['key' => 'irncs',   'label' => 'Impôts sur revenus non commerciaux (= L66)',    'section_id' => 'irncs'],
-            ['key' => 'rts',     'label' => 'RTS / salaires (= L73)',                        'section_id' => 'rts'],
-            ['key' => 'pv',      'label' => 'Impôts sur la plus-value (= L77)',              'section_id' => 'pv'],
-            ['key' => 'timbre',  'label' => "Droit de timbre d'aéroport (= L80)",            'section_id' => 'timbre'],
+        // Each recap row maps to a single reference line on the form.
+        // The displayed Total = that line's `total` field.
+        $defs = [
+            ['key' => 'tsr',     'label' => 'TSR (= L0)',                                  'section' => 'tsr',       'line' => 'L0'],
+            ['key' => 'da',      'label' => "Droit d'accises (= L8 ou L9)",                'section' => 'da',        'line' => 'L8'],
+            ['key' => 'tva',     'label' => 'TVA (= L39)',                                 'section' => 'tva_total', 'line' => 'L39'],
+            ['key' => 'ac_ir',   'label' => 'AC / IR + Précomptes (= L44)',                'section' => 'ir_rev',    'line' => 'L44'],
+            ['key' => 'acompte', 'label' => 'Acompte à payer (= L54)',                     'section' => 'ir_liq',    'line' => 'L54'],
+            ['key' => 'ircm',    'label' => 'IRCM (= L62)',                                'section' => 'ircm',      'line' => 'L62'],
+            ['key' => 'irncs',   'label' => 'Impôts sur revenus non commerciaux (= L66)',  'section' => 'irncs',     'line' => 'L66'],
+            ['key' => 'rts',     'label' => 'RTS / salaires (= L73)',                      'section' => 'rts',       'line' => 'L73'],
+            ['key' => 'pv',      'label' => 'Impôts sur la plus-value (= L77)',            'section' => 'pv',        'line' => 'L77'],
+            ['key' => 'timbre',  'label' => "Droit de timbre d'aéroport (= L80)",          'section' => 'timbre',    'line' => 'L80'],
         ];
 
-        $totals = ['principal' => 0, 'cac' => 0, 'penalites' => 0, 'total' => 0];
-        foreach ($rows as &$r) {
-            $sId = $r['section_id'];
-            $d = isset($byId[$sId]) ? $rowFromSection($byId[$sId]) : ['principal'=>0,'cac'=>0,'penalites'=>0,'total'=>0];
-            $r['principal'] = $d['principal'];
-            $r['cac']       = $d['cac'];
-            $r['penalites'] = $d['penalites'];
-            $r['total']     = $d['total'];
-            $totals['principal'] += $r['principal'];
-            $totals['cac']       += $r['cac'];
-            $totals['penalites'] += $r['penalites'];
-            $totals['total']     += $r['total'];
+        $rows = [];
+        $grandTotal = 0.0;
+        foreach ($defs as $d) {
+            $line = $find($d['section'], $d['line']);
+            $val  = $line ? (float) ($line['total'] ?? 0) : 0.0;
+            $rows[] = [
+                'key'     => $d['key'],
+                'label'   => $d['label'],
+                'section' => $d['section'],
+                'line'    => $d['line'],
+                'total'   => round($val, 2),
+            ];
+            $grandTotal += $val;
         }
-        unset($r);
 
         return [
             'rows'  => $rows,
-            'total' => array_map(fn ($v) => round($v, 2), $totals),
+            'total' => round($grandTotal, 2),
         ];
     }
 
@@ -558,7 +622,7 @@ final class MonthlyTaxReturnService
 
     private function resolveAccountIdsByPrefix(): array
     {
-        $prefixes = ['4421', '4423', '4426', '4431', '4434', '4452', '4456', '4477'];
+        $prefixes = ['4421', '4423', '4426', '4431', '4434', '4452', '4454', '4456', '4477'];
 
         $domain = [];
         for ($i = 1; $i < count($prefixes); $i++) $domain[] = '|';

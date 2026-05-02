@@ -144,7 +144,7 @@
             $period    = $analysis['period']   ?? [];
             $declarant = $analysis['declarant'] ?? [];
             $sections  = $analysis['sections'] ?? [];
-            $recap     = $analysis['recap']    ?? ['rows'=>[], 'total'=>['principal'=>0,'cac'=>0,'penalites'=>0,'total'=>0]];
+            $recap     = $analysis['recap']    ?? ['rows'=>[], 'total'=>0];
             $fmt = fn ($n) => number_format((float) $n, 0, '.', ' ');
             $niu = preg_replace('/\s+/', '', (string) ($declarant['niu'] ?? ''));
             $niuChars = str_pad($niu, 14)        ;
@@ -376,19 +376,13 @@
                 <thead>
                     <tr>
                         <th>Catégorie</th>
-                        <th style="width:90px;">Principal</th>
-                        <th style="width:70px;">CAC</th>
-                        <th style="width:80px;">Pénalités</th>
-                        <th style="width:100px;">Total ({{ $cur }})</th>
+                        <th style="width:130px;">Total ({{ $cur }})</th>
                     </tr>
                 </thead>
                 <tbody>
                     @foreach ($recap['rows'] as $r)
                         <tr>
                             <td>{{ $r['label'] }}</td>
-                            <td class="amount">{{ $fmt($r['principal']) }}</td>
-                            <td class="amount">{{ $fmt($r['cac']) }}</td>
-                            <td class="amount">{{ $fmt($r['penalites']) }}</td>
                             <td class="amount">{{ $fmt($r['total']) }}</td>
                         </tr>
                     @endforeach
@@ -396,10 +390,7 @@
                 <tfoot>
                     <tr>
                         <td>TOTAL À PAYER</td>
-                        <td class="amount">{{ $fmt($recap['total']['principal']) }}</td>
-                        <td class="amount">{{ $fmt($recap['total']['cac']) }}</td>
-                        <td class="amount">{{ $fmt($recap['total']['penalites']) }}</td>
-                        <td class="amount">{{ $fmt($recap['total']['total']) }}</td>
+                        <td class="amount">{{ $fmt($recap['total']) }}</td>
                     </tr>
                 </tfoot>
             </table>
