@@ -152,6 +152,7 @@ final class MonthlyTaxReturnService
             'L17' => $priorL33,        // Report du crédit antérieur = L33 (mois précédent)
             'L18' => $L18,             // TVA déductible sur achats locaux (4452*)
             'L19' => $L19,             // TVA déductible sur services locaux (4454*)
+            'L45' => abs($sum('4471')),// Acompte sur CA retenu à la source — balance of 4471*
             'L67' => abs($sum('4421')),// IRPP retenu sur traitements et salaires
             'L42' => abs($sum('4426')),// Précomptes sur loyers (15 %)
             'L0'  => abs($sum('4423')),// TSR pool
@@ -452,19 +453,35 @@ final class MonthlyTaxReturnService
         ];
 
         // §8 IR — Acomptes / précomptes à déduire
-        $L45 = 0; $L46 = 0; $L47 = 0; $L48 = 0;
-        $L49 = $L45 + $L46 + $L47 + $L48;
+        // L45 = Acompte sur CA retenu à la source — sourced from balance(4471):
+        //   Total     = balance of account 4471 (any sub-account starting 4471)
+        //   CAC       = 10 % × Total
+        //   Principal = Total − CAC                  (= 90 % × Total)
+        // L46-L48 stay zero pending manual entry.
+        // L49 = column-wise sum of L45-L48.
+        $L45total     = $L('L45');
+        $L45cac       = $L45total * 0.10;
+        $L45principal = $L45total - $L45cac;
+
+        $L46principal = 0; $L46cac = 0; $L46total = 0;
+        $L47principal = 0; $L47cac = 0; $L47total = 0;
+        $L48principal = 0; $L48cac = 0; $L48total = 0;
+
+        $L49principal = $L45principal + $L46principal + $L47principal + $L48principal;
+        $L49cac       = $L45cac       + $L46cac       + $L47cac       + $L48cac;
+        $L49total     = $L45total     + $L46total     + $L47total     + $L48total;
+
         $s8 = [
             'id' => 'ir_ded', 'code' => '8', 'title' => 'ACOMPTES ET PRÉCOMPTES À DÉDUIRE',
-            'subtitle' => "Retenues subies par l'entreprise (à imputer)",
+            'subtitle' => "L45 Total = balance(4471) · CAC 10 % du Total · Principal = Total − CAC",
             'lines' => [
-                $this->line('L45', 'Acompte sur CA retenu à la source',                principal: $L45),
-                $this->line('L46', 'Précomptes sur achats (0,5 % / 1 % / 3 % / 5 %)',   principal: $L46),
-                $this->line('L47', 'Précomptes 15 % sur loyers (déductible sur IR)',    principal: $L47),
-                $this->line('L48', 'Précomptes sur rémunérations et honoraires (5 %)',  principal: $L48),
-                $this->line('L49', 'TOTAL = L45 + L46 + L47 + L48',                     principal: $L49),
+                $this->line('L45', 'Acompte sur CA retenu à la source',                principal: $L45principal, cac: $L45cac, total: $L45total),
+                $this->line('L46', 'Précomptes sur achats (0,5 % / 1 % / 3 % / 5 %)',   principal: $L46principal, cac: $L46cac, total: $L46total),
+                $this->line('L47', 'Précomptes 15 % sur loyers (déductible sur IR)',    principal: $L47principal, cac: $L47cac, total: $L47total),
+                $this->line('L48', 'Précomptes sur rémunérations et honoraires (5 %)',  principal: $L48principal, cac: $L48cac, total: $L48total),
+                $this->line('L49', 'TOTAL = L45 + L46 + L47 + L48',                     principal: $L49principal, cac: $L49cac, total: $L49total),
             ],
-            'total' => 0,
+            'total' => 0,    // §8 is deductive — does not contribute to total à payer
         ];
 
         // §9 IR — Liquidation
@@ -486,9 +503,9 @@ final class MonthlyTaxReturnService
         $L51cac       = $L51principal * 0.10;
         $L51total     = $L51principal + $L51cac;
 
-        $L52principal = $L49;          // = §8's L49 (déductions)
-        $L52cac       = 0;
-        $L52total     = $L49;
+        $L52principal = $L49principal; // = §8's L49 (déductions)
+        $L52cac       = $L49cac;
+        $L52total     = $L49total;
 
         $L53principal = 0;             // crédit antérieur (= prior month's L55)
         $L53cac       = 0;
@@ -663,7 +680,7 @@ final class MonthlyTaxReturnService
 
     private function resolveAccountIdsByPrefix(): array
     {
-        $prefixes = ['4421', '4423', '4426', '4431', '4434', '4452', '4454', '4456', '4477'];
+        $prefixes = ['4421', '4423', '4426', '4431', '4434', '4452', '4454', '4456', '4471', '4477'];
 
         $domain = [];
         for ($i = 1; $i < count($prefixes); $i++) $domain[] = '|';
