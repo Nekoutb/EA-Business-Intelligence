@@ -30,7 +30,7 @@
             $dueDate      = $period['due_date']   ?? '';
             $dueStatus    = $period['due_status'] ?? 'pending';
             $sections     = $analysis['sections'] ?? [];
-            $recap        = $analysis['recap']    ?? ['rows'=>[], 'total'=>['principal'=>0,'cac'=>0,'penalites'=>0,'total'=>0]];
+            $recap        = $analysis['recap']    ?? ['rows'=>[], 'total'=>0];
             $totalAPayer  = (float) ($analysis['total_a_payer'] ?? 0);
             $months       = $analysis['available_months'] ?? [];
             $statusBadge  = match ($dueStatus) {
@@ -286,19 +286,13 @@
                     <thead>
                         <tr class="text-left text-[10px] text-slate-500 uppercase tracking-wider border-b border-slate-200 bg-slate-50">
                             <th class="px-5 py-3 font-semibold">Catégorie</th>
-                            <th class="px-3 py-3 font-semibold text-right w-28">Principal</th>
-                            <th class="px-3 py-3 font-semibold text-right w-20">CAC</th>
-                            <th class="px-3 py-3 font-semibold text-right w-24">Pénalités</th>
-                            <th class="px-5 py-3 font-semibold text-right w-32">Total ({{ $cur }})</th>
+                            <th class="px-5 py-3 font-semibold text-right w-44">Total ({{ $cur }})</th>
                         </tr>
                     </thead>
                     <tbody>
                         @foreach ($recap['rows'] as $r)
                             <tr class="border-b border-slate-100 hover:bg-slate-50/40">
                                 <td class="px-5 py-2.5 text-slate-700">{{ $r['label'] }}</td>
-                                <td class="px-3 py-2.5 text-right tabular-nums text-slate-700">{{ $fmt($r['principal']) }}</td>
-                                <td class="px-3 py-2.5 text-right tabular-nums text-slate-600">{{ $fmt($r['cac']) }}</td>
-                                <td class="px-3 py-2.5 text-right tabular-nums text-slate-600">{{ $fmt($r['penalites']) }}</td>
                                 <td class="px-5 py-2.5 text-right tabular-nums font-semibold text-slate-900">{{ $fmt($r['total']) }}</td>
                             </tr>
                         @endforeach
@@ -306,10 +300,7 @@
                     <tfoot>
                         <tr class="border-t-2 border-slate-700 bg-slate-50 font-bold">
                             <td class="px-5 py-3 text-slate-900 uppercase tracking-wider text-[11px]">Total à payer</td>
-                            <td class="px-3 py-3 text-right tabular-nums text-slate-900">{{ $fmt($recap['total']['principal']) }}</td>
-                            <td class="px-3 py-3 text-right tabular-nums text-slate-900">{{ $fmt($recap['total']['cac']) }}</td>
-                            <td class="px-3 py-3 text-right tabular-nums text-slate-900">{{ $fmt($recap['total']['penalites']) }}</td>
-                            <td class="px-5 py-3 text-right tabular-nums text-slate-900 text-base">{{ $fmt($recap['total']['total']) }}</td>
+                            <td class="px-5 py-3 text-right tabular-nums text-slate-900 text-base">{{ $fmt($recap['total']) }}</td>
                         </tr>
                     </tfoot>
                 </table>
