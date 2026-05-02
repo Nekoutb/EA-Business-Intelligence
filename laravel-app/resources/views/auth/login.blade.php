@@ -9,32 +9,47 @@
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,500;1,9..144,300;1,9..144,400&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600;9..40,700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    {{-- Elite Advisors design system: Hanken Grotesk (UI) · Newsreader (display serif) · JetBrains Mono (numerals) --}}
+    <link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@300;400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,300;0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,300;1,6..72,400;1,6..72,500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 
     <style>
+        /* ============================================================
+           ELITE Advisors — Design tokens (newsprint palette)
+           Source: ui_kits/marketing/marketing.css
+           Variable names preserved so existing styles keep working;
+           values aligned to the new template (parchment / ink / bronze).
+           ============================================================ */
         :root {
-            --ink: #0A0908;
-            --ink-2: #14120E;
-            --ink-3: #1F1C16;
+            /* Ink — slightly warmer near-black, replaces #14110F */
+            --ink: #14110F;
+            --ink-2: #1F1C18;
+            --ink-3: #2A2620;
             --line-dark: #2A2620;
             --line-darker: #1A1814;
 
-            --cream: #F5F1EA;
-            --cream-2: #EDE7DD;
-            --cream-3: #DCD4C5;
+            /* Parchment surfaces — soft warm whites, replaces cream stack */
+            --cream: #FBF8F1;
+            --cream-2: #F2EFE7;
+            --cream-3: #E6E2D7;
 
-            --gold: #C9A961;
-            --gold-deep: #A88840;
-            --gold-soft: rgba(201, 169, 97, 0.12);
+            /* Bronze accent — restrained, less yellow than gold */
+            --gold: #B07F3B;
+            --gold-deep: #8E6526;
+            --gold-soft: rgba(176, 127, 59, 0.10);
 
-            --muted-dark: #8C8780;
-            --muted-light: #5A5650;
+            /* Forest secondary accent — used sparingly for compliance/positive cues */
+            --forest: #3E5A44;
+            --forest-deep: #2C4231;
 
-            --good: #8FA77E;
-            --bad: #C68A6E;
+            /* Muted ink — for body copy, captions, eyebrows */
+            --muted-dark: #8A857C;
+            --muted-light: #5C5750;
 
-            --line-light: rgba(10, 9, 8, 0.08);
-            --line-mid: rgba(10, 9, 8, 0.18);
+            --good: #5C7E5E;   /* forest-leaning positive */
+            --bad: #B26A53;    /* desaturated coral negative */
+
+            --line-light: rgba(20, 17, 15, 0.08);
+            --line-mid:   rgba(20, 17, 15, 0.18);
         }
 
         *, *::before, *::after {
@@ -43,41 +58,42 @@
         }
 
         html, body {
-            font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+            font-family: 'Hanken Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
             background: var(--cream);
             color: var(--ink);
-            font-feature-settings: "ss01" 1;
+            font-feature-settings: "ss01" 1, "tnum" 0;
+            text-rendering: optimizeLegibility;
         }
         body { overflow-x: hidden; }
 
-        .font-display { font-family: 'Fraunces', 'Times New Roman', serif; font-feature-settings: "ss01" 1, "ss02" 1; }
-        .font-mono    { font-family: 'JetBrains Mono', monospace; }
+        .font-display { font-family: 'Newsreader', 'Times New Roman', Georgia, serif; font-weight: 400; }
+        .font-mono    { font-family: 'JetBrains Mono', ui-monospace, monospace; }
 
         .tracking-luxe     { letter-spacing: 0.18em; }
         .tracking-wordmark { letter-spacing: 0.34em; }
         .tracking-bms      { letter-spacing: 0.50em; }
         .num               { font-feature-settings: "tnum" 1, "lnum" 1, "ss01" 1; }
 
-        /* ─────────────── Sticky nav with backdrop blur on scroll ─────────────── */
+        /* --------------- Sticky nav with backdrop blur on scroll --------------- */
         .nav-bar {
-            background: rgba(245, 241, 234, 0);
+            background: rgba(251,248,241, 0);
             backdrop-filter: blur(0);
             -webkit-backdrop-filter: blur(0);
             transition: background 0.4s ease, backdrop-filter 0.4s ease, border-color 0.4s ease, padding 0.4s ease;
             border-bottom: 1px solid transparent;
         }
         .nav-bar.scrolled {
-            background: rgba(245, 241, 234, 0.85);
+            background: rgba(251,248,241, 0.85);
             backdrop-filter: saturate(180%) blur(14px);
             -webkit-backdrop-filter: saturate(180%) blur(14px);
             border-bottom-color: var(--line-light);
         }
 
-        /* ─────────────── Reveal on load (hero) ───────────────────────────────── */
+        /* --------------- Reveal on load (hero) --------------------------------- */
         @keyframes rise { 0% { opacity: 0; transform: translateY(18px); } 100% { opacity: 1; transform: translateY(0); } }
         .reveal { animation: rise 1.1s cubic-bezier(0.2,0.7,0.2,1) both; }
 
-        /* ─────────────── Reveal on scroll (intersection observer) ────────────── */
+        /* --------------- Reveal on scroll (intersection observer) -------------- */
         .scroll-reveal {
             opacity: 0;
             transform: translateY(28px);
@@ -85,7 +101,7 @@
         }
         .scroll-reveal.is-visible { opacity: 1; transform: translateY(0); }
 
-        /* ─────────────── Film-grain overlay (dark surfaces) ──────────────────── */
+        /* --------------- Film-grain overlay (dark surfaces) -------------------- */
         .grain { position: relative; }
         .grain::after {
             content: ''; position: absolute; inset: 0; pointer-events: none;
@@ -93,12 +109,12 @@
             background-image: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
         }
 
-        /* ─────────────── Hairline rules ──────────────────────────────────────── */
+        /* --------------- Hairline rules ---------------------------------------- */
         .rule       { height: 1px; background: var(--line-mid); }
         .rule-soft  { height: 1px; background: var(--line-light); }
         .rule-dark  { height: 1px; background: var(--line-dark); }
 
-        /* ─────────────── Eyebrow text (label kicker) ─────────────────────────── */
+        /* --------------- Eyebrow text (label kicker) --------------------------- */
         .eyebrow {
             display: inline-flex; align-items: center; gap: 0.7rem;
             font-size: 11px; font-weight: 500; text-transform: uppercase;
@@ -107,12 +123,12 @@
         .eyebrow::before { content: ''; display: block; width: 28px; height: 1px; background: currentColor; }
         .eyebrow.on-dark { color: var(--gold); }
 
-        /* ─────────────── Form fields (hairline only) ─────────────────────────── */
+        /* --------------- Form fields (hairline only) --------------------------- */
         .field {
             background: transparent; border: 0; border-radius: 0;
-            border-bottom: 1px solid #C9C2B2;
+            border-bottom: 1px solid #D8D2C3;
             padding: 14px 0 12px; width: 100%;
-            font-family: 'DM Sans', sans-serif; font-size: 16px; color: var(--ink);
+            font-family: 'Hanken Grotesk', sans-serif; font-size: 16px; color: var(--ink);
             transition: border-color 0.4s;
         }
         .field:focus { outline: none; border-bottom-color: var(--ink); }
@@ -124,49 +140,53 @@
         }
         .field-row:focus-within::after { right: 0; }
 
-        /* ─────────────── Buttons ─────────────────────────────────────────────── */
+        /* --------------- Buttons ----------------------------------------------- */
+        /* Buttons follow the new template's restrained convention:
+           4px radius, hover only deepens ink — no letter-spacing pump. */
         .btn-primary {
             background: var(--ink); color: var(--cream);
-            padding: 16px 24px; border: 0; cursor: pointer;
-            font-family: 'DM Sans', sans-serif;
-            font-size: 12px; font-weight: 500; letter-spacing: 0.20em; text-transform: uppercase;
-            transition: background 0.35s, letter-spacing 0.35s, transform 0.35s;
+            padding: 14px 22px; border: 0; border-radius: 4px; cursor: pointer;
+            font-family: 'Hanken Grotesk', sans-serif;
+            font-size: 13px; font-weight: 500; letter-spacing: 0.04em; text-transform: none;
+            transition: background 0.24s var(--ease, cubic-bezier(0.4,0,0.2,1)), transform 0.24s;
             display: inline-flex; align-items: center; justify-content: center; gap: 0.6rem;
         }
-        .btn-primary:hover { background: var(--ink-3); letter-spacing: 0.24em; }
-        .btn-primary .arrow { transition: transform 0.4s cubic-bezier(0.2,0.7,0.2,1); display: inline-block; }
-        .btn-primary:hover .arrow { transform: translateX(6px); }
+        .btn-primary:hover { background: var(--ink-2); }
+        .btn-primary .arrow { transition: transform 0.3s cubic-bezier(0.2,0.7,0.2,1); display: inline-block; }
+        .btn-primary:hover .arrow { transform: translateX(4px); }
 
         .btn-ghost {
             background: transparent; color: var(--ink); border: 1px solid var(--line-mid);
-            padding: 16px 24px; cursor: pointer;
-            font-family: 'DM Sans', sans-serif;
-            font-size: 12px; font-weight: 500; letter-spacing: 0.20em; text-transform: uppercase;
-            transition: border-color 0.35s, color 0.35s;
+            padding: 14px 22px; border-radius: 4px; cursor: pointer;
+            font-family: 'Hanken Grotesk', sans-serif;
+            font-size: 13px; font-weight: 500; letter-spacing: 0.04em; text-transform: none;
+            transition: border-color 0.24s, color 0.24s, background 0.24s;
             display: inline-flex; align-items: center; justify-content: center; gap: 0.6rem;
         }
-        .btn-ghost:hover { border-color: var(--ink); }
+        .btn-ghost:hover { border-color: var(--ink); background: var(--cream-2); }
 
         .btn-nav {
             background: var(--ink); color: var(--cream);
-            padding: 9px 18px; font-size: 12px; font-weight: 500; letter-spacing: 0.16em; text-transform: uppercase;
-            transition: background 0.3s; display: inline-flex; align-items: center; gap: 0.4rem;
+            padding: 9px 16px; border-radius: 4px;
+            font-family: 'Hanken Grotesk', sans-serif;
+            font-size: 13px; font-weight: 500; letter-spacing: 0.02em; text-transform: none;
+            transition: background 0.24s; display: inline-flex; align-items: center; gap: 0.4rem;
         }
-        .btn-nav:hover { background: var(--ink-3); }
+        .btn-nav:hover { background: var(--ink-2); }
 
-        /* ─────────────── Section spacing utilities ───────────────────────────── */
+        /* --------------- Section spacing utilities ----------------------------- */
         .section-pad { padding-top: 120px; padding-bottom: 120px; }
         @media (max-width: 768px) {
             .section-pad { padding-top: 80px; padding-bottom: 80px; }
         }
 
-        /* ─────────────── Card hover ──────────────────────────────────────────── */
+        /* --------------- Card hover -------------------------------------------- */
         .lift { transition: transform 0.5s cubic-bezier(0.2,0.7,0.2,1), box-shadow 0.5s ease, border-color 0.5s ease; }
-        .lift:hover { transform: translateY(-4px); box-shadow: 0 30px 60px -30px rgba(10,9,8,0.18); }
+        .lift:hover { transform: translateY(-4px); box-shadow: 0 30px 60px -30px rgba(20,17,15,0.18); }
 
-        /* ─────────────── Capability card with gold corner ────────────────────── */
+        /* --------------- Capability card with gold corner ---------------------- */
         .capability {
-            position: relative; background: #FFFEF9; border: 1px solid var(--line-light);
+            position: relative; background: #FFFDF7; border: 1px solid var(--line-light);
             transition: border-color 0.4s, transform 0.4s;
         }
         .capability:hover { border-color: var(--ink); transform: translateY(-3px); }
@@ -181,41 +201,41 @@
         .capability:hover::before { width: 60px; }
         .capability:hover::after  { height: 60px; }
 
-        /* ─────────────── Status pills ────────────────────────────────────────── */
+        /* --------------- Status pills ------------------------------------------ */
         .pill {
             display: inline-flex; align-items: center; gap: 0.45rem;
             padding: 4px 10px; border: 1px solid; border-radius: 999px;
             font-size: 10px; font-weight: 500; letter-spacing: 0.18em; text-transform: uppercase;
         }
-        .pill.live { color: #4D6B47; border-color: rgba(143,167,126,0.5); background: rgba(143,167,126,0.08); }
+        .pill.live { color: #3E5A44; border-color: rgba(92,126,94,0.5); background: rgba(92,126,94,0.08); }
         .pill.soon { color: var(--muted-light); border-color: var(--line-mid); background: rgba(0,0,0,0.02); }
         .pill .dot { width: 6px; height: 6px; border-radius: 999px; background: currentColor; }
         @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.45; transform: scale(0.85); } }
         .pill.live .dot { animation: pulse 2.2s ease-in-out infinite; }
 
-        /* ─────────────── Dashboard mockup chrome ─────────────────────────────── */
+        /* --------------- Dashboard mockup chrome ------------------------------- */
         .mock-shell {
-            background: #0A0908; color: var(--cream);
+            background: #14110F; color: var(--cream);
             border: 1px solid var(--line-dark);
             border-radius: 14px; overflow: hidden;
-            box-shadow: 0 60px 120px -40px rgba(10,9,8,0.55), 0 24px 48px -16px rgba(10,9,8,0.35);
+            box-shadow: 0 60px 120px -40px rgba(20,17,15,0.55), 0 24px 48px -16px rgba(20,17,15,0.35);
         }
         .mock-light {
-            background: #FFFEF9; color: var(--ink);
+            background: #FFFDF7; color: var(--ink);
             border: 1px solid var(--line-light);
             border-radius: 14px; overflow: hidden;
-            box-shadow: 0 60px 120px -40px rgba(10,9,8,0.30), 0 24px 48px -16px rgba(10,9,8,0.18);
+            box-shadow: 0 60px 120px -40px rgba(20,17,15,0.30), 0 24px 48px -16px rgba(20,17,15,0.18);
         }
         .mock-titlebar {
             display: flex; align-items: center; gap: 8px;
             padding: 10px 14px; border-bottom: 1px solid var(--line-dark);
             background: rgba(255,255,255,0.02);
         }
-        .mock-light .mock-titlebar { background: #FAF7F0; border-bottom-color: var(--line-light); }
+        .mock-light .mock-titlebar { background: #F5F2EA; border-bottom-color: var(--line-light); }
         .mock-dot { width: 9px; height: 9px; border-radius: 999px; background: rgba(255,255,255,0.18); }
-        .mock-light .mock-dot { background: rgba(10,9,8,0.16); }
+        .mock-light .mock-dot { background: rgba(20,17,15,0.16); }
 
-        /* ─────────────── Section dividers ────────────────────────────────────── */
+        /* --------------- Section dividers -------------------------------------- */
         .section-divider {
             position: relative; height: 1px; background: var(--line-light);
             display: flex; align-items: center; justify-content: center;
@@ -225,7 +245,7 @@
             font-size: 10px; font-weight: 500; letter-spacing: 0.34em; text-transform: uppercase; color: var(--gold-deep);
         }
 
-        /* ─────────────── Anchor link hover underline ─────────────────────────── */
+        /* --------------- Anchor link hover underline --------------------------- */
         .nav-link {
             position: relative; padding: 4px 0; font-size: 13px; font-weight: 400;
             color: var(--ink); transition: color 0.3s;
@@ -236,22 +256,22 @@
         }
         .nav-link:hover::after { right: 0; }
 
-        /* ─────────────── Subtle gradient over hero (depth) ───────────────────── */
+        /* --------------- Subtle gradient over hero (depth) --------------------- */
         .hero-bg {
             background:
-                radial-gradient(circle 600px at 100% 100%, rgba(201,169,97,0.06), transparent 70%),
+                radial-gradient(circle 600px at 100% 100%, rgba(176,127,59,0.06), transparent 70%),
                 var(--cream);
         }
 
-        /* ─────────────── Marquee for compatibility strip (optional) ──────────── */
+        /* --------------- Marquee for compatibility strip (optional) ------------ */
         .compat-grid > * { transition: opacity 0.4s; }
     </style>
 </head>
 <body class="h-full">
 
-{{-- ═══════════════════════════════════════════════════════════════════════════
+{{-- ═══════════════════════════════════════════════════════════════════════════
    STICKY TOP NAVIGATION
-═══════════════════════════════════════════════════════════════════════════ --}}
+═══════════════════════════════════════════════════════════════════════════ --}}
 <header id="navbar" class="nav-bar fixed top-0 left-0 right-0 z-50">
     <div class="max-w-[1400px] mx-auto px-6 lg:px-10 py-5 flex items-center justify-between">
 
@@ -290,15 +310,15 @@
     </div>
 </header>
 
-{{-- ═══════════════════════════════════════════════════════════════════════════
+{{-- ═══════════════════════════════════════════════════════════════════════════
    HERO — editorial left, login right
-═══════════════════════════════════════════════════════════════════════════ --}}
+═══════════════════════════════════════════════════════════════════════════ --}}
 <main id="top" class="hero-bg pt-24 lg:pt-28">
     <div class="max-w-[1400px] mx-auto px-6 lg:px-10">
 
         <div class="grid lg:grid-cols-[1.1fr_0.9fr] gap-12 lg:gap-16 xl:gap-24 pt-12 lg:pt-20 pb-24">
 
-            {{-- ─────────── Left: editorial ─────────── --}}
+            {{-- ----------- Left: editorial ----------- --}}
             <div class="flex flex-col justify-center">
 
                 <div class="eyebrow reveal" style="animation-delay: 0.05s;">
@@ -349,10 +369,10 @@
 
             </div>
 
-            {{-- ─────────── Right: login form ─────────── --}}
+            {{-- ----------- Right: login form ----------- --}}
             <div id="signin" class="lg:pl-6 xl:pl-12 self-center w-full reveal" style="animation-delay: 0.4s;">
                 <div class="bg-white border border-[var(--line-light)] p-8 sm:p-10 max-w-md mx-auto"
-                     style="box-shadow: 0 50px 100px -40px rgba(10,9,8,0.18), 0 18px 36px -12px rgba(10,9,8,0.10);">
+                     style="box-shadow: 0 50px 100px -40px rgba(20,17,15,0.18), 0 18px 36px -12px rgba(20,17,15,0.10);">
 
                     <div class="flex items-baseline justify-between mb-7">
                         <div>
@@ -365,7 +385,7 @@
 
                     @if (session('flash'))
                       <div class="mb-5 px-4 py-3 text-[12px] leading-relaxed"
-                           style="border: 1px solid rgba(198,138,110,0.4); background: #F8E8DD; color: #7A3D1F;">
+                           style="border: 1px solid rgba(178,106,83,0.4); background: #F8E8DD; color: #7A3D1F;">
                           {{ session('flash.msg') }}
                       </div>
                     @endif
@@ -373,14 +393,14 @@
                     <form method="POST" action="{{ $tenantSlug ? '/t/'.$tenantSlug.'/login' : '/login' }}" class="space-y-6">
                         @csrf
                         <div>
-                            <label class="block text-[10px] tracking-luxe uppercase font-medium mb-2" style="color: rgba(10,9,8,0.5);">Username</label>
+                            <label class="block text-[10px] tracking-luxe uppercase font-medium mb-2" style="color: rgba(20,17,15,0.5);">Username</label>
                             <div class="field-row">
                                 <input name="username" autofocus required autocomplete="username"
                                        class="field" placeholder="principal@firm">
                             </div>
                         </div>
                         <div>
-                            <label class="block text-[10px] tracking-luxe uppercase font-medium mb-2" style="color: rgba(10,9,8,0.5);">Password</label>
+                            <label class="block text-[10px] tracking-luxe uppercase font-medium mb-2" style="color: rgba(20,17,15,0.5);">Password</label>
                             <div class="field-row">
                                 <input name="password" type="password" required autocomplete="current-password"
                                        class="field" placeholder="••••••••••">
@@ -395,7 +415,7 @@
                     </form>
 
                     <div class="rule-soft mt-8 mb-5"></div>
-                    <div class="flex items-start gap-3 text-[11px] leading-relaxed font-light" style="color: rgba(10,9,8,0.55);">
+                    <div class="flex items-start gap-3 text-[11px] leading-relaxed font-light" style="color: rgba(20,17,15,0.55);">
                         <svg class="w-3.5 h-3.5 mt-0.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="color: var(--gold-deep);">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/>
                         </svg>
@@ -424,9 +444,9 @@
     </div>
 </main>
 
-{{-- ═══════════════════════════════════════════════════════════════════════════
+{{-- ═══════════════════════════════════════════════════════════════════════════
    CAPABILITIES — 4 module cards
-═══════════════════════════════════════════════════════════════════════════ --}}
+═══════════════════════════════════════════════════════════════════════════ --}}
 <section id="capabilities" class="section-pad">
     <div class="max-w-[1400px] mx-auto px-6 lg:px-10">
 
@@ -522,9 +542,9 @@
     </div>
 </section>
 
-{{-- ═══════════════════════════════════════════════════════════════════════════
+{{-- ═══════════════════════════════════════════════════════════════════════════
    DASHBOARDS — two high-fidelity inline mockups with commentary
-═══════════════════════════════════════════════════════════════════════════ --}}
+═══════════════════════════════════════════════════════════════════════════ --}}
 <section id="dashboards" class="grain section-pad relative overflow-hidden" style="background: var(--ink); color: var(--cream);">
     <div class="max-w-[1400px] mx-auto px-6 lg:px-10 relative">
 
@@ -538,7 +558,7 @@
                 </h2>
             </div>
             <div class="self-end">
-                <p class="text-[17px] leading-relaxed font-light max-w-xl" style="color: rgba(245,241,234,0.72);">
+                <p class="text-[17px] leading-relaxed font-light max-w-xl" style="color: rgba(251,248,241,0.72);">
                     Two principal-grade views from inside BMS.
                     The intent of every screen is to surface the next decision worth making —
                     not to display every column the database has.
@@ -557,7 +577,7 @@
                     </div>
                     <div class="grid grid-cols-[160px_1fr] min-h-[420px]">
                         {{-- Sidebar --}}
-                        <aside class="border-r border-[var(--line-light)] py-5 px-4 bg-[#FAF7F0]">
+                        <aside class="border-r border-[var(--line-light)] py-5 px-4 bg-[#F5F2EA]">
                             <div class="flex items-center gap-2 mb-7">
                                 <svg width="18" height="13" viewBox="0 0 44 32" fill="currentColor"><rect x="0" y="2" width="44" height="6.5"/><rect x="0" y="12.75" width="44" height="6.5"/><rect x="0" y="23.5" width="44" height="6.5"/></svg>
                                 <span class="text-[8px] tracking-wordmark uppercase font-medium">Elite&nbsp;Advisors</span>
@@ -608,28 +628,28 @@
                             <div class="border border-[var(--line-light)] p-4">
                                 <div class="flex items-baseline justify-between mb-2">
                                     <div class="text-[10px] tracking-luxe uppercase font-medium" style="color: var(--muted-light);">Revenue · trailing 12</div>
-                                    <div class="font-mono text-[10px]" style="color: var(--muted-light);">USD ‘000</div>
+                                    <div class="font-mono text-[10px]" style="color: var(--muted-light);">USD —˜000</div>
                                 </div>
                                 <svg viewBox="0 0 600 140" class="w-full h-[140px]" preserveAspectRatio="none">
                                     <defs>
                                         <linearGradient id="g1" x1="0" x2="0" y1="0" y2="1">
-                                            <stop offset="0%" stop-color="#C9A961" stop-opacity="0.35"/>
-                                            <stop offset="100%" stop-color="#C9A961" stop-opacity="0"/>
+                                            <stop offset="0%" stop-color="#B07F3B" stop-opacity="0.35"/>
+                                            <stop offset="100%" stop-color="#B07F3B" stop-opacity="0"/>
                                         </linearGradient>
                                     </defs>
                                     {{-- Grid lines --}}
-                                    <line x1="0" x2="600" y1="35" y2="35" stroke="#E8E2D2" stroke-width="0.5"/>
-                                    <line x1="0" x2="600" y1="70" y2="70" stroke="#E8E2D2" stroke-width="0.5"/>
-                                    <line x1="0" x2="600" y1="105" y2="105" stroke="#E8E2D2" stroke-width="0.5"/>
+                                    <line x1="0" x2="600" y1="35" y2="35" stroke="#E6E2D7" stroke-width="0.5"/>
+                                    <line x1="0" x2="600" y1="70" y2="70" stroke="#E6E2D7" stroke-width="0.5"/>
+                                    <line x1="0" x2="600" y1="105" y2="105" stroke="#E6E2D7" stroke-width="0.5"/>
                                     {{-- Area --}}
                                     <path d="M0,95 L50,82 L100,90 L150,68 L200,72 L250,55 L300,62 L350,40 L400,48 L450,30 L500,38 L550,22 L600,28 L600,140 L0,140 Z" fill="url(#g1)"/>
                                     {{-- Line --}}
-                                    <path d="M0,95 L50,82 L100,90 L150,68 L200,72 L250,55 L300,62 L350,40 L400,48 L450,30 L500,38 L550,22 L600,28" fill="none" stroke="#A88840" stroke-width="1.6"/>
+                                    <path d="M0,95 L50,82 L100,90 L150,68 L200,72 L250,55 L300,62 L350,40 L400,48 L450,30 L500,38 L550,22 L600,28" fill="none" stroke="#8E6526" stroke-width="1.6"/>
                                     {{-- Plan dashed --}}
-                                    <path d="M0,90 L50,85 L100,80 L150,75 L200,70 L250,65 L300,60 L350,55 L400,50 L450,45 L500,40 L550,35 L600,30" fill="none" stroke="#0A0908" stroke-width="0.8" stroke-dasharray="3 3" opacity="0.4"/>
+                                    <path d="M0,90 L50,85 L100,80 L150,75 L200,70 L250,65 L300,60 L350,55 L400,50 L450,45 L500,40 L550,35 L600,30" fill="none" stroke="#14110F" stroke-width="0.8" stroke-dasharray="3 3" opacity="0.4"/>
                                 </svg>
                                 <div class="flex items-center gap-4 text-[10px] mt-2" style="color: var(--muted-light);">
-                                    <span class="flex items-center gap-1.5"><span class="block w-3 h-px bg-[#A88840]"></span>Actual</span>
+                                    <span class="flex items-center gap-1.5"><span class="block w-3 h-px bg-[#8E6526]"></span>Actual</span>
                                     <span class="flex items-center gap-1.5"><span class="block w-3 h-px bg-[var(--ink)] opacity-40" style="border-top: 1px dashed currentColor;"></span>Plan</span>
                                 </div>
                             </div>
@@ -643,13 +663,13 @@
                 <h3 class="font-display text-[32px] xl:text-[40px] leading-[1.05] tracking-tight font-light">
                     Every KPI grounded in <span class="italic">your ledger.</span>
                 </h3>
-                <p class="text-[15px] mt-5 leading-relaxed font-light" style="color: rgba(245,241,234,0.72);">
+                <p class="text-[15px] mt-5 leading-relaxed font-light" style="color: rgba(251,248,241,0.72);">
                     Revenue, margin, AR days, and cash position refreshed live from Odoo —
                     drillable to the invoice. Variance bands compare actual against plan
                     and prior year so the narrative writes itself.
                 </p>
                 <div class="rule-dark my-7"></div>
-                <ul class="space-y-3 text-[13px] font-light" style="color: rgba(245,241,234,0.85);">
+                <ul class="space-y-3 text-[13px] font-light" style="color: rgba(251,248,241,0.85);">
                     <li class="flex items-start gap-3"><span class="text-[var(--gold)] mt-1">→</span><span>Trailing-twelve revenue with plan overlay</span></li>
                     <li class="flex items-start gap-3"><span class="text-[var(--gold)] mt-1">→</span><span>Receivables aging surfaced before invoices age past 60 days</span></li>
                     <li class="flex items-start gap-3"><span class="text-[var(--gold)] mt-1">→</span><span>Treasury position with weekly burn signal</span></li>
@@ -665,13 +685,13 @@
                 <h3 class="font-display text-[32px] xl:text-[40px] leading-[1.05] tracking-tight font-light">
                     Statutory rigour, <span class="italic">at operating speed.</span>
                 </h3>
-                <p class="text-[15px] mt-5 leading-relaxed font-light" style="color: rgba(245,241,234,0.72);">
+                <p class="text-[15px] mt-5 leading-relaxed font-light" style="color: rgba(251,248,241,0.72);">
                     A management P&L beside a live VAT calendar, both built on the same
                     GL — so every line is reconciled, every filing is traceable, and
                     the audit trail is one click away.
                 </p>
                 <div class="rule-dark my-7"></div>
-                <ul class="space-y-3 text-[13px] font-light" style="color: rgba(245,241,234,0.85);">
+                <ul class="space-y-3 text-[13px] font-light" style="color: rgba(251,248,241,0.85);">
                     <li class="flex items-start gap-3"><span class="text-[var(--gold)] mt-1">→</span><span>P&L with sparklines and variance vs budget</span></li>
                     <li class="flex items-start gap-3"><span class="text-[var(--gold)] mt-1">→</span><span>VAT calendar surfaces filings before the deadline</span></li>
                     <li class="flex items-start gap-3"><span class="text-[var(--gold)] mt-1">→</span><span>Invoice-level CGI checks flag exposure on contact</span></li>
@@ -712,10 +732,10 @@
                             @foreach ($rows as $row)
                                 @php [$lbl, $val, $delta, $tone] = [$row[0], $row[1], $row[2], $row[3]]; $em = $row[5] ?? null; @endphp
                                 <div class="grid grid-cols-[1.6fr_60px_1fr_70px] items-center px-3 py-2 {{ $em ? 'bg-white/[0.04]' : '' }} border-b border-[var(--line-darker)]">
-                                    <div class="{{ $em ? 'font-medium text-[var(--cream)]' : '' }}" style="color: {{ $em ? 'var(--cream)' : 'rgba(245,241,234,0.85)' }};">{{ $lbl }}</div>
+                                    <div class="{{ $em ? 'font-medium text-[var(--cream)]' : '' }}" style="color: {{ $em ? 'var(--cream)' : 'rgba(251,248,241,0.85)' }};">{{ $lbl }}</div>
                                     <div class="font-mono text-right num">
                                         <svg width="60" height="44" viewBox="0 0 63 44" class="inline-block opacity-70">
-                                            <path d="{{ $row[4] }}" stroke="{{ $tone === 'good' ? '#8FA77E' : '#C68A6E' }}" stroke-width="1.2" fill="none"/>
+                                            <path d="{{ $row[4] }}" stroke="{{ $tone === 'good' ? '#5C7E5E' : '#B26A53' }}" stroke-width="1.2" fill="none"/>
                                         </svg>
                                     </div>
                                     <div class="font-mono text-right num">{{ $val }}</div>
@@ -742,9 +762,9 @@
     </div>
 </section>
 
-{{-- ═══════════════════════════════════════════════════════════════════════════
+{{-- ═══════════════════════════════════════════════════════════════════════════
    INTEGRATIONS
-═══════════════════════════════════════════════════════════════════════════ --}}
+═══════════════════════════════════════════════════════════════════════════ --}}
 <section id="integrations" class="section-pad">
     <div class="max-w-[1400px] mx-auto px-6 lg:px-10">
 
@@ -772,13 +792,13 @@
                     <div class="font-display text-[40px] font-normal">Odoo</div>
                     <span class="pill live"><span class="dot"></span>Live</span>
                 </div>
-                <p class="text-[14px] font-light leading-relaxed mb-6" style="color: rgba(245,241,234,0.75);">
+                <p class="text-[14px] font-light leading-relaxed mb-6" style="color: rgba(251,248,241,0.75);">
                     Native bi-directional sync over JSON-RPC. Modules supported: Accounting,
                     Sales, Purchase, Inventory, CRM, HR. Every BMS reading writes back
                     a reconciliation marker.
                 </p>
                 <div class="rule-dark my-6"></div>
-                <ul class="space-y-2 text-[12px]" style="color: rgba(245,241,234,0.85);">
+                <ul class="space-y-2 text-[12px]" style="color: rgba(251,248,241,0.85);">
                     <li>· 5-minute refresh cadence</li>
                     <li>· Per-tenant credentials, encrypted at rest</li>
                     <li>· v15, v16, v17 supported</li>
@@ -813,9 +833,9 @@
     </div>
 </section>
 
-{{-- ═══════════════════════════════════════════════════════════════════════════
+{{-- ═══════════════════════════════════════════════════════════════════════════
    SECURITY & TRUST — six pillars
-═══════════════════════════════════════════════════════════════════════════ --}}
+═══════════════════════════════════════════════════════════════════════════ --}}
 <section id="security" class="section-pad" style="background: var(--cream-2);">
     <div class="max-w-[1400px] mx-auto px-6 lg:px-10">
 
@@ -880,9 +900,9 @@
     </div>
 </section>
 
-{{-- ═══════════════════════════════════════════════════════════════════════════
+{{-- ═══════════════════════════════════════════════════════════════════════════
    NEWSROOM — Tier 2 content (regulatory + events + recognition)
-═══════════════════════════════════════════════════════════════════════════ --}}
+═══════════════════════════════════════════════════════════════════════════ --}}
 <section id="newsroom" class="section-pad">
     <div class="max-w-[1400px] mx-auto px-6 lg:px-10">
 
@@ -902,7 +922,7 @@
             </div>
         </div>
 
-        {{-- ─────────── Regulatory pulse ─────────── --}}
+        {{-- ----------- Regulatory pulse ----------- --}}
         <div class="mb-20 scroll-reveal">
             <div class="flex items-baseline justify-between mb-7">
                 <h3 class="font-display text-[26px] font-normal">Regulatory pulse</h3>
@@ -915,7 +935,7 @@
                          'Updated CEMAC VAT calendar with corrected filing windows for monthly and quarterly regimes. Action required: confirm regime classification by 30 April.',
                          '04 Apr 2026'],
                         ['OHADA · AUDCIF',  'AUDCIF disclosure update for management reporting',
-                         'New presentation requirements for management commentary alongside statutory accounts. Affects entities subject to AUDCIF Articles 8–11.',
+                         'New presentation requirements for management commentary alongside statutory accounts. Affects entities subject to AUDCIF Articles 8—“11.',
                          '28 Mar 2026'],
                         ['IFRS · IFRS 18',  'IFRS 18 effective date approaches — Jan 2027',
                          'IFRS 18 reshapes the income statement into three categories. Early-adopter firms should begin restating comparative periods this quarter.',
@@ -923,7 +943,7 @@
                     ];
                 @endphp
                 @foreach ($regs as [$tag, $title, $body, $date])
-                    <article class="bg-[#FFFEF9] p-8 lg:p-10 lg:min-h-[280px] flex flex-col lift">
+                    <article class="bg-[#FFFDF7] p-8 lg:p-10 lg:min-h-[280px] flex flex-col lift">
                         <div class="flex items-baseline justify-between mb-4">
                             <span class="text-[10px] tracking-luxe uppercase font-medium font-mono" style="color: var(--gold-deep);">{{ $tag }}</span>
                             <span class="text-[10px] font-mono" style="color: var(--muted-light);">{{ $date }}</span>
@@ -938,7 +958,7 @@
             </div>
         </div>
 
-        {{-- ─────────── Events & roundtables ─────────── --}}
+        {{-- ----------- Events & roundtables ----------- --}}
         <div class="mb-20 scroll-reveal">
             <div class="flex items-baseline justify-between mb-7">
                 <h3 class="font-display text-[26px] font-normal">Events & roundtables</h3>
@@ -969,7 +989,7 @@
             </div>
         </div>
 
-        {{-- ─────────── Recognition & memberships ─────────── --}}
+        {{-- ----------- Recognition & memberships ----------- --}}
         <div class="scroll-reveal">
             <div class="flex items-baseline justify-between mb-7">
                 <h3 class="font-display text-[26px] font-normal">Recognition & memberships</h3>
@@ -986,7 +1006,7 @@
             @endphp
             <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-px bg-[var(--line-light)]">
                 @foreach ($recognition as [$badge, $body])
-                    <div class="bg-[#FFFEF9] p-7 lg:p-8 flex items-start gap-5">
+                    <div class="bg-[#FFFDF7] p-7 lg:p-8 flex items-start gap-5">
                         <div class="font-display text-[24px] leading-none font-normal text-[var(--gold-deep)] shrink-0">{{ $badge }}</div>
                         <p class="text-[13px] leading-relaxed font-light" style="color: var(--muted-light);">{{ $body }}</p>
                     </div>
@@ -996,9 +1016,9 @@
     </div>
 </section>
 
-{{-- ═══════════════════════════════════════════════════════════════════════════
+{{-- ═══════════════════════════════════════════════════════════════════════════
    FOOTER
-═══════════════════════════════════════════════════════════════════════════ --}}
+═══════════════════════════════════════════════════════════════════════════ --}}
 <footer class="grain pt-20 pb-10 relative overflow-hidden" style="background: var(--ink); color: var(--cream);">
     <div class="max-w-[1400px] mx-auto px-6 lg:px-10 relative">
 
@@ -1017,7 +1037,7 @@
                         <div class="text-[8.5px] tracking-bms uppercase font-medium text-[var(--gold)] mt-0.5">Business&nbsp;Management&nbsp;Suite&nbsp;·&nbsp;BMS</div>
                     </div>
                 </div>
-                <p class="text-[14px] leading-relaxed font-light max-w-sm" style="color: rgba(245,241,234,0.65);">
+                <p class="text-[14px] leading-relaxed font-light max-w-sm" style="color: rgba(251,248,241,0.65);">
                     A principal-grade business management suite — engineered for the
                     rigour your firm deserves and the cadence at which you actually run.
                 </p>
@@ -1033,7 +1053,7 @@
             {{-- Footer columns --}}
             <div>
                 <div class="text-[10px] tracking-luxe uppercase font-medium mb-5" style="color: var(--gold);">Suite</div>
-                <ul class="space-y-3 text-[13px] font-light" style="color: rgba(245,241,234,0.75);">
+                <ul class="space-y-3 text-[13px] font-light" style="color: rgba(251,248,241,0.75);">
                     <li><a href="#capabilities" class="hover:text-[var(--cream)] transition">Business Intelligence</a></li>
                     <li><a href="#capabilities" class="hover:text-[var(--cream)] transition">Financial Reporting</a></li>
                     <li><a href="#capabilities" class="hover:text-[var(--cream)] transition">Tax Compliance</a></li>
@@ -1043,7 +1063,7 @@
 
             <div>
                 <div class="text-[10px] tracking-luxe uppercase font-medium mb-5" style="color: var(--gold);">Platform</div>
-                <ul class="space-y-3 text-[13px] font-light" style="color: rgba(245,241,234,0.75);">
+                <ul class="space-y-3 text-[13px] font-light" style="color: rgba(251,248,241,0.75);">
                     <li><a href="#integrations" class="hover:text-[var(--cream)] transition">Integrations</a></li>
                     <li><a href="#security" class="hover:text-[var(--cream)] transition">Security</a></li>
                     <li><a href="#dashboards" class="hover:text-[var(--cream)] transition">Dashboards</a></li>
@@ -1053,7 +1073,7 @@
 
             <div>
                 <div class="text-[10px] tracking-luxe uppercase font-medium mb-5" style="color: var(--gold);">Engage</div>
-                <ul class="space-y-3 text-[13px] font-light" style="color: rgba(245,241,234,0.75);">
+                <ul class="space-y-3 text-[13px] font-light" style="color: rgba(251,248,241,0.75);">
                     <li><a href="#signin" class="hover:text-[var(--cream)] transition">Sign in</a></li>
                     <li><a href="https://www.eliteadvisors.cm-ea.com" class="hover:text-[var(--cream)] transition">Contact</a></li>
                     <li><a href="#newsroom" class="hover:text-[var(--cream)] transition">Events</a></li>
@@ -1063,7 +1083,7 @@
 
         <div class="rule-dark"></div>
 
-        <div class="pt-7 flex flex-col md:flex-row md:items-center md:justify-between gap-4 text-[10px] tracking-luxe uppercase font-medium" style="color: rgba(245,241,234,0.45);">
+        <div class="pt-7 flex flex-col md:flex-row md:items-center md:justify-between gap-4 text-[10px] tracking-luxe uppercase font-medium" style="color: rgba(251,248,241,0.45);">
             <div>© 2026 Elite Advisors · Business Management Suite</div>
             <div class="flex items-center gap-6">
                 <span>Confidential — authorized use only</span>
@@ -1073,9 +1093,9 @@
     </div>
 </footer>
 
-{{-- ═══════════════════════════════════════════════════════════════════════════
+{{-- ═══════════════════════════════════════════════════════════════════════════
    JS — sticky nav blur, scroll reveals
-═══════════════════════════════════════════════════════════════════════════ --}}
+═══════════════════════════════════════════════════════════════════════════ --}}
 <script>
     // Sticky nav backdrop blur on scroll
     (function() {
