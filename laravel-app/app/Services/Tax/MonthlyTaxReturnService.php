@@ -118,31 +118,55 @@ final class MonthlyTaxReturnService
     {
         $sum = fn (string $prefix) => $this->sumBalanceWindow($idsByPrefix[$prefix] ?? [], $from, $to);
 
-        $tvaDedCapex    = abs($sum('4452'));   // input VAT — capex
-        $tvaDedOpex     = abs($sum('4456'));   // input VAT — opex
-        $tvaCreditCarry = abs($sum('4434'));   // last month's L33 carried on account 4434
-
         $salesIds = $this->classSalesAccountIds();
         $caHt     = abs($this->sumBalanceWindow($salesIds, $from, $to));
 
-        // Note: L28 is NOT auto-extracted — it is computed in §5 as
-        // (TVA on L10) + (TVA on L11) + (TVA on L12), per the form.
-        // L33 is also NOT auto-extracted — it is computed as max(-L32, 0).
-        // The carry from last month's L33 surfaces here as L17.
+        // §3 — exact-account auto-fill (per user spec)
+        //   L18 ← account 4452000 net movement for the month
+        //   L19 ← account 4454000 net movement for the month
+        $id4452000 = $this->resolveAccountIdByCode('4452000');
+        $id4454000 = $this->resolveAccountIdByCode('4454000');
+        $L18 = $id4452000 ? abs($this->sumBalanceWindow([$id4452000], $from, $to)) : 0.0;
+        $L19 = $id4454000 ? abs($this->sumBalanceWindow([$id4454000], $from, $to)) : 0.0;
+
+        // L17 = prior month's L33 — computed inline from the same accounts
+        // applied to the prior calendar month. (Handles a clean sale of L33
+        // when the firm has no posting on account 4434.)
+        $priorTo   = $from->modify('-1 day');
+        $priorFrom = $priorTo->modify('first day of this month');
+        $priorCa   = $salesIds === [] ? 0.0 : abs($this->sumBalanceWindow($salesIds, $priorFrom, $priorTo));
+        $prior4452 = $id4452000 ? abs($this->sumBalanceWindow([$id4452000], $priorFrom, $priorTo)) : 0.0;
+        $prior4454 = $id4454000 ? abs($this->sumBalanceWindow([$id4454000], $priorFrom, $priorTo)) : 0.0;
+        $priorL22  = $prior4452 + $prior4454;       // L18+L19+L20+L21 (others = 0)
+        $priorL28  = $priorCa * 0.1925;             // TVA on L10 (assuming L11/L12 = 0)
+        $priorL32  = $priorL28 - $priorL22;
+        $priorL33  = max(-$priorL32, 0);            // = previous month's credit carry
+
         return [
-            'L10' => $caHt,                      // CA opérations taxables au taux normal
-            'L17' => $tvaCreditCarry,            // Report du crédit antérieur = L33 (mois précédent)
-            'L18' => $tvaDedCapex + $tvaDedOpex, // TVA déductible / achats + services locaux
-            'L67' => abs($sum('4421')),          // IRPP retenu sur traitements et salaires
-            'L42' => abs($sum('4426')),          // Précomptes sur loyers (15 %)
-            'L0'  => abs($sum('4423')),          // TSR pool
-            'L70' => abs($sum('4477')),          // FNE (autres taxes)
+            'L10' => $caHt,            // CA opérations taxables au taux normal
+            'L17' => $priorL33,        // Report du crédit antérieur = L33 (mois précédent)
+            'L18' => $L18,             // TVA déductible sur achats locaux (account 4452000)
+            'L19' => $L19,             // TVA déductible sur services locaux (account 4454000)
+            'L67' => abs($sum('4421')),// IRPP retenu sur traitements et salaires
+            'L42' => abs($sum('4426')),// Précomptes sur loyers (15 %)
+            'L0'  => abs($sum('4423')),// TSR pool
+            'L70' => abs($sum('4477')),// FNE (autres taxes)
         ];
+    }
+
+    /** Resolve an account.account by its exact `code` field. Returns id or null. */
+    private function resolveAccountIdByCode(string $code): ?int
+    {
+        try {
+            $rows = $this->odoo->searchRead('account.account', [['code', '=', $code]], ['id'], [], 1);
+            if (!empty($rows)) return (int) $rows[0]['id'];
+        } catch (\Throwable $e) { /* fall through */ }
+        return null;
     }
 
     /* ─── Section builders ──────────────────────────────────────────── */
 
-    private function line(string $code, string $label, float $base = 0, ?string $rate = null, float $principal = 0, float $cac = 0, float $penalites = 0, ?float $total = null): array
+    private function line(string $code, string $label, float $base = 0, ?string $rate = null, float $principal = 0, float $cac = 0, float $penalites = 0, ?float $total = null, ?string $unit = null): array
     {
         if ($total === null) $total = $principal + $cac + $penalites;
         return [
@@ -154,6 +178,7 @@ final class MonthlyTaxReturnService
             'cac'       => round($cac, 2),
             'penalites' => round($penalites, 2),
             'total'     => round($total, 2),
+            'unit'      => $unit,    // optional display unit (e.g. '%') for the 'amount' layout
         ];
     }
 
@@ -224,26 +249,32 @@ final class MonthlyTaxReturnService
         ];
 
         // §3 TVA déductible
-        // L17 is the credit carry from last month's L33 (auto-resolved
-        // via account 4434). L22 sums L17+L18+L19+L20+L21 and feeds L29.
+        //   L17 = prior month's L33 (computed inline in autoExtract).
+        //   L18 = account 4452000 net movement (achats locaux).
+        //   L19 = account 4454000 net movement (services locaux).
+        //   L22 = L18 + L19 + L20 + L21        (per user spec — L17 NOT in the sum)
+        //   L23 = L16 % × L22
         $L16 = 0;
         $L17 = $L('L17');
         $L18 = $L('L18');
-        $L19 = 0; $L20 = 0; $L21 = 0;
-        $L22 = $L17 + $L18 + $L19 + $L20 + $L21;
+        $L19 = $L('L19');
+        $L20 = 0; $L21 = 0;
+        $L22 = $L18 + $L19 + $L20 + $L21;
         $L23 = $L16 > 0 ? $L22 * ($L16 / 100) : 0;
         $s3 = [
             'id' => 'tva_ded', 'code' => '3', 'title' => 'TVA DÉDUCTIBLE',
-            'subtitle' => 'Achats, services, prorata',
+            'subtitle' => 'Achats, services locaux, prorata',
+            // Single Montant column per user spec — drop Base/Taux/Principal/CAC/Pénalités.
+            'layout' => 'amount',
             'lines' => [
-                $this->line('L16', 'Prorata prévisionnel (assujettis partiels) — cf. DSF n−1',       $L16, '%'),
-                $this->line('L17', 'Report du crédit antérieur (L33 de la déclaration précédente)',  $L17),
-                $this->line('L18', 'TVA déductible sur achats locaux et services locaux',             principal: $L18),
-                $this->line('L19', "TVA déductible sur achats à l'étranger",                          $L19),
-                $this->line('L20', "TVA déductible sur services et autres rémunérations versés à l'étranger", $L20),
-                $this->line('L21', 'Total TVA déductible (intermédiaire)',                            $L21),
-                $this->line('L22', 'Total TVA déductible = L17 + L18 + L19 + L20 + L21',              principal: $L22),
-                $this->line('L23', 'TVA déductible au prorata prévisionnel = L16 × L22',              principal: $L23),
+                $this->line('L16', 'Prorata prévisionnel (assujettis partiels) confère DSF n-1',     principal: $L16, unit: '%'),
+                $this->line('L17', 'Report du crédite antérieur = L33 de la déclaration précédente', principal: $L17),
+                $this->line('L18', 'TVA déductible sur achats locaux',                                 principal: $L18),
+                $this->line('L19', 'TVA déductible sur services locaux',                               principal: $L19),
+                $this->line('L20', "TVA déductible sur achats à l'étranger",                           principal: $L20),
+                $this->line('L21', "TVA déductible sur services et autres rémunérations versés à l'étranger", principal: $L21),
+                $this->line('L22', 'Total TVA déductible : L18+L19+L20+L21',                            principal: $L22),
+                $this->line('L23', 'TVA déductible au prorata previsionnel (assujettis partiels): L16 X L22', principal: $L23),
             ],
             'total' => $L22,
         ];

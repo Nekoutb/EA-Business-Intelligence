@@ -208,7 +208,8 @@
                                 </tbody>
                             </table>
                         @elseif ($sLayout === 'amount')
-                            {{-- Form §5 layout: Code · Libellé · Montant — single amount column --}}
+                            {{-- §3 / §5 layout: Code · Libellé · Montant — single amount column.
+                                 If a line carries a 'unit' (e.g. '%') it is appended to the value. --}}
                             <table class="w-full text-[12.5px]">
                                 <thead>
                                     <tr class="text-left text-[10px] text-slate-500 uppercase tracking-wider bg-slate-50">
@@ -221,13 +222,18 @@
                                     @foreach ($lines as $ln)
                                         @php
                                             $code = (string) ($ln['code'] ?? '');
-                                            $isTotal = in_array($code, ['L32', 'L36', 'L39', 'L44', 'L49', 'L62', 'L66', 'L73', 'L77', 'L80'], true)
+                                            $isTotal = in_array($code, ['L22', 'L32', 'L36', 'L39', 'L44', 'L49', 'L62', 'L66', 'L73', 'L77', 'L80'], true)
                                                        || str_starts_with(strtoupper((string) ($ln['label'] ?? '')), 'TOTAL');
+                                            $unit    = (string) ($ln['unit'] ?? '');
+                                            $value   = (float)  ($ln['principal'] ?? 0);
+                                            $display = $unit === '%'
+                                                ? number_format($value, 2, ',', ' ') . ' %'
+                                                : $fmt($value);
                                         @endphp
                                         <tr class="border-t border-slate-200 {{ $isTotal ? 'bg-slate-100 font-semibold' : 'bg-white' }}">
                                             <td class="px-4 py-2 font-mono text-[11px] {{ $isTotal ? 'text-slate-900' : 'text-slate-500' }}">{{ $code }}</td>
                                             <td class="px-3 py-2 text-slate-700">{{ $ln['label'] }}</td>
-                                            <td class="px-4 py-2 text-right tabular-nums {{ $isTotal ? 'text-slate-900 font-bold' : 'text-slate-800' }}">{{ $fmt($ln['principal']) }}</td>
+                                            <td class="px-4 py-2 text-right tabular-nums {{ $isTotal ? 'text-slate-900 font-bold' : 'text-slate-800' }}">{{ $display }}</td>
                                         </tr>
                                     @endforeach
                                 </tbody>
