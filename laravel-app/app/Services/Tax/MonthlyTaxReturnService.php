@@ -299,23 +299,33 @@ final class MonthlyTaxReturnService
             'total' => $tvaAPayer,
         ];
 
-        // §6 Total TVA à payer — L36 reports L32 from §5; L39 sums L36-L38.
-        //   L36 = L32 (clamped to ≥ 0; in credit cases the form leaves L36 blank)
-        //   L39 = L36 + L37 + L38
-        $L36 = max($L32, 0);
-        $L37 = 0; $L38 = 0;
-        $L39 = $L36 + $L37 + $L38;
-        $cacOnL36 = $L36 * 0.10;
+        // §6 Total TVA à payer
+        // The standard 19,25 % Cameroon TVA decomposes into 17,5 %
+        // (Principal) + 1,75 % (CAC, the 10 % surcharge on the principal).
+        // For §6 we apply that split directly to the L10 turnover, so that:
+        //   L36 Principal = L10 × 17,5 %
+        //   L36 CAC       = L10 × 1,75 %     ( = L36 Principal × 10 %)
+        //   L39 = L36 + L37 + L38   (column-wise: Principal, CAC, Pénalités)
+        // L37 / L38 (retenues à la source) remain at zero unless the
+        // taxpayer fills them in manually.
+        $L36principal = $L10 * 0.175;
+        $L36cac       = $L10 * 0.0175;
+        $L37principal = 0; $L37cac = 0;
+        $L38principal = 0; $L38cac = 0;
+        $L39principal = $L36principal + $L37principal + $L38principal;
+        $L39cac       = $L36cac       + $L37cac       + $L38cac;
         $s6 = [
             'id' => 'tva_total', 'code' => '6', 'title' => 'TOTAL DE TVA À PAYER',
-            'subtitle' => 'Avec CAC et retenues à la source',
+            'subtitle' => 'Principal 17,5 % · CAC 1,75 % · sur le CA L10',
+            // Form §6 columns: Principal · CAC · Pénalités · Total — no Base/Taux.
+            'layout' => 'tax_due',
             'lines' => [
-                $this->line('L36', 'TVA à payer (L32)',                                    principal: $L36, cac: $cacOnL36),
-                $this->line('L37', 'TVA retenue à la source (entreprise habilitée)',        principal: $L37),
-                $this->line('L38', "TVA retenue sur rémunération versée à l'étranger",      principal: $L38),
-                $this->line('L39', 'Montant à payer = L36 + L37 + L38',                     principal: $L39, cac: $cacOnL36),
+                $this->line('L36', 'TVA à payer (= L10 × 17,5 %)',                          principal: $L36principal, cac: $L36cac),
+                $this->line('L37', 'TVA retenue à la source (entreprise habilitée)',         principal: $L37principal, cac: $L37cac),
+                $this->line('L38', "TVA retenue sur rémunération versée à l'étranger",       principal: $L38principal, cac: $L38cac),
+                $this->line('L39', 'Montant à payer = L36 + L37 + L38',                      principal: $L39principal, cac: $L39cac),
             ],
-            'total' => $L39 + $cacOnL36,
+            'total' => $L39principal + $L39cac,
         ];
 
         // §7 IR — Acomptes / précomptes à reverser
