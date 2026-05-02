@@ -208,7 +208,10 @@ final class MonthlyTaxReturnService
         $tvaSurL12 = 0;     // Specific rates / bases — manual entry would override
         $s2 = [
             'id' => 'tva_ca', 'code' => '2', 'title' => "TAXE SUR LA VALEUR AJOUTÉE (TVA) — Chiffre d'affaires réalisé",
-            'subtitle' => 'CA et taxe collectée',
+            'subtitle' => 'CA · Taux · Montant de la taxe',
+            // Form §2 only has CA · Taux · Montant de la taxe columns — no
+            // Principal/CAC/Pénalités split. The view renders accordingly.
+            'layout' => 'ca',
             'lines' => [
                 $this->line('L10', 'Opérations taxables au taux normal',                  $L10, '19,25 %', principal: $tvaSurL10),
                 $this->line('L11', "Montant du droit d'accises (L8 ou L9)",                $L11, '19,25 %', principal: $tvaSurL11),
@@ -279,6 +282,10 @@ final class MonthlyTaxReturnService
         $s5 = [
             'id' => 'tva_pay', 'code' => '5', 'title' => 'TVA À PAYER OU CRÉDIT DE TVA',
             'subtitle' => 'Liquidation de la TVA du mois',
+            // Form §5 has a single amount column per line — every line is a
+            // derived value (L28 = TVA on L10+L11+L12, L32 = L28−L29−…).
+            // No base/rate/CAC/pénalités splits.
+            'layout' => 'amount',
             'lines' => [
                 $this->line('L28', 'TVA collectée (L10 + L11 + L12)',           principal: $L28),
                 $this->line('L29', 'TVA déductible : (L22) ou (L23)',           principal: $L29),

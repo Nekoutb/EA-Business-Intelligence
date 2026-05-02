@@ -237,44 +237,99 @@
             </div>
         </div>
 
-        {{-- ─────── 14 sections ─────── --}}
+        {{-- ─────── 14 sections — column layout matches the form per-section ─────── --}}
         @foreach ($sections as $sec)
             @php
-                $sCode  = (string) ($sec['code']  ?? '');
-                $sTitle = (string) ($sec['title'] ?? '');
-                $lines  = $sec['lines'] ?? [];
+                $sCode   = (string) ($sec['code']  ?? '');
+                $sTitle  = (string) ($sec['title'] ?? '');
+                $sLayout = (string) ($sec['layout'] ?? 'full');
+                $lines   = $sec['lines'] ?? [];
             @endphp
             <div class="section">
                 <div class="head">§{{ $sCode }} — {{ $sTitle }}</div>
-                <table>
-                    <thead>
-                        <tr>
-                            <th style="width:36px;">Code</th>
-                            <th>Libellé</th>
-                            <th style="width:70px;">Base</th>
-                            <th style="width:48px;">Taux</th>
-                            <th style="width:74px;">Principal</th>
-                            <th style="width:54px;">CAC</th>
-                            <th style="width:60px;">Pénalités</th>
-                            <th style="width:74px;">Total</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        @foreach ($lines as $ln)
-                            @php $isTotal = str_starts_with(strtoupper((string) ($ln['label'] ?? '')), 'TOTAL'); @endphp
-                            <tr class="{{ $isTotal ? 'total' : '' }}">
-                                <td class="code">{{ $ln['code'] }}</td>
-                                <td>{{ $ln['label'] }}</td>
-                                <td class="amount">{{ $ln['base'] > 0 ? $fmt($ln['base']) : '' }}</td>
-                                <td class="center">{{ $ln['rate'] ?: '' }}</td>
-                                <td class="amount">{{ $ln['principal'] != 0 ? $fmt($ln['principal']) : '' }}</td>
-                                <td class="amount">{{ $ln['cac'] > 0 ? $fmt($ln['cac']) : '' }}</td>
-                                <td class="amount">{{ $ln['penalites'] > 0 ? $fmt($ln['penalites']) : '' }}</td>
-                                <td class="amount">{{ $ln['total'] != 0 ? $fmt($ln['total']) : '' }}</td>
+
+                @if ($sLayout === 'ca')
+                    {{-- Form §2: Code · Libellé · CA · Taux · Montant de la taxe --}}
+                    <table>
+                        <thead>
+                            <tr>
+                                <th style="width:36px;">Code</th>
+                                <th>Libellé</th>
+                                <th style="width:90px;">CA</th>
+                                <th style="width:54px;">Taux</th>
+                                <th style="width:110px;">Montant de la taxe</th>
                             </tr>
-                        @endforeach
-                    </tbody>
-                </table>
+                        </thead>
+                        <tbody>
+                            @foreach ($lines as $ln)
+                                @php $isTotal = str_starts_with(strtoupper((string) ($ln['label'] ?? '')), 'TOTAL') || (string) ($ln['code'] ?? '') === 'L15'; @endphp
+                                <tr class="{{ $isTotal ? 'total' : '' }}">
+                                    <td class="code">{{ $ln['code'] }}</td>
+                                    <td>{{ $ln['label'] }}</td>
+                                    <td class="amount">{{ $ln['base'] > 0 ? $fmt($ln['base']) : '' }}</td>
+                                    <td class="center">{{ $ln['rate'] ?: '' }}</td>
+                                    <td class="amount">{{ $ln['total'] > 0 ? $fmt($ln['total']) : '' }}</td>
+                                </tr>
+                            @endforeach
+                        </tbody>
+                    </table>
+                @elseif ($sLayout === 'amount')
+                    {{-- Form §5: Code · Libellé · Montant — single amount column --}}
+                    <table>
+                        <thead>
+                            <tr>
+                                <th style="width:36px;">Code</th>
+                                <th>Libellé</th>
+                                <th style="width:130px;">Montant</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach ($lines as $ln)
+                                @php
+                                    $code = (string) ($ln['code'] ?? '');
+                                    $isTotal = in_array($code, ['L32', 'L36', 'L39', 'L44', 'L49', 'L62', 'L66', 'L73', 'L77', 'L80'], true)
+                                               || str_starts_with(strtoupper((string) ($ln['label'] ?? '')), 'TOTAL');
+                                @endphp
+                                <tr class="{{ $isTotal ? 'total' : '' }}">
+                                    <td class="code">{{ $code }}</td>
+                                    <td>{{ $ln['label'] }}</td>
+                                    <td class="amount">{{ $ln['principal'] != 0 ? $fmt($ln['principal']) : '' }}</td>
+                                </tr>
+                            @endforeach
+                        </tbody>
+                    </table>
+                @else
+                    {{-- Default: Code · Libellé · Base · Taux · Principal · CAC · Pénalités · Total --}}
+                    <table>
+                        <thead>
+                            <tr>
+                                <th style="width:36px;">Code</th>
+                                <th>Libellé</th>
+                                <th style="width:70px;">Base</th>
+                                <th style="width:48px;">Taux</th>
+                                <th style="width:74px;">Principal</th>
+                                <th style="width:54px;">CAC</th>
+                                <th style="width:60px;">Pénalités</th>
+                                <th style="width:74px;">Total</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach ($lines as $ln)
+                                @php $isTotal = str_starts_with(strtoupper((string) ($ln['label'] ?? '')), 'TOTAL'); @endphp
+                                <tr class="{{ $isTotal ? 'total' : '' }}">
+                                    <td class="code">{{ $ln['code'] }}</td>
+                                    <td>{{ $ln['label'] }}</td>
+                                    <td class="amount">{{ $ln['base'] > 0 ? $fmt($ln['base']) : '' }}</td>
+                                    <td class="center">{{ $ln['rate'] ?: '' }}</td>
+                                    <td class="amount">{{ $ln['principal'] != 0 ? $fmt($ln['principal']) : '' }}</td>
+                                    <td class="amount">{{ $ln['cac'] > 0 ? $fmt($ln['cac']) : '' }}</td>
+                                    <td class="amount">{{ $ln['penalites'] > 0 ? $fmt($ln['penalites']) : '' }}</td>
+                                    <td class="amount">{{ $ln['total'] != 0 ? $fmt($ln['total']) : '' }}</td>
+                                </tr>
+                            @endforeach
+                        </tbody>
+                    </table>
+                @endif
             </div>
         @endforeach
 

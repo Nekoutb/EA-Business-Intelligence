@@ -132,6 +132,7 @@
                     $sTitle = (string) ($sec['title'] ?? '');
                     $sSub   = (string) ($sec['subtitle'] ?? '');
                     $sTotal = (float)  ($sec['total'] ?? 0);
+                    $sLayout = (string) ($sec['layout'] ?? 'full');
                     $lines  = $sec['lines'] ?? [];
                 @endphp
                 <details class="group bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
@@ -151,37 +152,88 @@
                     </summary>
 
                     <div class="border-t border-slate-200 bg-slate-50/40 overflow-x-auto">
-                        <table class="w-full text-[12.5px]">
-                            <thead>
-                                <tr class="text-left text-[10px] text-slate-500 uppercase tracking-wider bg-slate-50">
-                                    <th class="px-4 py-2.5 font-semibold w-16">Code</th>
-                                    <th class="px-3 py-2.5 font-semibold">Libellé</th>
-                                    <th class="px-3 py-2.5 font-semibold w-28 text-right">Base</th>
-                                    <th class="px-3 py-2.5 font-semibold w-20 text-center">Taux</th>
-                                    <th class="px-3 py-2.5 font-semibold w-28 text-right">Principal</th>
-                                    <th class="px-3 py-2.5 font-semibold w-20 text-right">CAC</th>
-                                    <th class="px-3 py-2.5 font-semibold w-20 text-right">Pénalités</th>
-                                    <th class="px-4 py-2.5 font-semibold w-28 text-right">Total ({{ $cur }})</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                @foreach ($lines as $ln)
-                                    @php
-                                        $isTotal = str_starts_with(strtoupper((string) ($ln['label'] ?? '')), 'TOTAL');
-                                    @endphp
-                                    <tr class="border-t border-slate-200 {{ $isTotal ? 'bg-slate-100 font-semibold' : 'bg-white' }}">
-                                        <td class="px-4 py-2 font-mono text-[11px] {{ $isTotal ? 'text-slate-900' : 'text-slate-500' }}">{{ $ln['code'] }}</td>
-                                        <td class="px-3 py-2 text-slate-700">{{ $ln['label'] }}</td>
-                                        <td class="px-3 py-2 text-right tabular-nums text-slate-600">{{ $ln['base'] > 0 ? $fmt($ln['base']) : '—' }}</td>
-                                        <td class="px-3 py-2 text-center text-[11px] text-slate-600 tabular-nums">{{ $ln['rate'] ?: '—' }}</td>
-                                        <td class="px-3 py-2 text-right tabular-nums {{ $isTotal ? 'text-slate-900' : 'text-slate-700' }}">{{ $fmt($ln['principal']) }}</td>
-                                        <td class="px-3 py-2 text-right tabular-nums text-slate-600">{{ $ln['cac'] > 0 ? $fmt($ln['cac']) : '—' }}</td>
-                                        <td class="px-3 py-2 text-right tabular-nums text-slate-600">{{ $ln['penalites'] > 0 ? $fmt($ln['penalites']) : '—' }}</td>
-                                        <td class="px-4 py-2 text-right tabular-nums {{ $isTotal ? 'text-slate-900 font-bold' : 'text-slate-800' }}">{{ $fmt($ln['total']) }}</td>
+                        @if ($sLayout === 'ca')
+                            {{-- Form §2 layout: Code · Libellé · CA · Taux · Montant de la taxe --}}
+                            <table class="w-full text-[12.5px]">
+                                <thead>
+                                    <tr class="text-left text-[10px] text-slate-500 uppercase tracking-wider bg-slate-50">
+                                        <th class="px-4 py-2.5 font-semibold w-16">Code</th>
+                                        <th class="px-3 py-2.5 font-semibold">Libellé</th>
+                                        <th class="px-3 py-2.5 font-semibold w-32 text-right">CA</th>
+                                        <th class="px-3 py-2.5 font-semibold w-20 text-center">Taux</th>
+                                        <th class="px-4 py-2.5 font-semibold w-36 text-right">Montant de la taxe ({{ $cur }})</th>
                                     </tr>
-                                @endforeach
-                            </tbody>
-                        </table>
+                                </thead>
+                                <tbody>
+                                    @foreach ($lines as $ln)
+                                        @php $isTotal = str_starts_with(strtoupper((string) ($ln['label'] ?? '')), 'TOTAL') || str_contains((string) ($ln['code'] ?? ''), '15'); @endphp
+                                        <tr class="border-t border-slate-200 {{ $isTotal ? 'bg-slate-100 font-semibold' : 'bg-white' }}">
+                                            <td class="px-4 py-2 font-mono text-[11px] {{ $isTotal ? 'text-slate-900' : 'text-slate-500' }}">{{ $ln['code'] }}</td>
+                                            <td class="px-3 py-2 text-slate-700">{{ $ln['label'] }}</td>
+                                            <td class="px-3 py-2 text-right tabular-nums {{ $isTotal ? 'text-slate-900' : 'text-slate-700' }}">{{ $ln['base'] > 0 ? $fmt($ln['base']) : '—' }}</td>
+                                            <td class="px-3 py-2 text-center text-[11px] text-slate-600 tabular-nums">{{ $ln['rate'] ?: '—' }}</td>
+                                            <td class="px-4 py-2 text-right tabular-nums {{ $isTotal ? 'text-slate-900 font-bold' : 'text-slate-800' }}">{{ $ln['total'] > 0 ? $fmt($ln['total']) : '—' }}</td>
+                                        </tr>
+                                    @endforeach
+                                </tbody>
+                            </table>
+                        @elseif ($sLayout === 'amount')
+                            {{-- Form §5 layout: Code · Libellé · Montant — single amount column --}}
+                            <table class="w-full text-[12.5px]">
+                                <thead>
+                                    <tr class="text-left text-[10px] text-slate-500 uppercase tracking-wider bg-slate-50">
+                                        <th class="px-4 py-2.5 font-semibold w-16">Code</th>
+                                        <th class="px-3 py-2.5 font-semibold">Libellé</th>
+                                        <th class="px-4 py-2.5 font-semibold w-44 text-right">Montant ({{ $cur }})</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach ($lines as $ln)
+                                        @php
+                                            $code = (string) ($ln['code'] ?? '');
+                                            $isTotal = in_array($code, ['L32', 'L36', 'L39', 'L44', 'L49', 'L62', 'L66', 'L73', 'L77', 'L80'], true)
+                                                       || str_starts_with(strtoupper((string) ($ln['label'] ?? '')), 'TOTAL');
+                                        @endphp
+                                        <tr class="border-t border-slate-200 {{ $isTotal ? 'bg-slate-100 font-semibold' : 'bg-white' }}">
+                                            <td class="px-4 py-2 font-mono text-[11px] {{ $isTotal ? 'text-slate-900' : 'text-slate-500' }}">{{ $code }}</td>
+                                            <td class="px-3 py-2 text-slate-700">{{ $ln['label'] }}</td>
+                                            <td class="px-4 py-2 text-right tabular-nums {{ $isTotal ? 'text-slate-900 font-bold' : 'text-slate-800' }}">{{ $fmt($ln['principal']) }}</td>
+                                        </tr>
+                                    @endforeach
+                                </tbody>
+                            </table>
+                        @else
+                            {{-- Default 8-column layout: Code · Libellé · Base · Taux · Principal · CAC · Pénalités · Total --}}
+                            <table class="w-full text-[12.5px]">
+                                <thead>
+                                    <tr class="text-left text-[10px] text-slate-500 uppercase tracking-wider bg-slate-50">
+                                        <th class="px-4 py-2.5 font-semibold w-16">Code</th>
+                                        <th class="px-3 py-2.5 font-semibold">Libellé</th>
+                                        <th class="px-3 py-2.5 font-semibold w-28 text-right">Base</th>
+                                        <th class="px-3 py-2.5 font-semibold w-20 text-center">Taux</th>
+                                        <th class="px-3 py-2.5 font-semibold w-28 text-right">Principal</th>
+                                        <th class="px-3 py-2.5 font-semibold w-20 text-right">CAC</th>
+                                        <th class="px-3 py-2.5 font-semibold w-20 text-right">Pénalités</th>
+                                        <th class="px-4 py-2.5 font-semibold w-28 text-right">Total ({{ $cur }})</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach ($lines as $ln)
+                                        @php $isTotal = str_starts_with(strtoupper((string) ($ln['label'] ?? '')), 'TOTAL'); @endphp
+                                        <tr class="border-t border-slate-200 {{ $isTotal ? 'bg-slate-100 font-semibold' : 'bg-white' }}">
+                                            <td class="px-4 py-2 font-mono text-[11px] {{ $isTotal ? 'text-slate-900' : 'text-slate-500' }}">{{ $ln['code'] }}</td>
+                                            <td class="px-3 py-2 text-slate-700">{{ $ln['label'] }}</td>
+                                            <td class="px-3 py-2 text-right tabular-nums text-slate-600">{{ $ln['base'] > 0 ? $fmt($ln['base']) : '—' }}</td>
+                                            <td class="px-3 py-2 text-center text-[11px] text-slate-600 tabular-nums">{{ $ln['rate'] ?: '—' }}</td>
+                                            <td class="px-3 py-2 text-right tabular-nums {{ $isTotal ? 'text-slate-900' : 'text-slate-700' }}">{{ $fmt($ln['principal']) }}</td>
+                                            <td class="px-3 py-2 text-right tabular-nums text-slate-600">{{ $ln['cac'] > 0 ? $fmt($ln['cac']) : '—' }}</td>
+                                            <td class="px-3 py-2 text-right tabular-nums text-slate-600">{{ $ln['penalites'] > 0 ? $fmt($ln['penalites']) : '—' }}</td>
+                                            <td class="px-4 py-2 text-right tabular-nums {{ $isTotal ? 'text-slate-900 font-bold' : 'text-slate-800' }}">{{ $fmt($ln['total']) }}</td>
+                                        </tr>
+                                    @endforeach
+                                </tbody>
+                            </table>
+                        @endif
                     </div>
                 </details>
             @endforeach
