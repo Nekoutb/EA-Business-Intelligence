@@ -352,18 +352,31 @@ final class MonthlyTaxReturnService
 
     /**
      * Resolve all category-relevant account ids in one Odoo call.
-     * Returns a map: prefix => [account_id, ...].
+     * Returns a map: prefix-as-string => [account_id, ...].
+     *
+     * Important: prefixes are kept as a flat *list of strings* throughout.
+     * If they were used as array *keys*, PHP would coerce purely-numeric
+     * strings ('4421', '4423', …) into ints, and a subsequent
+     * `str_starts_with($code, $intPrefix)` would throw a TypeError because
+     * needle must be a string. We therefore never store prefixes as keys
+     * before iterating; only after all string-typed work is done do we
+     * use them as keys (PHP's int-coercion of the lookup is symmetric, so
+     * `$byPrefix['4431']` correctly reaches the same bucket).
      */
     private function resolveAccountIdsByPrefix(): array
     {
-        // Collect all distinct prefixes (excluding the 'sales' synthetic key
-        // which uses class 70 lookup instead).
+        // Collect all distinct prefixes as a flat string list (excluding the
+        // 'sales' synthetic key which uses class 70 lookup instead).
         $prefixes = [];
         foreach (self::ACCOUNT_MAP as $key => $list) {
             if ($key === 'sales') continue;
-            foreach ($list as $p) $prefixes[$p] = true;
+            foreach ($list as $p) {
+                $p = (string) $p;
+                if (!in_array($p, $prefixes, true)) {
+                    $prefixes[] = $p;
+                }
+            }
         }
-        $prefixes = array_keys($prefixes);
         if ($prefixes === []) return [];
 
         // Build OR domain across all prefixes.
@@ -373,7 +386,12 @@ final class MonthlyTaxReturnService
 
         $rows = $this->odoo->searchRead('account.account', $domain, ['id', 'code'], []);
 
-        $byPrefix = array_fill_keys($prefixes, []);
+        // Initialise empty buckets — keys here will be int-coerced by PHP for
+        // purely-numeric strings, but reads on the same string keys later
+        // coerce identically, so lookups still hit the right bucket.
+        $byPrefix = [];
+        foreach ($prefixes as $p) $byPrefix[$p] = [];
+
         foreach ($rows as $r) {
             $code = (string) ($r['code'] ?? '');
             if ($code === '') continue;
@@ -381,6 +399,7 @@ final class MonthlyTaxReturnService
             // also get attributed to a hypothetical '44' prefix).
             $matched = null;
             foreach ($prefixes as $p) {
+                // $p is guaranteed to be a string by the construction above.
                 if (str_starts_with($code, $p)) {
                     if ($matched === null || strlen($p) > strlen($matched)) $matched = $p;
                 }
