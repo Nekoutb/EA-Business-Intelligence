@@ -107,7 +107,7 @@
             $year = $appYear ?: (int) date('Y');
             $rows = [
                 [
-                    'title'    => 'Monthly VAT Return',
+                    'title'    => 'Monthly Tax Return',
                     'subtitle' => '15th of M+1 (DGI portal)',
                     'due'      => [
                         1  => "Declaration & payment of Dec ".($year-1)." VAT collected (Régime du Réel)",

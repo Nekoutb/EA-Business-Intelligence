@@ -4,10 +4,10 @@ namespace App\Http\Controllers\Tax;
 
 use App\Http\Controllers\Controller;
 use App\Odoo\OdooFactory;
-use App\Services\Tax\MonthlyVatReturnService;
+use App\Services\Tax\MonthlyTaxReturnService;
 use Illuminate\Http\Request;
 
-class MonthlyVatReturnController extends Controller
+class MonthlyTaxReturnController extends Controller
 {
     public function index(Request $request)
     {
@@ -19,21 +19,21 @@ class MonthlyVatReturnController extends Controller
             $month = '';
         }
 
-        $cacheKey = 'monthly_vat_return_' . ($month ?: 'current');
+        $cacheKey = 'monthly_tax_return_' . ($month ?: 'current');
 
         try {
             $analysis = ea_cached($cacheKey, function () use ($month) {
-                return (new MonthlyVatReturnService(OdooFactory::fromConfig()))->analyze($month ?: null);
+                return (new MonthlyTaxReturnService(OdooFactory::fromConfig()))->analyze($month ?: null);
             });
         } catch (\Throwable $e) {
             $error = $e->getMessage();
         }
 
-        return view('tax.monthly-vat-return', [
+        return view('tax.monthly-tax-return', [
             'analysis' => $analysis,
             'error'    => $error,
             'month'    => $month,
-            'active'   => 'monthly_vat_return',
+            'active'   => 'monthly_tax_return',
         ]);
     }
 }
