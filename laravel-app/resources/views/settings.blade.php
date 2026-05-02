@@ -94,6 +94,14 @@
                         </div>
                     </div>
                     <div>
+                        <label class="block text-xs font-medium text-slate-600 mb-1">Monthly Scanned Revenue Target <span class="text-slate-400 font-normal">(F1)</span></label>
+                        <div class="relative">
+                            <span class="absolute left-3 top-2.5 text-xs text-slate-400">XAF</span>
+                            <input name="BUDGET_MONTHLY_SCANNED_REVENUE" value="{{ $values['BUDGET_MONTHLY_SCANNED_REVENUE'] ?? '' }}"
+                                   class="w-full border border-slate-300 rounded-lg pl-12 pr-3 py-2 text-sm" placeholder="6 500 000">
+                        </div>
+                    </div>
+                    <div>
                         <label class="block text-xs font-medium text-slate-600 mb-1">Monthly Outfits</label>
                         <input name="BUDGET_MONTHLY_OUTFITS" value="{{ $values['BUDGET_MONTHLY_OUTFITS'] ?? '' }}"
                                class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" placeholder="125">

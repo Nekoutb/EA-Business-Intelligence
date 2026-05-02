@@ -37,6 +37,8 @@ class SettingsController extends Controller
         'BUDGET_MONTHLY_DIRECT_COSTS', 'BUDGET_MONTHLY_INDIRECT_COSTS',
         'BUDGET_MONTHLY_DA', 'BUDGET_MONTHLY_INCOME_TAX',
         'BUDGET_MONTHLY_COST_OF_SALES',
+        // Scanning operations budget — feeds dashboard F1 (Scanned Revenue vs Budget)
+        'BUDGET_MONTHLY_SCANNED_REVENUE',
         // Tax declarant info (DGI I/TVA-IR header) — added 2026-05-02
         'TAX_DGE_CRI', 'TAX_CDI_CSI_CIME',
         'TAX_REGIME', 'TAX_NIU',
