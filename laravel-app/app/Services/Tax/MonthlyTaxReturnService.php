@@ -106,30 +106,37 @@ final class MonthlyTaxReturnService
         return $defaults;
     }
 
-    /* ─── Auto-extraction from Odoo (where SYSCOHADA mapping is unambiguous) ─── */
+    /* ─── Auto-extraction from Odoo ───────────────────────────────────
+       Only BASE values are auto-extracted from posted GL movements.
+       Every "computed" line (L3, L5, L8, L9, L15, L22, L28, L29, L30,
+       L31, L32, L33, L36, L39, L44, L49, L52, L54, L55, L62, L66, L73,
+       L77, L80) is derived from these bases via the form's own formulas
+       — see buildSections() for the explicit cross-references.
+       ──────────────────────────────────────────────────────────────── */
 
     private function autoExtract(array $idsByPrefix, \DateTimeImmutable $from, \DateTimeImmutable $to): array
     {
         $sum = fn (string $prefix) => $this->sumBalanceWindow($idsByPrefix[$prefix] ?? [], $from, $to);
 
-        $tvaCollectee   = abs($sum('4431'));
-        $tvaDedCapex    = abs($sum('4452'));
-        $tvaDedOpex     = abs($sum('4456'));
-        $tvaCreditCarry = abs($sum('4434'));
+        $tvaDedCapex    = abs($sum('4452'));   // input VAT — capex
+        $tvaDedOpex     = abs($sum('4456'));   // input VAT — opex
+        $tvaCreditCarry = abs($sum('4434'));   // last month's L33 carried on account 4434
 
         $salesIds = $this->classSalesAccountIds();
         $caHt     = abs($this->sumBalanceWindow($salesIds, $from, $to));
 
+        // Note: L28 is NOT auto-extracted — it is computed in §5 as
+        // (TVA on L10) + (TVA on L11) + (TVA on L12), per the form.
+        // L33 is also NOT auto-extracted — it is computed as max(-L32, 0).
+        // The carry from last month's L33 surfaces here as L17.
         return [
-            'L10' => $caHt,
-            'L18' => $tvaDedCapex + $tvaDedOpex,
-            'L28' => $tvaCollectee,
-            'L29' => $tvaDedCapex + $tvaDedOpex,
-            'L33' => $tvaCreditCarry,
-            'L67' => abs($sum('4421')),
-            'L42' => abs($sum('4426')),
-            'L0'  => abs($sum('4423')),
-            'L70' => abs($sum('4477')),
+            'L10' => $caHt,                      // CA opérations taxables au taux normal
+            'L17' => $tvaCreditCarry,            // Report du crédit antérieur = L33 (mois précédent)
+            'L18' => $tvaDedCapex + $tvaDedOpex, // TVA déductible / achats + services locaux
+            'L67' => abs($sum('4421')),          // IRPP retenu sur traitements et salaires
+            'L42' => abs($sum('4426')),          // Précomptes sur loyers (15 %)
+            'L0'  => abs($sum('4423')),          // TSR pool
+            'L70' => abs($sum('4477')),          // FNE (autres taxes)
         ];
     }
 
@@ -189,12 +196,16 @@ final class MonthlyTaxReturnService
         ];
 
         // §2 TVA — CA réalisé
+        // L11 reports the DA total computed in §1 (L8 in the standard case).
+        // L10/L11/L12 carry both a CA (base) and a TVA amount — the TVA
+        // amounts feed forward into §5 L28.
         $L10 = $L('L10');
         $L11 = $L8 ?: $L9;
         $L12 = 0; $L13 = 0; $L14 = 0;
         $L15 = $L10 + $L11 + $L12 + $L13;
         $tvaSurL10 = $L10 * 0.1925;
         $tvaSurL11 = $L11 * 0.1925;
+        $tvaSurL12 = 0;     // Specific rates / bases — manual entry would override
         $s2 = [
             'id' => 'tva_ca', 'code' => '2', 'title' => "TAXE SUR LA VALEUR AJOUTÉE (TVA) — Chiffre d'affaires réalisé",
             'subtitle' => 'CA et taxe collectée',
@@ -210,7 +221,12 @@ final class MonthlyTaxReturnService
         ];
 
         // §3 TVA déductible
-        $L16 = 0; $L17 = 0; $L18 = $L('L18'); $L19 = 0; $L20 = 0; $L21 = 0;
+        // L17 is the credit carry from last month's L33 (auto-resolved
+        // via account 4434). L22 sums L17+L18+L19+L20+L21 and feeds L29.
+        $L16 = 0;
+        $L17 = $L('L17');
+        $L18 = $L('L18');
+        $L19 = 0; $L20 = 0; $L21 = 0;
         $L22 = $L17 + $L18 + $L19 + $L20 + $L21;
         $L23 = $L16 > 0 ? $L22 * ($L16 / 100) : 0;
         $s3 = [
@@ -243,13 +259,21 @@ final class MonthlyTaxReturnService
             'total' => $L26 + $L27 - $L24 - $L25,
         ];
 
-        // §5 TVA à payer ou crédit
-        $L28 = $L('L28');
+        // §5 TVA à payer ou crédit — every line here is a cross-reference
+        // pulling from earlier sections per the form's own formulas:
+        //   L28 = (TVA on L10) + (TVA on L11) + (TVA on L12)        [§2]
+        //   L29 = (L22) ou (L23)                                     [§3]
+        //   L30 = (L24 + L25)                                        [§4]
+        //   L31 = (L26 + L27)                                        [§4]
+        //   L32 = L28 − L29 − L30 + L31
+        //   L33 = max(−L32, 0)                                       (credit if L32 < 0)
+        //   L35 = L33 − L34
+        $L28 = $tvaSurL10 + $tvaSurL11 + $tvaSurL12;
         $L29 = max($L22, $L23);
         $L30 = $L24 + $L25;
         $L31 = $L26 + $L27;
         $L32 = $L28 - $L29 - $L30 + $L31;
-        $L33 = $L('L33') ?: max(-$L32, 0);
+        $L33 = max(-$L32, 0);
         $L34 = 0; $L35 = $L33 - $L34;
         $tvaAPayer = max($L32, 0);
         $s5 = [
@@ -268,8 +292,11 @@ final class MonthlyTaxReturnService
             'total' => $tvaAPayer,
         ];
 
-        // §6 Total TVA à payer
-        $L36 = $tvaAPayer; $L37 = 0; $L38 = 0;
+        // §6 Total TVA à payer — L36 reports L32 from §5; L39 sums L36-L38.
+        //   L36 = L32 (clamped to ≥ 0; in credit cases the form leaves L36 blank)
+        //   L39 = L36 + L37 + L38
+        $L36 = max($L32, 0);
+        $L37 = 0; $L38 = 0;
         $L39 = $L36 + $L37 + $L38;
         $cacOnL36 = $L36 * 0.10;
         $s6 = [
