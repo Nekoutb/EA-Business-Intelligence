@@ -273,6 +273,36 @@
                             @endforeach
                         </tbody>
                     </table>
+                @elseif ($sLayout === 'tax_due')
+                    {{-- Form §6: Code · Libellé · Principal · CAC · Pénalités · Total — no Base/Taux --}}
+                    <table>
+                        <thead>
+                            <tr>
+                                <th style="width:36px;">Code</th>
+                                <th>Libellé</th>
+                                <th style="width:90px;">Principal</th>
+                                <th style="width:70px;">CAC</th>
+                                <th style="width:78px;">Pénalités</th>
+                                <th style="width:90px;">Total</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach ($lines as $ln)
+                                @php
+                                    $code = (string) ($ln['code'] ?? '');
+                                    $isTotal = $code === 'L39' || str_starts_with(strtoupper((string) ($ln['label'] ?? '')), 'TOTAL') || str_starts_with(strtoupper((string) ($ln['label'] ?? '')), 'MONTANT');
+                                @endphp
+                                <tr class="{{ $isTotal ? 'total' : '' }}">
+                                    <td class="code">{{ $code }}</td>
+                                    <td>{{ $ln['label'] }}</td>
+                                    <td class="amount">{{ $ln['principal'] != 0 ? $fmt($ln['principal']) : '' }}</td>
+                                    <td class="amount">{{ $ln['cac'] != 0 ? $fmt($ln['cac']) : '' }}</td>
+                                    <td class="amount">{{ $ln['penalites'] != 0 ? $fmt($ln['penalites']) : '' }}</td>
+                                    <td class="amount">{{ $ln['total'] != 0 ? $fmt($ln['total']) : '' }}</td>
+                                </tr>
+                            @endforeach
+                        </tbody>
+                    </table>
                 @elseif ($sLayout === 'amount')
                     {{-- Form §5: Code · Libellé · Montant — single amount column --}}
                     <table>
