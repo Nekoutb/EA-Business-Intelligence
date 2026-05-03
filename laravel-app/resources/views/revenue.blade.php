@@ -81,15 +81,26 @@
   .rv-chip--neg { color: var(--neg); background: #fef2f2; border: 1px solid #fecaca; }
   .rv-chip--warn { color: var(--warn); background: var(--warn-bg); border: 1px solid var(--warn-bd); }
 
-  /* Cost-ratio bars */
+  /* Cost-ratio bars — each row carries its own permanent hue
+     (cost = warm amber, outfit-discount = teal, customer-discount =
+     slate). Whether the bar is over/under target is signalled by
+     the marker line position AND by the value text colour on the
+     right (red when over, green when within), not by repainting
+     the bar — that kept all three uniform when all happened to be
+     above target. */
   .rv-cost { padding: 6px 0; }
   .rv-cost__row { display: flex; align-items: center; gap: 10px; padding: 4px 0; }
   .rv-cost__l { width: 110px; flex-shrink: 0; font: 700 10px var(--font); color: var(--text-subtle); letter-spacing: .04em; text-transform: uppercase; }
   .rv-cost__t { flex: 1; height: 18px; background: var(--border-faint); border-radius: var(--r-sm); position: relative; overflow: hidden; }
-  .rv-cost__f { height: 100%; background: var(--ea-primary); display: flex; align-items: center; padding-left: 8px; color: #fff; font: 700 10px var(--font); }
-  .rv-cost__f.warn { background: var(--warn); }
-  .rv-cost__m { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--text); }
-  .rv-cost__v { width: 100px; flex-shrink: 0; font: 700 11px var(--font); color: var(--text); text-align: right; }
+  .rv-cost__f { height: 100%; display: flex; align-items: center; padding-left: 8px; color: #fff; font: 700 10px var(--font); }
+  .rv-cost__f.cpo  { background: linear-gradient(90deg, #d18840 0%, #b97034 100%); }   /* warm amber — cost */
+  .rv-cost__f.dpot { background: linear-gradient(90deg, #0d6e6e 0%, #0a5757 100%); }   /* teal — outfit discount */
+  .rv-cost__f.dpc  { background: linear-gradient(90deg, #4f6d7a 0%, #3a533c 100%); }   /* slate / sage — customer discount */
+  .rv-cost__f.is-over { box-shadow: inset 0 0 0 2px rgba(185, 28, 28, .18); }
+  .rv-cost__m { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--text); z-index: 2; }
+  .rv-cost__v { width: 110px; flex-shrink: 0; font: 700 11px var(--font); color: var(--text); text-align: right; }
+  .rv-cost__v.is-over  { color: var(--neg); }
+  .rv-cost__v.is-under { color: var(--pos); }
   .rv-cost__v small { color: var(--text-faint); font-weight: 500; font-size: 9px; margin-left: 2px; }
 
   .rv-empty { padding: 24px; text-align: center; color: var(--text-faint); font: 500 11px var(--font); }
@@ -360,26 +371,26 @@
             <div class="rv-cost__row">
                 <div class="rv-cost__l">CpO / RpO</div>
                 <div class="rv-cost__t">
-                    <div class="rv-cost__f {{ $cpoR > 35 ? 'warn' : '' }}" style="width: {{ min(100, $cpoR / 60 * 100) }}%;">{{ number_format($cpoR, 0) }}%</div>
+                    <div class="rv-cost__f cpo {{ $cpoR > 35 ? 'is-over' : '' }}" style="width: {{ min(100, $cpoR / 60 * 100) }}%;">{{ number_format($cpoR, 0) }}%</div>
                     <div class="rv-cost__m" style="left: {{ min(100, 35 / 60 * 100) }}%;" title="Target ≤ 35%"></div>
                 </div>
-                <div class="rv-cost__v">{{ number_format($cpoR, 1) }}%<small>· 35% tgt</small></div>
+                <div class="rv-cost__v {{ $cpoR > 35 ? 'is-over' : ($cpoR > 0 ? 'is-under' : '') }}">{{ number_format($cpoR, 1) }}%<small>· 35% tgt</small></div>
             </div>
             <div class="rv-cost__row">
                 <div class="rv-cost__l">DpOT / RpO</div>
                 <div class="rv-cost__t">
-                    <div class="rv-cost__f {{ $dpotR > 15 ? 'warn' : '' }}" style="width: {{ min(100, $dpotR / 60 * 100) }}%;">{{ number_format($dpotR, 0) }}%</div>
+                    <div class="rv-cost__f dpot {{ $dpotR > 15 ? 'is-over' : '' }}" style="width: {{ min(100, $dpotR / 60 * 100) }}%;">{{ number_format($dpotR, 0) }}%</div>
                     <div class="rv-cost__m" style="left: {{ min(100, 15 / 60 * 100) }}%;" title="Target ≤ 15%"></div>
                 </div>
-                <div class="rv-cost__v">{{ number_format($dpotR, 1) }}%<small>· 15% tgt</small></div>
+                <div class="rv-cost__v {{ $dpotR > 15 ? 'is-over' : ($dpotR > 0 ? 'is-under' : '') }}">{{ number_format($dpotR, 1) }}%<small>· 15% tgt</small></div>
             </div>
             <div class="rv-cost__row">
                 <div class="rv-cost__l">DpC / RpC</div>
                 <div class="rv-cost__t">
-                    <div class="rv-cost__f {{ $dpcR > 15 ? 'warn' : '' }}" style="width: {{ min(100, $dpcR / 60 * 100) }}%;">{{ number_format($dpcR, 0) }}%</div>
+                    <div class="rv-cost__f dpc {{ $dpcR > 15 ? 'is-over' : '' }}" style="width: {{ min(100, $dpcR / 60 * 100) }}%;">{{ number_format($dpcR, 0) }}%</div>
                     <div class="rv-cost__m" style="left: {{ min(100, 15 / 60 * 100) }}%;" title="Target ≤ 15%"></div>
                 </div>
-                <div class="rv-cost__v">{{ number_format($dpcR, 1) }}%<small>· 15% tgt</small></div>
+                <div class="rv-cost__v {{ $dpcR > 15 ? 'is-over' : ($dpcR > 0 ? 'is-under' : '') }}">{{ number_format($dpcR, 1) }}%<small>· 15% tgt</small></div>
             </div>
         </div>
         <div class="rv-card__f">
