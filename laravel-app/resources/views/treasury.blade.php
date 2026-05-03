@@ -1,21 +1,7 @@
 @extends('layouts.app')
 @section('title', 'Treasury')
 
-@section('header')
-    <div class="flex flex-wrap items-end justify-between gap-4">
-        <div>
-            <div class="flex items-center gap-2 mb-1">
-                <span class="text-[10px] uppercase tracking-[0.35em] text-[#8a8578] font-medium">Liquidity Cockpit · {{ $receivables['as_of'] ?? '—' }}</span>
-            </div>
-            <h1 class="text-2xl font-bold text-[#1e3d44]">Treasury & Working Capital</h1>
-        </div>
-        <div class="section-card px-4 py-2.5 text-[11px] text-[#8a8578]">
-            <span class="font-semibold text-[#5a6a70]">Data sources:</span>
-            AR ({{ $receivables['as_of'] ?? '—' }}) · AP ({{ $payables['as_of'] ?? '—' }})
-        </div>
-    </div>
-@endsection
-
+@section('page-title', 'Treasury & Working Capital')
 @section('content')
     @if ($error)
         <div class="bg-coral-50 border border-coral-200 text-coral-800 rounded-xl p-4 text-sm">{{ $error }}</div>

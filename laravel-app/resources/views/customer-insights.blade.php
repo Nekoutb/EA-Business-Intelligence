@@ -1,27 +1,8 @@
 @extends('layouts.app')
 @section('title', 'Customer Insights')
 
-@section('header')
-    <div class="flex flex-wrap items-end justify-between gap-3">
-        <div>
-            <div class="flex items-center gap-2 mb-1">
-                <span class="inline-block w-2 h-2 rounded-full bg-brand-400"></span>
-                <span class="text-[10px] uppercase tracking-[0.35em] text-[#8a8578] font-medium">{{ $periodLabel }} · {{ ea_last_sync_label() }}</span>
-            </div>
-            <h1 class="text-2xl font-bold text-[#1e3d44]">Customer Insights</h1>
-        </div>
-        <form method="POST" action="{{ tenant_url('/sync') }}">@csrf
-            <button class="inline-flex items-center gap-1.5 text-[11px] font-semibold text-white bg-brand-600 hover:bg-brand-700 rounded-lg px-3 py-1.5 shadow-sm transition">
-                <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-                Refresh
-            </button>
-        </form>
-    </div>
-@endsection
-
+@section('page-title', 'Customer Insights')
 @section('content')
-    <x-period-filter :period="$period"/>
-
     @if ($error)
         <div class="bg-coral-50 border border-coral-200 text-coral-800 rounded-xl p-4 text-sm">{{ $error }}</div>
     @elseif (!$insights)

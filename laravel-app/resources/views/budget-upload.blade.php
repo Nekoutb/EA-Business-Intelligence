@@ -1,31 +1,7 @@
 @extends('layouts.app')
 @section('title', 'Budget Upload')
 
-@section('header')
-    <div class="flex flex-wrap items-end justify-between gap-4">
-        <div>
-            <div class="flex items-center gap-2 mb-1">
-                <span class="text-[10px] uppercase tracking-[0.35em] text-[#8a8578] font-medium">{{ $year }} · Budget Upload · {{ ea_last_sync_label() }}</span>
-            </div>
-            <h1 class="text-2xl font-bold text-[#1e3d44]">Budget Upload</h1>
-            <div class="text-[11px] text-[#7c7466] mt-1">
-                Upload your management budget for the year. The P&amp;L Forecast page picks it up automatically — Budget column on the MTD / YTD comparison views switches from "PY × growth" to your uploaded figures.
-            </div>
-        </div>
-        <form method="get" class="flex items-end gap-2">
-            <div>
-                <label class="block text-[10px] uppercase tracking-wider text-[#8a8578] font-medium mb-1">Year</label>
-                <select name="year" class="text-xs border border-[#e8e4de] rounded-lg px-3 py-2 bg-white text-[#1e3d44] focus:ring-2 focus:ring-brand-300 focus:border-brand-300 outline-none min-w-[7rem]" onchange="this.form.submit()">
-                    @php $thisYear = (int) date('Y'); @endphp
-                    @for ($y = $thisYear + 1; $y >= $thisYear - 3; $y--)
-                        <option value="{{ $y }}" {{ $y === $year ? 'selected' : '' }}>{{ $y }}</option>
-                    @endfor
-                </select>
-            </div>
-        </form>
-    </div>
-@endsection
-
+@section('page-title', 'Budget Upload')
 @section('content')
     @if (session('flash'))
         @php $flash = session('flash'); @endphp

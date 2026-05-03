@@ -233,3 +233,78 @@ if (!function_exists('ea_money_short')) {
         return $sign . number_format($abs, 0) . ' ' . $currency;
     }
 }
+
+if (!function_exists('tenant_logo_url')) {
+    /**
+     * Returns the public URL of the active tenant's logo, or null when
+     * unset. logo_path is stored on tenants.logo_path as a path relative
+     * to public/ — matches the migration's `// public/uploads/<file>`
+     * comment and lets the file be served directly by the web server
+     * without a Laravel storage symlink (one less ops gotcha).
+     *
+     * Example: tenants.logo_path = 'uploads/tenant-logos/12-tadsa.png'
+     *          tenant_logo_url() = '/uploads/tenant-logos/12-tadsa.png'
+     */
+    function tenant_logo_url(): ?string
+    {
+        $t = tenant();
+        if (!$t || !$t->logo_path) return null;
+        $path = ltrim((string) $t->logo_path, '/');
+        // If logo_path already includes a scheme, hand it back verbatim.
+        if (preg_match('#^https?://#', $path)) return $path;
+        return '/' . $path;
+    }
+}
+
+if (!function_exists('tenant_brand_name')) {
+    /**
+     * Brand / etp name shown in the top-right company badge and below the
+     * logo. Resolution order: tenant.brand → tenant.name → config('bi.brand')
+     * → 'Workspace'. Always returns a non-empty string.
+     */
+    function tenant_brand_name(): string
+    {
+        $t = tenant();
+        if ($t) {
+            if (!empty($t->brand)) return (string) $t->brand;
+            if (!empty($t->name))  return (string) $t->name;
+        }
+        return (string) (config('bi.brand') ?: 'Workspace');
+    }
+}
+
+if (!function_exists('tenant_brand_initial')) {
+    /**
+     * One-letter fallback used by the company-badge avatar when no
+     * uploaded logo exists. Strips diacritics and uppercases.
+     */
+    function tenant_brand_initial(): string
+    {
+        $name = tenant_brand_name();
+        $first = mb_substr(trim($name), 0, 1, 'UTF-8');
+        return mb_strtoupper($first ?: 'W', 'UTF-8');
+    }
+}
+
+if (!function_exists('current_period')) {
+    /**
+     * Returns the active period array as resolved by the RememberPeriod
+     * middleware. Reads from the request first (URL params), then falls
+     * back to session, then to YTD-current-year defaults.
+     *
+     * Shape: ['type' => 'ytd|mtd|month|yoy', 'year' => int, 'month' => int]
+     *
+     * Controllers may keep using $request->query('period', ...) — this
+     * helper is for views/components that need the period without a
+     * Request injection.
+     */
+    function current_period(): array
+    {
+        $today = new \DateTimeImmutable();
+        return [
+            'type'  => session('bms.period.type',  'ytd'),
+            'year'  => (int) session('bms.period.year',  (int) $today->format('Y')),
+            'month' => (int) session('bms.period.month', (int) $today->format('m')),
+        ];
+    }
+}

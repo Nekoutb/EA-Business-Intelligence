@@ -196,6 +196,66 @@
       .ea-sb::-webkit-scrollbar-thumb { background: rgba(148,163,184,.30); border-radius: 3px; }
       .table-row-hover:hover { background: var(--surface-alt); }
 
+      /* ── Master period filter (sidebar) ─────────────────────────── */
+      .ea-mfilter {
+        background: linear-gradient(to bottom, #f9fafb, var(--surface));
+        border-bottom: 1px solid var(--border);
+        padding: 10px 12px;
+        flex-shrink: 0;
+      }
+      .ea-mfilter__l { font: 700 9px var(--font); color: var(--ea-primary); letter-spacing: .12em; text-transform: uppercase; margin-bottom: 6px; display: flex; align-items: center; gap: 5px; }
+      .ea-mfilter__l svg { width: 11px; height: 11px; }
+      .ea-mfilter__row { display: flex; gap: 4px; margin-bottom: 6px; }
+      .ea-mfilter__row:last-child { margin-bottom: 0; }
+      .ea-mfilter__btn {
+        flex: 1; border: 1px solid var(--border); background: var(--surface);
+        padding: 4px 6px; font: 600 10px var(--font); color: var(--text-subtle);
+        border-radius: var(--r-sm); cursor: pointer; transition: background .12s, color .12s;
+        text-align: center; line-height: 1.2;
+      }
+      .ea-mfilter__btn:hover { background: var(--bg); color: var(--text); }
+      .ea-mfilter__btn.is-active { background: var(--ea-primary); border-color: var(--ea-primary); color: #fff; }
+      .ea-mfilter__sel {
+        flex: 1; border: 1px solid var(--border); background: var(--surface);
+        padding: 3px 6px; font: 600 10px var(--font); color: var(--text-muted);
+        border-radius: var(--r-sm); cursor: pointer; min-width: 0;
+      }
+      .ea-mfilter__hint { font: 500 9px var(--font); color: var(--text-faint); margin-top: 4px; line-height: 1.3; }
+
+      /* ── Company badge (top-right of every page) ────────────────── */
+      .ea-cobadge {
+        display: flex; align-items: center; gap: 8px;
+        padding: 4px 10px;
+        background: var(--surface); border: 1px solid var(--border);
+        border-radius: var(--r);
+      }
+      .ea-cobadge__logo {
+        width: 32px; height: 32px;
+        background: linear-gradient(135deg, var(--ea-primary), #338f8f);
+        border-radius: var(--r-sm);
+        display: flex; align-items: center; justify-content: center;
+        color: #fff; font: 700 13px var(--font);
+        flex-shrink: 0;
+        overflow: hidden;
+      }
+      .ea-cobadge__logo img { width: 100%; height: 100%; object-fit: contain; background: #fff; }
+      .ea-cobadge__t { display: flex; flex-direction: column; line-height: 1.1; min-width: 0; }
+      .ea-cobadge__n { font: 700 11px var(--font); color: var(--text); white-space: nowrap; max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
+      .ea-cobadge__sub { font: 500 9px var(--font); color: var(--text-subtle); letter-spacing: .04em; text-transform: uppercase; margin-top: 1px; white-space: nowrap; max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
+
+      /* ── Standardised topbar (used by pages without @section('header')) */
+      .ea-topbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; flex-shrink: 0; gap: 12px; }
+      .ea-topbar__t { display: flex; align-items: baseline; gap: 12px; min-width: 0; }
+      .ea-topbar__eb { font: 600 10px var(--font); color: var(--text-subtle); letter-spacing: .12em; text-transform: uppercase; display: flex; align-items: center; gap: 6px; }
+      .ea-topbar__eb::before { content:''; width:5px; height:5px; border-radius: 50%; background: var(--ea-primary); }
+      .ea-topbar__h { font: 700 20px var(--font); color: var(--text); letter-spacing: -0.02em; }
+      .ea-topbar__c { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+      .ea-topbar__meta { font: 500 11px var(--font); color: var(--text-subtle); }
+      .ea-topbar__meta b { color: var(--text); font-weight: 600; }
+      .ea-refresh-btn { background: var(--ea-primary); color:#fff; border:0; border-radius: var(--r); padding: 4px 10px; font: 600 11px var(--font); cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }
+      .ea-refresh-btn:hover { background: var(--ea-primary-dark); }
+      .ea-refresh-btn svg { width: 12px; height: 12px; }
+
       /* When pages > viewport on smaller screens, allow body scroll */
       @media (max-width: 1100px) {
         body { overflow: auto; }
@@ -216,13 +276,58 @@
          'revenue'). This keeps a single source of truth across the
          sidebar, route guard, admin toggles and per-tenant flags.   --}}
     <aside class="ea-sb">
+        {{-- Brand block — sidebar identity. Falls through to tenant.brand,
+             tenant.name, then config('bi.brand'). Logo (if uploaded)
+             replaces the letter avatar. --}}
         <a href="{{ tenant_url('/') }}" class="ea-sb__brand" style="text-decoration:none;">
-            <div class="ea-sb__brand-a">{{ strtoupper(substr(config('bi.brand', 'E'), 0, 1)) }}</div>
+            <div class="ea-sb__brand-a">
+                @if (tenant_logo_url())
+                  <img src="{{ tenant_logo_url() }}" alt="" style="width:100%; height:100%; object-fit:contain; background:#fff; border-radius:6px;">
+                @else
+                  {{ tenant_brand_initial() }}
+                @endif
+            </div>
             <div class="ea-sb__brand-w">
-                <div class="ea-sb__brand-n">{{ config('bi.brand', 'Elite Advisors Management Suite') }}</div>
+                <div class="ea-sb__brand-n">{{ tenant_brand_name() }}</div>
                 <div class="ea-sb__brand-s">Management Suite</div>
             </div>
         </a>
+
+        {{-- ── MASTER PERIOD FILTER ─────────────────────────────────
+             One filter for the whole app. Submits GET to current URL;
+             RememberPeriod middleware persists the choice in session
+             so navigating between modules keeps the filter applied.  --}}
+        @php
+          $mfPeriod = current_period();
+          $mfType   = $mfPeriod['type']  ?? 'ytd';
+          $mfYear   = $mfPeriod['year']  ?? (int) date('Y');
+          $mfMonth  = $mfPeriod['month'] ?? (int) date('m');
+        @endphp
+        <form method="GET" class="ea-mfilter">
+            <div class="ea-mfilter__l">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 3H2l8 9.5V19l4 2v-8.5L22 3z"/></svg>
+                Period · Master Filter
+            </div>
+            <div class="ea-mfilter__row">
+                <button type="submit" name="period" value="ytd"   class="ea-mfilter__btn {{ $mfType === 'ytd' ? 'is-active' : '' }}">YTD</button>
+                <button type="submit" name="period" value="mtd"   class="ea-mfilter__btn {{ $mfType === 'mtd' ? 'is-active' : '' }}">MTD</button>
+                <button type="submit" name="period" value="month" class="ea-mfilter__btn {{ $mfType === 'month' ? 'is-active' : '' }}">Month</button>
+                <button type="submit" name="period" value="yoy"   class="ea-mfilter__btn {{ $mfType === 'yoy' ? 'is-active' : '' }}">YoY</button>
+            </div>
+            <div class="ea-mfilter__row">
+                <select name="year" onchange="this.form.submit()" class="ea-mfilter__sel" title="Year">
+                    @for ($y = (int) date('Y'); $y >= (int) date('Y') - 4; $y--)
+                      <option value="{{ $y }}" {{ $mfYear == $y ? 'selected' : '' }}>{{ $y }}</option>
+                    @endfor
+                </select>
+                <select name="month" onchange="this.form.submit()" class="ea-mfilter__sel" title="Month (only used when Month is active)">
+                    @foreach (range(1,12) as $m)
+                      <option value="{{ $m }}" {{ $mfMonth == $m ? 'selected' : '' }}>{{ date('M', mktime(0,0,0,$m,1)) }}</option>
+                    @endforeach
+                </select>
+            </div>
+            <div class="ea-mfilter__hint">Applies to <b style="color:var(--ea-primary);">every page</b> · synced via session</div>
+        </form>
 
         @php
           $services = collect(config('modules.services', []))->sortBy('order');
@@ -295,8 +400,52 @@
          sticky-visible regardless.                                   --}}
     <main class="ea-main @yield('main-class')">
 
+        {{-- ── Standardised topbar ─────────────────────────────────────
+             Pages can either:
+               • Yield 'page-title' (preferred) — the layout renders the
+                 v5 topbar with company badge, refresh, and meta.
+               • Or define @section('header') (legacy) — the page owns
+                 the entire header block; layout just inlines it.
+             Pages that fully manage their own chrome (eg the v5 single-
+             screen Dashboard) yield 'page-title' as empty AND set
+             main-class to 'is-fit' to suppress the layout topbar.    --}}
         @hasSection('header')
+          {{-- Legacy path: page-supplied header markup --}}
           <div style="margin-bottom: 16px; flex-shrink: 0;">@yield('header')</div>
+        @elseif (trim($__env->yieldContent('page-title')) !== '')
+          {{-- v5 path: layout renders the topbar; page just supplies
+               the title (and optionally an eyebrow). --}}
+          <div class="ea-topbar">
+              <div class="ea-topbar__t">
+                  <div>
+                      <div class="ea-topbar__eb">@yield('page-eyebrow', ($periodLabel ?? 'YTD ' . date('Y')) . ' · ' . now()->format('d M H:i'))</div>
+                      <div class="ea-topbar__h">@yield('page-title')</div>
+                  </div>
+              </div>
+              <div class="ea-topbar__c">
+                  <span class="ea-topbar__meta">Updated <b>{{ now()->format('H:i') }}</b> · {{ ea_last_sync_label() }}</span>
+                  <form method="POST" action="{{ tenant_url('/sync') }}" style="margin:0;">
+                      @csrf
+                      <button type="submit" class="ea-refresh-btn" title="Force refresh">
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+                          Refresh
+                      </button>
+                  </form>
+                  <div class="ea-cobadge" title="{{ tenant_brand_name() }}">
+                      <div class="ea-cobadge__logo">
+                          @if (tenant_logo_url())
+                            <img src="{{ tenant_logo_url() }}" alt="">
+                          @else
+                            {{ tenant_brand_initial() }}
+                          @endif
+                      </div>
+                      <div class="ea-cobadge__t">
+                          <div class="ea-cobadge__n">{{ tenant_brand_name() }}</div>
+                          <div class="ea-cobadge__sub">{{ optional(tenant())->name ?? 'Workspace' }}</div>
+                      </div>
+                  </div>
+              </div>
+          </div>
         @endif
 
         @if (session('flash'))

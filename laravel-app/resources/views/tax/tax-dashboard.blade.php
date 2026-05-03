@@ -1,18 +1,7 @@
 @extends('layouts.app')
 @section('title', 'Tax Dashboard')
 
-@section('header')
-    <div class="flex flex-wrap items-end justify-between gap-3">
-        <div>
-            <h1 class="text-2xl font-bold text-slate-900">Tax Dashboard</h1>
-            <p class="text-xs text-slate-500 mt-1">Tax-regime classification, effective tax rate &amp; obligations calendar (Cameroon CGI / OHADA)</p>
-        </div>
-        @if(!empty($analysis['as_of']))
-            <div class="text-[11px] text-slate-500">As of <span class="tabular-nums font-medium text-slate-700">{{ $analysis['as_of'] }}</span></div>
-        @endif
-    </div>
-@endsection
-
+@section('page-title', 'Tax Dashboard')
 @section('content')
     @if ($error)
         <div class="bg-rose-50 border border-rose-200 text-rose-700 rounded-xl p-4 text-sm">

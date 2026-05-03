@@ -81,6 +81,55 @@ class SettingsController extends Controller
             $row->save();
         }
 
+        // ── Top-level tenant fields (brand name, ETP) live on the
+        // tenants row itself, not in tenant_settings. They drive the
+        // company badge in the topbar so they need to be queryable
+        // without a settings join.
+        if ($request->filled('TENANT_BRAND')) {
+            $tenant->brand = trim((string) $request->input('TENANT_BRAND'));
+        }
+        if ($request->filled('TENANT_NAME')) {
+            $tenant->name = trim((string) $request->input('TENANT_NAME'));
+        }
+
+        // ── Logo upload — stored under public/uploads/tenant-logos/
+        // per the migration's `// public/uploads/<file>` convention.
+        // Validation: PNG/JPG/SVG/WebP, ≤ 2 MB. SVG accepted because
+        // it scales cleanly into the topbar at any DPR.
+        if ($request->hasFile('logo')) {
+            $request->validate([
+                'logo' => 'file|mimetypes:image/png,image/jpeg,image/svg+xml,image/webp|max:2048',
+            ]);
+
+            $file    = $request->file('logo');
+            $ext     = strtolower($file->getClientOriginalExtension() ?: $file->guessExtension() ?: 'png');
+            $dir     = public_path('uploads/tenant-logos');
+            if (!is_dir($dir)) {
+                @mkdir($dir, 0755, true);
+            }
+            $name    = $tenant->id . '-' . substr(md5(microtime(true)), 0, 8) . '.' . $ext;
+            $file->move($dir, $name);
+
+            // Best-effort delete of the previous file so we don't
+            // accumulate orphans; ignore failures (path may have
+            // moved between deploys).
+            if ($tenant->logo_path) {
+                $old = public_path(ltrim((string) $tenant->logo_path, '/'));
+                if (is_file($old)) @unlink($old);
+            }
+
+            $tenant->logo_path = 'uploads/tenant-logos/' . $name;
+        }
+
+        // Allow explicit logo removal via a hidden flag.
+        if ($request->boolean('remove_logo') && $tenant->logo_path) {
+            $old = public_path(ltrim((string) $tenant->logo_path, '/'));
+            if (is_file($old)) @unlink($old);
+            $tenant->logo_path = null;
+        }
+
+        $tenant->save();
+
         // Drop any cached service responses that may have been computed under
         // the previous (stale) credentials so the next page load refetches.
         ea_cache_clear();

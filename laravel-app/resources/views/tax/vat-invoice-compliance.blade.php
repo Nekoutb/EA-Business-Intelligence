@@ -1,18 +1,8 @@
 @extends('layouts.app')
 @section('title', 'Invoice Compliance')
 
-@section('header')
-    <div class="flex flex-wrap items-end justify-between gap-3">
-        <div>
-            <h1 class="text-2xl font-bold text-slate-900">VAT Invoice Compliance</h1>
-            <p class="text-xs text-slate-500 mt-1">Conditions de fond &amp; forme — Cameroon CGI invoice-field verification</p>
-        </div>
-    </div>
-@endsection
-
+@section('page-title', 'VAT Invoice Compliance')
 @section('content')
-    <x-period-filter :period="$period"/>
-
     @if ($error)
         <div class="bg-rose-50 border border-rose-200 text-rose-700 rounded-xl p-4 text-sm">
             <div class="font-medium mb-1">Could not load data from Odoo</div>

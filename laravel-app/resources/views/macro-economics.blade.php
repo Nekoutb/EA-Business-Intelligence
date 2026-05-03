@@ -1,20 +1,7 @@
 @extends('layouts.app')
 @section('title', 'Macro Economics')
 
-@section('header')
-    <div>
-        <div class="flex items-center gap-2 mb-0.5">
-            <span class="text-[10px] uppercase tracking-[0.35em] text-[#8a8578] font-medium">
-                Cameroon · {{ ea_last_sync_label() }}
-            </span>
-        </div>
-        <h1 class="text-2xl font-bold text-[#1e3d44]">Macro Economics</h1>
-        <div class="text-[11px] text-[#7c7466] mt-0.5">
-            Trade-focused indicators relevant to scanning operations — {{ ($data['history_window']['to'] ?? 0) - ($data['history_window']['from'] ?? 0) + 1 }}y actuals + 2y projection · plus BEAC TIAO policy rate.
-        </div>
-    </div>
-@endsection
-
+@section('page-title', 'Macro Economics')
 @section('content')
     @if ($error)
         <div class="bg-coral-50 border border-coral-200 text-coral-800 rounded-xl p-4 text-sm mb-6">

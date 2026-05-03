@@ -1105,8 +1105,10 @@ Route::prefix('t/{tenant}')
             Route::post('/onboarding/step',          [OnboardingController::class, 'step']);
             Route::post('/onboarding/complete',      [OnboardingController::class, 'complete']);
 
-            // Apply onboarding redirect middleware to all other routes
-            Route::middleware('redirect.if.not.onboarded')->group(function () {
+            // Apply onboarding redirect middleware to all other routes.
+            // 'remember.period' rides along here so the master sidebar
+            // filter persists across every tenant page in the group.
+            Route::middleware(['redirect.if.not.onboarded', 'remember.period'])->group(function () {
                 Route::get('/',                  [DashboardController::class, 'index'])->middleware('module:dashboard');
                 Route::post('/sync',             [DashboardController::class, 'sync']);
 

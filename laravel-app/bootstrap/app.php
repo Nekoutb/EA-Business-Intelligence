@@ -17,6 +17,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'module'                     => \App\Http\Middleware\EnsureModuleEnabled::class,
             'admin.auth'                 => \App\Http\Middleware\RequireAdminLogin::class,
             'redirect.if.not.onboarded' => \App\Http\Middleware\RedirectIfNotOnboarded::class,
+            'remember.period'            => \App\Http\Middleware\RememberPeriod::class,
         ]);
 
         // Exempt login routes from CSRF.

@@ -1,14 +1,8 @@
 @extends('layouts.app')
 @section('title', 'Profit & Loss')
 
-@section('header')
-    <h1 class="text-2xl font-bold text-slate-900">Profit &amp; Loss</h1>
-    <p class="text-xs text-slate-500 mt-1">Period: <strong>{{ $periodLabel }}</strong> · {{ ea_last_sync_label() }}</p>
-@endsection
-
+@section('page-title', 'Profit & Loss')
 @section('content')
-    <x-period-filter :period="$period"/>
-
     @if ($error)
         <div class="bg-rose-50 border border-rose-200 text-rose-700 rounded-xl p-4 text-sm">{{ $error }}</div>
     @elseif ($data)

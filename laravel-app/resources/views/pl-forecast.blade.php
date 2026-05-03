@@ -1,73 +1,7 @@
 @extends('layouts.app')
 @section('title', 'P&L Forecast')
 
-@section('header')
-    <div class="flex flex-wrap items-end justify-between gap-4">
-        <div>
-            <div class="flex items-center gap-2 mb-1">
-                <span class="text-[10px] uppercase tracking-[0.35em] text-[#8a8578] font-medium">
-                    {{ $year }} · Cameroon · {{ ea_last_sync_label() }}
-                </span>
-            </div>
-            <h1 class="text-2xl font-bold text-[#1e3d44]">P&amp;L Forecast</h1>
-            <div class="text-[11px] text-[#7c7466] mt-1">
-                @if ($view === 'full_year')
-                    Full-year monthly P&amp;L. Closed months show <strong class="text-[#5d8067]">Actual</strong>; current and future months show <strong class="text-[#6B2D2F]">Budget</strong> (forecast). Year total compared against full-year Budget at the bottom.
-                @elseif ($view === 'mtd')
-                    Single-month comparison: Prior Year · Current Year · Forecast · Budget. Variances (CY vs PY, Forecast vs Budget) shown alongside.
-                @elseif ($view === 'ytd')
-                    Year-to-Date comparison: PY YTD · CY YTD · Full-Year Forecast · Full-Year Budget, with variances.
-                @endif
-                Figures in million XAF.
-            </div>
-        </div>
-
-        {{-- Filters + budget management link --}}
-        <div class="flex items-end gap-3 flex-wrap">
-            <a href="{{ tenant_url('/budget-upload?year=' . $year) }}"
-               class="text-[11px] font-medium text-brand-700 hover:text-brand-900 border border-brand-200 hover:border-brand-400 rounded px-3 py-2 inline-flex items-center gap-1.5">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3M3 17V8a2 2 0 012-2h6l2 2h5a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></svg>
-                Manage Budget
-            </a>
-            <form method="get" class="flex items-end gap-2 flex-wrap">
-                <div>
-                    <label class="block text-[10px] uppercase tracking-wider text-[#8a8578] font-medium mb-1">View</label>
-                    <select name="view"
-                            class="text-xs border border-[#e8e4de] rounded-lg px-3 py-2 bg-white text-[#1e3d44] focus:ring-2 focus:ring-brand-300 focus:border-brand-300 outline-none"
-                            onchange="this.form.submit()">
-                        <option value="full_year" {{ $view === 'full_year' ? 'selected' : '' }}>Full Year</option>
-                        <option value="ytd"       {{ $view === 'ytd'       ? 'selected' : '' }}>YTD</option>
-                        <option value="mtd"       {{ $view === 'mtd'       ? 'selected' : '' }}>MTD</option>
-                    </select>
-                </div>
-            @if ($view === 'mtd')
-                <div>
-                    <label class="block text-[10px] uppercase tracking-wider text-[#8a8578] font-medium mb-1">Month</label>
-                    <select name="month"
-                            class="text-xs border border-[#e8e4de] rounded-lg px-3 py-2 bg-white text-[#1e3d44] focus:ring-2 focus:ring-brand-300 focus:border-brand-300 outline-none"
-                            onchange="this.form.submit()">
-                        @foreach (['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'] as $i => $name)
-                            <option value="{{ $i + 1 }}" {{ ($i + 1) === $month ? 'selected' : '' }}>{{ $name }}</option>
-                        @endforeach
-                    </select>
-                </div>
-            @endif
-                <div>
-                    <label class="block text-[10px] uppercase tracking-wider text-[#8a8578] font-medium mb-1">Year</label>
-                    <select name="year"
-                            class="text-xs border border-[#e8e4de] rounded-lg px-3 py-2 bg-white text-[#1e3d44] focus:ring-2 focus:ring-brand-300 focus:border-brand-300 outline-none"
-                            onchange="this.form.submit()">
-                        @php $thisYear = (int) date('Y'); @endphp
-                        @for ($y = $thisYear + 1; $y >= $thisYear - 3; $y--)
-                            <option value="{{ $y }}" {{ $y === $year ? 'selected' : '' }}>{{ $y }}</option>
-                        @endfor
-                    </select>
-                </div>
-            </form>
-        </div>
-    </div>
-@endsection
-
+@section('page-title', 'P&L Forecast')
 @section('content')
     @if (session('flash'))
         @php $flash = session('flash'); @endphp

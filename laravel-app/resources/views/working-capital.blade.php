@@ -1,31 +1,7 @@
 @extends('layouts.app')
 @section('title', 'Working Capital')
 
-@section('header')
-    <div class="flex flex-wrap items-end justify-between gap-4">
-        <div>
-            <div class="flex items-center gap-2 mb-1">
-                <span class="text-[10px] uppercase tracking-[0.35em] text-[#8a8578] font-medium">As of {{ $asOf }} · {{ ea_last_sync_label() }}</span>
-            </div>
-            <h1 class="text-2xl font-bold text-[#1e3d44]">Working Capital</h1>
-            <div class="text-xs text-[#7c7466] mt-1">Liquidity ratios and cash conversion cycle. Balance-sheet snapshot uses date ≤ as-of; DSO / DPO / DIO denominators use trailing-12-month revenue / COGS so the days figures are honestly annualised.</div>
-        </div>
-
-        {{-- As-of date picker (vanilla form, no JS dependency) --}}
-        <form method="get" class="flex items-end gap-2">
-            <div>
-                <label class="block text-[10px] uppercase tracking-wider text-[#8a8578] font-medium mb-1">As of</label>
-                <input type="date" name="as_of" value="{{ $asOf }}" max="{{ now()->format('Y-m-d') }}"
-                       class="text-xs border border-[#e8e4de] rounded-lg px-3 py-2 bg-white text-[#1e3d44] focus:ring-2 focus:ring-brand-300 focus:border-brand-300 outline-none">
-            </div>
-            <button type="submit"
-                    class="text-xs font-medium px-3 py-2 rounded-lg bg-brand-600 hover:bg-brand-700 text-white">
-                Apply
-            </button>
-        </form>
-    </div>
-@endsection
-
+@section('page-title', 'Working Capital')
 @section('content')
     @if ($error)
         <div class="bg-coral-50 border border-coral-200 text-coral-800 rounded-xl p-4 text-sm mb-6">

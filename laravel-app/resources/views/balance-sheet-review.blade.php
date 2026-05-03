@@ -1,49 +1,7 @@
 @extends('layouts.app')
 @section('title', 'Balance Sheet Review')
 
-@section('header')
-    <div class="flex flex-wrap items-end justify-between gap-4">
-        <div>
-            <div class="flex items-center gap-2 mb-1">
-                <span class="text-[10px] uppercase tracking-[0.35em] text-[#8a8578] font-medium">{{ $data['period_label'] ?? '—' }} · {{ ea_last_sync_label() }}</span>
-            </div>
-            <h1 class="text-2xl font-bold text-[#1e3d44]">Balance Sheet Review · Bilan</h1>
-            <div class="text-[11px] text-[#7c7466] mt-1">
-                OHADA Système Normal Bilan Actif / Passif. Built from the Trial Balance closing balances; mapped to BS lines via SYSCOHADA code-prefix conventions. Side-by-side review for verification before publishing.
-            </div>
-        </div>
-        <form method="get" class="flex items-end gap-2 flex-wrap">
-            <div>
-                <label class="block text-[10px] uppercase tracking-wider text-[#8a8578] font-medium mb-1">Period</label>
-                <select name="period_type" class="text-xs border border-[#e8e4de] rounded-lg px-3 py-2 bg-white text-[#1e3d44] focus:ring-2 focus:ring-brand-300 focus:border-brand-300 outline-none" onchange="this.form.submit()">
-                    <option value="ytd"   {{ $periodType === 'ytd'   ? 'selected' : '' }}>YTD</option>
-                    <option value="month" {{ $periodType === 'month' ? 'selected' : '' }}>Single Month</option>
-                    <option value="year"  {{ $periodType === 'year'  ? 'selected' : '' }}>Full Year</option>
-                </select>
-            </div>
-            @if ($periodType !== 'year')
-                <div>
-                    <label class="block text-[10px] uppercase tracking-wider text-[#8a8578] font-medium mb-1">Month</label>
-                    <select name="month" class="text-xs border border-[#e8e4de] rounded-lg px-3 py-2 bg-white text-[#1e3d44] focus:ring-2 focus:ring-brand-300 focus:border-brand-300 outline-none" onchange="this.form.submit()">
-                        @foreach (['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'] as $i => $name)
-                            <option value="{{ $i + 1 }}" {{ ($i + 1) === $month ? 'selected' : '' }}>{{ $name }}</option>
-                        @endforeach
-                    </select>
-                </div>
-            @endif
-            <div>
-                <label class="block text-[10px] uppercase tracking-wider text-[#8a8578] font-medium mb-1">Year</label>
-                <select name="year" class="text-xs border border-[#e8e4de] rounded-lg px-3 py-2 bg-white text-[#1e3d44] focus:ring-2 focus:ring-brand-300 focus:border-brand-300 outline-none" onchange="this.form.submit()">
-                    @php $thisYear = (int) date('Y'); @endphp
-                    @for ($y = $thisYear + 1; $y >= $thisYear - 5; $y--)
-                        <option value="{{ $y }}" {{ $y === $year ? 'selected' : '' }}>{{ $y }}</option>
-                    @endfor
-                </select>
-            </div>
-        </form>
-    </div>
-@endsection
-
+@section('page-title', 'Balance Sheet Review · Bilan')
 @section('content')
     @if ($error)
         <div class="bg-coral-50 border border-coral-200 text-coral-800 rounded-xl p-4 text-sm mb-6"><strong>Error:</strong> {{ $error }}</div>

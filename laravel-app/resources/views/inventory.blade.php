@@ -2,28 +2,7 @@
 
 @section('title', 'Inventory')
 
-@section('header')
-    <div class="flex items-center justify-between">
-        <div>
-            <h2 class="text-2xl font-bold text-slate-900">Inventory</h2>
-            <p class="text-xs text-slate-500 mt-1">
-                {{ $data['period_label'] ?? 'YTD' }}
-                @if ($data['error'] ?? null)
-                    — Last sync failed
-                @else
-                    — Last synced just now
-                @endif
-            </p>
-        </div>
-        <form method="POST" action="{{ url('/sync') }}" class="inline">
-            @csrf
-            <button type="submit" class="px-4 py-2 text-sm font-medium bg-slate-200 text-slate-700 rounded-lg hover:bg-slate-300 transition">
-                Sync now
-            </button>
-        </form>
-    </div>
-@endsection
-
+@section('page-title', 'Inventory')
 @section('content')
     @if ($error ?? null)
         <div class="mb-6 px-4 py-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-sm">
