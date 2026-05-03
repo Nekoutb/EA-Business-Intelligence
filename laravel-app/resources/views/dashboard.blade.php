@@ -233,6 +233,30 @@
   if ($gpPct > 0 && $gpPct < 35) $priority = 'Gross margin recovery';
   elseif ($ebPct < -3) $priority = 'OPEX leverage';
   elseif ($cashPct !== null && $cashPct < 80) $priority = 'AR collection';
+
+  // ── Pre-built JS payloads ──────────────────────────────────────
+  // CRITICAL: Blade's @json() directive uses a brittle bracket-counter
+  // when its argument spans multiple lines with nested arrays + ?:
+  // ternaries — it silently truncates the array to the first element
+  // (https://github.com/laravel/framework/issues — historical issue).
+  // To stay safe we ALWAYS construct chart payloads here in PHP and
+  // hand a single variable to @json(). Never inline a multi-line
+  // array literal as a @json argument.
+  $rpoCur = (float) ($cur['rpo'] ?? 0);
+  $rpcCur = (float) ($cur['per_customer'] ?? 0);
+  $costData = [
+      ['CPO',  $rpoCur > 0 ? 100.0 * ((float) ($cur['cpo']   ?? 0)) / $rpoCur : 0.0, 35],
+      ['DPOT', $rpoCur > 0 ? 100.0 * ((float) ($cur['dp_ot'] ?? 0)) / $rpoCur : 0.0, 15],
+      ['DPC',  $rpcCur > 0 ? 100.0 * ((float) ($cur['dp_c']  ?? 0)) / $rpcCur : 0.0, 15],
+  ];
+  $unitData = [
+      ['RPD · Rev/Day',      [(float) ($prev['rpd']          ?? 0), (float) ($cur['rpd']          ?? 0)]],
+      ['OPD · Outfit/Day',   [(float) ($prev['opd']          ?? 0), (float) ($cur['opd']          ?? 0)]],
+      ['RPO · Rev/Outfit',   [(float) ($prev['rpo']          ?? 0), (float) ($cur['rpo']          ?? 0)]],
+      ['RPC · Rev/Customer', [(float) ($prev['per_customer'] ?? 0), (float) ($cur['per_customer'] ?? 0)]],
+  ];
+  $cumActualJson = array_values($cumActual);
+  $cumLinearJson = array_values($cumLinear);
 @endphp
 
 {{-- ── Topbar ────────────────────────────────────────────────────── --}}
@@ -548,8 +572,8 @@
 
   /* ── 1. Trajectory ───────────────────────────────────────────── */
   const trajectoryEl = document.getElementById('ec-trajectory');
-  const cumActual = @json(array_values($cumActual));
-  const cumLinear = @json(array_values($cumLinear));
+  const cumActual = @json($cumActualJson);
+  const cumLinear = @json($cumLinearJson);
   if (trajectoryEl && cumActual.some(v => v != null)) {
     echarts.init(trajectoryEl).setOption({
       textStyle: { fontFamily: FF, color: '#374151' },
@@ -630,11 +654,7 @@
 
   /* ── 3. Cost Pressure (horizontal bars: CPO/RPO, DPOT/RPO, DPC/RPC) ── */
   const costEl = document.getElementById('ec-cost');
-  const costData = @json([
-      ['CPO',  ($cur['rpo'] ?? 0) > 0 ? 100.0 * ((float)($cur['cpo']   ?? 0)) / ((float)$cur['rpo']) : 0, 35],
-      ['DPOT', ($cur['rpo'] ?? 0) > 0 ? 100.0 * ((float)($cur['dp_ot'] ?? 0)) / ((float)$cur['rpo']) : 0, 15],
-      ['DPC',  ($cur['per_customer'] ?? 0) > 0 ? 100.0 * ((float)($cur['dp_c'] ?? 0)) / ((float)$cur['per_customer']) : 0, 15],
-  ]);
+  const costData = @json($costData);
   if (costEl && costData.some(d => d[1] > 0)) {
     echarts.init(costEl).setOption({
       textStyle: { fontFamily: FF, color: '#374151' },
@@ -666,12 +686,7 @@
 
   /* ── 4. Unit Economics small multiples ──────────────────────── */
   const unitEl = document.getElementById('ec-unit');
-  const unit = @json([
-      ['RPD · Rev/Day',     [(float)($prev['rpd']          ?? 0), (float)($cur['rpd']          ?? 0)], 'pos'],
-      ['OPD · Outfit/Day',  [(float)($prev['opd']          ?? 0), (float)($cur['opd']          ?? 0)], 'pos'],
-      ['RPO · Rev/Outfit',  [(float)($prev['rpo']          ?? 0), (float)($cur['rpo']          ?? 0)], 'pos'],
-      ['RPC · Rev/Customer',[(float)($prev['per_customer'] ?? 0), (float)($cur['per_customer'] ?? 0)], 'pos'],
-  ]);
+  const unit = @json($unitData);
   if (unitEl && unit.some(u => u[1][1] > 0)) {
     const grids = unit.map((_, i) => ({ left: `${i * 25 + 3}%`, right: `${100 - (i + 1) * 25 + 1}%`, top: 28, bottom: 22 }));
     const titles = unit.map((u, i) => ({
