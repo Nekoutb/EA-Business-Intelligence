@@ -215,11 +215,14 @@
       }
       .ea-mfilter__btn:hover { background: var(--bg); color: var(--text); }
       .ea-mfilter__btn.is-active { background: var(--ea-primary); border-color: var(--ea-primary); color: #fff; }
+      .ea-mfilter__btn.is-frozen { color: var(--text-faint); cursor: not-allowed; background: var(--surface-alt); }
+      .ea-mfilter__btn.is-frozen:hover { background: var(--surface-alt); color: var(--text-faint); }
       .ea-mfilter__sel {
         flex: 1; border: 1px solid var(--border); background: var(--surface);
         padding: 3px 6px; font: 600 10px var(--font); color: var(--text-muted);
         border-radius: var(--r-sm); cursor: pointer; min-width: 0;
       }
+      .ea-mfilter__sel:disabled { color: var(--text-faint); background: var(--surface-alt); cursor: not-allowed; }
       .ea-mfilter__hint { font: 500 9px var(--font); color: var(--text-faint); margin-top: 4px; line-height: 1.3; }
 
       /* ── Company badge (top-right of every page) ────────────────── */
@@ -302,6 +305,18 @@
           $mfType   = $mfPeriod['type']  ?? 'ytd';
           $mfYear   = $mfPeriod['year']  ?? (int) date('Y');
           $mfMonth  = $mfPeriod['month'] ?? (int) date('m');
+          // Pages can pin the master filter to a subset of period
+          // types by yielding a comma-separated list of frozen
+          // (disabled) types — eg @section('mfilter-frozen', 'mtd,month,yoy')
+          // on the Receivables page locks the filter to YTD only.
+          $mfFrozenList = trim($__env->yieldContent('mfilter-frozen', ''));
+          $mfFrozen     = $mfFrozenList === '' ? [] : array_map('trim', explode(',', $mfFrozenList));
+          $mfIsFrozen   = fn (string $t) => in_array($t, $mfFrozen, true);
+          // If the active session period happens to be a frozen
+          // type on this page (eg user picks MTD elsewhere then
+          // navigates to Receivables), force-display YTD-active so
+          // the user understands the constraint applies here.
+          $mfDisplayType = $mfIsFrozen($mfType) ? 'ytd' : $mfType;
         @endphp
         <form method="GET" class="ea-mfilter">
             <div class="ea-mfilter__l">
@@ -309,10 +324,16 @@
                 Period · Master Filter
             </div>
             <div class="ea-mfilter__row">
-                <button type="submit" name="period" value="ytd"   class="ea-mfilter__btn {{ $mfType === 'ytd' ? 'is-active' : '' }}">YTD</button>
-                <button type="submit" name="period" value="mtd"   class="ea-mfilter__btn {{ $mfType === 'mtd' ? 'is-active' : '' }}">MTD</button>
-                <button type="submit" name="period" value="month" class="ea-mfilter__btn {{ $mfType === 'month' ? 'is-active' : '' }}">Month</button>
-                <button type="submit" name="period" value="yoy"   class="ea-mfilter__btn {{ $mfType === 'yoy' ? 'is-active' : '' }}">YoY</button>
+                @foreach (['ytd' => 'YTD', 'mtd' => 'MTD', 'month' => 'Month', 'yoy' => 'YoY'] as $tk => $tlbl)
+                  @php $frozen = $mfIsFrozen($tk); @endphp
+                  <button
+                      type="{{ $frozen ? 'button' : 'submit' }}"
+                      name="period" value="{{ $tk }}"
+                      @if ($frozen) disabled title="Locked on this page" @endif
+                      class="ea-mfilter__btn {{ $mfDisplayType === $tk ? 'is-active' : '' }} {{ $frozen ? 'is-frozen' : '' }}">
+                      {{ $tlbl }}
+                  </button>
+                @endforeach
             </div>
             <div class="ea-mfilter__row">
                 <select name="year" onchange="this.form.submit()" class="ea-mfilter__sel" title="Year">
@@ -320,13 +341,19 @@
                       <option value="{{ $y }}" {{ $mfYear == $y ? 'selected' : '' }}>{{ $y }}</option>
                     @endfor
                 </select>
-                <select name="month" onchange="this.form.submit()" class="ea-mfilter__sel" title="Month (only used when Month is active)">
+                <select name="month" onchange="this.form.submit()" class="ea-mfilter__sel" title="Month (only used when Month is active)" @if($mfIsFrozen('month')) disabled @endif>
                     @foreach (range(1,12) as $m)
                       <option value="{{ $m }}" {{ $mfMonth == $m ? 'selected' : '' }}>{{ date('M', mktime(0,0,0,$m,1)) }}</option>
                     @endforeach
                 </select>
             </div>
-            <div class="ea-mfilter__hint">Applies to <b style="color:var(--ea-primary);">every page</b> · synced via session</div>
+            <div class="ea-mfilter__hint">
+                @if (!empty($mfFrozen))
+                  <b style="color:var(--warn);">YTD-only on this page</b> · {{ implode(', ', array_map('strtoupper', $mfFrozen)) }} disabled
+                @else
+                  Applies to <b style="color:var(--ea-primary);">every page</b> · synced via session
+                @endif
+            </div>
         </form>
 
         @php

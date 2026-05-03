@@ -267,31 +267,10 @@
             <div class="topbar__h">Executive Overview</div>
         </div>
     </div>
+    {{-- Topbar right side — period filter has moved to the sidebar
+         master filter. We keep only the "last refresh" indicator,
+         the Refresh trigger, and the tenant company badge. --}}
     <div class="topbar__c">
-        <form method="GET" class="period">
-            <button type="submit" name="period" value="ytd"   class="{{ $periodType === 'ytd' ? 'is-active' : '' }}">YTD</button>
-            <button type="submit" name="period" value="mtd"   class="{{ $periodType === 'mtd' ? 'is-active' : '' }}">MTD</button>
-            <button type="submit" name="period" value="month" class="{{ $periodType === 'month' ? 'is-active' : '' }}">Month</button>
-            @if ($periodType === 'month')
-              <input type="hidden" name="year" value="{{ $year }}">
-              <input type="hidden" name="month" value="{{ $monthCur }}">
-            @endif
-        </form>
-        <form method="GET" style="display:inline-flex; gap: 4px;">
-            <input type="hidden" name="period" value="{{ $periodType }}">
-            <select name="year" onchange="this.form.submit()" class="year-pick">
-                @for ($y = (int) date('Y'); $y >= (int) date('Y') - 3; $y--)
-                  <option value="{{ $y }}" {{ $year == $y ? 'selected' : '' }}>{{ $y }}</option>
-                @endfor
-            </select>
-            @if ($periodType === 'month')
-              <select name="month" onchange="this.form.submit()" class="month-pick">
-                @foreach (range(1,12) as $m)
-                  <option value="{{ $m }}" {{ $monthCur == $m ? 'selected' : '' }}>{{ date('M', mktime(0,0,0,$m,1)) }}</option>
-                @endforeach
-              </select>
-            @endif
-        </form>
         <span class="topbar__meta">Updated <b>{{ now()->format('H:i') }}</b> · {{ ea_last_sync_label() }}</span>
         <form method="POST" action="{{ tenant_url('/sync') }}" style="margin:0;">
             @csrf
@@ -300,6 +279,19 @@
                 Refresh
             </button>
         </form>
+        <div class="ea-cobadge" title="{{ tenant_brand_name() }}">
+            <div class="ea-cobadge__logo">
+                @if (tenant_logo_url())
+                  <img src="{{ tenant_logo_url() }}" alt="">
+                @else
+                  {{ tenant_brand_initial() }}
+                @endif
+            </div>
+            <div class="ea-cobadge__t">
+                <div class="ea-cobadge__n">{{ tenant_brand_name() }}</div>
+                <div class="ea-cobadge__sub">{{ optional(tenant())->name ?? 'Workspace' }}</div>
+            </div>
+        </div>
     </div>
 </div>
 
