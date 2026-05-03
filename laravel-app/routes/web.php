@@ -1108,7 +1108,6 @@ Route::prefix('t/{tenant}')
             // Apply onboarding redirect middleware to all other routes
             Route::middleware('redirect.if.not.onboarded')->group(function () {
                 Route::get('/',                  [DashboardController::class, 'index'])->middleware('module:dashboard');
-                Route::get('/preview/dashboard', [DashboardController::class, 'preview'])->middleware('module:dashboard');
                 Route::post('/sync',             [DashboardController::class, 'sync']);
 
                 Route::get('/revenue',           [RevenueController::class, 'index'])->middleware('module:revenue');
