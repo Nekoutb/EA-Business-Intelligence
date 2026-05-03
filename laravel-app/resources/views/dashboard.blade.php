@@ -2,278 +2,587 @@
 @section('title', 'Dashboard')
 
 @section('header')
-    <div class="flex flex-wrap items-end justify-between gap-3">
+    <div class="flex flex-wrap items-end justify-between gap-4">
         <div>
-            <h1 class="text-2xl font-bold text-slate-900">Dashboard</h1>
-            <p class="text-xs text-slate-500 mt-1">Top-management pulse · 11 KPIs across Financial, Operational, Compliance</p>
+            <div class="flex items-center gap-2 mb-1">
+                <span class="inline-block w-2 h-2 rounded-full bg-sage-400 animate-pulse"></span>
+                <span class="text-[10px] uppercase tracking-[0.35em] text-[#8a8578] font-medium">{{ $periodLabel ?? 'Live' }} · {{ ea_last_sync_label() }}</span>
+            </div>
+            <h1 class="text-2xl font-bold text-[#1e3d44]">Executive Overview</h1>
         </div>
-        @if(!empty($analysis['as_of']))
-            <div class="text-[11px] text-slate-500">As of <span class="tabular-nums font-medium text-slate-700">{{ $analysis['as_of'] }}</span></div>
-        @endif
+        <form method="POST" action="{{ tenant_url('/sync') }}" class="flex items-center gap-2">
+            @csrf
+            <a href="{{ tenant_url('/treasury') }}" class="text-[11px] font-medium text-[#5a6a70] px-3 py-1.5 rounded-lg border border-[#e8e4de] bg-white hover:bg-[#faf8f5] transition">Treasury →</a>
+            <button class="inline-flex items-center gap-1.5 text-[11px] font-semibold text-white bg-brand-600 hover:bg-brand-700 rounded-lg px-3 py-1.5 shadow-sm transition">
+                <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+                Refresh
+            </button>
+        </form>
     </div>
 @endsection
 
 @section('content')
-    @if ($error)
-        <div class="bg-rose-50 border border-rose-200 text-rose-700 rounded-xl p-4 text-sm">
-            <div class="font-medium mb-1">Could not load data from Odoo</div>
-            <div>{{ $error }}</div>
-            <div class="mt-2">Go to <a href="{{ tenant_url('/settings') }}" class="underline">Settings</a> to verify your Odoo connection.</div>
-        </div>
-    @elseif ($analysis)
-        @php
-            $cur     = $analysis['currency'] ?? 'XAF';
-            $kpis    = $analysis['kpis']     ?? [];
-            $type    = $period['type']  ?? 'ytd';
-            $year    = $period['year']  ?? (int) date('Y');
-            $month   = $period['month'] ?? (int) date('m');
 
-            $fmtN   = fn ($n) => number_format((float) $n, 0, '.', ',');
-            $fmtPct = function ($p) {
-                if ($p === null) return '—';
-                $n = (float) $p * 100.0;
-                $sign = $n > 0 ? '+' : '';
-                return $sign . number_format($n, 1) . ' %';
+    {{-- YTD / MTD timeframe selector. Limited to those two tabs (Month/YoY
+         live on the Revenue page) so the dashboard stays a fast read of
+         "year-to-date" vs "this month so far". --}}
+    <x-period-filter :period="$period" :options="[['ytd','YTD'],['mtd','MTD'],['month','Month']]" />
+
+    @if ($error)
+        <div class="bg-coral-50 border border-coral-200 text-coral-800 rounded-xl p-4 text-sm mb-6">
+            <strong>Error:</strong> {{ $error }}
+            <div class="text-xs mt-1 text-coral-600">Check your Odoo credentials in <a href="{{ tenant_url('/settings') }}" class="underline">Settings</a>.</div>
+        </div>
+    @elseif (!$data)
+        <div class="bg-warm-50 border border-warm-200 text-warm-800 rounded-xl p-5 text-sm">Loading data…</div>
+    @else
+        @php
+            $cur    = $data['current']  ?? [];
+            $prev   = $data['previous'] ?? [];
+            $ccy    = $data['currency'] ?? 'USD';
+            $yoy    = $data['yoy_growth_pct'] ?? null;
+            $plCur  = $pl['current']  ?? null;
+            $budgetData   = $data['budget'] ?? [];
+            $budgetTotals = $budgetData['totals'] ?? [];
+            $budgetDays   = (int) ($budgetData['working_days'] ?? ($cur['working_days'] ?? 1));
+            $budgetDays   = max($budgetDays, 1);
+
+            $safeDiv = function ($num, $den) {
+                if (!is_numeric($num) || !is_numeric($den) || (float) $den === 0.0) {
+                    return null;
+                }
+                return (float) $num / (float) $den;
             };
-            $chipClass = function ($p) {
-                if ($p === null) return 'text-slate-500 bg-slate-100 border-slate-200';
-                if ($p >= 0)     return 'text-emerald-700 bg-emerald-50 border-emerald-200';
-                if ($p >= -0.05) return 'text-amber-700 bg-amber-50 border-amber-200';
-                return 'text-rose-700 bg-rose-50 border-rose-200';
+            $planRevenue   = $budgetTotals['revenue']   ?? null;
+            $planOutfits   = $budgetTotals['outfits']   ?? null;
+            $planDiscounts = $budgetTotals['discounts'] ?? null;
+            $planCustomers = $budgetTotals['customers'] ?? null;
+            $planCostBase  = $budgetTotals['cost_base'] ?? null;
+            $planMetrics = [
+                'total' => $planRevenue,
+                'rpd'   => $safeDiv($planRevenue, $budgetDays),
+                'rpo'   => $safeDiv($planRevenue, $planOutfits),
+                'opd'   => $safeDiv($planOutfits, $budgetDays),
+                'rpc'   => $safeDiv($planRevenue, $planCustomers),
+                'dp_ot' => $safeDiv($planDiscounts, $planOutfits),
+                'dp_c'  => $safeDiv($planDiscounts, $planCustomers),
+                'cpo'   => $safeDiv($planCostBase, $planOutfits),
+            ];
+
+            $variance = function ($current, $reference) {
+                if (!is_numeric($current) || !is_numeric($reference)) {
+                    return null;
+                }
+                if ((float) $reference === 0.0) {
+                    return (float) $current === 0.0 ? 0.0 : null;
+                }
+                return (($current - $reference) / abs($reference)) * 100.0;
             };
-            $arrow = fn ($p) => $p === null ? '·' : ($p >= 0 ? '↑' : '↓');
+
+            // Per-tenant KPI on/off — managed in /admin/tenants/{id} → Dashboard KPIs.
+            // Falls back to the registry default if no row exists.
+            $tnt   = tenant();
+            $kpiOn = fn (string $key) => $tnt ? $tnt->dashboardKpiEnabled($key) : true;
+
+            // Run-rate — working-day basis (consistent with RpD).
+            //
+            // Period-aware:
+            //   YTD: run_rate = (YTD revenue ÷ working_days_YTD) × annual_working_days
+            //                 → "Annualised Run-Rate" headline
+            //   MTD: run_rate = (MTD revenue ÷ working_days_so_far_in_month) × working_days_in_month
+            //                 → "Monthly Run-Rate" headline
+            //
+            // We use working days, not calendar days, because revenue is
+            // generally posted only on trading days. CRITICAL: the basis
+            // here MUST match the basis RevenueService uses for
+            // `working_days`. RevenueService::workingDaysExact() counts
+            // Mon-Sat (6-day week), excluding only Sundays — the company
+            // trades on Saturdays. Mixing a 5-day denominator with a 6-day
+            // numerator would inflate the projection by ~17%.
+            // "Monthly view" = either MTD (current calendar month, partial)
+            // OR Month (a specific year+month, complete or partial). Both
+            // anchor to a single calendar month, so the run-rate basis and
+            // KPI titles are identical for both.
+            $periodType    = $period['type'] ?? 'ytd';
+            $isMtd         = in_array($periodType, ['mtd', 'month'], true);
+            $workingDaysSoFar = max(1, (int) ($cur['working_days'] ?? 1));
+
+            // Full-period working days — annual when YTD, calendar-month when MTD/Month.
+            $today  = new \DateTimeImmutable();
+            $year   = (int) $today->format('Y');
+            $fullPeriodWorkingDays = 0;
+            if ($isMtd) {
+                // Mon-Sat days in the relevant calendar month. For type=mtd
+                // that's the current month; for type=month it's the
+                // year+month selected via the filter (so April 2026 picks
+                // up April's full WD count regardless of today's date).
+                if ($periodType === 'month' && !empty($period['year']) && !empty($period['month'])) {
+                    $monthStart = new \DateTimeImmutable(sprintf(
+                        '%04d-%02d-01', (int) $period['year'], (int) $period['month']
+                    ));
+                } else {
+                    $monthStart = $today->modify('first day of this month');
+                }
+                $nextMonth = $monthStart->modify('first day of next month');
+                for ($d = $monthStart; $d < $nextMonth; $d = $d->modify('+1 day')) {
+                    if ((int) $d->format('N') < 7) $fullPeriodWorkingDays++;
+                }
+            } else {
+                // Mon-Sat days in the current calendar year (no public-
+                // holiday adjustment — a one-line subtraction later if
+                // the firm wants a holiday calendar). For 2026 this is ~313.
+                for ($d = new \DateTimeImmutable("$year-01-01"); (int) $d->format('Y') === $year; $d = $d->modify('+1 day')) {
+                    if ((int) $d->format('N') < 7) $fullPeriodWorkingDays++;
+                }
+            }
+            $fullPeriodWorkingDays = max(1, $fullPeriodWorkingDays);
+
+            $runRate = ((float) ($cur['total'] ?? 0) / $workingDaysSoFar) * $fullPeriodWorkingDays;
+
+            // Prior-period same-pace projection on the same basis. Uses
+            // the SAME working-days denominator on the assumption that
+            // the PY same-period had a similar working-day count (true
+            // to within ±1 day for most calendars).
+            $runRatePy = ($prev['total'] ?? null) !== null
+                ? ((float) $prev['total'] / $workingDaysSoFar) * $fullPeriodWorkingDays
+                : null;
+
+            // Plan figure projected to the same horizon as the run-rate.
+            // $planMetrics['total'] is the period-to-date plan (matches
+            // what the Revenue KPI compares against), so we scale it the
+            // same way we scaled $cur['total']: divide by working_days
+            // elapsed, multiply by the full-period working_days. The
+            // resulting $runRatePlan answers "where would the plan have
+            // us land at full-period close?" and the variance against
+            // $runRate answers "if pace continues, will we beat plan?".
+            // For a perfectly linear plan this matches the % variance
+            // shown on Revenue YTD/MTD; for a seasonal plan they diverge,
+            // which is the useful signal.
+            $runRatePlan = is_numeric($planMetrics['total'] ?? null)
+                ? ((float) $planMetrics['total'] / $workingDaysSoFar) * $fullPeriodWorkingDays
+                : null;
+
+            // Period-aware copy.
+            $revenueTitle = $isMtd ? 'Revenue MTD' : 'Revenue YTD';
+            $runRateTitle = $isMtd ? 'Monthly Run-Rate' : 'Annualised Run-Rate';
+            $runRateSub   = 'Working-day pace · ' . $workingDaysSoFar . ' / ' . $fullPeriodWorkingDays . ' WD';
         @endphp
 
-        {{-- Period filter --}}
-        <div class="bg-white border border-slate-200 rounded-xl shadow-sm p-4 mb-4">
-            <form method="GET" action="{{ tenant_url('/') }}" class="flex flex-wrap items-end gap-4">
-                <div>
-                    <label class="block text-[10px] uppercase tracking-widest text-slate-500 font-semibold mb-1.5">Period</label>
-                    <div class="inline-flex border border-slate-300 rounded-lg overflow-hidden">
-                        @foreach (['ytd' => 'YTD', 'mtd' => 'MTD', 'month' => 'Month'] as $v => $l)
-                            <a href="{{ tenant_url('/') }}?period={{ $v }}&year={{ $year }}&month={{ $month }}"
-                               class="px-3 py-1.5 text-sm {{ $type === $v ? 'bg-slate-900 text-white' : 'bg-white text-slate-700 hover:bg-slate-50' }}">
-                                {{ $l }}
-                            </a>
-                        @endforeach
-                    </div>
-                </div>
-                <div>
-                    <label class="block text-[10px] uppercase tracking-widest text-slate-500 font-semibold mb-1.5">Year</label>
-                    <select name="year" onchange="this.form.submit()" class="border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white">
-                        @foreach (range((int) date('Y'), (int) date('Y') - 4) as $y)
-                            <option value="{{ $y }}" {{ $year === $y ? 'selected' : '' }}>{{ $y }}</option>
-                        @endforeach
-                    </select>
-                </div>
-                @if ($type === 'month')
-                    <div>
-                        <label class="block text-[10px] uppercase tracking-widest text-slate-500 font-semibold mb-1.5">Month</label>
-                        <select name="month" onchange="this.form.submit()" class="border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white">
-                            @foreach (range(1, 12) as $m)
-                                <option value="{{ $m }}" {{ $month === $m ? 'selected' : '' }}>{{ \DateTime::createFromFormat('!m', (string) $m)->format('M') }}</option>
-                            @endforeach
-                        </select>
-                    </div>
+        {{-- ── Section: Revenue & Profitability KPIs ─────────────────────── --}}
+        <div class="mb-7">
+            <div class="flex items-center gap-2 mb-3">
+                <div class="w-1 h-4 rounded bg-brand-400"></div>
+                <h2 class="text-xs font-semibold uppercase tracking-wider text-[#5a6a70]">Revenue & Profitability</h2>
+            </div>
+            <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3">
+                @if ($kpiOn('revenue_ytd'))
+                <x-kpi :title="$revenueTitle"
+                       :value="ea_money_short((float)($cur['total'] ?? 0), $ccy)"
+                       :delta="$yoy"
+                       :vsPy="$variance($cur['total'] ?? null, $prev['total'] ?? null)"
+                       :vsPlan="$variance($cur['total'] ?? null, $planMetrics['total'])"
+                       color="brand"
+                       icon="M3 3v18h18M7 14l4-4 3 3 5-5"/>
                 @endif
-                <input type="hidden" name="period" value="{{ $type }}">
-                <div class="flex-1 text-right text-[11px] text-slate-500">{{ $periodLabel ?? '' }}</div>
-            </form>
-        </div>
 
-        {{-- Theme A · Financial --}}
-        <div class="mb-3">
-            <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold mb-2 px-1">Theme A · Financial Performance</div>
-            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+                @if ($kpiOn('rpd'))
+                <div title="Revenue per day can be highlighted">
+                    <x-kpi title="RpD"
+                           :value="ea_money_short((float)($cur['rpd'] ?? 0), $ccy)"
+                           :sub="($cur['working_days'] ?? 0) . ' working days'"
+                           :vsPy="$variance($cur['rpd'] ?? null, $prev['rpd'] ?? null)"
+                           :vsPlan="$variance($cur['rpd'] ?? null, $planMetrics['rpd'])"
+                           color="sage"
+                           icon="M12 8v4l3 2M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z"/>
+                </div>
+                @endif
 
-                {{-- F1 --}}
-                @php $k = $kpis['F1'] ?? []; @endphp
-                <a href="{{ $k['drill'] ?? '#' }}" class="bg-white border border-slate-200 rounded-xl shadow-sm p-4 hover:shadow-md transition block">
-                    <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">{{ $k['label'] ?? 'F1' }}</div>
-                    <div class="text-2xl font-bold tabular-nums text-slate-900 mt-1">
-                        {{ $k['value_fmt'] ?? '—' }}
-                        <span class="text-sm font-medium text-slate-500">{{ $k['unit'] ?? '' }}</span>
-                    </div>
-                    <div class="flex flex-wrap items-center gap-1.5 mt-2">
-                        @if (array_key_exists('vs_budget', $k) && $k['vs_budget'] !== null)
-                            <span class="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full border {{ $chipClass($k['vs_budget']) }}">
-                                {{ $arrow($k['vs_budget']) }} {{ $fmtPct($k['vs_budget']) }} Budget
-                            </span>
-                        @endif
-                        @if (array_key_exists('vs_py', $k) && $k['vs_py'] !== null)
-                            <span class="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full border {{ $chipClass($k['vs_py']) }}">
-                                {{ $arrow($k['vs_py']) }} {{ $fmtPct($k['vs_py']) }} PY
-                            </span>
-                        @endif
-                    </div>
-                    <div class="text-[10px] text-slate-400 mt-2">{{ $k['sub'] ?? '' }}</div>
-                </a>
+                @if ($kpiOn('rpo'))
+                <div title="Revenue per day can be highlighted">
+                    <x-kpi title="RpO"
+                           :value="ea_money_short((float)($cur['rpo'] ?? 0), $ccy)"
+                           :sub="number_format((int)($cur['outfits'] ?? 0)) . ' outfits'"
+                           :vsPy="$variance($cur['rpo'] ?? null, $prev['rpo'] ?? null)"
+                           :vsPlan="$variance($cur['rpo'] ?? null, $planMetrics['rpo'])"
+                           color="brand"
+                           icon="M3 3v18h18M8 12h8"/>
+                </div>
+                @endif
 
-                {{-- F2 (wide_recon) --}}
-                @php $k = $kpis['F2'] ?? []; @endphp
-                <a href="{{ $k['drill'] ?? '#' }}" class="bg-white border border-slate-200 rounded-xl shadow-sm p-4 hover:shadow-md transition block">
-                    <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">{{ $k['label'] ?? 'F2' }}</div>
-                    <div class="grid grid-cols-3 gap-2 mt-2">
-                        <div>
-                            <div class="text-[9px] uppercase tracking-wider text-slate-500">Scanned</div>
-                            <div class="text-sm font-semibold tabular-nums text-slate-900">{{ $fmtN($k['expected'] ?? 0) }}</div>
-                        </div>
-                        <div>
-                            <div class="text-[9px] uppercase tracking-wider text-slate-500">Billed</div>
-                            <div class="text-sm font-semibold tabular-nums text-slate-900">{{ $fmtN($k['billed'] ?? 0) }}</div>
-                        </div>
-                        <div>
-                            <div class="text-[9px] uppercase tracking-wider text-slate-500">Collected</div>
-                            <div class="text-sm font-semibold tabular-nums text-slate-900">{{ $fmtN($k['collected'] ?? 0) }}</div>
-                        </div>
-                    </div>
-                    @php
-                        $br = $k['billing_realisation_pct']    ?? null;
-                        $cr = $k['collection_realisation_pct'] ?? null;
-                        $brFr = $br === null ? null : ($br - 100) / 100;
-                        $crFr = $cr === null ? null : ($cr - 100) / 100;
-                    @endphp
-                    <div class="flex flex-wrap items-center gap-1.5 mt-2">
-                        <span class="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full border {{ $chipClass($brFr) }}">
-                            B/S {{ $br === null ? '—' : number_format((float) $br, 1) . ' %' }}
-                        </span>
-                        <span class="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full border {{ $chipClass($crFr) }}">
-                            C/B {{ $cr === null ? '—' : number_format((float) $cr, 1) . ' %' }}
-                        </span>
-                    </div>
-                    <div class="text-[10px] text-slate-400 mt-2">{{ $k['sub'] ?? '' }} · YTD</div>
-                </a>
+                @if ($kpiOn('opd'))
+                <x-kpi title="OpD"
+                       :value="number_format((float)($cur['opd'] ?? 0), 1)"
+                       :sub="'Outfits / working day'"
+                       :vsPy="$variance($cur['opd'] ?? null, $prev['opd'] ?? null)"
+                       :vsPlan="$variance($cur['opd'] ?? null, $planMetrics['opd'])"
+                       color="slate"
+                       icon="M4 6h16M4 12h10M4 18h6"/>
+                @endif
 
-                {{-- F3 --}}
-                @php $k = $kpis['F3'] ?? []; @endphp
-                <a href="{{ $k['drill'] ?? '#' }}" class="bg-white border border-slate-200 rounded-xl shadow-sm p-4 hover:shadow-md transition block">
-                    <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">{{ $k['label'] ?? 'F3' }}</div>
-                    <div class="text-2xl font-bold tabular-nums text-slate-900 mt-1">
-                        {{ $k['value_fmt'] ?? '—' }}
-                        <span class="text-sm font-medium text-slate-500">{{ $k['unit'] ?? '' }}</span>
-                    </div>
-                    <div class="flex flex-wrap items-center gap-1.5 mt-2">
-                        @if (array_key_exists('vs_budget', $k) && $k['vs_budget'] !== null)
-                            <span class="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full border {{ $chipClass($k['vs_budget']) }}">
-                                {{ $arrow($k['vs_budget']) }} {{ $fmtPct($k['vs_budget']) }} Budget
-                            </span>
-                        @endif
-                    </div>
-                    <div class="text-[10px] text-slate-400 mt-2">{{ $k['sub'] ?? '' }}</div>
-                </a>
+                @if ($kpiOn('rpc'))
+                <x-kpi title="RpC"
+                       :value="ea_money_short((float)($cur['per_customer'] ?? 0), $ccy)"
+                       :sub="number_format((int)($cur['customers'] ?? 0)) . ' customers'"
+                       :vsPy="$variance($cur['per_customer'] ?? null, $prev['per_customer'] ?? null)"
+                       :vsPlan="$variance($cur['per_customer'] ?? null, $planMetrics['rpc'])"
+                       color="coral"
+                       icon="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+                @endif
 
-                {{-- F4 (wide_aging) --}}
-                @php $k = $kpis['F4'] ?? []; @endphp
-                <a href="{{ $k['drill'] ?? '#' }}" class="bg-white border border-slate-200 rounded-xl shadow-sm p-4 hover:shadow-md transition block">
-                    <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">{{ $k['label'] ?? 'F4' }}</div>
-                    <div class="text-2xl font-bold tabular-nums text-slate-900 mt-1">
-                        {{ $fmtN($k['total_ar'] ?? 0) }}
-                        <span class="text-sm font-medium text-slate-500">{{ $cur }}</span>
-                    </div>
-                    @php
-                        $p30 = $k['pct_over_30'] ?? 0;
-                        $p60 = $k['pct_over_60'] ?? 0;
-                        $cls30 = $p30 > 25 ? 'text-rose-700 bg-rose-50 border-rose-200' : ($p30 > 10 ? 'text-amber-700 bg-amber-50 border-amber-200' : 'text-emerald-700 bg-emerald-50 border-emerald-200');
-                        $cls60 = $p60 > 15 ? 'text-rose-700 bg-rose-50 border-rose-200' : ($p60 > 5  ? 'text-amber-700 bg-amber-50 border-amber-200' : 'text-emerald-700 bg-emerald-50 border-emerald-200');
-                    @endphp
-                    <div class="flex flex-wrap items-center gap-1.5 mt-2">
-                        <span class="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full border {{ $cls30 }}">
-                            &gt; 30 d · {{ number_format($p30, 1) }} %
-                        </span>
-                        <span class="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full border {{ $cls60 }}">
-                            &gt; 60 d · {{ number_format($p60, 1) }} %
-                        </span>
-                    </div>
-                    <div class="text-[10px] text-slate-400 mt-2">{{ $k['sub'] ?? '' }}</div>
-                </a>
+                @if ($kpiOn('dpot'))
+                <x-kpi title="DpOT"
+                       :value="ea_money_short((float)($cur['dp_ot'] ?? 0), $ccy)"
+                       :sub="'Discount per outfit'"
+                       :vsPy="$variance($cur['dp_ot'] ?? null, $prev['dp_ot'] ?? null)"
+                       :vsPlan="$variance($cur['dp_ot'] ?? null, $planMetrics['dp_ot'])"
+                       prefer="down"
+                       color="warm"
+                       icon="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82zM7 7h.01"/>
+                @endif
+
+                @if ($kpiOn('dpc'))
+                <x-kpi title="DpC"
+                       :value="ea_money_short((float)($cur['dp_c'] ?? 0), $ccy)"
+                       :sub="'Discount per customer'"
+                       :vsPy="$variance($cur['dp_c'] ?? null, $prev['dp_c'] ?? null)"
+                       :vsPlan="$variance($cur['dp_c'] ?? null, $planMetrics['dp_c'])"
+                       prefer="down"
+                       color="warm"
+                       icon="M9 14l6-6M9 8h.01M15 14h.01"/>
+                @endif
+
+                @if ($kpiOn('cpo'))
+                <x-kpi title="CpO"
+                       :value="ea_money_short((float)($cur['cpo'] ?? 0), $ccy)"
+                       :sub="'603 + 7019 basis'"
+                       :vsPy="$variance($cur['cpo'] ?? null, $prev['cpo'] ?? null)"
+                       :vsPlan="$variance($cur['cpo'] ?? null, $planMetrics['cpo'])"
+                       prefer="down"
+                       color="sage"
+                       icon="M5 12h14M12 5l7 7-7 7"/>
+                @endif
+
+                @if ($kpiOn('run_rate'))
+                <x-kpi :title="$runRateTitle"
+                       :value="ea_money_short($runRate, $ccy)"
+                       :sub="$runRateSub"
+                       :vsPy="$variance($runRate, $runRatePy)"
+                       :vsPlan="$variance($runRate, $runRatePlan)"
+                       color="brand"
+                       icon="M3 17l6-6 4 4 8-8M14 7h7v7"/>
+                @endif
             </div>
         </div>
 
-        {{-- Theme B · Operational --}}
-        <div class="mb-3">
-            <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold mb-2 px-1">Theme B · Operational Efficiency</div>
-            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
-                @foreach (['O1', 'O2', 'O3', 'O4'] as $code)
-                    @php $k = $kpis[$code] ?? []; @endphp
-                    <a href="{{ $k['drill'] ?? '#' }}" class="bg-white border border-slate-200 rounded-xl shadow-sm p-4 hover:shadow-md transition block">
-                        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">{{ $k['label'] ?? $code }}</div>
-                        <div class="text-2xl font-bold tabular-nums text-slate-900 mt-1">
-                            {{ $k['value_fmt'] ?? '—' }}
-                            <span class="text-sm font-medium text-slate-500">{{ ($k['unit'] ?? '') === 'count' ? '' : (($k['unit'] ?? '') === 'pct' ? '%' : ($k['unit'] ?? '')) }}</span>
-                        </div>
-                        <div class="flex flex-wrap items-center gap-1.5 mt-2">
-                            @if (array_key_exists('vs_py', $k) && $k['vs_py'] !== null)
-                                <span class="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full border {{ $chipClass($k['vs_py']) }}">
-                                    {{ $arrow($k['vs_py']) }} {{ $fmtPct($k['vs_py']) }} PY
-                                </span>
-                            @endif
-                            @if (!empty($k['pending']))
-                                <span class="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full border text-slate-500 bg-slate-100 border-slate-200">pending</span>
-                            @endif
-                        </div>
-                        <div class="text-[10px] text-slate-400 mt-2">{{ $k['sub'] ?? '' }}</div>
-                    </a>
-                @endforeach
+        @if ($plCur)
+        <div class="mb-7">
+            <div class="flex items-center gap-2 mb-3">
+                <div class="w-1 h-4 rounded bg-sage-400"></div>
+                <h2 class="text-xs font-semibold uppercase tracking-wider text-[#5a6a70]">Margin Structure</h2>
+            </div>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+                @if ($kpiOn('gross_profit'))
+                <x-kpi title="Gross Profit"
+                       :value="ea_money_short((float)($plCur['gross_profit'] ?? 0), $ccy)"
+                       :sub="'Margin ' . number_format((float)($plCur['gross_margin_pct'] ?? $plCur['gross_margin'] ?? 0), 1) . '%'"
+                       color="sage"
+                       icon="M12 2l3 7h7l-5.5 4L18 20l-6-4-6 4 1.5-7L2 9h7z"/>
+                @endif
+
+                @if ($kpiOn('ebitda'))
+                <x-kpi title="EBITDA"
+                       :value="ea_money_short((float)($plCur['ebitda'] ?? 0), $ccy)"
+                       :sub="'Margin ' . number_format((float)($plCur['ebitda_margin_pct'] ?? $plCur['ebitda_margin'] ?? 0), 1) . '%'"
+                       color="brand"
+                       icon="M3 3v18h18M7 14l4-4 3 3 5-5"/>
+                @endif
+
+                @if ($kpiOn('net_profit'))
+                <x-kpi title="Net Profit"
+                       :value="ea_money_short((float)($plCur['net_profit'] ?? 0), $ccy)"
+                       :sub="'Margin ' . number_format((float)($plCur['net_margin_pct'] ?? $plCur['net_margin'] ?? 0), 1) . '%'"
+                       :color="($plCur['net_profit'] ?? 0) >= 0 ? 'sage' : 'coral'"
+                       icon="M22 11V3h-8M14 3l8 8-11 11-8-8z"/>
+                @endif
+
+                @if ($kpiOn('opex'))
+                <x-kpi title="OpEx"
+                       :value="ea_money_short((float)($plCur['opex'] ?? 0), $ccy)"
+                       color="slate"
+                       icon="M4 6h16M4 12h16M4 18h16"/>
+                @endif
             </div>
         </div>
+        @endif
 
-        {{-- Theme C · Compliance --}}
-        <div class="mb-3">
-            <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold mb-2 px-1">Theme C · Compliance &amp; Risk</div>
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
-                {{-- C1 --}}
-                @php $k = $kpis['C1'] ?? []; @endphp
-                <a href="{{ $k['drill'] ?? '#' }}" class="bg-white border border-slate-200 rounded-xl shadow-sm p-4 hover:shadow-md transition block">
-                    <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">{{ $k['label'] ?? 'C1' }}</div>
-                    <div class="text-2xl font-bold tabular-nums text-slate-900 mt-1">
-                        {{ $k['value_fmt'] ?? '—' }}
-                        <span class="text-sm font-medium text-slate-500">%</span>
-                    </div>
-                    <div class="flex flex-wrap items-center gap-1.5 mt-2">
-                        @if (array_key_exists('vs_py', $k) && $k['vs_py'] !== null)
-                            <span class="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full border {{ $chipClass($k['vs_py']) }}">
-                                {{ $arrow($k['vs_py']) }} {{ $fmtPct($k['vs_py']) }} PY
-                            </span>
-                        @endif
-                    </div>
-                    <div class="text-[10px] text-slate-400 mt-2">{{ $k['sub'] ?? '' }}</div>
-                </a>
+        {{-- ── Section: Revenue Reconciliation Sandbox ──────────────────────
+             Compact summary of the Expected → Billed → Cash flow with the
+             two diagnostic gaps inline. Mirrors /billing's full panel but
+             trimmed for the dashboard's "quick read" purpose. Hidden if
+             reconciliation has no data (e.g. operations not reachable). --}}
+        @php
+            $rec = $reconciliation ?? null;
+            $recHas = $rec && empty($rec['error']) && (
+                (($rec['headline']['expected'] ?? 0)  > 0) ||
+                (($rec['headline']['billed']   ?? 0)  > 0) ||
+                (($rec['headline']['collected'] ?? 0) > 0)
+            );
+        @endphp
+        @if ($recHas)
+          @php
+              $h = $rec['headline'];
+              $billGap = (float) $h['billing_gap'];
+              $collGap = (float) $h['collection_gap'];
+              $billGapPct = $h['expected'] > 0 ? 100.0 * abs($billGap) / $h['expected'] : null;
+              $collGapPct = $h['billed']   > 0 ? 100.0 * abs($collGap) / $h['billed']   : null;
+              $billRealisationPct = $h['billing_realisation_pct'];
+              $collRealisationPct = $h['collection_realisation_pct'];
+          @endphp
+          <div class="section-card p-5 mb-7">
+              <div class="flex items-center justify-between mb-4 gap-3 flex-wrap">
+                  <div>
+                      <h2 class="text-[13px] font-semibold text-[#1e3d44]">Revenue Reconciliation Sandbox</h2>
+                      <p class="text-[11px] text-[#8a8578] mt-0.5">From Expected (scans) → Billed (invoices) → Cash (collected) · {{ $periodLabel }} · FCFA HT</p>
+                  </div>
+                  <a href="{{ tenant_url('/billing') }}?period={{ $period['type'] ?? 'ytd' }}&year={{ $period['year'] ?? now()->year }}&month={{ $period['month'] ?? now()->month }}"
+                     class="text-[10.5px] font-medium text-brand-700 hover:text-brand-900 border border-brand-200 hover:border-brand-400 rounded px-2 py-1 inline-flex items-center gap-1">
+                      View full reconciliation →
+                  </a>
+              </div>
 
-                {{-- C2 --}}
-                @php $k = $kpis['C2'] ?? []; @endphp
-                <a href="{{ $k['drill'] ?? '#' }}" class="bg-white border border-slate-200 rounded-xl shadow-sm p-4 hover:shadow-md transition block">
-                    <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">{{ $k['label'] ?? 'C2' }}</div>
-                    <div class="text-2xl font-bold tabular-nums text-slate-900 mt-1">
-                        {{ $k['value_fmt'] ?? '—' }}
-                    </div>
-                    <div class="text-[10px] text-slate-400 mt-2">{{ $k['sub'] ?? '' }}</div>
-                </a>
+              {{-- Three pillars + two arrows on a single horizontal row.
+                   On small screens it stacks vertically and the arrows
+                   become "down arrows" naturally via flex-wrap. --}}
+              <div class="grid grid-cols-1 md:grid-cols-[1fr_auto_1fr_auto_1fr] gap-3 items-stretch">
+                  {{-- Expected --}}
+                  <div class="bg-sage-50 border border-sage-100 rounded-lg p-3 flex flex-col">
+                      <div class="text-[10px] uppercase tracking-wider text-sage-700 font-semibold">Expected</div>
+                      <div class="text-xl font-bold text-[#2d3748] mt-1 tabular-nums">{{ ea_money_short((float) $h['expected'], 'XAF') }}</div>
+                      <div class="text-[10px] text-[#7c7466] mt-0.5 leading-snug">Scan revenue × tariff (Operations)</div>
+                  </div>
+                  {{-- Arrow + billing gap --}}
+                  <div class="flex md:flex-col items-center justify-center gap-1 text-center md:px-1">
+                      <div class="text-[#a09d95] hidden md:block">
+                          <svg width="22" height="14" viewBox="0 0 22 14" fill="none" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" d="M1 7h19m0 0l-5-5m5 5l-5 5"/></svg>
+                      </div>
+                      <div class="text-[#a09d95] md:hidden">
+                          <svg width="14" height="22" viewBox="0 0 14 22" fill="none" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" d="M7 1v19m0 0l-5-5m5 5l5-5"/></svg>
+                      </div>
+                      <div class="text-[10px] uppercase tracking-wider text-warm-700 font-semibold">Billing gap</div>
+                      <div class="text-xs font-bold tabular-nums {{ abs($billGap) > 0 ? 'text-coral-700' : 'text-sage-700' }}">
+                          {{ ($billGap >= 0 ? '−' : '+') }}{{ ea_money_short(abs($billGap), 'XAF') }}
+                      </div>
+                      @if ($billGapPct !== null)
+                        <div class="text-[9.5px] text-[#7c7466]">{{ number_format($billGapPct, 1) }}% of Expected</div>
+                      @endif
+                  </div>
+                  {{-- Billed --}}
+                  <div class="bg-brand-50 border border-brand-100 rounded-lg p-3 flex flex-col">
+                      <div class="flex items-center justify-between gap-2">
+                          <div class="text-[10px] uppercase tracking-wider text-brand-700 font-semibold">Billed</div>
+                          @if ($billRealisationPct !== null)
+                            <div class="text-[9.5px] font-semibold rounded bg-white border border-brand-200 text-brand-700 px-1.5 py-0.5">{{ number_format($billRealisationPct, 1) }}%</div>
+                          @endif
+                      </div>
+                      <div class="text-xl font-bold text-[#2d3748] mt-1 tabular-nums">{{ ea_money_short((float) $h['billed'], 'XAF') }}</div>
+                      <div class="text-[10px] text-[#7c7466] mt-0.5 leading-snug">Posted out_invoices (HT)</div>
+                  </div>
+                  {{-- Arrow + collection gap --}}
+                  <div class="flex md:flex-col items-center justify-center gap-1 text-center md:px-1">
+                      <div class="text-[#a09d95] hidden md:block">
+                          <svg width="22" height="14" viewBox="0 0 22 14" fill="none" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" d="M1 7h19m0 0l-5-5m5 5l-5 5"/></svg>
+                      </div>
+                      <div class="text-[#a09d95] md:hidden">
+                          <svg width="14" height="22" viewBox="0 0 14 22" fill="none" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" d="M7 1v19m0 0l-5-5m5 5l5-5"/></svg>
+                      </div>
+                      <div class="text-[10px] uppercase tracking-wider text-warm-700 font-semibold">Collection gap</div>
+                      <div class="text-xs font-bold tabular-nums {{ abs($collGap) > 0 ? 'text-coral-700' : 'text-sage-700' }}">
+                          −{{ ea_money_short(abs($collGap), 'XAF') }}
+                      </div>
+                      @if ($collGapPct !== null)
+                        <div class="text-[9.5px] text-[#7c7466]">{{ number_format($collGapPct, 1) }}% of Billed</div>
+                      @endif
+                  </div>
+                  {{-- Cash collected --}}
+                  <div class="bg-warm-50 border border-warm-100 rounded-lg p-3 flex flex-col">
+                      <div class="flex items-center justify-between gap-2">
+                          <div class="text-[10px] uppercase tracking-wider text-warm-700 font-semibold">Cash</div>
+                          @if ($collRealisationPct !== null)
+                            <div class="text-[9.5px] font-semibold rounded bg-white border border-warm-200 text-warm-700 px-1.5 py-0.5">{{ number_format($collRealisationPct, 1) }}%</div>
+                          @endif
+                      </div>
+                      <div class="text-xl font-bold text-[#2d3748] mt-1 tabular-nums">{{ ea_money_short((float) $h['collected'], 'XAF') }}</div>
+                      <div class="text-[10px] text-[#7c7466] mt-0.5 leading-snug">Billed × payment progress (HT)</div>
+                  </div>
+              </div>
 
-                {{-- C3 (wide_tax) --}}
-                @php $k = $kpis['C3'] ?? []; @endphp
-                <a href="{{ $k['drill'] ?? '#' }}" class="bg-white border border-slate-200 rounded-xl shadow-sm p-4 hover:shadow-md transition block">
-                    <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">{{ $k['label'] ?? 'C3' }}</div>
-                    <div class="grid grid-cols-2 gap-2 mt-1">
+              <div class="text-[11px] text-[#7c7466] mt-3 leading-relaxed">
+                  <strong>Reading:</strong>
+                  Billing gap = revenue earned operationally but not invoiced.
+                  Collection gap = invoiced but not yet received (open AR on this period's invoices).
+                  All figures HT to keep stages comparable.
+              </div>
+          </div>
+        @endif
+
+        {{-- ── Section: Revenue Trend ────────────────────────────────────── --}}
+        @if (!empty($cur['series']))
+          <div class="grid lg:grid-cols-3 gap-4 mb-7">
+              <div class="lg:col-span-2 section-card p-5">
+                  <div class="flex items-center justify-between mb-4">
+                      <div>
+                          <h2 class="text-[13px] font-semibold text-[#1e3d44]">{{ $data['period']['label'] ?? 'Period' }} Revenue vs Budget</h2>
+                          <p class="text-[11px] text-[#8a8578]">Cumulative actuals vs cumulative budget ({{ $ccy }})</p>
+                      </div>
+                      <div class="flex gap-3 text-[10px] text-[#8a8578]">
+                          <div class="flex items-center gap-1.5"><span class="w-3 h-[3px] bg-brand-400 rounded"></span>Actual (cum)</div>
+                          <div class="flex items-center gap-1.5"><span class="w-3 h-[3px] bg-warm-500 rounded"></span>Budget (cum)</div>
+                      </div>
+                  </div>
+                  <div class="h-56"><canvas id="revenueTrendChart"></canvas></div>
+              </div>
+
+              <div class="space-y-4">
+                  <div class="section-card p-4 bg-brand-50/50">
+                      <p class="text-[10px] uppercase tracking-wider text-[#8a8578] font-medium">Commercial Sentiment</p>
+                      <h3 class="text-lg font-bold text-[#1e3d44] mt-1.5">{{ number_format((float)($cur['customers'] ?? 0)) }} <span class="text-sm font-normal text-[#5a6a70]">customers</span></h3>
+                      <p class="text-[11px] text-[#8a8578] mt-1.5 leading-relaxed">Avg spend {{ ea_money_short((float)($cur['per_customer'] ?? 0), $ccy) }} — track VIP accounts in Receivables.</p>
+                  </div>
+                  <div class="section-card p-4 bg-sage-50/50">
+                      <p class="text-[10px] uppercase tracking-wider text-[#8a8578] font-medium">Margin Glance</p>
+                      <h3 class="text-lg font-bold text-[#1e3d44] mt-1.5">
+                          {{ $plCur ? number_format((float)($plCur['gross_margin_pct'] ?? $plCur['gross_margin'] ?? 0),1) : '—' }}%
+                          <span class="text-sm font-normal text-[#5a6a70]">gross</span> ·
+                          {{ $plCur ? number_format((float)($plCur['ebitda_margin_pct'] ?? $plCur['ebitda_margin'] ?? 0),1) : '—' }}%
+                          <span class="text-sm font-normal text-[#5a6a70]">EBITDA</span>
+                      </h3>
+                      <p class="text-[11px] text-[#8a8578] mt-1.5 leading-relaxed">Monitor OpEx in Profit &amp; Loss to defend margins.</p>
+                  </div>
+              </div>
+          </div>
+
+          @push('scripts')
+          <script>
+          (function () {
+              const cy = @json($cur['series'] ?? []);
+              const budget = @json($data['budget']['series'] ?? []);
+              const labels = Object.keys(cy);
+              let runningActual = 0;
+              const cumulativeActual = labels.map(day => {
+                  runningActual += cy[day] ?? 0;
+                  return runningActual;
+              });
+              let runningBudget = 0;
+              const cumulativeBudget = labels.map(day => {
+                  runningBudget += budget[day] ?? 0;
+                  return runningBudget;
+              });
+              const ctx = document.getElementById('revenueTrendChart');
+              if (!ctx) return;
+              new Chart(ctx, {
+                  type: 'line',
+                  data: {
+                      labels,
+                      datasets: [
+                          {
+                              label: 'Actual (cum)', data: cumulativeActual,
+                              borderColor: '#4da8b4', backgroundColor: 'rgba(77,168,180,.12)',
+                              fill: true, tension: 0.35, pointRadius: 0, borderWidth: 2,
+                          },
+                          {
+                              label: 'Budget (cum)', data: cumulativeBudget,
+                              borderColor: '#f0a43c', borderWidth: 1.5, borderDash: [4, 4],
+                              fill: false, tension: 0.2, pointRadius: 0,
+                          },
+                      ],
+                  },
+                  options: {
+                      responsive: true, maintainAspectRatio: false,
+                      interaction: { intersect: false, mode: 'index' },
+                      plugins: {
+                          legend: { display: false },
+                          tooltip: { backgroundColor: '#1c2637', titleFont: { size: 11 }, bodyFont: { size: 11 }, padding: 10, cornerRadius: 8 }
+                      },
+                      scales: {
+                          x: { grid: { display: false }, ticks: { maxTicksLimit: 8, font: { size: 10 }, color: '#8a8578' } },
+                          y: { grid: { color: '#f0ede7' }, ticks: { font: { size: 10 }, color: '#8a8578',
+                                callback: v => v >= 1e6 ? (v/1e6).toFixed(1)+'M' : v >= 1e3 ? (v/1e3).toFixed(0)+'K' : v } },
+                      },
+                  },
+              });
+          })();
+          </script>
+          @endpush
+        @endif
+
+        {{-- ── Section: Treasury Snapshot ─────────────────────────────────── --}}
+        @if ($receivables)
+            @php
+                $treasuryCards = [
+                    ['label' => 'Total AR',           'value' => ea_money_short((float)($receivables['total_ar'] ?? 0), $ccy), 'hint' => 'Outstanding including current', 'accent' => 'bg-brand-400'],
+                    ['label' => 'Overdue Ratio',      'value' => number_format((float)($receivables['overdue_rate'] ?? 0), 1) . '%', 'hint' => 'Target < 8%', 'accent' => 'bg-coral-400'],
+                    ['label' => 'DSO',                'value' => number_format((float)($receivables['dso'] ?? $receivables['kpis']['dso_days'] ?? 0), 0) . ' days', 'hint' => 'Collection velocity', 'accent' => 'bg-sage-400'],
+                    ['label' => 'Top-5 Concentration','value' => number_format((float)($receivables['top5_pct'] ?? 0), 1) . '%', 'hint' => 'Customer risk', 'accent' => 'bg-warm-400'],
+                ];
+            @endphp
+            <div class="section-card p-5 mb-7">
+                <div class="flex items-center justify-between mb-4">
+                    <div class="flex items-center gap-2">
+                        <div class="w-1 h-4 rounded bg-warm-400"></div>
                         <div>
-                            <div class="text-[9px] uppercase tracking-wider text-slate-500">Issues</div>
-                            <div class="text-2xl font-bold tabular-nums {{ ($k['issues_count'] ?? 0) > 0 ? 'text-rose-700' : 'text-slate-900' }}">{{ $k['issues_count'] ?? 0 }}</div>
-                        </div>
-                        <div>
-                            <div class="text-[9px] uppercase tracking-wider text-slate-500">Exposure ({{ $cur }})</div>
-                            <div class="text-2xl font-bold tabular-nums text-slate-900">{{ $k['exposure_fmt'] ?? '—' }}</div>
+                            <h2 class="text-[13px] font-semibold text-[#1e3d44]">Treasury Pulse</h2>
+                            <p class="text-[11px] text-[#8a8578]">Receivables quality feeds liquidity planning</p>
                         </div>
                     </div>
-                    <div class="text-[10px] text-slate-400 mt-2">{{ $k['sub'] ?? '' }}</div>
-                </a>
+                    <a href="{{ tenant_url('/treasury') }}" class="text-[10px] font-medium text-brand-600 hover:text-brand-800 transition">Open treasury →</a>
+                </div>
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    @foreach ($treasuryCards as $card)
+                        <div class="rounded-xl border border-[#e8e4de] bg-[#faf8f5] p-3.5 flex gap-3">
+                            <div class="w-1 rounded {{ $card['accent'] }} shrink-0"></div>
+                            <div>
+                                <p class="text-[10px] uppercase tracking-wider text-[#8a8578] font-medium">{{ $card['label'] }}</p>
+                                <div class="text-lg font-bold text-[#1e3d44] mt-0.5">{{ $card['value'] }}</div>
+                                <p class="text-[10px] text-[#a09d95] mt-0.5">{{ $card['hint'] }}</p>
+                            </div>
+                        </div>
+                    @endforeach
+                </div>
             </div>
-        </div>
+        @endif
 
-        {{-- Methodology --}}
-        <div class="bg-white border border-slate-200 rounded-xl p-4 shadow-sm text-[11px] text-slate-500 leading-relaxed">
-            <strong class="text-slate-700">11 KPIs · 3 themes.</strong>
-            Sourced via <code class="text-[10.5px] bg-slate-100 px-1 py-0.5 rounded">DashboardKpiService</code> from existing services
-            (Operations, Billing, OHADA Financials, Receivables, Procurement, GL Quality, VAT Invoice Compliance, Monthly Tax Return).
-            Click any card to drill into its source module. Period toggle drives Financial and Operational rows; Compliance is point-in-time.
+        {{-- ── Quick Links ────────────────────────────────────────────────── --}}
+        <div class="grid md:grid-cols-3 gap-3">
+            <a href="{{ tenant_url('/revenue') }}" class="section-card p-4 hover:shadow-md transition group">
+                <div class="flex items-center justify-between mb-1.5">
+                    <p class="text-[11px] uppercase tracking-wider text-[#8a8578] font-medium">Revenue</p>
+                    <span class="text-[10px] text-brand-600 group-hover:translate-x-0.5 transition">View →</span>
+                </div>
+                <p class="text-[11px] text-[#8a8578] leading-relaxed">CY vs PY trends, daily run rate and customer mix.</p>
+            </a>
+            <a href="{{ tenant_url('/customer-insights') }}" class="section-card p-4 hover:shadow-md transition group">
+                <div class="flex items-center justify-between mb-1.5">
+                    <p class="text-[11px] uppercase tracking-wider text-[#8a8578] font-medium">Customer Insights</p>
+                    <span class="text-[10px] text-brand-600 group-hover:translate-x-0.5 transition">Explore →</span>
+                </div>
+                <p class="text-[13px] font-semibold text-[#1e3d44]">Customer growth & loyalty</p>
+                <p class="text-[11px] text-[#8a8578] mt-1">Identify profitable, repeat, and at-risk accounts.</p>
+            </a>
+            <a href="{{ tenant_url('/profit-loss') }}" class="section-card p-4 hover:shadow-md transition group">
+                <div class="flex items-center justify-between mb-1.5">
+                    <h3 class="text-[13px] font-semibold text-[#1e3d44]">Profit &amp; Loss</h3>
+                    <svg class="w-3.5 h-3.5 text-[#cdc7bc] group-hover:translate-x-0.5 group-hover:text-brand-500 transition" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+                </div>
+                <p class="text-[11px] text-[#8a8578] leading-relaxed">Waterfall from revenue → gross → EBITDA → net.</p>
+            </a>
+            <a href="{{ tenant_url('/receivables') }}" class="section-card p-4 hover:shadow-md transition group">
+                <div class="flex items-center justify-between mb-1.5">
+                    <p class="text-[11px] uppercase tracking-wider text-[#8a8578] font-medium">Receivables</p>
+                    <span class="text-[10px] text-brand-600 group-hover:translate-x-0.5 transition">Open →</span>
+                </div>
+                <p class="text-[11px] text-[#8a8578] leading-relaxed">Ageing buckets, DSO tracking and top offender scorecard.</p>
+            </a>
         </div>
     @endif
+
 @endsection
