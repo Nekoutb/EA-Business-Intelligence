@@ -519,12 +519,27 @@
     });
   }
 
-  /* Composition donut */
+  /* Composition donut — varied palette mirroring the dashboard's
+     multi-hue logic (teal lead · sage · amber · coral · slate ·
+     muted grey for "Other"). Subtle but distinct, not uniform. */
   const cmEl = document.getElementById('ec-rv-composition');
   const cm = @json($ecComposition);
   if (cmEl && cm.length) {
-    const palette = [t.pri, '#338f8f', '#66abab', '#99c7c7', '#cce3e3', '#e5e7eb'];
-    const data = cm.map((d, i) => ({ ...d, itemStyle: { color: palette[i % palette.length] } }));
+    const palette = [
+      t.pri,        // #0d6e6e teal — lead SKU
+      '#5a815e',    // sage 500
+      '#d18840',    // warm 500
+      '#d06a50',    // coral 500
+      '#4f6d7a',    // slate
+      '#9ca3af',    // grey — fallback for "Other"
+    ];
+    const data = cm.map((d, i) => {
+      // Push "Other" to the muted grey at the end regardless of
+      // its index, so colored slots stay reserved for real SKUs.
+      const isOther = /^other/i.test(d.name);
+      const color = isOther ? palette[palette.length - 1] : palette[i % (palette.length - 1)];
+      return { ...d, itemStyle: { color } };
+    });
     echarts.init(cmEl).setOption({
       textStyle: { fontFamily: FF },
       tooltip: { trigger:'item', backgroundColor:'#fff', borderColor:'#e5e7eb', borderWidth:1, textStyle:{color:'#111827', fontSize:11},

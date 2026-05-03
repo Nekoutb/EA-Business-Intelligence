@@ -214,6 +214,60 @@ final class ReceivablesService
         }
         unset($d);
 
+        // ── Monthly AR Evolution (Jan → current month of selected year)
+        // For each month-end snapshot M, classify each currently-open
+        // invoice:
+        //   - "open at M" iff invoice_date ≤ M (residual > 0 today is
+        //     the proxy for "was unpaid then" — exact for invoices
+        //     issued in the period; introduces minor lag for ones that
+        //     were paid then re-credited).
+        //   - aging at M = (M - due_date) days, only when due_date < M.
+        // Sums total_at_m, over_60_at_m, over_90_at_m. Powers the
+        // 3-line evolution chart on the Receivables page.
+        $evolution = [];
+        $year      = (int) $today->format('Y');
+        $endMonNum = (int) $today->format('n');
+        for ($m = 1; $m <= $endMonNum; $m++) {
+            $monthEnd = new \DateTimeImmutable(sprintf('%04d-%02d-01', $year, $m));
+            $monthEnd = $monthEnd->modify('last day of this month')->setTime(23, 59, 59);
+            if ($monthEnd > $today) $monthEnd = $today;
+
+            $totalAtM = 0.0; $over60AtM = 0.0; $over90AtM = 0.0;
+            foreach ($records as $r) {
+                $residual = (float) ($r['amount_residual_signed'] ?? $r['amount_residual'] ?? 0);
+                if ($residual == 0.0) continue;
+
+                $invStr = (string) ($r['invoice_date'] ?? '');
+                if ($invStr === '') continue;
+                try {
+                    $invDate = new \DateTimeImmutable(substr($invStr, 0, 10));
+                } catch (\Throwable $e) { continue; }
+                if ($invDate > $monthEnd) continue;   // not yet issued at snapshot
+
+                $totalAtM += $residual;
+
+                $dueStr = (string) ($r['invoice_date_due'] ?? '');
+                if ($dueStr !== '') {
+                    try {
+                        $dueDate = new \DateTimeImmutable(substr($dueStr, 0, 10));
+                        if ($dueDate < $monthEnd) {
+                            $daysOverdueAtM = (int) $dueDate->diff($monthEnd)->days;
+                            if ($daysOverdueAtM > 60) $over60AtM += $residual;
+                            if ($daysOverdueAtM > 90) $over90AtM += $residual;
+                        }
+                    } catch (\Throwable $e) { /* skip */ }
+                }
+            }
+
+            $evolution[] = [
+                'label'   => $monthEnd->format('M'),
+                'ym'      => $monthEnd->format('Y-m'),
+                'total'   => round($totalAtM, 2),
+                'over_60' => round($over60AtM, 2),
+                'over_90' => round($over90AtM, 2),
+            ];
+        }
+
         $summary = [
             'currency' => $currency,
             'as_of'    => $today->format('Y-m-d'),
@@ -230,6 +284,7 @@ final class ReceivablesService
             'over90_amount' => $over90,
             'aging'      => $buckets,
             'overdue_trend' => array_values($trendBuckets),
+            'ar_evolution' => $evolution,
             'top_partners' => array_map(fn($d) => [
                 'id'      => $d['id'],
                 'name'    => $d['name'],
