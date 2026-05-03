@@ -1,15 +1,7 @@
 @extends('layouts.app')
 @section('title', 'VAT Compliance')
 
-@section('header')
-    <div class="flex flex-wrap items-end justify-between gap-3">
-        <div>
-            <h1 class="text-2xl font-bold text-slate-900">VAT Compliance</h1>
-            <p class="text-xs text-slate-500 mt-1">VAT-specific filings, prorata computation, and reconciliation</p>
-        </div>
-    </div>
-@endsection
-
+@section('page-title', 'VAT Compliance')
 @section('content')
     <div class="bg-white border border-slate-200 rounded-xl p-8 shadow-sm">
         <div class="max-w-2xl">

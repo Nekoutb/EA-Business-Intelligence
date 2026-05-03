@@ -1,15 +1,7 @@
 @extends('layouts.app')
 @section('title', 'Receivables')
 
-@section('header')
-    <div>
-        <div class="flex items-center gap-2 mb-1">
-            <span class="text-[10px] uppercase tracking-[0.35em] text-[#8a8578] font-medium">Collections · {{ ea_last_sync_label() }}</span>
-        </div>
-        <h1 class="text-2xl font-bold text-[#1e3d44]">Accounts Receivable</h1>
-    </div>
-@endsection
-
+@section('page-title', 'Accounts Receivable')
 @section('content')
     @if ($error)
         <div class="bg-coral-50 border border-coral-200 text-coral-800 rounded-xl p-4 text-sm">{{ $error }}</div>

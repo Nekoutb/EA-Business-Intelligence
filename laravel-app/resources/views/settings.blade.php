@@ -1,14 +1,11 @@
 @extends('layouts.app')
 @section('title', 'Settings')
-
-@section('header')
-    <h1 class="text-2xl font-bold text-slate-900">Settings</h1>
-    <p class="text-xs text-slate-500 mt-1">Per-workspace configuration: Odoo connection, branding, budget benchmarks. Secrets are encrypted at rest.</p>
-@endsection
+@section('page-title', 'Settings')
 
 @section('content')
 <div class="max-w-3xl">
-    <form method="POST" action="{{ tenant_url('/settings') }}" class="space-y-6">
+    <p class="text-xs text-slate-500 mb-4">Per-workspace configuration: company identity, Odoo connection, budget benchmarks. Secrets are encrypted at rest.</p>
+    <form method="POST" action="{{ tenant_url('/settings') }}" enctype="multipart/form-data" class="space-y-6">
         @csrf
 
         {{-- ── Odoo connection ────────────────────────────────────────── --}}
@@ -68,12 +65,74 @@
             </div>
         </div>
 
-        {{-- ── Branding ───────────────────────────────────────────────── --}}
+        {{-- ── Company identity ─────────────────────────────────────────
+             Drives the sidebar brand block and the company badge in the
+             top-right of every page. Logo file is stored under
+             public/uploads/tenant-logos/ and served via the web server
+             (no Laravel storage symlink needed).                      --}}
         <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
-            <h2 class="text-sm font-semibold text-slate-900 mb-1">Appearance</h2>
-            <p class="text-xs text-slate-500 mb-4">Brand name shown in the sidebar and login page.</p>
-            <input name="APP_BRAND" value="{{ $values['APP_BRAND'] }}" placeholder="Your company name"
-                   class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+            <h2 class="text-sm font-semibold text-slate-900 mb-1">Company Identity</h2>
+            <p class="text-xs text-slate-500 mb-4">Logo and names shown in the sidebar (top-left) and the company badge (top-right of every page).</p>
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {{-- Logo column --}}
+                <div class="md:col-span-1">
+                    <label class="block text-xs font-medium text-slate-600 mb-1">Company Logo</label>
+                    <div class="border border-dashed border-slate-300 rounded-lg p-3 bg-slate-50">
+                        <div class="flex items-center gap-3 mb-3">
+                            <div class="w-14 h-14 rounded-lg bg-gradient-to-br from-brand-500 to-brand-700 flex items-center justify-center text-white font-bold text-xl overflow-hidden flex-shrink-0">
+                                @if (tenant_logo_url())
+                                  <img src="{{ tenant_logo_url() }}" alt="" class="w-full h-full object-contain bg-white">
+                                @else
+                                  {{ tenant_brand_initial() }}
+                                @endif
+                            </div>
+                            <div class="text-[11px] text-slate-600 leading-tight">
+                                @if (tenant_logo_url())
+                                  Current logo<br>
+                                  <a href="{{ tenant_logo_url() }}" target="_blank" class="text-brand-600 underline">view file</a>
+                                @else
+                                  No logo set.<br>Letter avatar is used.
+                                @endif
+                            </div>
+                        </div>
+                        <input type="file" name="logo" accept="image/png,image/jpeg,image/svg+xml,image/webp"
+                               class="w-full text-[11px] text-slate-700 file:bg-brand-600 file:text-white file:border-0 file:rounded file:px-2 file:py-1 file:text-[11px] file:font-semibold file:cursor-pointer file:mr-2 cursor-pointer">
+                        <p class="text-[10px] text-slate-500 mt-2">PNG, JPG, SVG or WebP · max 2 MB. Square or near-square works best.</p>
+                        @if (tenant_logo_url())
+                          <label class="flex items-center gap-1.5 mt-2 text-[11px] text-rose-700 cursor-pointer">
+                              <input type="checkbox" name="remove_logo" value="1" class="rounded border-rose-300">
+                              Remove current logo on save
+                          </label>
+                        @endif
+                    </div>
+                </div>
+
+                {{-- Name fields --}}
+                <div class="md:col-span-2 grid grid-cols-1 gap-3">
+                    <div>
+                        <label class="block text-xs font-medium text-slate-600 mb-1">
+                            ETP <span class="text-slate-400 font-normal">· short name shown next to the logo</span>
+                        </label>
+                        <input name="TENANT_BRAND" value="{{ optional(tenant())->brand }}" placeholder="e.g. TADSA"
+                               class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-slate-600 mb-1">
+                            Full Company Name <span class="text-slate-400 font-normal">· shown beneath the ETP</span>
+                        </label>
+                        <input name="TENANT_NAME" value="{{ optional(tenant())->name }}" placeholder="e.g. Transatlantic D S.A."
+                               class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-slate-600 mb-1">
+                            Suite Brand <span class="text-slate-400 font-normal">· legacy fallback (login page, emails)</span>
+                        </label>
+                        <input name="APP_BRAND" value="{{ $values['APP_BRAND'] }}" placeholder="Your company name"
+                               class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+                    </div>
+                </div>
+            </div>
         </div>
 
         {{-- ── Budget Benchmarks ───────────────────────────────────────── --}}

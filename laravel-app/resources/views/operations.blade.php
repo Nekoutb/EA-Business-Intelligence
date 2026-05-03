@@ -1,21 +1,8 @@
 @extends('layouts.app')
 @section('title', 'Operations')
 
-@section('header')
-    <div class="flex flex-wrap items-end justify-between gap-4">
-        <div>
-            <div class="flex items-center gap-2 mb-1">
-                <span class="text-[10px] uppercase tracking-[0.35em] text-[#8a8578] font-medium">{{ $periodLabel ?? 'Operations' }} · {{ ea_last_sync_label() }}</span>
-            </div>
-            <h1 class="text-2xl font-bold text-[#1e3d44]">Operations</h1>
-            <div class="text-xs text-[#7c7466] mt-1">Container &amp; logistics analytics — sourced from your Odoo <em>Logistique</em> module.</div>
-        </div>
-    </div>
-@endsection
-
+@section('page-title', 'Operations')
 @section('content')
-    <x-period-filter :period="$period" :options="[['ytd','YTD'],['mtd','MTD'],['month','Month']]" />
-
     @if ($error)
         {{-- Service-layer failure — usually a connection issue (Odoo
              unreachable, creds missing). The cards still render below in
