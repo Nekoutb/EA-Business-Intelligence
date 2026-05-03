@@ -328,8 +328,20 @@
         </div>
         <div class="rv-card__f">
             @if (!empty($ecComposition))
+              @php
+                // Reading line uses the donut's OWN total as denominator
+                // (not period revenue $totalRev) — gross product revenue
+                // can exceed net period revenue when refunds / mid-period
+                // credits are present, which produced the "253% of
+                // revenue" math bug. The donut percentages always sum
+                // to 100, so this version is internally consistent.
+                $compTotal = array_sum(array_column($ecComposition, 'value'));
+                $top5Sum   = array_sum(array_column($compRows, 'value'));
+                $top5Share = $compTotal > 0 ? min(100.0, 100.0 * $top5Sum / $compTotal) : 0.0;
+              @endphp
               <b>Reading:</b> Top {{ count($compRows) }} SKUs drive
-              {{ $totalRev > 0 ? number_format(100 * array_sum(array_column($compRows, 'value')) / $totalRev, 0) : '—' }}% of revenue.
+              <b>{{ number_format($top5Share, 0) }}%</b> of categorised revenue
+              ({{ $shortNum($top5Sum) }}{{ $shortUnit($top5Sum) }} {{ $ccy }}).
             @else
               <b>Reading:</b> Run sync to compute SKU breakdown.
             @endif
@@ -540,13 +552,32 @@
       const color = isOther ? palette[palette.length - 1] : palette[i % (palette.length - 1)];
       return { ...d, itemStyle: { color } };
     });
+    // Long SKU names (eg "CHEMISE CORPORATE MANCHES COURTES — MOTIF
+    // SIGNATURE") were pushing the legend column wide enough to
+    // overlap the donut. Fix: truncate at 22 chars with ellipsis,
+    // shift the donut left and shrink it slightly so legend has a
+    // dedicated 40% slot, and add a legend tooltip so the full name
+    // is still discoverable on hover.
+    const truncate = (s, n = 22) => (s && s.length > n) ? s.slice(0, n - 1) + '…' : s;
     echarts.init(cmEl).setOption({
       textStyle: { fontFamily: FF },
       tooltip: { trigger:'item', backgroundColor:'#fff', borderColor:'#e5e7eb', borderWidth:1, textStyle:{color:'#111827', fontSize:11},
         formatter: p => `<b>${p.name}</b>: ${fmt(p.value)} (${p.percent}%)` },
-      legend: { orient:'vertical', right: 4, top: 'middle', icon: 'circle', itemWidth: 8, itemHeight: 8, textStyle: { color: '#6b7280', fontSize: 10, fontFamily: FF } },
+      legend: {
+        orient: 'vertical', right: 4, top: 'middle',
+        icon: 'circle', itemWidth: 8, itemHeight: 8,
+        itemGap: 8,
+        textStyle: { color: '#6b7280', fontSize: 10, fontFamily: FF, width: 130, overflow: 'truncate' },
+        formatter: name => truncate(name, 22),
+        tooltip: { show: true, formatter: p => p.name },
+      },
       series: [{
-        type: 'pie', radius: ['52%', '76%'], center: ['38%', '50%'], avoidLabelOverlap: false, label: { show: false }, labelLine: { show: false },
+        type: 'pie',
+        radius: ['44%', '66%'],
+        center: ['28%', '50%'],
+        avoidLabelOverlap: false,
+        label: { show: false },
+        labelLine: { show: false },
         data: data,
       }],
     });
