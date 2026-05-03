@@ -1,588 +1,750 @@
 @extends('layouts.app')
-@section('title', 'Dashboard')
+@section('title', 'Executive Overview')
+@section('main-class', 'is-fit')
 
-@section('header')
-    <div class="flex flex-wrap items-end justify-between gap-4">
+{{--
+    Executive Overview — v5 single-screen layout.
+
+    Fits the entire briefing on one viewport: topbar + 1-line summary
+    + 6 charts on a 12-col grid + 6-cell KPI strip. Everything sized
+    via CSS grid (`grid-auto-rows: 1fr`) so charts fill available
+    height — ECharts resizes to container on `window.resize`.
+
+    Data shape (from DashboardController::index):
+      $data: current/previous periods, currency, yoy, period meta,
+             daily series, budget feed.
+      $pl:   profit & loss for current period (revenue, cogs, gp,
+             opex, ebitda, da+tax, net, all with margin pcts).
+      $reconciliation: expected → billed → cash with gaps.
+      $receivables:    AR totals, DSO, overdue, top-5.
+      $period, $periodLabel, $error.
+--}}
+
+@push('styles')
+<style>
+  /* ── Page-local layout (extends .ea-main.is-fit from layout shell) */
+  .topbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; flex-shrink: 0; gap: 12px; }
+  .topbar__t  { display: flex; align-items: baseline; gap: 12px; }
+  .topbar__eb { font: 600 10px var(--font); color: var(--text-subtle); letter-spacing: .12em; text-transform: uppercase; display: flex; align-items: center; gap: 6px; }
+  .topbar__eb::before { content:''; width:5px; height:5px; border-radius: 50%; background: var(--ea-primary); }
+  .topbar__h  { font: 700 20px var(--font); color: var(--text); letter-spacing: -0.02em; margin-top: 2px; }
+  .topbar__c  { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .topbar__meta { font: 500 11px var(--font); color: var(--text-subtle); }
+  .topbar__meta b { color: var(--text); font-weight: 600; }
+
+  .period { display: inline-flex; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: 2px; }
+  .period button { border: 0; background: transparent; padding: 4px 12px; font: 600 12px var(--font); color: var(--text-subtle); cursor: pointer; border-radius: var(--r-sm); }
+  .period button.is-active { background: rgba(13,110,110,.10); color: var(--ea-primary); }
+  .year-pick { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: 4px 10px; font: 600 12px var(--font); color: var(--text-muted); cursor: pointer; }
+  .month-pick { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: 4px 8px; font: 600 12px var(--font); color: var(--text-muted); cursor: pointer; }
+  .refresh-btn { background: var(--ea-primary); color: #fff; border: 0; border-radius: var(--r); padding: 4px 10px; font: 600 11px var(--font); cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }
+  .refresh-btn:hover { background: var(--ea-primary-dark); }
+  .refresh-btn svg { width: 12px; height: 12px; }
+
+  .summary { background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--ea-primary); border-radius: var(--r); padding: 6px 12px; margin-bottom: 8px; flex-shrink: 0; display: flex; align-items: center; gap: 12px; font: 500 12px var(--font); color: var(--text-muted); min-height: 30px; flex-wrap: wrap; }
+  .summary__l { font: 700 10px var(--font); color: var(--ea-primary); letter-spacing: .1em; text-transform: uppercase; flex-shrink: 0; }
+  .summary b { color: var(--text); font-weight: 700; }
+  .summary .pos { color: var(--pos); font-weight: 700; }
+  .summary .neg { color: var(--neg); font-weight: 700; }
+  .summary .neutral { color: var(--warn); font-weight: 700; }
+
+  .grid { flex: 1; display: grid; gap: 8px; grid-template-columns: repeat(12, 1fr); grid-auto-rows: 1fr; min-height: 0; }
+  .grid > * { min-height: 0; min-width: 0; }
+  .span-7 { grid-column: span 7; } .span-5 { grid-column: span 5; }
+  .span-4 { grid-column: span 4; } .span-12 { grid-column: span 12; }
+
+  .v5-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); padding: 8px 12px; display: flex; flex-direction: column; min-height: 0; }
+  .v5-card__h { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; margin-bottom: 4px; flex-shrink: 0; }
+  .v5-card__t { font: 700 12px var(--font); color: var(--text); }
+  .v5-card__sub { font: 400 10.5px var(--font); color: var(--text-subtle); margin-top: 1px; }
+  .v5-card__leg { display: flex; gap: 10px; font: 500 10px var(--font); color: var(--text-subtle); flex-shrink: 0; flex-wrap: wrap; }
+  .v5-card__leg > span { display: inline-flex; align-items: center; gap: 4px; }
+  .lswatch { width: 10px; height: 10px; border-radius: 2px; }
+  .lline { width: 12px; height: 2px; }
+  .v5-card__b { flex: 1; min-height: 0; width: 100%; position: relative; }
+  .v5-card__f { font: 500 10px var(--font); color: var(--text-subtle); margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--border-faint); flex-shrink: 0; line-height: 1.4; }
+  .v5-card__f b { color: var(--text); font-weight: 600; }
+  .v5-card__f .pos { color: var(--pos); font-weight: 600; }
+  .v5-card__f .neg { color: var(--neg); font-weight: 600; }
+  .v5-card__f .warn { color: var(--warn); font-weight: 600; }
+
+  /* Bullet (run-rate) — pure CSS */
+  .bullet { display: flex; flex-direction: column; gap: 6px; padding: 4px 0; }
+  .bullet__r { display: flex; align-items: center; gap: 8px; }
+  .bullet__l { font: 700 9px var(--font); color: var(--text-subtle); letter-spacing: .06em; text-transform: uppercase; width: 80px; flex-shrink: 0; }
+  .bullet__l.dim { color: var(--text-faint); }
+  .bullet__t { flex: 1; height: 18px; background: var(--border-faint); border-radius: var(--r-sm); position: relative; overflow: hidden; }
+  .bullet__t.dim { border: 1px dashed var(--warn-bd); }
+  .bullet__f { height: 100%; background: var(--ea-primary); display: flex; align-items: center; padding-left: 8px; color: #fff; font: 700 10px var(--font); white-space: nowrap; }
+  .bullet__f.proj { background: repeating-linear-gradient(45deg, var(--text-faint), var(--text-faint) 4px, #d1d5db 4px, #d1d5db 8px); width: 100%; }
+  .bullet__f.dimt { color: var(--pending-text); font-style: italic; font-weight: 600; background: transparent; padding-left: 8px; }
+  .bullet__m { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--text); }
+  .bullet__v { font: 700 11px var(--font); color: var(--text); width: 70px; text-align: right; flex-shrink: 0; }
+  .bullet__v.dim { color: var(--text-faint); }
+
+  /* KPI strip (~52px) */
+  .strip { display: grid; grid-template-columns: repeat(6, 1fr); background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); margin-top: 8px; flex-shrink: 0; overflow: hidden; }
+  .strip__c { padding: 6px 10px; border-right: 1px solid var(--border-faint); }
+  .strip__c:last-child { border-right: 0; }
+  .strip__l { font: 700 9px var(--font); color: var(--text-subtle); letter-spacing: .06em; text-transform: uppercase; margin-bottom: 2px; }
+  .strip__v { font: 700 14px var(--font); color: var(--text); line-height: 1; letter-spacing: -.01em; }
+  .strip__v.is-pos { color: var(--pos); }
+  .strip__v.is-neg { color: var(--neg); }
+  .strip__v .u { font: 500 10px var(--font); color: var(--text-subtle); margin-left: 1px; }
+  .strip__m { font: 500 9px var(--font); color: var(--text-subtle); margin-top: 2px; }
+
+  /* Empty / error states */
+  .empty-state { display: flex; align-items: center; justify-content: center; height: 100%; color: var(--text-faint); font: 500 11px var(--font); text-align: center; padding: 8px; }
+  .error-card { padding: 12px 16px; background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; border-radius: var(--r); font-size: 12px; margin-bottom: 8px; }
+
+  /* Tighter responsive on narrow viewports */
+  @media (max-width: 1300px) {
+    .grid { grid-auto-rows: minmax(140px, 1fr); }
+  }
+</style>
+@endpush
+
+@section('content')
+
+@if ($error)
+  <div class="error-card">
+    <strong>Error:</strong> {{ $error }} ·
+    <a href="{{ tenant_url('/settings') }}" style="color:#991b1b; text-decoration:underline;">Check Odoo settings</a>
+  </div>
+@endif
+
+@php
+  // ── Defensive shape pulls so the page renders even when data is partial.
+  $cur    = $data['current']  ?? [];
+  $prev   = $data['previous'] ?? [];
+  $ccy    = $data['currency'] ?? 'XAF';
+  $yoy    = $data['yoy_growth_pct'] ?? null;
+  $plCur  = $pl['current']    ?? null;
+  $rec    = $reconciliation   ?? null;
+  $recH   = $rec['headline']  ?? null;
+  $rcv    = $receivables      ?? null;
+
+  $budgetData   = $data['budget'] ?? [];
+  $budgetTotals = $budgetData['totals'] ?? [];
+
+  $safeDiv = function ($num, $den) {
+      if (!is_numeric($num) || !is_numeric($den) || (float) $den === 0.0) return null;
+      return (float) $num / (float) $den;
+  };
+  $variance = function ($current, $reference) {
+      if (!is_numeric($current) || !is_numeric($reference)) return null;
+      if ((float) $reference === 0.0) return (float) $current === 0.0 ? 0.0 : null;
+      return (($current - $reference) / abs($reference)) * 100.0;
+  };
+
+  $planRevenue   = $budgetTotals['revenue']   ?? null;
+  $planOutfits   = $budgetTotals['outfits']   ?? null;
+  $planDiscounts = $budgetTotals['discounts'] ?? null;
+  $planCustomers = $budgetTotals['customers'] ?? null;
+  $planCostBase  = $budgetTotals['cost_base'] ?? null;
+
+  // Period flags + working-day pace (logic mirrors prior dashboard).
+  $periodType    = $period['type'] ?? 'ytd';
+  $isMtd         = in_array($periodType, ['mtd', 'month'], true);
+  $workingDaysSoFar = max(1, (int) ($cur['working_days'] ?? 1));
+
+  $today = new \DateTimeImmutable();
+  $year  = (int) ($period['year'] ?? $today->format('Y'));
+  $monthCur = (int) ($period['month'] ?? $today->format('n'));
+  $fullPeriodWorkingDays = 0;
+  if ($isMtd) {
+      $monthStart = new \DateTimeImmutable(sprintf('%04d-%02d-01', $year,
+          $periodType === 'month' ? (int) ($period['month'] ?? $today->format('n')) : (int) $today->format('n')));
+      $nextMonth = $monthStart->modify('first day of next month');
+      for ($d = $monthStart; $d < $nextMonth; $d = $d->modify('+1 day')) {
+          if ((int) $d->format('N') < 7) $fullPeriodWorkingDays++;
+      }
+  } else {
+      for ($d = new \DateTimeImmutable("$year-01-01"); (int) $d->format('Y') === $year; $d = $d->modify('+1 day')) {
+          if ((int) $d->format('N') < 7) $fullPeriodWorkingDays++;
+      }
+  }
+  $fullPeriodWorkingDays = max(1, $fullPeriodWorkingDays);
+
+  $runRate     = ((float) ($cur['total'] ?? 0) / $workingDaysSoFar) * $fullPeriodWorkingDays;
+  $runRatePy   = ($prev['total'] ?? null) !== null ? ((float) $prev['total'] / $workingDaysSoFar) * $fullPeriodWorkingDays : null;
+  $runRatePlan = is_numeric($planRevenue) ? ((float) $planRevenue / $workingDaysSoFar) * $fullPeriodWorkingDays : null;
+
+  // Trajectory series — group daily into months and compute cumulative.
+  $dailySeries = $cur['series'] ?? [];
+  $monthlyActual = array_fill(1, 12, 0);
+  foreach ($dailySeries as $date => $val) {
+      try {
+          $m = (int) (new \DateTimeImmutable($date))->format('n');
+          if ($m >= 1 && $m <= 12) $monthlyActual[$m] += (float) $val;
+      } catch (\Throwable $e) { /* skip malformed dates */ }
+  }
+  $cumActual = []; $running = 0; $latestActualMonth = 0;
+  for ($m = 1; $m <= 12; $m++) {
+      if ($monthlyActual[$m] > 0) {
+          $running += $monthlyActual[$m];
+          $cumActual[$m] = $running;
+          $latestActualMonth = $m;
+      } else {
+          $cumActual[$m] = null;
+      }
+  }
+  // Linear pace = (actual / WD-so-far) × cumulative-WD-by-month.
+  $wdByMonth = [];
+  for ($m = 1; $m <= 12; $m++) {
+      $ms = new \DateTimeImmutable(sprintf('%04d-%02d-01', $year, $m));
+      $nm = $ms->modify('first day of next month');
+      $w = 0;
+      for ($d = $ms; $d < $nm; $d = $d->modify('+1 day')) if ((int) $d->format('N') < 7) $w++;
+      $wdByMonth[$m] = $w;
+  }
+  $dailyPace = $workingDaysSoFar > 0 ? ((float) ($cur['total'] ?? 0) / $workingDaysSoFar) : 0;
+  $cumLinear = []; $cw = 0;
+  for ($m = 1; $m <= 12; $m++) { $cw += $wdByMonth[$m]; $cumLinear[$m] = $dailyPace * $cw; }
+
+  // Helpers for pretty number formatting in the strip.
+  $shortNum = function (float $v) {
+      $a = abs($v);
+      if ($a >= 1_000_000) return number_format($v / 1_000_000, 2);
+      if ($a >= 1_000)     return number_format($v / 1_000, 0);
+      return number_format($v, 0);
+  };
+  $shortUnit = function (float $v, string $ccy = 'XAF') {
+      $a = abs($v);
+      return ($a >= 1_000_000 ? 'M ' : ($a >= 1_000 ? 'K ' : '')) . $ccy;
+  };
+
+  // Strip metrics — fall back gracefully if PL is missing.
+  $rev      = (float) ($cur['total']           ?? 0);
+  $gp       = (float) ($plCur['gross_profit']  ?? 0);
+  $gpPct    = (float) ($plCur['gross_margin_pct'] ?? $plCur['gross_margin'] ?? 0);
+  $ebitda   = (float) ($plCur['ebitda']        ?? 0);
+  $ebPct    = (float) ($plCur['ebitda_margin_pct'] ?? $plCur['ebitda_margin'] ?? 0);
+  $net      = (float) ($plCur['net_profit']    ?? 0);
+  $netPct   = (float) ($plCur['net_margin_pct']    ?? $plCur['net_margin']    ?? 0);
+  $cash     = (float) ($recH['collected']      ?? 0);
+  $billed   = (float) ($recH['billed']         ?? 0);
+  $cashPct  = $billed > 0 ? 100.0 * $cash / $billed : null;
+  $ar       = (float) ($rcv['total_ar']        ?? 0);
+  $dso      = (float) ($rcv['dso']             ?? $rcv['kpis']['dso_days'] ?? 0);
+
+  // Summary band priority — pick the tightest constraint.
+  $priority = 'OPEX leverage';
+  if ($gpPct > 0 && $gpPct < 35) $priority = 'Gross margin recovery';
+  elseif ($ebPct < -3) $priority = 'OPEX leverage';
+  elseif ($cashPct !== null && $cashPct < 80) $priority = 'AR collection';
+@endphp
+
+{{-- ── Topbar ────────────────────────────────────────────────────── --}}
+<div class="topbar">
+    <div class="topbar__t">
         <div>
-            <div class="flex items-center gap-2 mb-1">
-                <span class="inline-block w-2 h-2 rounded-full bg-sage-400 animate-pulse"></span>
-                <span class="text-[10px] uppercase tracking-[0.35em] text-[#8a8578] font-medium">{{ $periodLabel ?? 'Live' }} · {{ ea_last_sync_label() }}</span>
-            </div>
-            <h1 class="text-2xl font-bold text-[#1e3d44]">Executive Overview</h1>
+            <div class="topbar__eb">{{ $periodLabel ?? 'YTD' }} · {{ now()->format('d M H:i') }}</div>
+            <div class="topbar__h">Executive Overview</div>
         </div>
-        <form method="POST" action="{{ tenant_url('/sync') }}" class="flex items-center gap-2">
+    </div>
+    <div class="topbar__c">
+        <form method="GET" class="period">
+            <button type="submit" name="period" value="ytd"   class="{{ $periodType === 'ytd' ? 'is-active' : '' }}">YTD</button>
+            <button type="submit" name="period" value="mtd"   class="{{ $periodType === 'mtd' ? 'is-active' : '' }}">MTD</button>
+            <button type="submit" name="period" value="month" class="{{ $periodType === 'month' ? 'is-active' : '' }}">Month</button>
+            @if ($periodType === 'month')
+              <input type="hidden" name="year" value="{{ $year }}">
+              <input type="hidden" name="month" value="{{ $monthCur }}">
+            @endif
+        </form>
+        <form method="GET" style="display:inline-flex; gap: 4px;">
+            <input type="hidden" name="period" value="{{ $periodType }}">
+            <select name="year" onchange="this.form.submit()" class="year-pick">
+                @for ($y = (int) date('Y'); $y >= (int) date('Y') - 3; $y--)
+                  <option value="{{ $y }}" {{ $year == $y ? 'selected' : '' }}>{{ $y }}</option>
+                @endfor
+            </select>
+            @if ($periodType === 'month')
+              <select name="month" onchange="this.form.submit()" class="month-pick">
+                @foreach (range(1,12) as $m)
+                  <option value="{{ $m }}" {{ $monthCur == $m ? 'selected' : '' }}>{{ date('M', mktime(0,0,0,$m,1)) }}</option>
+                @endforeach
+              </select>
+            @endif
+        </form>
+        <span class="topbar__meta">Updated <b>{{ now()->format('H:i') }}</b> · {{ ea_last_sync_label() }}</span>
+        <form method="POST" action="{{ tenant_url('/sync') }}" style="margin:0;">
             @csrf
-            <a href="{{ tenant_url('/treasury') }}" class="text-[11px] font-medium text-[#5a6a70] px-3 py-1.5 rounded-lg border border-[#e8e4de] bg-white hover:bg-[#faf8f5] transition">Treasury →</a>
-            <button class="inline-flex items-center gap-1.5 text-[11px] font-semibold text-white bg-brand-600 hover:bg-brand-700 rounded-lg px-3 py-1.5 shadow-sm transition">
-                <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+            <button type="submit" class="refresh-btn" title="Force refresh">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
                 Refresh
             </button>
         </form>
     </div>
-@endsection
+</div>
 
-@section('content')
-
-    {{-- YTD / MTD timeframe selector. Limited to those two tabs (Month/YoY
-         live on the Revenue page) so the dashboard stays a fast read of
-         "year-to-date" vs "this month so far". --}}
-    <x-period-filter :period="$period" :options="[['ytd','YTD'],['mtd','MTD'],['month','Month']]" />
-
-    @if ($error)
-        <div class="bg-coral-50 border border-coral-200 text-coral-800 rounded-xl p-4 text-sm mb-6">
-            <strong>Error:</strong> {{ $error }}
-            <div class="text-xs mt-1 text-coral-600">Check your Odoo credentials in <a href="{{ tenant_url('/settings') }}" class="underline">Settings</a>.</div>
-        </div>
-    @elseif (!$data)
-        <div class="bg-warm-50 border border-warm-200 text-warm-800 rounded-xl p-5 text-sm">Loading data…</div>
-    @else
-        @php
-            $cur    = $data['current']  ?? [];
-            $prev   = $data['previous'] ?? [];
-            $ccy    = $data['currency'] ?? 'USD';
-            $yoy    = $data['yoy_growth_pct'] ?? null;
-            $plCur  = $pl['current']  ?? null;
-            $budgetData   = $data['budget'] ?? [];
-            $budgetTotals = $budgetData['totals'] ?? [];
-            $budgetDays   = (int) ($budgetData['working_days'] ?? ($cur['working_days'] ?? 1));
-            $budgetDays   = max($budgetDays, 1);
-
-            $safeDiv = function ($num, $den) {
-                if (!is_numeric($num) || !is_numeric($den) || (float) $den === 0.0) {
-                    return null;
-                }
-                return (float) $num / (float) $den;
-            };
-            $planRevenue   = $budgetTotals['revenue']   ?? null;
-            $planOutfits   = $budgetTotals['outfits']   ?? null;
-            $planDiscounts = $budgetTotals['discounts'] ?? null;
-            $planCustomers = $budgetTotals['customers'] ?? null;
-            $planCostBase  = $budgetTotals['cost_base'] ?? null;
-            $planMetrics = [
-                'total' => $planRevenue,
-                'rpd'   => $safeDiv($planRevenue, $budgetDays),
-                'rpo'   => $safeDiv($planRevenue, $planOutfits),
-                'opd'   => $safeDiv($planOutfits, $budgetDays),
-                'rpc'   => $safeDiv($planRevenue, $planCustomers),
-                'dp_ot' => $safeDiv($planDiscounts, $planOutfits),
-                'dp_c'  => $safeDiv($planDiscounts, $planCustomers),
-                'cpo'   => $safeDiv($planCostBase, $planOutfits),
-            ];
-
-            $variance = function ($current, $reference) {
-                if (!is_numeric($current) || !is_numeric($reference)) {
-                    return null;
-                }
-                if ((float) $reference === 0.0) {
-                    return (float) $current === 0.0 ? 0.0 : null;
-                }
-                return (($current - $reference) / abs($reference)) * 100.0;
-            };
-
-            // Per-tenant KPI on/off — managed in /admin/tenants/{id} → Dashboard KPIs.
-            // Falls back to the registry default if no row exists.
-            $tnt   = tenant();
-            $kpiOn = fn (string $key) => $tnt ? $tnt->dashboardKpiEnabled($key) : true;
-
-            // Run-rate — working-day basis (consistent with RpD).
-            //
-            // Period-aware:
-            //   YTD: run_rate = (YTD revenue ÷ working_days_YTD) × annual_working_days
-            //                 → "Annualised Run-Rate" headline
-            //   MTD: run_rate = (MTD revenue ÷ working_days_so_far_in_month) × working_days_in_month
-            //                 → "Monthly Run-Rate" headline
-            //
-            // We use working days, not calendar days, because revenue is
-            // generally posted only on trading days. CRITICAL: the basis
-            // here MUST match the basis RevenueService uses for
-            // `working_days`. RevenueService::workingDaysExact() counts
-            // Mon-Sat (6-day week), excluding only Sundays — the company
-            // trades on Saturdays. Mixing a 5-day denominator with a 6-day
-            // numerator would inflate the projection by ~17%.
-            // "Monthly view" = either MTD (current calendar month, partial)
-            // OR Month (a specific year+month, complete or partial). Both
-            // anchor to a single calendar month, so the run-rate basis and
-            // KPI titles are identical for both.
-            $periodType    = $period['type'] ?? 'ytd';
-            $isMtd         = in_array($periodType, ['mtd', 'month'], true);
-            $workingDaysSoFar = max(1, (int) ($cur['working_days'] ?? 1));
-
-            // Full-period working days — annual when YTD, calendar-month when MTD/Month.
-            $today  = new \DateTimeImmutable();
-            $year   = (int) $today->format('Y');
-            $fullPeriodWorkingDays = 0;
-            if ($isMtd) {
-                // Mon-Sat days in the relevant calendar month. For type=mtd
-                // that's the current month; for type=month it's the
-                // year+month selected via the filter (so April 2026 picks
-                // up April's full WD count regardless of today's date).
-                if ($periodType === 'month' && !empty($period['year']) && !empty($period['month'])) {
-                    $monthStart = new \DateTimeImmutable(sprintf(
-                        '%04d-%02d-01', (int) $period['year'], (int) $period['month']
-                    ));
-                } else {
-                    $monthStart = $today->modify('first day of this month');
-                }
-                $nextMonth = $monthStart->modify('first day of next month');
-                for ($d = $monthStart; $d < $nextMonth; $d = $d->modify('+1 day')) {
-                    if ((int) $d->format('N') < 7) $fullPeriodWorkingDays++;
-                }
-            } else {
-                // Mon-Sat days in the current calendar year (no public-
-                // holiday adjustment — a one-line subtraction later if
-                // the firm wants a holiday calendar). For 2026 this is ~313.
-                for ($d = new \DateTimeImmutable("$year-01-01"); (int) $d->format('Y') === $year; $d = $d->modify('+1 day')) {
-                    if ((int) $d->format('N') < 7) $fullPeriodWorkingDays++;
-                }
-            }
-            $fullPeriodWorkingDays = max(1, $fullPeriodWorkingDays);
-
-            $runRate = ((float) ($cur['total'] ?? 0) / $workingDaysSoFar) * $fullPeriodWorkingDays;
-
-            // Prior-period same-pace projection on the same basis. Uses
-            // the SAME working-days denominator on the assumption that
-            // the PY same-period had a similar working-day count (true
-            // to within ±1 day for most calendars).
-            $runRatePy = ($prev['total'] ?? null) !== null
-                ? ((float) $prev['total'] / $workingDaysSoFar) * $fullPeriodWorkingDays
-                : null;
-
-            // Plan figure projected to the same horizon as the run-rate.
-            // $planMetrics['total'] is the period-to-date plan (matches
-            // what the Revenue KPI compares against), so we scale it the
-            // same way we scaled $cur['total']: divide by working_days
-            // elapsed, multiply by the full-period working_days. The
-            // resulting $runRatePlan answers "where would the plan have
-            // us land at full-period close?" and the variance against
-            // $runRate answers "if pace continues, will we beat plan?".
-            // For a perfectly linear plan this matches the % variance
-            // shown on Revenue YTD/MTD; for a seasonal plan they diverge,
-            // which is the useful signal.
-            $runRatePlan = is_numeric($planMetrics['total'] ?? null)
-                ? ((float) $planMetrics['total'] / $workingDaysSoFar) * $fullPeriodWorkingDays
-                : null;
-
-            // Period-aware copy.
-            $revenueTitle = $isMtd ? 'Revenue MTD' : 'Revenue YTD';
-            $runRateTitle = $isMtd ? 'Monthly Run-Rate' : 'Annualised Run-Rate';
-            $runRateSub   = 'Working-day pace · ' . $workingDaysSoFar . ' / ' . $fullPeriodWorkingDays . ' WD';
-        @endphp
-
-        {{-- ── Section: Revenue & Profitability KPIs ─────────────────────── --}}
-        <div class="mb-7">
-            <div class="flex items-center gap-2 mb-3">
-                <div class="w-1 h-4 rounded bg-brand-400"></div>
-                <h2 class="text-xs font-semibold uppercase tracking-wider text-[#5a6a70]">Revenue & Profitability</h2>
-            </div>
-            <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3">
-                @if ($kpiOn('revenue_ytd'))
-                <x-kpi :title="$revenueTitle"
-                       :value="ea_money_short((float)($cur['total'] ?? 0), $ccy)"
-                       :delta="$yoy"
-                       :vsPy="$variance($cur['total'] ?? null, $prev['total'] ?? null)"
-                       :vsPlan="$variance($cur['total'] ?? null, $planMetrics['total'])"
-                       color="brand"
-                       icon="M3 3v18h18M7 14l4-4 3 3 5-5"/>
-                @endif
-
-                @if ($kpiOn('rpd'))
-                <div title="Revenue per day can be highlighted">
-                    <x-kpi title="RpD"
-                           :value="ea_money_short((float)($cur['rpd'] ?? 0), $ccy)"
-                           :sub="($cur['working_days'] ?? 0) . ' working days'"
-                           :vsPy="$variance($cur['rpd'] ?? null, $prev['rpd'] ?? null)"
-                           :vsPlan="$variance($cur['rpd'] ?? null, $planMetrics['rpd'])"
-                           color="sage"
-                           icon="M12 8v4l3 2M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z"/>
-                </div>
-                @endif
-
-                @if ($kpiOn('rpo'))
-                <div title="Revenue per day can be highlighted">
-                    <x-kpi title="RpO"
-                           :value="ea_money_short((float)($cur['rpo'] ?? 0), $ccy)"
-                           :sub="number_format((int)($cur['outfits'] ?? 0)) . ' outfits'"
-                           :vsPy="$variance($cur['rpo'] ?? null, $prev['rpo'] ?? null)"
-                           :vsPlan="$variance($cur['rpo'] ?? null, $planMetrics['rpo'])"
-                           color="brand"
-                           icon="M3 3v18h18M8 12h8"/>
-                </div>
-                @endif
-
-                @if ($kpiOn('opd'))
-                <x-kpi title="OpD"
-                       :value="number_format((float)($cur['opd'] ?? 0), 1)"
-                       :sub="'Outfits / working day'"
-                       :vsPy="$variance($cur['opd'] ?? null, $prev['opd'] ?? null)"
-                       :vsPlan="$variance($cur['opd'] ?? null, $planMetrics['opd'])"
-                       color="slate"
-                       icon="M4 6h16M4 12h10M4 18h6"/>
-                @endif
-
-                @if ($kpiOn('rpc'))
-                <x-kpi title="RpC"
-                       :value="ea_money_short((float)($cur['per_customer'] ?? 0), $ccy)"
-                       :sub="number_format((int)($cur['customers'] ?? 0)) . ' customers'"
-                       :vsPy="$variance($cur['per_customer'] ?? null, $prev['per_customer'] ?? null)"
-                       :vsPlan="$variance($cur['per_customer'] ?? null, $planMetrics['rpc'])"
-                       color="coral"
-                       icon="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
-                @endif
-
-                @if ($kpiOn('dpot'))
-                <x-kpi title="DpOT"
-                       :value="ea_money_short((float)($cur['dp_ot'] ?? 0), $ccy)"
-                       :sub="'Discount per outfit'"
-                       :vsPy="$variance($cur['dp_ot'] ?? null, $prev['dp_ot'] ?? null)"
-                       :vsPlan="$variance($cur['dp_ot'] ?? null, $planMetrics['dp_ot'])"
-                       prefer="down"
-                       color="warm"
-                       icon="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82zM7 7h.01"/>
-                @endif
-
-                @if ($kpiOn('dpc'))
-                <x-kpi title="DpC"
-                       :value="ea_money_short((float)($cur['dp_c'] ?? 0), $ccy)"
-                       :sub="'Discount per customer'"
-                       :vsPy="$variance($cur['dp_c'] ?? null, $prev['dp_c'] ?? null)"
-                       :vsPlan="$variance($cur['dp_c'] ?? null, $planMetrics['dp_c'])"
-                       prefer="down"
-                       color="warm"
-                       icon="M9 14l6-6M9 8h.01M15 14h.01"/>
-                @endif
-
-                @if ($kpiOn('cpo'))
-                <x-kpi title="CpO"
-                       :value="ea_money_short((float)($cur['cpo'] ?? 0), $ccy)"
-                       :sub="'603 + 7019 basis'"
-                       :vsPy="$variance($cur['cpo'] ?? null, $prev['cpo'] ?? null)"
-                       :vsPlan="$variance($cur['cpo'] ?? null, $planMetrics['cpo'])"
-                       prefer="down"
-                       color="sage"
-                       icon="M5 12h14M12 5l7 7-7 7"/>
-                @endif
-
-                @if ($kpiOn('run_rate'))
-                <x-kpi :title="$runRateTitle"
-                       :value="ea_money_short($runRate, $ccy)"
-                       :sub="$runRateSub"
-                       :vsPy="$variance($runRate, $runRatePy)"
-                       :vsPlan="$variance($runRate, $runRatePlan)"
-                       color="brand"
-                       icon="M3 17l6-6 4 4 8-8M14 7h7v7"/>
-                @endif
-            </div>
-        </div>
-
+{{-- ── Summary band ──────────────────────────────────────────────── --}}
+<div class="summary">
+    <span class="summary__l">In 5 sec</span>
+    <span>
+        Revenue <b>{{ $shortNum($rev) }}{{ $shortUnit($rev, $ccy) }} {{ $periodLabel ?? 'YTD' }}</b>
+        @if (!$isMtd && $runRate > 0)
+          on linear pace · year-end projection <b>{{ $shortNum($runRate) }}{{ $shortUnit($runRate, $ccy) }}</b>.
+        @else
+          .
+        @endif
         @if ($plCur)
-        <div class="mb-7">
-            <div class="flex items-center gap-2 mb-3">
-                <div class="w-1 h-4 rounded bg-sage-400"></div>
-                <h2 class="text-xs font-semibold uppercase tracking-wider text-[#5a6a70]">Margin Structure</h2>
+          Gross <span class="{{ $gpPct >= 35 ? 'pos' : ($gpPct >= 25 ? 'neutral' : 'neg') }}">{{ $gpPct >= 0 ? '+' : '' }}{{ number_format($gpPct, 1) }}%</span>,
+          EBITDA <span class="{{ $ebPct >= 0 ? 'pos' : 'neg' }}">{{ $ebPct >= 0 ? '+' : '' }}{{ number_format($ebPct, 1) }}%</span>
+          @if ($ebPct < 0 && $gpPct > 0) — OPEX consumes margin. @else . @endif
+        @endif
+        @if ($cashPct !== null)
+          Cash <span class="{{ $cashPct >= 90 ? 'pos' : ($cashPct >= 70 ? 'neutral' : 'neg') }}">{{ number_format($cashPct, 1) }}% of billed</span>
+          @if ($ar > 0)
+            · AR <span class="neutral">{{ $shortNum($ar) }}{{ $shortUnit($ar, $ccy) }}{{ $dso > 0 ? ' · DSO ' . round($dso) . 'd' : '' }}</span>.
+          @else
+            .
+          @endif
+        @endif
+        Priority: <b>{{ $priority }}</b>.
+    </span>
+</div>
+
+{{-- ── Grid ──────────────────────────────────────────────────────── --}}
+<div class="grid">
+
+    {{-- Row 1 · Cumulative Revenue (span 7) --}}
+    <div class="v5-card span-7">
+        <div class="v5-card__h">
+            <div>
+                <div class="v5-card__t">Cumulative Revenue · Linear pace</div>
+                <div class="v5-card__sub">{{ $periodLabel ?? 'YTD' }} {{ $year }} · {{ $ccy }} (Mon-Sat {{ $fullPeriodWorkingDays }} WD)</div>
             </div>
-            <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
-                @if ($kpiOn('gross_profit'))
-                <x-kpi title="Gross Profit"
-                       :value="ea_money_short((float)($plCur['gross_profit'] ?? 0), $ccy)"
-                       :sub="'Margin ' . number_format((float)($plCur['gross_margin_pct'] ?? $plCur['gross_margin'] ?? 0), 1) . '%'"
-                       color="sage"
-                       icon="M12 2l3 7h7l-5.5 4L18 20l-6-4-6 4 1.5-7L2 9h7z"/>
-                @endif
-
-                @if ($kpiOn('ebitda'))
-                <x-kpi title="EBITDA"
-                       :value="ea_money_short((float)($plCur['ebitda'] ?? 0), $ccy)"
-                       :sub="'Margin ' . number_format((float)($plCur['ebitda_margin_pct'] ?? $plCur['ebitda_margin'] ?? 0), 1) . '%'"
-                       color="brand"
-                       icon="M3 3v18h18M7 14l4-4 3 3 5-5"/>
-                @endif
-
-                @if ($kpiOn('net_profit'))
-                <x-kpi title="Net Profit"
-                       :value="ea_money_short((float)($plCur['net_profit'] ?? 0), $ccy)"
-                       :sub="'Margin ' . number_format((float)($plCur['net_margin_pct'] ?? $plCur['net_margin'] ?? 0), 1) . '%'"
-                       :color="($plCur['net_profit'] ?? 0) >= 0 ? 'sage' : 'coral'"
-                       icon="M22 11V3h-8M14 3l8 8-11 11-8-8z"/>
-                @endif
-
-                @if ($kpiOn('opex'))
-                <x-kpi title="OpEx"
-                       :value="ea_money_short((float)($plCur['opex'] ?? 0), $ccy)"
-                       color="slate"
-                       icon="M4 6h16M4 12h16M4 18h16"/>
-                @endif
+            <div class="v5-card__leg">
+                <span><span class="lline" style="background:var(--ea-primary);"></span>Actual</span>
+                <span><span class="lline" style="background:var(--text-faint);"></span>Linear pace</span>
             </div>
         </div>
-        @endif
+        <div class="v5-card__b" id="ec-trajectory">
+            @if (empty($dailySeries))<div class="empty-state">No revenue series for this period.</div>@endif
+        </div>
+        <div class="v5-card__f">
+            <b>Reading:</b> Daily run-rate <b>{{ $shortNum($dailyPace) }}{{ $shortUnit($dailyPace, $ccy) }}</b>
+            · {{ $workingDaysSoFar }}/{{ $fullPeriodWorkingDays }} WD ({{ number_format(100 * $workingDaysSoFar / $fullPeriodWorkingDays, 1) }}%)
+            · @if(!$isMtd) year-end at pace: <b>{{ $shortNum($runRate) }}{{ $shortUnit($runRate, $ccy) }}</b> @else month-end: <b>{{ $shortNum($runRate) }}{{ $shortUnit($runRate, $ccy) }}</b> @endif.
+            @if (!$planRevenue)<span class="warn">Budget feed pending</span>.@endif
+        </div>
+    </div>
 
-        {{-- ── Section: Revenue Reconciliation Sandbox ──────────────────────
-             Compact summary of the Expected → Billed → Cash flow with the
-             two diagnostic gaps inline. Mirrors /billing's full panel but
-             trimmed for the dashboard's "quick read" purpose. Hidden if
-             reconciliation has no data (e.g. operations not reachable). --}}
-        @php
-            $rec = $reconciliation ?? null;
-            $recHas = $rec && empty($rec['error']) && (
-                (($rec['headline']['expected'] ?? 0)  > 0) ||
-                (($rec['headline']['billed']   ?? 0)  > 0) ||
-                (($rec['headline']['collected'] ?? 0) > 0)
-            );
-        @endphp
-        @if ($recHas)
-          @php
-              $h = $rec['headline'];
-              $billGap = (float) $h['billing_gap'];
-              $collGap = (float) $h['collection_gap'];
-              $billGapPct = $h['expected'] > 0 ? 100.0 * abs($billGap) / $h['expected'] : null;
-              $collGapPct = $h['billed']   > 0 ? 100.0 * abs($collGap) / $h['billed']   : null;
-              $billRealisationPct = $h['billing_realisation_pct'];
-              $collRealisationPct = $h['collection_realisation_pct'];
-          @endphp
-          <div class="section-card p-5 mb-7">
-              <div class="flex items-center justify-between mb-4 gap-3 flex-wrap">
-                  <div>
-                      <h2 class="text-[13px] font-semibold text-[#1e3d44]">Revenue Reconciliation Sandbox</h2>
-                      <p class="text-[11px] text-[#8a8578] mt-0.5">From Expected (scans) → Billed (invoices) → Cash (collected) · {{ $periodLabel }} · FCFA HT</p>
-                  </div>
-                  <a href="{{ tenant_url('/billing') }}?period={{ $period['type'] ?? 'ytd' }}&year={{ $period['year'] ?? now()->year }}&month={{ $period['month'] ?? now()->month }}"
-                     class="text-[10.5px] font-medium text-brand-700 hover:text-brand-900 border border-brand-200 hover:border-brand-400 rounded px-2 py-1 inline-flex items-center gap-1">
-                      View full reconciliation →
-                  </a>
-              </div>
+    {{-- Row 1 · Margin Waterfall (span 5) --}}
+    <div class="v5-card span-5">
+        <div class="v5-card__h">
+            <div>
+                <div class="v5-card__t">Margin Waterfall</div>
+                <div class="v5-card__sub">Revenue → Net Profit ({{ $ccy }})</div>
+            </div>
+            <div class="v5-card__leg">
+                <span><span class="lswatch" style="background:#047857;"></span>In</span>
+                <span><span class="lswatch" style="background:#fbbf24;"></span>Out</span>
+                <span><span class="lswatch" style="background:#b91c1c;"></span>Loss</span>
+            </div>
+        </div>
+        <div class="v5-card__b" id="ec-waterfall">
+            @if (!$plCur)<div class="empty-state">P&amp;L not yet available.</div>@endif
+        </div>
+        <div class="v5-card__f">
+            <b>Reading:</b>
+            @if ($plCur)
+              <span class="{{ $gpPct >= 35 ? 'pos' : 'warn' }}">{{ number_format($gpPct, 1) }}% gross margin</span>,
+              OPEX <span class="warn">{{ $rev > 0 ? number_format(100 * (float) ($plCur['opex'] ?? 0) / $rev, 0) : '—' }}% of revenue</span>.
+              EBITDA <span class="{{ $ebitda >= 0 ? 'pos' : 'neg' }}">{{ $shortNum($ebitda) }}{{ $shortUnit($ebitda, $ccy) }}</span>.
+            @else
+              Run sync to populate the P&amp;L stages.
+            @endif
+        </div>
+    </div>
 
-              {{-- Three pillars + two arrows on a single horizontal row.
-                   On small screens it stacks vertically and the arrows
-                   become "down arrows" naturally via flex-wrap. --}}
-              <div class="grid grid-cols-1 md:grid-cols-[1fr_auto_1fr_auto_1fr] gap-3 items-stretch">
-                  {{-- Expected --}}
-                  <div class="bg-sage-50 border border-sage-100 rounded-lg p-3 flex flex-col">
-                      <div class="text-[10px] uppercase tracking-wider text-sage-700 font-semibold">Expected</div>
-                      <div class="text-xl font-bold text-[#2d3748] mt-1 tabular-nums">{{ ea_money_short((float) $h['expected'], 'XAF') }}</div>
-                      <div class="text-[10px] text-[#7c7466] mt-0.5 leading-snug">Scan revenue × tariff (Operations)</div>
-                  </div>
-                  {{-- Arrow + billing gap --}}
-                  <div class="flex md:flex-col items-center justify-center gap-1 text-center md:px-1">
-                      <div class="text-[#a09d95] hidden md:block">
-                          <svg width="22" height="14" viewBox="0 0 22 14" fill="none" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" d="M1 7h19m0 0l-5-5m5 5l-5 5"/></svg>
-                      </div>
-                      <div class="text-[#a09d95] md:hidden">
-                          <svg width="14" height="22" viewBox="0 0 14 22" fill="none" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" d="M7 1v19m0 0l-5-5m5 5l5-5"/></svg>
-                      </div>
-                      <div class="text-[10px] uppercase tracking-wider text-warm-700 font-semibold">Billing gap</div>
-                      <div class="text-xs font-bold tabular-nums {{ abs($billGap) > 0 ? 'text-coral-700' : 'text-sage-700' }}">
-                          {{ ($billGap >= 0 ? '−' : '+') }}{{ ea_money_short(abs($billGap), 'XAF') }}
-                      </div>
-                      @if ($billGapPct !== null)
-                        <div class="text-[9.5px] text-[#7c7466]">{{ number_format($billGapPct, 1) }}% of Expected</div>
-                      @endif
-                  </div>
-                  {{-- Billed --}}
-                  <div class="bg-brand-50 border border-brand-100 rounded-lg p-3 flex flex-col">
-                      <div class="flex items-center justify-between gap-2">
-                          <div class="text-[10px] uppercase tracking-wider text-brand-700 font-semibold">Billed</div>
-                          @if ($billRealisationPct !== null)
-                            <div class="text-[9.5px] font-semibold rounded bg-white border border-brand-200 text-brand-700 px-1.5 py-0.5">{{ number_format($billRealisationPct, 1) }}%</div>
-                          @endif
-                      </div>
-                      <div class="text-xl font-bold text-[#2d3748] mt-1 tabular-nums">{{ ea_money_short((float) $h['billed'], 'XAF') }}</div>
-                      <div class="text-[10px] text-[#7c7466] mt-0.5 leading-snug">Posted out_invoices (HT)</div>
-                  </div>
-                  {{-- Arrow + collection gap --}}
-                  <div class="flex md:flex-col items-center justify-center gap-1 text-center md:px-1">
-                      <div class="text-[#a09d95] hidden md:block">
-                          <svg width="22" height="14" viewBox="0 0 22 14" fill="none" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" d="M1 7h19m0 0l-5-5m5 5l-5 5"/></svg>
-                      </div>
-                      <div class="text-[#a09d95] md:hidden">
-                          <svg width="14" height="22" viewBox="0 0 14 22" fill="none" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" d="M7 1v19m0 0l-5-5m5 5l5-5"/></svg>
-                      </div>
-                      <div class="text-[10px] uppercase tracking-wider text-warm-700 font-semibold">Collection gap</div>
-                      <div class="text-xs font-bold tabular-nums {{ abs($collGap) > 0 ? 'text-coral-700' : 'text-sage-700' }}">
-                          −{{ ea_money_short(abs($collGap), 'XAF') }}
-                      </div>
-                      @if ($collGapPct !== null)
-                        <div class="text-[9.5px] text-[#7c7466]">{{ number_format($collGapPct, 1) }}% of Billed</div>
-                      @endif
-                  </div>
-                  {{-- Cash collected --}}
-                  <div class="bg-warm-50 border border-warm-100 rounded-lg p-3 flex flex-col">
-                      <div class="flex items-center justify-between gap-2">
-                          <div class="text-[10px] uppercase tracking-wider text-warm-700 font-semibold">Cash</div>
-                          @if ($collRealisationPct !== null)
-                            <div class="text-[9.5px] font-semibold rounded bg-white border border-warm-200 text-warm-700 px-1.5 py-0.5">{{ number_format($collRealisationPct, 1) }}%</div>
-                          @endif
-                      </div>
-                      <div class="text-xl font-bold text-[#2d3748] mt-1 tabular-nums">{{ ea_money_short((float) $h['collected'], 'XAF') }}</div>
-                      <div class="text-[10px] text-[#7c7466] mt-0.5 leading-snug">Billed × payment progress (HT)</div>
-                  </div>
-              </div>
-
-              <div class="text-[11px] text-[#7c7466] mt-3 leading-relaxed">
-                  <strong>Reading:</strong>
-                  Billing gap = revenue earned operationally but not invoiced.
-                  Collection gap = invoiced but not yet received (open AR on this period's invoices).
-                  All figures HT to keep stages comparable.
-              </div>
-          </div>
-        @endif
-
-        {{-- ── Section: Revenue Trend ────────────────────────────────────── --}}
-        @if (!empty($cur['series']))
-          <div class="grid lg:grid-cols-3 gap-4 mb-7">
-              <div class="lg:col-span-2 section-card p-5">
-                  <div class="flex items-center justify-between mb-4">
-                      <div>
-                          <h2 class="text-[13px] font-semibold text-[#1e3d44]">{{ $data['period']['label'] ?? 'Period' }} Revenue vs Budget</h2>
-                          <p class="text-[11px] text-[#8a8578]">Cumulative actuals vs cumulative budget ({{ $ccy }})</p>
-                      </div>
-                      <div class="flex gap-3 text-[10px] text-[#8a8578]">
-                          <div class="flex items-center gap-1.5"><span class="w-3 h-[3px] bg-brand-400 rounded"></span>Actual (cum)</div>
-                          <div class="flex items-center gap-1.5"><span class="w-3 h-[3px] bg-warm-500 rounded"></span>Budget (cum)</div>
-                      </div>
-                  </div>
-                  <div class="h-56"><canvas id="revenueTrendChart"></canvas></div>
-              </div>
-
-              <div class="space-y-4">
-                  <div class="section-card p-4 bg-brand-50/50">
-                      <p class="text-[10px] uppercase tracking-wider text-[#8a8578] font-medium">Commercial Sentiment</p>
-                      <h3 class="text-lg font-bold text-[#1e3d44] mt-1.5">{{ number_format((float)($cur['customers'] ?? 0)) }} <span class="text-sm font-normal text-[#5a6a70]">customers</span></h3>
-                      <p class="text-[11px] text-[#8a8578] mt-1.5 leading-relaxed">Avg spend {{ ea_money_short((float)($cur['per_customer'] ?? 0), $ccy) }} — track VIP accounts in Receivables.</p>
-                  </div>
-                  <div class="section-card p-4 bg-sage-50/50">
-                      <p class="text-[10px] uppercase tracking-wider text-[#8a8578] font-medium">Margin Glance</p>
-                      <h3 class="text-lg font-bold text-[#1e3d44] mt-1.5">
-                          {{ $plCur ? number_format((float)($plCur['gross_margin_pct'] ?? $plCur['gross_margin'] ?? 0),1) : '—' }}%
-                          <span class="text-sm font-normal text-[#5a6a70]">gross</span> ·
-                          {{ $plCur ? number_format((float)($plCur['ebitda_margin_pct'] ?? $plCur['ebitda_margin'] ?? 0),1) : '—' }}%
-                          <span class="text-sm font-normal text-[#5a6a70]">EBITDA</span>
-                      </h3>
-                      <p class="text-[11px] text-[#8a8578] mt-1.5 leading-relaxed">Monitor OpEx in Profit &amp; Loss to defend margins.</p>
-                  </div>
-              </div>
-          </div>
-
-          @push('scripts')
-          <script>
-          (function () {
-              const cy = @json($cur['series'] ?? []);
-              const budget = @json($data['budget']['series'] ?? []);
-              const labels = Object.keys(cy);
-              let runningActual = 0;
-              const cumulativeActual = labels.map(day => {
-                  runningActual += cy[day] ?? 0;
-                  return runningActual;
-              });
-              let runningBudget = 0;
-              const cumulativeBudget = labels.map(day => {
-                  runningBudget += budget[day] ?? 0;
-                  return runningBudget;
-              });
-              const ctx = document.getElementById('revenueTrendChart');
-              if (!ctx) return;
-              new Chart(ctx, {
-                  type: 'line',
-                  data: {
-                      labels,
-                      datasets: [
-                          {
-                              label: 'Actual (cum)', data: cumulativeActual,
-                              borderColor: '#4da8b4', backgroundColor: 'rgba(77,168,180,.12)',
-                              fill: true, tension: 0.35, pointRadius: 0, borderWidth: 2,
-                          },
-                          {
-                              label: 'Budget (cum)', data: cumulativeBudget,
-                              borderColor: '#f0a43c', borderWidth: 1.5, borderDash: [4, 4],
-                              fill: false, tension: 0.2, pointRadius: 0,
-                          },
-                      ],
-                  },
-                  options: {
-                      responsive: true, maintainAspectRatio: false,
-                      interaction: { intersect: false, mode: 'index' },
-                      plugins: {
-                          legend: { display: false },
-                          tooltip: { backgroundColor: '#1c2637', titleFont: { size: 11 }, bodyFont: { size: 11 }, padding: 10, cornerRadius: 8 }
-                      },
-                      scales: {
-                          x: { grid: { display: false }, ticks: { maxTicksLimit: 8, font: { size: 10 }, color: '#8a8578' } },
-                          y: { grid: { color: '#f0ede7' }, ticks: { font: { size: 10 }, color: '#8a8578',
-                                callback: v => v >= 1e6 ? (v/1e6).toFixed(1)+'M' : v >= 1e3 ? (v/1e3).toFixed(0)+'K' : v } },
-                      },
-                  },
-              });
-          })();
-          </script>
-          @endpush
-        @endif
-
-        {{-- ── Section: Treasury Snapshot ─────────────────────────────────── --}}
-        @if ($receivables)
+    {{-- Row 2 · Cost Pressure (span 4) --}}
+    <div class="v5-card span-4">
+        <div class="v5-card__h">
+            <div>
+                <div class="v5-card__t">Cost Ratio &amp; Discount</div>
+                <div class="v5-card__sub">CPO · DPOT · DPC vs target</div>
+            </div>
+        </div>
+        <div class="v5-card__b" id="ec-cost"></div>
+        <div class="v5-card__f">
+            <b>Reading:</b>
             @php
-                $treasuryCards = [
-                    ['label' => 'Total AR',           'value' => ea_money_short((float)($receivables['total_ar'] ?? 0), $ccy), 'hint' => 'Outstanding including current', 'accent' => 'bg-brand-400'],
-                    ['label' => 'Overdue Ratio',      'value' => number_format((float)($receivables['overdue_rate'] ?? 0), 1) . '%', 'hint' => 'Target < 8%', 'accent' => 'bg-coral-400'],
-                    ['label' => 'DSO',                'value' => number_format((float)($receivables['dso'] ?? $receivables['kpis']['dso_days'] ?? 0), 0) . ' days', 'hint' => 'Collection velocity', 'accent' => 'bg-sage-400'],
-                    ['label' => 'Top-5 Concentration','value' => number_format((float)($receivables['top5_pct'] ?? 0), 1) . '%', 'hint' => 'Customer risk', 'accent' => 'bg-warm-400'],
-                ];
+                $cpoR = ($cur['rpo'] ?? 0) > 0 ? 100.0 * ((float)($cur['cpo'] ?? 0)) / ((float)$cur['rpo']) : 0;
             @endphp
-            <div class="section-card p-5 mb-7">
-                <div class="flex items-center justify-between mb-4">
-                    <div class="flex items-center gap-2">
-                        <div class="w-1 h-4 rounded bg-warm-400"></div>
-                        <div>
-                            <h2 class="text-[13px] font-semibold text-[#1e3d44]">Treasury Pulse</h2>
-                            <p class="text-[11px] text-[#8a8578]">Receivables quality feeds liquidity planning</p>
+            CPO {{ number_format($cpoR, 0) }}% of unit revenue
+            ({{ $cpoR > 35 ? 'above' : 'within' }} 35% target).
+            Tighten cost-per-outfit first.
+        </div>
+    </div>
+
+    {{-- Row 2 · Run-Rate Bullet (span 4) --}}
+    <div class="v5-card span-4">
+        <div class="v5-card__h">
+            <div>
+                <div class="v5-card__t">{{ $isMtd ? 'Monthly Run-Rate' : 'Annualised Run-Rate' }}</div>
+                <div class="v5-card__sub">{{ number_format(100 * $workingDaysSoFar / $fullPeriodWorkingDays, 1) }}% of {{ $isMtd ? 'month' : 'year' }} elapsed</div>
+            </div>
+        </div>
+        <div class="v5-card__b" style="display:flex; flex-direction:column; justify-content:center;">
+            <div class="bullet">
+                <div class="bullet__r">
+                    <div class="bullet__l">{{ $isMtd ? 'MTD' : 'YTD' }}</div>
+                    <div class="bullet__t">
+                        <div class="bullet__f" style="width: {{ min(100, 100 * $workingDaysSoFar / $fullPeriodWorkingDays) }}%;">
+                            {{ $shortNum($rev) }}{{ $shortUnit($rev, $ccy) }}
                         </div>
+                        <div class="bullet__m" style="left: {{ min(100, 100 * $workingDaysSoFar / $fullPeriodWorkingDays) }}%;"></div>
                     </div>
-                    <a href="{{ tenant_url('/treasury') }}" class="text-[10px] font-medium text-brand-600 hover:text-brand-800 transition">Open treasury →</a>
+                    <div class="bullet__v">{{ number_format(100 * $workingDaysSoFar / $fullPeriodWorkingDays, 1) }}%</div>
                 </div>
-                <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
-                    @foreach ($treasuryCards as $card)
-                        <div class="rounded-xl border border-[#e8e4de] bg-[#faf8f5] p-3.5 flex gap-3">
-                            <div class="w-1 rounded {{ $card['accent'] }} shrink-0"></div>
-                            <div>
-                                <p class="text-[10px] uppercase tracking-wider text-[#8a8578] font-medium">{{ $card['label'] }}</p>
-                                <div class="text-lg font-bold text-[#1e3d44] mt-0.5">{{ $card['value'] }}</div>
-                                <p class="text-[10px] text-[#a09d95] mt-0.5">{{ $card['hint'] }}</p>
-                            </div>
-                        </div>
-                    @endforeach
+                <div class="bullet__r">
+                    <div class="bullet__l">Projection</div>
+                    <div class="bullet__t">
+                        <div class="bullet__f proj">{{ $shortNum($runRate) }}{{ $shortUnit($runRate, $ccy) }} projected</div>
+                    </div>
+                    <div class="bullet__v" style="color:#374151; font-size:10px;">at pace</div>
+                </div>
+                <div class="bullet__r">
+                    @if ($planRevenue)
+                      <div class="bullet__l">Budget</div>
+                      <div class="bullet__t">
+                          <div class="bullet__f" style="width: {{ min(100, 100 * $rev / $planRevenue) }}%; background: var(--warn);">
+                              {{ number_format(100 * $rev / $planRevenue, 1) }}%
+                          </div>
+                      </div>
+                      <div class="bullet__v">{{ $shortNum($planRevenue) }}{{ $shortUnit($planRevenue, $ccy) }}</div>
+                    @else
+                      <div class="bullet__l dim">Budget</div>
+                      <div class="bullet__t dim">
+                          <div class="bullet__f dimt">budget feed pending</div>
+                      </div>
+                      <div class="bullet__v dim">—</div>
+                    @endif
                 </div>
             </div>
-        @endif
-
-        {{-- ── Quick Links ────────────────────────────────────────────────── --}}
-        <div class="grid md:grid-cols-3 gap-3">
-            <a href="{{ tenant_url('/revenue') }}" class="section-card p-4 hover:shadow-md transition group">
-                <div class="flex items-center justify-between mb-1.5">
-                    <p class="text-[11px] uppercase tracking-wider text-[#8a8578] font-medium">Revenue</p>
-                    <span class="text-[10px] text-brand-600 group-hover:translate-x-0.5 transition">View →</span>
-                </div>
-                <p class="text-[11px] text-[#8a8578] leading-relaxed">CY vs PY trends, daily run rate and customer mix.</p>
-            </a>
-            <a href="{{ tenant_url('/customer-insights') }}" class="section-card p-4 hover:shadow-md transition group">
-                <div class="flex items-center justify-between mb-1.5">
-                    <p class="text-[11px] uppercase tracking-wider text-[#8a8578] font-medium">Customer Insights</p>
-                    <span class="text-[10px] text-brand-600 group-hover:translate-x-0.5 transition">Explore →</span>
-                </div>
-                <p class="text-[13px] font-semibold text-[#1e3d44]">Customer growth & loyalty</p>
-                <p class="text-[11px] text-[#8a8578] mt-1">Identify profitable, repeat, and at-risk accounts.</p>
-            </a>
-            <a href="{{ tenant_url('/profit-loss') }}" class="section-card p-4 hover:shadow-md transition group">
-                <div class="flex items-center justify-between mb-1.5">
-                    <h3 class="text-[13px] font-semibold text-[#1e3d44]">Profit &amp; Loss</h3>
-                    <svg class="w-3.5 h-3.5 text-[#cdc7bc] group-hover:translate-x-0.5 group-hover:text-brand-500 transition" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-                </div>
-                <p class="text-[11px] text-[#8a8578] leading-relaxed">Waterfall from revenue → gross → EBITDA → net.</p>
-            </a>
-            <a href="{{ tenant_url('/receivables') }}" class="section-card p-4 hover:shadow-md transition group">
-                <div class="flex items-center justify-between mb-1.5">
-                    <p class="text-[11px] uppercase tracking-wider text-[#8a8578] font-medium">Receivables</p>
-                    <span class="text-[10px] text-brand-600 group-hover:translate-x-0.5 transition">Open →</span>
-                </div>
-                <p class="text-[11px] text-[#8a8578] leading-relaxed">Ageing buckets, DSO tracking and top offender scorecard.</p>
-            </a>
         </div>
-    @endif
+        <div class="v5-card__f">
+            <b>Reading:</b>
+            @if ($planRevenue)
+              {{ $rev >= $planRevenue ? 'Ahead of plan.' : 'Behind plan by ' . number_format(100 * (1 - $rev / $planRevenue), 1) . '%.' }}
+            @else
+              On linear pace · <span class="warn">budget gap pending feed integration</span>.
+            @endif
+        </div>
+    </div>
+
+    {{-- Row 2 · Sankey · Reconciliation (span 4) --}}
+    <div class="v5-card span-4">
+        <div class="v5-card__h">
+            <div>
+                <div class="v5-card__t">Revenue Reconciliation</div>
+                <div class="v5-card__sub">Expected → Billed → Cash</div>
+            </div>
+        </div>
+        <div class="v5-card__b" id="ec-sankey">
+            @if (!$recH)<div class="empty-state">Reconciliation not available.</div>@endif
+        </div>
+        <div class="v5-card__f">
+            @if ($recH && $cashPct !== null)
+              <b>Reading:</b>
+              <span class="{{ $cashPct >= 90 ? 'pos' : 'warn' }}">{{ number_format($cashPct, 1) }}% lands in cash</span>
+              · <span class="neg">{{ number_format(100 - $cashPct, 1) }}% as receivables</span>.
+            @else
+              <b>Reading:</b> Run sync to compute reconciliation.
+            @endif
+        </div>
+    </div>
+
+    {{-- Row 3 · Unit Economics small multiples (span 12) --}}
+    <div class="v5-card span-12">
+        <div class="v5-card__h">
+            <div>
+                <div class="v5-card__t">Unit Economics</div>
+                <div class="v5-card__sub">RPD · OPD · RPO · RPC — current period vs prior year</div>
+            </div>
+        </div>
+        <div class="v5-card__b" id="ec-unit"></div>
+        <div class="v5-card__f">
+            <b>Reading:</b>
+            @php
+                $rpdDelta = $variance($cur['rpd'] ?? null, $prev['rpd'] ?? null);
+                $opdDelta = $variance($cur['opd'] ?? null, $prev['opd'] ?? null);
+                $rpoDelta = $variance($cur['rpo'] ?? null, $prev['rpo'] ?? null);
+                $rpcDelta = $variance($cur['per_customer'] ?? null, $prev['per_customer'] ?? null);
+            @endphp
+            @if ($rpdDelta !== null && $opdDelta !== null && ($rpdDelta > 0 || $opdDelta > 0) && (($rpoDelta ?? 0) < 0 || ($rpcDelta ?? 0) < 0))
+              Throughput accelerating, unit pricing eroding — pattern of <span class="warn">volume-led growth at lower contract values</span>.
+            @elseif ($rpdDelta !== null && $rpdDelta > 0)
+              Revenue per day up — units holding their value.
+            @else
+              Compare current to prior year for trajectory.
+            @endif
+        </div>
+    </div>
+
+</div>
+
+{{-- ── KPI strip (6 cells) ──────────────────────────────────────── --}}
+<div class="strip">
+    <div class="strip__c">
+        <div class="strip__l">Revenue {{ $isMtd ? 'MTD' : 'YTD' }}</div>
+        <div class="strip__v">{{ $shortNum($rev) }}<span class="u">{{ $shortUnit($rev, $ccy) }}</span></div>
+        <div class="strip__m">tracking pace</div>
+    </div>
+    <div class="strip__c">
+        <div class="strip__l">Gross Profit</div>
+        <div class="strip__v {{ $gp >= 0 ? 'is-pos' : 'is-neg' }}">{{ $shortNum($gp) }}<span class="u">{{ $shortUnit($gp, $ccy) }}</span></div>
+        <div class="strip__m">{{ number_format($gpPct, 1) }}% margin</div>
+    </div>
+    <div class="strip__c">
+        <div class="strip__l">EBITDA</div>
+        <div class="strip__v {{ $ebitda >= 0 ? 'is-pos' : 'is-neg' }}">{{ $ebitda < 0 ? '−' : '' }}{{ $shortNum(abs($ebitda)) }}<span class="u">{{ $shortUnit($ebitda, $ccy) }}</span></div>
+        <div class="strip__m">{{ number_format($ebPct, 1) }}% margin</div>
+    </div>
+    <div class="strip__c">
+        <div class="strip__l">Net Profit</div>
+        <div class="strip__v {{ $net >= 0 ? 'is-pos' : 'is-neg' }}">{{ $net < 0 ? '−' : '' }}{{ $shortNum(abs($net)) }}<span class="u">{{ $shortUnit($net, $ccy) }}</span></div>
+        <div class="strip__m">{{ number_format($netPct, 1) }}% margin</div>
+    </div>
+    <div class="strip__c">
+        <div class="strip__l">Cash Collected</div>
+        <div class="strip__v {{ $cashPct !== null && $cashPct >= 80 ? 'is-pos' : '' }}">{{ $shortNum($cash) }}<span class="u">{{ $shortUnit($cash, $ccy) }}</span></div>
+        <div class="strip__m">{{ $cashPct !== null ? number_format($cashPct, 1) . '% of billed' : '—' }}</div>
+    </div>
+    <div class="strip__c">
+        <div class="strip__l">AR Outstanding</div>
+        <div class="strip__v">{{ $shortNum($ar) }}<span class="u">{{ $shortUnit($ar, $ccy) }}</span></div>
+        <div class="strip__m">{{ $dso > 0 ? 'DSO ' . round($dso) . 'd' : 'DSO —' }}</div>
+    </div>
+</div>
+
+@push('scripts')
+<script>
+(function () {
+  const t = {
+    pri: '#0d6e6e', pos: '#047857', neg: '#b91c1c',
+    warn: '#d97706', warnLt: '#fbbf24',
+    textM: '#6b7280', textF: '#9ca3af',
+    grid: '#f3f4f6', base: '#d1d5db', area: 'rgba(13,110,110,0.10)'
+  };
+  const FF = "'Segoe UI',-apple-system,BlinkMacSystemFont,system-ui,sans-serif";
+  const tip = {
+    trigger: 'axis', backgroundColor: '#fff', borderColor: '#e5e7eb',
+    borderWidth: 1, padding: [6, 10],
+    textStyle: { color: '#111827', fontSize: 11 },
+    axisPointer: { type: 'shadow', shadowStyle: { color: 'rgba(13,110,110,0.04)' } }
+  };
+
+  function fmt(v) {
+    if (v == null) return '—';
+    const a = Math.abs(v);
+    if (a >= 1e6) return (v / 1e6).toFixed(1).replace(/\.0$/, '') + 'M';
+    if (a >= 1e3) return (v / 1e3).toFixed(0) + 'K';
+    return v.toString();
+  }
+
+  /* ── 1. Trajectory ───────────────────────────────────────────── */
+  const trajectoryEl = document.getElementById('ec-trajectory');
+  const cumActual = @json(array_values($cumActual));
+  const cumLinear = @json(array_values($cumLinear));
+  if (trajectoryEl && cumActual.some(v => v != null)) {
+    echarts.init(trajectoryEl).setOption({
+      textStyle: { fontFamily: FF, color: '#374151' },
+      grid: { left: 48, right: 16, top: 8, bottom: 22, containLabel: false },
+      tooltip: tip,
+      xAxis: { type: 'category', data: ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'],
+        axisLine: { lineStyle: { color: t.base } }, axisTick: { show: false },
+        axisLabel: { color: t.textM, fontSize: 9 } },
+      yAxis: { type: 'value', axisLine: { show: false }, axisTick: { show: false },
+        splitLine: { lineStyle: { color: t.grid } },
+        axisLabel: { color: t.textM, fontSize: 9, formatter: v => fmt(v) } },
+      series: [
+        { name: 'Actual', type: 'line', data: cumActual,
+          lineStyle: { color: t.pri, width: 2 }, itemStyle: { color: t.pri },
+          areaStyle: { color: t.area }, symbol: 'circle', symbolSize: 5 },
+        { name: 'Linear', type: 'line', data: cumLinear,
+          lineStyle: { color: t.textF, type: 'dashed', width: 1.5 },
+          itemStyle: { color: t.textF }, symbol: 'none' },
+      ],
+    });
+  }
+
+  /* ── 2. Waterfall ────────────────────────────────────────────── */
+  const wfEl = document.getElementById('ec-waterfall');
+  const pl = @json($plCur);
+  if (wfEl && pl) {
+    const stages = [
+      { name: 'Rev',    value: +pl.revenue       || 0,           type: 'total' },
+      { name: 'COGS',   value: -Math.abs(+pl.cogs || 0),         type: 'out'   },
+      { name: 'GP',     value: +pl.gross_profit  || 0,           type: 'sub'   },
+      { name: 'OPEX',   value: -Math.abs(+pl.opex || 0),         type: 'out'   },
+      { name: 'EBITDA', value: +pl.ebitda        || 0,           type: (+pl.ebitda || 0) >= 0 ? 'sub' : 'sub-' },
+      { name: 'D&A+T',  value: -Math.abs((+pl.depreciation || 0) + (+pl.tax || 0) + (+pl.interest || 0)), type: 'out' },
+      { name: 'NP',     value: +pl.net_profit    || 0,           type: (+pl.net_profit || 0) >= 0 ? 'sub' : 'tot-' },
+    ];
+    const ph = [], pos = [], neg = [];
+    let r = 0;
+    stages.forEach(s => {
+      if (['total','sub','sub-','tot-'].includes(s.type)) {
+        ph.push(s.value < 0 ? s.value : 0);
+        if (s.value >= 0) { pos.push(s.value); neg.push(0); }
+        else              { pos.push(0); neg.push(Math.abs(s.value)); }
+        r = s.value;
+      } else {
+        const e = r + s.value;
+        ph.push(Math.min(r, e));
+        const h = Math.abs(s.value);
+        if (s.value >= 0) { pos.push(h); neg.push(0); }
+        else              { pos.push(0); neg.push(h); }
+        r = e;
+      }
+    });
+    echarts.init(wfEl).setOption({
+      textStyle: { fontFamily: FF, color: '#374151' },
+      grid: { left: 48, right: 8, top: 8, bottom: 22, containLabel: false },
+      tooltip: { ...tip, formatter: p => {
+        const s = stages[p[0].dataIndex]; return `<b>${s.name}</b>: ${fmt(s.value)}`;
+      } },
+      xAxis: { type: 'category', data: stages.map(s => s.name),
+        axisLine: { lineStyle: { color: t.base } }, axisTick: { show: false },
+        axisLabel: { color: t.textM, fontSize: 9, fontWeight: 600 } },
+      yAxis: { type: 'value', axisLine: { show: false },
+        splitLine: { lineStyle: { color: t.grid } },
+        axisLabel: { color: t.textM, fontSize: 9, formatter: v => fmt(v) } },
+      series: [
+        { name: 'ph', type: 'bar', stack: 'w', itemStyle: { color: 'transparent' }, data: ph, tooltip: { show: false } },
+        { name: 'In', type: 'bar', stack: 'w',
+          data: pos.map((v, i) => ({ value: v,
+            itemStyle: { color: ['total','sub'].includes(stages[i].type) ? t.pri : t.pos } })),
+          barWidth: '60%' },
+        { name: 'Out', type: 'bar', stack: 'w',
+          data: neg.map((v, i) => ({ value: v,
+            itemStyle: { color: ['sub-','tot-'].includes(stages[i].type) ? t.neg : t.warnLt } })),
+          barWidth: '60%' },
+      ],
+    });
+  }
+
+  /* ── 3. Cost Pressure (horizontal bars: CPO/RPO, DPOT/RPO, DPC/RPC) ── */
+  const costEl = document.getElementById('ec-cost');
+  const costData = @json([
+      ['CPO',  ($cur['rpo'] ?? 0) > 0 ? 100.0 * ((float)($cur['cpo']   ?? 0)) / ((float)$cur['rpo']) : 0, 35],
+      ['DPOT', ($cur['rpo'] ?? 0) > 0 ? 100.0 * ((float)($cur['dp_ot'] ?? 0)) / ((float)$cur['rpo']) : 0, 15],
+      ['DPC',  ($cur['per_customer'] ?? 0) > 0 ? 100.0 * ((float)($cur['dp_c'] ?? 0)) / ((float)$cur['per_customer']) : 0, 15],
+  ]);
+  if (costEl && costData.some(d => d[1] > 0)) {
+    echarts.init(costEl).setOption({
+      textStyle: { fontFamily: FF, color: '#374151' },
+      grid: { left: 50, right: 60, top: 6, bottom: 22, containLabel: false },
+      tooltip: tip,
+      yAxis: { type: 'category', data: costData.map(d => d[0]).reverse(),
+        axisLine: { lineStyle: { color: t.base } }, axisTick: { show: false },
+        axisLabel: { color: t.textM, fontSize: 10, fontWeight: 600 } },
+      xAxis: { type: 'value', max: 60, axisLine: { show: false },
+        splitLine: { lineStyle: { color: t.grid } },
+        axisLabel: { color: t.textM, fontSize: 9, formatter: '{value}%' } },
+      series: [{
+        type: 'bar', data: costData.slice().reverse().map(d => ({
+          value: d[1],
+          itemStyle: { color: d[1] > d[2] ? t.warn : t.pri }
+        })),
+        barWidth: 14,
+        label: { show: true, position: 'right', color: t.textM, fontSize: 10,
+          formatter: p => p.value.toFixed(0) + '%' },
+        markLine: {
+          silent: true, symbol: 'none',
+          lineStyle: { color: t.textF, type: 'dashed', width: 1 },
+          label: { position: 'end', formatter: '≤ 35%', color: t.textM, fontSize: 9, distance: 4 },
+          data: [{ xAxis: 35 }]
+        }
+      }],
+    });
+  }
+
+  /* ── 4. Unit Economics small multiples ──────────────────────── */
+  const unitEl = document.getElementById('ec-unit');
+  const unit = @json([
+      ['RPD · Rev/Day',     [(float)($prev['rpd']          ?? 0), (float)($cur['rpd']          ?? 0)], 'pos'],
+      ['OPD · Outfit/Day',  [(float)($prev['opd']          ?? 0), (float)($cur['opd']          ?? 0)], 'pos'],
+      ['RPO · Rev/Outfit',  [(float)($prev['rpo']          ?? 0), (float)($cur['rpo']          ?? 0)], 'pos'],
+      ['RPC · Rev/Customer',[(float)($prev['per_customer'] ?? 0), (float)($cur['per_customer'] ?? 0)], 'pos'],
+  ]);
+  if (unitEl && unit.some(u => u[1][1] > 0)) {
+    const grids = unit.map((_, i) => ({ left: `${i * 25 + 3}%`, right: `${100 - (i + 1) * 25 + 1}%`, top: 28, bottom: 22 }));
+    const titles = unit.map((u, i) => ({
+      text: u[0], left: grids[i].left, top: 4,
+      textStyle: { fontSize: 10, fontWeight: 700, color: '#111827', fontFamily: FF }
+    }));
+    echarts.init(unitEl).setOption({
+      textStyle: { fontFamily: FF, color: '#374151' },
+      title: titles, grid: grids,
+      xAxis: unit.map((_, i) => ({ gridIndex: i, type: 'category', data: ['Prior', 'Current'],
+        axisLine: { lineStyle: { color: t.base } }, axisTick: { show: false },
+        axisLabel: { color: t.textM, fontSize: 9 } })),
+      yAxis: unit.map((_, i) => ({ gridIndex: i, type: 'value', axisLine: { show: false }, axisTick: { show: false },
+        splitLine: { lineStyle: { color: t.grid } },
+        axisLabel: { color: t.textM, fontSize: 9, formatter: v => fmt(v) } })),
+      series: unit.map((u, i) => ({
+        type: 'bar', xAxisIndex: i, yAxisIndex: i, data: u[1],
+        itemStyle: { color: (u[1][1] >= u[1][0]) ? t.pri : t.neg },
+        barWidth: '60%',
+        label: { show: true, position: 'top', color: t.textM, fontSize: 9, formatter: p => fmt(p.value) }
+      })),
+    });
+  }
+
+  /* ── 5. Sankey · Reconciliation ──────────────────────────────── */
+  const sankeyEl = document.getElementById('ec-sankey');
+  const recH = @json($recH);
+  if (sankeyEl && recH) {
+    const expected = +recH.expected || 0;
+    const billed   = +recH.billed   || 0;
+    const cash     = +recH.collected || 0;
+    const leak     = Math.max(0, billed - cash);
+    if (billed > 0) {
+      echarts.init(sankeyEl).setOption({
+        textStyle: { fontFamily: FF, color: '#374151' },
+        series: [{
+          type: 'sankey',
+          left: 6, right: 70, top: 4, bottom: 4,
+          data: [
+            { name: 'Expected',    itemStyle: { color: t.warnLt, opacity: 0.5 } },
+            { name: 'Billed',      itemStyle: { color: t.pri } },
+            { name: 'Cash',        itemStyle: { color: t.pos } },
+            { name: 'Receivables', itemStyle: { color: t.neg } },
+          ],
+          links: [
+            ...(expected > 0 ? [{ source: 'Expected', target: 'Billed', value: Math.min(expected, billed),
+                lineStyle: { color: t.warnLt, opacity: 0.3 } }] : []),
+            { source: 'Billed', target: 'Cash',        value: cash, lineStyle: { color: t.pos, opacity: 0.5 } },
+            { source: 'Billed', target: 'Receivables', value: leak || 1, lineStyle: { color: t.neg, opacity: 0.7 } },
+          ],
+          orient: 'horizontal', nodeAlign: 'justify', nodeWidth: 18, nodeGap: 10,
+          label: { fontSize: 10, fontWeight: 600, color: '#111827', fontFamily: FF },
+          lineStyle: { curveness: 0.5 },
+        }],
+        tooltip: { ...tip, trigger: 'item',
+          formatter: p => p.dataType === 'edge'
+              ? `<b>${p.data.source}→${p.data.target}</b>: ${fmt(p.data.value)}`
+              : `<b>${p.name}</b>` },
+      });
+    }
+  }
+
+  /* ── Resize charts when viewport changes ─────────────────────── */
+  function resizeAll() {
+    document.querySelectorAll('.v5-card__b').forEach(el => {
+      const i = echarts.getInstanceByDom(el); if (i) i.resize();
+    });
+  }
+  window.addEventListener('resize', resizeAll);
+  /* ECharts may need a second tick to settle after Blade injection. */
+  setTimeout(resizeAll, 100);
+})();
+</script>
+@endpush
 
 @endsection
