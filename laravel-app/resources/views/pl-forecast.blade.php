@@ -3,6 +3,21 @@
 
 @section('page-title', 'P&L Forecast')
 @section('content')
+    {{-- Quick-jump to Budget Upload — the forecast leans on the budget
+         feed, so we surface the management page right at the top. The
+         page also has its own sidebar nav entry, but a CTA here keeps
+         users in flow when they realise the forecast is missing budget
+         input. --}}
+    <div class="bg-white rounded-xl border border-[#e8e4de] shadow-sm p-4 mb-4 flex items-center justify-between gap-3 flex-wrap">
+        <div>
+            <div class="text-[13px] font-semibold text-[#1e3d44]">Budget Upload</div>
+            <p class="text-[11px] text-[#7c7466] mt-0.5">Upload, review, or replace the annual budget the forecast compares against. Excel template available.</p>
+        </div>
+        <a href="{{ tenant_url('/budget-upload') }}" class="inline-flex items-center gap-1.5 text-[11px] font-semibold text-white bg-brand-600 hover:bg-brand-700 rounded-lg px-3 py-2 shadow-sm transition flex-shrink-0">
+            Manage budget →
+        </a>
+    </div>
+
     @if (session('flash'))
         @php $flash = session('flash'); @endphp
         <div class="rounded-xl p-3 text-xs mb-4 border

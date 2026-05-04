@@ -63,10 +63,16 @@ final class OperationsService
      * If the firm later wants TTC (after VAT) instead of HT, multiply by
      * the published TTC ratio (~1.1925 for the 20'/40' rows on the grid).
      */
-    private const PRICE_HT_EXPORT_FULL_20    = 38_500;
-    private const PRICE_HT_EXPORT_FULL_40    = 50_000;
-    private const PRICE_HT_IMPORT_FULL_20    = 66_000;
-    private const PRICE_HT_IMPORT_FULL_40    = 95_000;
+    // Container scan tariffs — set to 0 per client direction (2026-05).
+    // The 45' bucket is mapped to the 40' tariff in code, so zeroing 40'
+    // also zeroes 45' automatically. Vehicle, wood, transit, and empty
+    // rates (below) are unchanged and continue to drive Expected revenue.
+    // Re-introduce non-zero rates here when the client publishes a new
+    // grille tarifaire — the rest of the pipeline picks them up live.
+    private const PRICE_HT_EXPORT_FULL_20    = 0;
+    private const PRICE_HT_EXPORT_FULL_40    = 0;
+    private const PRICE_HT_IMPORT_FULL_20    = 0;
+    private const PRICE_HT_IMPORT_FULL_40    = 0;
 
     // "Autres" pricing (non-container scans).
     //
