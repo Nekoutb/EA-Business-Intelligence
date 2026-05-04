@@ -1,0 +1,67 @@
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+
+/**
+ * One row per (tenant, day) snapshot of Claude-generated business
+ * insights. The Platform Admin dashboard renders the latest row per
+ * tenant. The /admin/business-insights/{tenant} detail page renders
+ * the full markdown body plus the underlying KPI snapshot.
+ */
+class BusinessInsight extends Model
+{
+    use HasFactory;
+
+    public const PRIORITY_URGENT = 'urgent';
+    public const PRIORITY_WATCH  = 'watch';
+    public const PRIORITY_GOOD   = 'good';
+
+    public const STATUS_OK      = 'ok';
+    public const STATUS_FAILED  = 'failed';
+    public const STATUS_SKIPPED = 'skipped';
+
+    protected $fillable = [
+        'tenant_id', 'generated_at', 'model',
+        'kpis_snapshot', 'insight_md', 'summary',
+        'priority', 'input_tokens', 'output_tokens',
+        'status', 'error_msg',
+    ];
+
+    protected function casts(): array
+    {
+        return [
+            'generated_at'  => 'datetime',
+            'kpis_snapshot' => 'array',
+            'input_tokens'  => 'integer',
+            'output_tokens' => 'integer',
+        ];
+    }
+
+    public function tenant(): BelongsTo
+    {
+        return $this->belongsTo(Tenant::class);
+    }
+
+    /** Latest row per tenant — the one rendered on the admin dashboard. */
+    public static function latestForTenant(int $tenantId): ?self
+    {
+        return self::where('tenant_id', $tenantId)
+            ->orderByDesc('generated_at')
+            ->first();
+    }
+
+    /** Visual styling helpers for the card chrome. */
+    public function priorityBadge(): array
+    {
+        return match ($this->priority) {
+            self::PRIORITY_URGENT => ['Urgent', 'bg-rose-50 text-rose-700 border-rose-200'],
+            self::PRIORITY_WATCH  => ['Watch',  'bg-amber-50 text-amber-700 border-amber-200'],
+            self::PRIORITY_GOOD   => ['Good',   'bg-emerald-50 text-emerald-700 border-emerald-200'],
+            default               => ['—',      'bg-slate-50 text-slate-600 border-slate-200'],
+        };
+    }
+}

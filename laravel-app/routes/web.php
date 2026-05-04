@@ -33,6 +33,7 @@ use App\Http\Controllers\Tax\VATComplianceController;
 use App\Http\Controllers\Tax\VATInvoiceComplianceController;
 use App\Http\Controllers\Admin\AdminAuthController;
 use App\Http\Controllers\Admin\AdminDashboardController;
+use App\Http\Controllers\Admin\BusinessInsightsController as AdminBusinessInsightsController;
 use App\Http\Controllers\Admin\UsersController as AdminUsersController;
 use App\Http\Controllers\Admin\AiSettingsController as AdminAiSettingsController;
 use App\Http\Controllers\Admin\IndustryController as AdminIndustryController;
@@ -80,6 +81,13 @@ Route::prefix('admin')->group(function () {
         Route::get   ('/users/{id}/edit',      [AdminUsersController::class, 'edit'])->whereNumber('id');
         Route::post  ('/users/{id}',           [AdminUsersController::class, 'update'])->whereNumber('id');
         Route::post  ('/users/{id}/delete',    [AdminUsersController::class, 'destroy'])->whereNumber('id');
+
+        // Daily Claude-generated business insights (super-admin only —
+        // already gated by admin.auth above).
+        Route::get ('/business-insights',                  [AdminBusinessInsightsController::class, 'index']);
+        Route::post('/business-insights/run-all',          [AdminBusinessInsightsController::class, 'runAll']);
+        Route::get ('/business-insights/{tenantId}',       [AdminBusinessInsightsController::class, 'show'])->whereNumber('tenantId');
+        Route::post('/business-insights/{tenantId}/refresh',[AdminBusinessInsightsController::class, 'refresh'])->whereNumber('tenantId');
 
         Route::get('/methodology', fn () => view('admin.methodology', [
             'active' => 'methodology',

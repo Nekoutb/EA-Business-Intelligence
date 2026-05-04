@@ -34,5 +34,18 @@ return [
         'api_key'  => env('AI_API_KEY', ''),
     ],
 
+    /**
+     * Daily Business Insights — super-admin section on /admin.
+     *
+     * Cheapest tier by default (Haiku ~$1/MTok input, $5/MTok output).
+     * For ~30 tenants × ~3K input + ~2K output tokens per day, that's
+     * ~$0.10 fleet-wide per day at Haiku — and prompt caching cuts the
+     * input side by ~80% across a fleet pass. Swap to Sonnet / Opus
+     * via AI_BUSINESS_INSIGHTS_MODEL when the cost head-room allows.
+     */
+    'business_insights' => [
+        'model' => env('AI_BUSINESS_INSIGHTS_MODEL', 'claude-haiku-4-5'),
+    ],
+
     'cache_ttl' => 300, // 5 minutes
 ];
