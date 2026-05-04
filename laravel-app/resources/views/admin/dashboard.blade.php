@@ -9,21 +9,21 @@
 @section('content')
 <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
     @foreach ([
-        ['Tenants total',     $totalTenants,     'from-indigo-500 to-blue-500'],
-        ['Active',            $activeTenants,    'from-emerald-500 to-teal-500'],
-        ['Suspended',         $suspendedTenants, 'from-rose-500 to-orange-500'],
-        ['Tenant users',      $tenantUsers,      'from-violet-500 to-fuchsia-500'],
-        ['Super admins',      $superAdmins,      'from-amber-500 to-yellow-500'],
-    ] as [$label, $value, $grad])
-      <div class="panel p-4">
+        ['Tenants total',     $totalTenants,     'from-indigo-500 to-blue-500',     '/admin/tenants'],
+        ['Active',            $activeTenants,    'from-emerald-500 to-teal-500',    '/admin/tenants?status=active'],
+        ['Suspended',         $suspendedTenants, 'from-rose-500 to-orange-500',     '/admin/tenants?status=suspended'],
+        ['Tenant users',      $tenantUsers,      'from-violet-500 to-fuchsia-500',  '/admin/users'],
+        ['Super admins',      $superAdmins,      'from-amber-500 to-yellow-500',    '/admin/users?tenant=platform'],
+    ] as [$label, $value, $grad, $href])
+      <a href="{{ $href }}" class="panel p-4 hover:shadow-md transition group">
           <div class="flex items-center gap-3">
               <div class="w-1 h-10 rounded bg-gradient-to-b {{ $grad }}"></div>
               <div>
                   <p class="text-[10px] uppercase tracking-wider text-slate-500 font-medium">{{ $label }}</p>
-                  <div class="text-xl font-bold text-slate-900">{{ number_format($value) }}</div>
+                  <div class="text-xl font-bold text-slate-900 group-hover:text-indigo-700 transition">{{ number_format($value) }}</div>
               </div>
           </div>
-      </div>
+      </a>
     @endforeach
 </div>
 

@@ -33,6 +33,7 @@ use App\Http\Controllers\Tax\VATComplianceController;
 use App\Http\Controllers\Tax\VATInvoiceComplianceController;
 use App\Http\Controllers\Admin\AdminAuthController;
 use App\Http\Controllers\Admin\AdminDashboardController;
+use App\Http\Controllers\Admin\UsersController as AdminUsersController;
 use App\Http\Controllers\Admin\AiSettingsController as AdminAiSettingsController;
 use App\Http\Controllers\Admin\IndustryController as AdminIndustryController;
 use App\Http\Controllers\Admin\TenantController as AdminTenantController;
@@ -71,6 +72,15 @@ Route::prefix('admin')->group(function () {
         // data sources, formulas and design rationale. Used to live at
         // the bottom of each client-facing module page; moved here so
         // it isn't exposed to clients.
+        // Cross-tenant user management (super admin only — already
+        // gated by admin.auth above).
+        Route::get   ('/users',                [AdminUsersController::class, 'index']);
+        Route::get   ('/users/create',         [AdminUsersController::class, 'create']);
+        Route::post  ('/users',                [AdminUsersController::class, 'store']);
+        Route::get   ('/users/{id}/edit',      [AdminUsersController::class, 'edit'])->whereNumber('id');
+        Route::post  ('/users/{id}',           [AdminUsersController::class, 'update'])->whereNumber('id');
+        Route::post  ('/users/{id}/delete',    [AdminUsersController::class, 'destroy'])->whereNumber('id');
+
         Route::get('/methodology', fn () => view('admin.methodology', [
             'active' => 'methodology',
         ]));
