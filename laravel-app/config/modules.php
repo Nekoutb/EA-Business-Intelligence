@@ -388,6 +388,23 @@ return [
             'status'  => 'live',
         ],
         [
+            // Sidebar entry restored — the page existed at /budget-upload
+            // but the v5 sidebar migration dropped its nav item. Keeps
+            // the same parent service ('financial_planning') so users
+            // discover it next to the forecast where they actually need
+            // the budget feed. default=true means existing tenants pick
+            // it up automatically (no per-tenant toggle row required).
+            'key'     => 'budget_upload',
+            'service' => 'financial_planning',
+            'label'   => 'Budget Upload',
+            'url'     => '/budget-upload',
+            'active'  => 'budget_upload',
+            'icon'    => 'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12',
+            'default' => true,
+            'core'    => false,
+            'status'  => 'live',
+        ],
+        [
             'key'     => 'cashflow_forecast',
             'service' => 'financial_planning',
             'label'   => 'Cashflow Forecast',

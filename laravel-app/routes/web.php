@@ -1152,10 +1152,13 @@ Route::prefix('t/{tenant}')
                 Route::post('/pl-forecast/commentary', [PLForecastController::class, 'saveCommentary'])->middleware('module:pl_forecast');
                 Route::get('/cashflow-forecast',   [CashflowForecastController::class,   'index'])->middleware('module:cashflow_forecast');
                 Route::get('/investment-analysis', [InvestmentAnalysisController::class, 'index'])->middleware('module:investment_analysis');
-                Route::get ('/budget-upload',           [BudgetUploadController::class, 'index'])->middleware('module:pl_forecast');
-                Route::post('/budget-upload',           [BudgetUploadController::class, 'upload'])->middleware('module:pl_forecast');
-                Route::post('/budget-upload/delete',    [BudgetUploadController::class, 'delete'])->middleware('module:pl_forecast');
-                Route::get ('/budget-upload/template',  [BudgetUploadController::class, 'template'])->middleware('module:pl_forecast');
+                // Budget Upload — gated by its own module key now that the
+                // sidebar has a dedicated nav entry. Default=true in the
+                // registry so existing tenants pick it up without a DB row.
+                Route::get ('/budget-upload',           [BudgetUploadController::class, 'index'])->middleware('module:budget_upload');
+                Route::post('/budget-upload',           [BudgetUploadController::class, 'upload'])->middleware('module:budget_upload');
+                Route::post('/budget-upload/delete',    [BudgetUploadController::class, 'delete'])->middleware('module:budget_upload');
+                Route::get ('/budget-upload/template',  [BudgetUploadController::class, 'template'])->middleware('module:budget_upload');
 
                 // ── Financial Reporting service ───────────────────────────────
                 Route::get('/trial-balance',                [TrialBalanceController::class,                'index'])->middleware('module:trial_balance');

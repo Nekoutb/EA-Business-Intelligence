@@ -196,51 +196,150 @@
                       <span class="text-[10px] uppercase tracking-wider text-[#a09d95] font-medium ml-1">FCFA · HT · {{ $period['type'] === 'ytd' ? 'YTD' : ($period['type'] === 'mtd' ? 'MTD' : 'Month') }}</span>
                   </h3>
                   <p class="text-[11px] text-[#7c7466] mt-1.5 leading-relaxed max-w-3xl">
-                      Walks revenue across three operational stages:
-                      <strong>Expected</strong> (scan-derived, from /operations) →
-                      <strong>Billed</strong> (posted invoices) →
-                      <strong>Collected</strong> (paid portion). Gaps surface
-                      missed billings and outstanding receivables in one view.
+                      Two reconciliations across three values.
+                      <strong>(1)</strong> Expected revenue from the operational scan breakdown vs the value of invoices issued.
+                      <strong>(2)</strong> Invoiced revenue vs the portion actually collected (invoices marked paid).
+                      Gaps below tell you what's earned-but-not-invoiced and invoiced-but-not-collected.
                   </p>
               </div>
           </div>
 
-          {{-- Stacked headline cards --}}
-          <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-5">
-              @foreach ($reconRows as $row)
-                  @php
-                      $palette = [
-                          'sage'  => ['bar' => 'bg-sage-500',  'bg' => 'bg-sage-50',  'bdr' => 'border-sage-100',  'txt' => 'text-sage-700'],
-                          'brand' => ['bar' => 'bg-brand-500', 'bg' => 'bg-brand-50', 'bdr' => 'border-brand-100', 'txt' => 'text-brand-700'],
-                          'warm'  => ['bar' => 'bg-warm-500',  'bg' => 'bg-warm-50',  'bdr' => 'border-warm-100',  'txt' => 'text-warm-700'],
-                      ][$row['color']];
-                  @endphp
-                  <div class="bg-white rounded-lg border border-[#e8e4de] flex overflow-hidden shadow-sm">
-                      <div class="w-1 {{ $palette['bar'] }} shrink-0"></div>
-                      <div class="flex-1 min-w-0 p-3">
-                          <div class="text-[10px] uppercase tracking-wider text-[#8a8578] font-medium">{{ $row['label'] }}</div>
-                          <div class="text-xl font-bold text-[#2d3748] mt-1 tabular-nums truncate">
-                              {{ ea_money_short($row['value'], 'XAF') }}
-                          </div>
-                          <div class="text-[10.5px] text-[#7c7466] mt-0.5 leading-snug">{{ $row['sub'] }}</div>
-                          @if ($row['pctOfExp'] !== null)
-                              <div class="mt-2 inline-flex items-center text-[10.5px] font-semibold rounded {{ $palette['bg'] }} {{ $palette['bdr'] }} {{ $palette['txt'] }} border px-1.5 py-0.5">
-                                  {{ number_format($row['pctOfExp'], 1) }}% of Expected
-                              </div>
-                          @endif
-                      </div>
-                  </div>
-              @endforeach
-          </div>
-
-          {{-- Sandbox table: gaps with the maths exposed --}}
+          {{-- ── Two-step reconciliation panels ─────────────────────────
+               Same three values (expected / billed / collected) and same
+               gaps (billing_gap, collection_gap), but framed as two
+               explicit reconciliations the way an auditor would walk
+               them. Each panel: source → gap → target + reading line. --}}
           @php
               $h = $recon['headline'];
-              $billGap = $h['billing_gap'];
-              $collGap = $h['collection_gap'];
+              $billGap = (float) $h['billing_gap'];
+              $collGap = (float) $h['collection_gap'];
               $billGapPct = $h['expected'] > 0 ? 100.0 * abs($billGap) / $h['expected'] : null;
               $collGapPct = $h['billed']   > 0 ? 100.0 * abs($collGap) / $h['billed']   : null;
           @endphp
+
+          @php
+              // Reusable bits for both panels
+              $stepBadgeCls = 'inline-flex items-center justify-center w-5 h-5 rounded-full bg-brand-600 text-white text-[10px] font-bold';
+              $gapCls = fn ($gap) => abs($gap) > 0
+                  ? 'bg-coral-50 text-coral-700 border-coral-200'
+                  : 'bg-sage-50 text-sage-700 border-sage-200';
+          @endphp
+
+          <div class="space-y-3 mb-5">
+
+              {{-- Reconciliation 1 · Operations → Billing --}}
+              <div class="border border-[#e8e4de] rounded-lg p-4">
+                  <div class="flex items-center gap-2 mb-3 flex-wrap">
+                      <span class="{{ $stepBadgeCls }}">1</span>
+                      <span class="text-[12px] font-semibold text-[#1e3d44] uppercase tracking-wider">Reconciliation 1 · Operations → Billing</span>
+                      <span class="ml-auto inline-flex items-center px-2 py-0.5 rounded-full border text-[10px] font-semibold {{ $gapCls($billGap) }}">
+                          Gap · {{ $billGapPct !== null ? number_format($billGapPct, 1) . '%' : '—' }}
+                      </span>
+                  </div>
+                  <div class="grid grid-cols-1 md:grid-cols-[1fr_120px_1fr] gap-3 items-stretch">
+                      {{-- Expected --}}
+                      <div class="bg-sage-50 border border-sage-100 rounded-lg p-3 flex flex-col">
+                          <div class="text-[10px] uppercase tracking-wider text-sage-700 font-semibold">Expected</div>
+                          <div class="text-xl font-bold text-[#2d3748] mt-1 tabular-nums">{{ ea_money_short((float) $h['expected'], 'XAF') }}</div>
+                          <div class="text-[10.5px] text-[#7c7466] mt-1.5 leading-snug">From the <strong>scan revenue breakdown</strong> on Operations · scans × tariff (HT). Operational baseline.</div>
+                      </div>
+                      {{-- Gap arrow --}}
+                      <div class="flex md:flex-col items-center justify-center text-center gap-1 md:px-1">
+                          <div class="text-[#a09d95] hidden md:block">
+                              <svg width="32" height="14" viewBox="0 0 32 14" fill="none" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" d="M1 7h29m0 0l-5-5m5 5l-5 5"/></svg>
+                          </div>
+                          <div class="text-[#a09d95] md:hidden">
+                              <svg width="14" height="22" viewBox="0 0 14 22" fill="none" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" d="M7 1v19m0 0l-5-5m5 5l5-5"/></svg>
+                          </div>
+                          <div class="text-[10px] uppercase tracking-wider text-warm-700 font-semibold">Billing gap</div>
+                          <div class="text-sm font-bold tabular-nums {{ abs($billGap) > 0 ? 'text-coral-700' : 'text-sage-700' }}">
+                              {{ ($billGap >= 0 ? '−' : '+') }}{{ ea_money_short(abs($billGap), 'XAF') }}
+                          </div>
+                          @if ($billGapPct !== null)
+                              <div class="text-[9.5px] text-[#7c7466]">{{ number_format($billGapPct, 1) }}% of Expected</div>
+                          @endif
+                      </div>
+                      {{-- Billed --}}
+                      <div class="bg-brand-50 border border-brand-100 rounded-lg p-3 flex flex-col">
+                          <div class="flex items-center justify-between gap-2">
+                              <div class="text-[10px] uppercase tracking-wider text-brand-700 font-semibold">Billed</div>
+                              @if ($h['billing_realisation_pct'] !== null)
+                                <div class="text-[9.5px] font-semibold rounded bg-white border border-brand-200 text-brand-700 px-1.5 py-0.5">{{ number_format($h['billing_realisation_pct'], 1) }}%</div>
+                              @endif
+                          </div>
+                          <div class="text-xl font-bold text-[#2d3748] mt-1 tabular-nums">{{ ea_money_short((float) $h['billed'], 'XAF') }}</div>
+                          <div class="text-[10.5px] text-[#7c7466] mt-1.5 leading-snug">Total <strong>value of invoices issued</strong> · posted <code class="text-[10px] bg-white px-1 rounded border border-brand-100">out_invoices</code> in period (HT).</div>
+                      </div>
+                  </div>
+                  <div class="text-[11px] text-[#7c7466] mt-3 leading-relaxed">
+                      <strong>Reading:</strong>
+                      @if ($billGap > 0)
+                          <span class="text-coral-700 font-semibold">Earned but not invoiced</span> — operations recorded scans worth {{ ea_money_short(abs($billGap), 'XAF') }} more than what's been billed. Likely invoice-cycle lag or scans that need a billable.
+                      @elseif ($billGap < 0)
+                          <span class="text-warm-700 font-semibold">Invoiced more than scanned</span> — typical when billing catches up on prior-period scans inside this window.
+                      @else
+                          <span class="text-sage-700 font-semibold">Invoicing matches operations</span> — no break.
+                      @endif
+                  </div>
+              </div>
+
+              {{-- Reconciliation 2 · Billing → Collection --}}
+              <div class="border border-[#e8e4de] rounded-lg p-4">
+                  <div class="flex items-center gap-2 mb-3 flex-wrap">
+                      <span class="{{ $stepBadgeCls }}">2</span>
+                      <span class="text-[12px] font-semibold text-[#1e3d44] uppercase tracking-wider">Reconciliation 2 · Billing → Collection</span>
+                      <span class="ml-auto inline-flex items-center px-2 py-0.5 rounded-full border text-[10px] font-semibold {{ $gapCls($collGap) }}">
+                          Gap · {{ $collGapPct !== null ? number_format($collGapPct, 1) . '%' : '—' }}
+                      </span>
+                  </div>
+                  <div class="grid grid-cols-1 md:grid-cols-[1fr_120px_1fr] gap-3 items-stretch">
+                      {{-- Billed (same as above) --}}
+                      <div class="bg-brand-50 border border-brand-100 rounded-lg p-3 flex flex-col">
+                          <div class="text-[10px] uppercase tracking-wider text-brand-700 font-semibold">Billed</div>
+                          <div class="text-xl font-bold text-[#2d3748] mt-1 tabular-nums">{{ ea_money_short((float) $h['billed'], 'XAF') }}</div>
+                          <div class="text-[10.5px] text-[#7c7466] mt-1.5 leading-snug">Same as the right side of Reconciliation 1 — invoices issued in period.</div>
+                      </div>
+                      {{-- Collection gap --}}
+                      <div class="flex md:flex-col items-center justify-center text-center gap-1 md:px-1">
+                          <div class="text-[#a09d95] hidden md:block">
+                              <svg width="32" height="14" viewBox="0 0 32 14" fill="none" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" d="M1 7h29m0 0l-5-5m5 5l-5 5"/></svg>
+                          </div>
+                          <div class="text-[#a09d95] md:hidden">
+                              <svg width="14" height="22" viewBox="0 0 14 22" fill="none" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" d="M7 1v19m0 0l-5-5m5 5l5-5"/></svg>
+                          </div>
+                          <div class="text-[10px] uppercase tracking-wider text-warm-700 font-semibold">Collection gap</div>
+                          <div class="text-sm font-bold tabular-nums {{ abs($collGap) > 0 ? 'text-coral-700' : 'text-sage-700' }}">
+                              −{{ ea_money_short(abs($collGap), 'XAF') }}
+                          </div>
+                          @if ($collGapPct !== null)
+                              <div class="text-[9.5px] text-[#7c7466]">{{ number_format($collGapPct, 1) }}% of Billed</div>
+                          @endif
+                      </div>
+                      {{-- Collected --}}
+                      <div class="bg-warm-50 border border-warm-100 rounded-lg p-3 flex flex-col">
+                          <div class="flex items-center justify-between gap-2">
+                              <div class="text-[10px] uppercase tracking-wider text-warm-700 font-semibold">Collected</div>
+                              @if ($h['collection_realisation_pct'] !== null)
+                                <div class="text-[9.5px] font-semibold rounded bg-white border border-warm-200 text-warm-700 px-1.5 py-0.5">{{ number_format($h['collection_realisation_pct'], 1) }}%</div>
+                              @endif
+                          </div>
+                          <div class="text-xl font-bold text-[#2d3748] mt-1 tabular-nums">{{ ea_money_short((float) $h['collected'], 'XAF') }}</div>
+                          <div class="text-[10.5px] text-[#7c7466] mt-1.5 leading-snug">Invoices <strong>marked paid</strong> in Odoo (<code class="text-[10px] bg-white px-1 rounded border border-warm-100">payment_state</code>) · HT, pro-rata of partial payments.</div>
+                      </div>
+                  </div>
+                  <div class="text-[11px] text-[#7c7466] mt-3 leading-relaxed">
+                      <strong>Reading:</strong>
+                      @if (abs($collGap) > 0)
+                          <span class="text-coral-700 font-semibold">Invoiced but not yet collected</span> — open AR of {{ ea_money_short(abs($collGap), 'XAF') }} on this period's invoices. Cross-references the Receivables page and feeds DSO.
+                      @else
+                          <span class="text-sage-700 font-semibold">Fully collected</span> — every invoice in period is paid.
+                      @endif
+                  </div>
+              </div>
+
+          </div>
+
+          {{-- Detail table — kept under both panels for the "show me the maths" review --}}
           <div class="overflow-x-auto mb-5">
               <table class="w-full text-xs">
                   <thead>
