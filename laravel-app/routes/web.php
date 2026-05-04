@@ -25,6 +25,7 @@ use App\Http\Controllers\ProcurementController;
 use App\Http\Controllers\GLQualityController;
 use App\Http\Controllers\CustomerInsightsController;
 use App\Http\Controllers\SettingsController;
+use App\Http\Controllers\TenantUsersController;
 use App\Http\Controllers\Tax\IncomeTaxComplianceController;
 use App\Http\Controllers\Tax\MonthlyTaxReturnController;
 use App\Http\Controllers\Tax\TaxDashboardController;
@@ -1172,6 +1173,20 @@ Route::prefix('t/{tenant}')
                 Route::get ('/settings',                    [SettingsController::class, 'show']);
                 Route::post('/settings',                    [SettingsController::class, 'save']);
                 Route::post('/settings/test-odoo',          [SettingsController::class, 'testOdoo']);
+
+                // Tenant user management — gated to tenant admins (and
+                // platform super admins). The list view is open to any
+                // signed-in user (read-only) so analysts can see who's
+                // in their workspace without escalation; mutating
+                // routes are admin-only.
+                Route::get('/settings/users',                          [TenantUsersController::class, 'index']);
+                Route::middleware('tenant.admin')->group(function () {
+                    Route::get   ('/settings/users/create',            [TenantUsersController::class, 'create']);
+                    Route::post  ('/settings/users',                   [TenantUsersController::class, 'store']);
+                    Route::get   ('/settings/users/{id}/edit',         [TenantUsersController::class, 'edit'])->whereNumber('id');
+                    Route::post  ('/settings/users/{id}',              [TenantUsersController::class, 'update'])->whereNumber('id');
+                    Route::post  ('/settings/users/{id}/delete',       [TenantUsersController::class, 'destroy'])->whereNumber('id');
+                });
             });
         });
     });

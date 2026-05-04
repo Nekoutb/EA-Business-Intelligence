@@ -118,22 +118,37 @@ class Tenant extends Model
      */
     public function dashboardKpiEnabled(string $key): bool
     {
+        // ── Tenant-level flag (existing behaviour)
         if (!isset($this->_kpiCache)) {
             $this->_kpiCache = $this->dashboardKpis()
                 ->get(['kpi_key', 'enabled'])
                 ->mapWithKeys(fn ($r) => [$r->kpi_key => (bool) $r->enabled])
                 ->all();
         }
+        $tenantOn = true;
         if (array_key_exists($key, $this->_kpiCache)) {
-            return $this->_kpiCache[$key];
-        }
-        // No row → fall back to registry default.
-        foreach (config('dashboard_kpis.kpis', []) as $entry) {
-            if (($entry['key'] ?? null) === $key) {
-                return (bool) ($entry['default'] ?? true);
+            $tenantOn = $this->_kpiCache[$key];
+        } else {
+            // No row → fall back to registry default.
+            foreach (config('dashboard_kpis.kpis', []) as $entry) {
+                if (($entry['key'] ?? null) === $key) {
+                    $tenantOn = (bool) ($entry['default'] ?? true);
+                    break;
+                }
             }
         }
-        return true; // unknown KPI → don't hide
+        if (!$tenantOn) return false;
+
+        // ── User-level override (Phase A — multi-user). If a user is in
+        // session and has an explicit override for this KPI, that wins
+        // over the role default. Tenant admins / managers without an
+        // explicit override see everything.
+        $user = function_exists('auth') ? auth()->user() : null;
+        if ($user && method_exists($user, 'canSeeKpi')) {
+            return $user->canSeeKpi($key);
+        }
+
+        return true;
     }
 
     /** Per-request memo cache, populated on first dashboardKpiEnabled() call. */
