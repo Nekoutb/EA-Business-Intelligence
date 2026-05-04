@@ -51,13 +51,34 @@ class EnsureModuleEnabled
             ));
         }
 
-        if ($this->context->moduleEnabled($moduleKey)) {
-            return $next($request);
+        if (!$this->context->moduleEnabled($moduleKey)) {
+            throw new HttpException(403, sprintf(
+                'The "%s" module is not activated for this workspace. Contact your administrator.',
+                $module['label'] ?? $moduleKey
+            ));
         }
 
-        throw new HttpException(403, sprintf(
-            'The "%s" module is not activated for this workspace. Contact your administrator.',
-            $module['label'] ?? $moduleKey
-        ));
+        // Per-user permission override. Tenant admin can opt individual
+        // users out of specific services or modules even when the
+        // tenant-level flag is on. A 403 here means "the workspace has
+        // it; you specifically don't" — the message guides the user
+        // back to their admin rather than IT.
+        $user = $request->user();
+        if ($user && method_exists($user, 'canAccessService')
+            && $serviceKey && !$user->canAccessService($serviceKey)) {
+            throw new HttpException(403, sprintf(
+                'You do not have access to the "%s" service. Ask your tenant admin if you need it.',
+                $service['label'] ?? $serviceKey
+            ));
+        }
+        if ($user && method_exists($user, 'canAccessModule')
+            && !$user->canAccessModule($moduleKey)) {
+            throw new HttpException(403, sprintf(
+                'You do not have access to the "%s" module. Ask your tenant admin if you need it.',
+                $module['label'] ?? $moduleKey
+            ));
+        }
+
+        return $next($request);
     }
 }

@@ -65,6 +65,18 @@
             </div>
         </div>
 
+        {{-- ── Users link (visible to everyone; mutating routes
+             gated to tenant admins by RequireTenantAdmin middleware) --}}
+        <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-5 flex items-center justify-between gap-3">
+            <div>
+                <h2 class="text-sm font-semibold text-slate-900">Workspace Users</h2>
+                <p class="text-xs text-slate-500 mt-0.5">Manage who can access this workspace, what role they have, and per-user permission overrides for services / modules / KPIs.</p>
+            </div>
+            <a href="{{ tenant_url('/settings/users') }}" class="text-[11px] font-semibold text-white bg-brand-600 hover:bg-brand-700 rounded px-3 py-2 flex-shrink-0">
+                Manage users →
+            </a>
+        </div>
+
         {{-- ── Company identity ─────────────────────────────────────────
              Drives the sidebar brand block and the company badge in the
              top-right of every page. Logo file is stored under

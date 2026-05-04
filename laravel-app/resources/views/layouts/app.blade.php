@@ -363,14 +363,27 @@
           $active = $active ?? '';
 
           $tenantInScope = function_exists('tenant') ? tenant() : null;
-          $isVisible = function ($module) use ($tenantInScope) {
+          $signedInUser  = auth()->user();
+          // Visibility cascade:
+          //   1. core modules (dashboard, settings) always visible.
+          //   2. tenant-level service flag must be on.
+          //   3. tenant-level module flag must be on.
+          //   4. user-level service/module override (Phase A) — if the
+          //      tenant admin explicitly opted this user out, hide.
+          $isVisible = function ($module) use ($tenantInScope, $signedInUser) {
               if (!empty($module['core'])) return true;
-              if (!$tenantInScope) return true;
-              if (method_exists($tenantInScope, 'serviceEnabled')
-                  && !$tenantInScope->serviceEnabled($module['service'] ?? null)) {
-                  return false;
+              if ($tenantInScope) {
+                  if (method_exists($tenantInScope, 'serviceEnabled')
+                      && !$tenantInScope->serviceEnabled($module['service'] ?? null)) {
+                      return false;
+                  }
+                  if (!$tenantInScope->moduleEnabled($module['key'])) return false;
               }
-              return $tenantInScope->moduleEnabled($module['key']);
+              if ($signedInUser && method_exists($signedInUser, 'canAccessService')
+                  && !$signedInUser->canAccessService($module['service'] ?? null)) return false;
+              if ($signedInUser && method_exists($signedInUser, 'canAccessModule')
+                  && !$signedInUser->canAccessModule($module['key'])) return false;
+              return true;
           };
         @endphp
 
