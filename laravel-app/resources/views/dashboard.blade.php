@@ -131,6 +131,18 @@
       if (!is_numeric($num) || !is_numeric($den) || (float) $den === 0.0) return null;
       return (float) $num / (float) $den;
   };
+  // Per-tenant KPI gate. Falls back to true when no tenant is in
+  // scope (eg test renders) so dashboards still populate. The
+  // registry default is honoured by Tenant::dashboardKpiEnabled
+  // when no DB row exists.
+  $kpiOn = function (string $key): bool {
+      $t = function_exists('tenant') ? tenant() : null;
+      if ($t && method_exists($t, 'dashboardKpiEnabled')) {
+          return (bool) $t->dashboardKpiEnabled($key);
+      }
+      return true;
+  };
+
   $variance = function ($current, $reference) {
       if (!is_numeric($current) || !is_numeric($reference)) return null;
       if ((float) $reference === 0.0) return (float) $current === 0.0 ? 0.0 : null;
@@ -202,6 +214,49 @@
   $cumLinear = []; $cw = 0;
   for ($m = 1; $m <= 12; $m++) { $cw += $wdByMonth[$m]; $cumLinear[$m] = $dailyPace * $cw; }
 
+  // ── Period-aware budget overlay ────────────────────────────────────
+  // Pulled from the user-uploaded TenantBudget (passed by the
+  // controller). When YTD: cumulative annual budget across 12 months.
+  // When MTD: 4 weekly buckets for the current month, each = monthly
+  // revenue ÷ 4 (uniform split — simpler than working-days-per-week
+  // and what the preview promised). Falls back gracefully when no
+  // upload exists.
+  $monthlyBudget = $uploadedBudgetMonthly ?? null;          // array 1..12 or null
+  $cumBudget = [];
+  $cumBudgetTotal = 0.0;
+  if (is_array($monthlyBudget)) {
+      $running = 0.0;
+      for ($mm = 1; $mm <= 12; $mm++) {
+          $running += (float) ($monthlyBudget[$mm] ?? 0);
+          $cumBudget[$mm] = $running;
+      }
+      $cumBudgetTotal = $running;
+  }
+
+  // ── MTD weekly buckets ────────────────────────────────────────────
+  // For MTD/Month period: split the current month into 4 weekly slots
+  // and sum the daily series into each. Weekly budget target = monthly
+  // budget ÷ 4 (uniform).
+  $weeklyActual = []; $weeklyBudget = []; $weekLabels = ['Week 1','Week 2','Week 3','Week 4'];
+  if ($isMtd) {
+      $monthRefY = (int) ($period['year']  ?? $today->format('Y'));
+      $monthRefM = (int) ($period['month'] ?? $today->format('n'));
+      $monthBudget = is_array($monthlyBudget) ? (float) ($monthlyBudget[$monthRefM] ?? 0) : 0.0;
+      $weekBucket = [0, 0, 0, 0];
+      foreach ($dailySeries as $date => $val) {
+          try {
+              $d = new \DateTimeImmutable($date);
+          } catch (\Throwable $e) { continue; }
+          if ((int) $d->format('Y') !== $monthRefY || (int) $d->format('n') !== $monthRefM) continue;
+          $dom = (int) $d->format('j');
+          // Day-of-month → 4 buckets: 1-7, 8-14, 15-21, 22-end
+          $idx = min(3, intdiv($dom - 1, 7));
+          $weekBucket[$idx] += (float) $val;
+      }
+      $weeklyActual = $weekBucket;
+      $weeklyBudget = $monthBudget > 0 ? array_fill(0, 4, $monthBudget / 4.0) : [0, 0, 0, 0];
+  }
+
   // Helpers for pretty number formatting in the strip.
   $shortNum = function (float $v) {
       $a = abs($v);
@@ -249,14 +304,28 @@
       ['DPOT', $rpoCur > 0 ? 100.0 * ((float) ($cur['dp_ot'] ?? 0)) / $rpoCur : 0.0, 15],
       ['DPC',  $rpcCur > 0 ? 100.0 * ((float) ($cur['dp_c']  ?? 0)) / $rpcCur : 0.0, 15],
   ];
-  $unitData = [
-      ['RPD · Rev/Day',      [(float) ($prev['rpd']          ?? 0), (float) ($cur['rpd']          ?? 0)]],
-      ['OPD · Outfit/Day',   [(float) ($prev['opd']          ?? 0), (float) ($cur['opd']          ?? 0)]],
-      ['RPO · Rev/Outfit',   [(float) ($prev['rpo']          ?? 0), (float) ($cur['rpo']          ?? 0)]],
-      ['RPC · Rev/Customer', [(float) ($prev['per_customer'] ?? 0), (float) ($cur['per_customer'] ?? 0)]],
+  // Unit economics — filter by per-tenant KPI registry so admins can
+  // hide metrics that aren't relevant for a particular tenant. Toggles
+  // live in /admin/tenants/{id} (same UI as every other dashboard KPI).
+  // Default: all 4 visible (no behavioural change for existing tenants).
+  $unitDataFull = [
+      'rpd' => ['RPD · Rev/Day',      [(float) ($prev['rpd']          ?? 0), (float) ($cur['rpd']          ?? 0)]],
+      'opd' => ['OPD · Outfit/Day',   [(float) ($prev['opd']          ?? 0), (float) ($cur['opd']          ?? 0)]],
+      'rpo' => ['RPO · Rev/Outfit',   [(float) ($prev['rpo']          ?? 0), (float) ($cur['rpo']          ?? 0)]],
+      'rpc' => ['RPC · Rev/Customer', [(float) ($prev['per_customer'] ?? 0), (float) ($cur['per_customer'] ?? 0)]],
   ];
+  $unitData = [];
+  foreach ($unitDataFull as $key => $row) {
+      if ($kpiOn($key)) $unitData[] = $row;
+  }
   $cumActualJson = array_values($cumActual);
   $cumLinearJson = array_values($cumLinear);
+  $cumBudgetJson = !empty($cumBudget) ? array_values($cumBudget) : [];
+  $weeklyActualJson = $weeklyActual;
+  $weeklyBudgetJson = $weeklyBudget;
+  $weekLabelsJson   = $weekLabels;
+  // Trajectory mode flag: 'mtd' shows weekly bars, otherwise cumulative line
+  $trajectoryMode = $isMtd ? 'mtd' : 'ytd';
 @endphp
 
 {{-- ── Topbar ────────────────────────────────────────────────────── --}}
@@ -329,22 +398,53 @@
     <div class="v5-card span-7">
         <div class="v5-card__h">
             <div>
-                <div class="v5-card__t">Cumulative Revenue · Linear pace</div>
-                <div class="v5-card__sub">{{ $periodLabel ?? 'YTD' }} {{ $year }} · {{ $ccy }} (Mon-Sat {{ $fullPeriodWorkingDays }} WD)</div>
+                @if ($isMtd)
+                  <div class="v5-card__t">Weekly Revenue · {{ $periodLabel ?? 'MTD' }}</div>
+                  <div class="v5-card__sub">4 weeks · actual vs weekly budget · {{ $ccy }}</div>
+                @else
+                  <div class="v5-card__t">Cumulative Revenue · vs Annual Budget</div>
+                  <div class="v5-card__sub">{{ $periodLabel ?? 'YTD' }} {{ $year }} · {{ $ccy }} · cumulative</div>
+                @endif
             </div>
             <div class="v5-card__leg">
-                <span><span class="lline" style="background:var(--ea-primary);"></span>Actual</span>
-                <span><span class="lline" style="background:var(--text-faint);"></span>Linear pace</span>
+                @if ($isMtd)
+                  <span><span class="lswatch" style="background:var(--ea-primary);"></span>Actual</span>
+                  @if (!empty($cumBudget))<span><span class="lline" style="background:var(--warn);"></span>Budget</span>@endif
+                @else
+                  <span><span class="lline" style="background:var(--ea-primary);"></span>Actual</span>
+                  @if (!empty($cumBudget))<span><span class="lline" style="background:var(--warn);"></span>Budget</span>@endif
+                  <span><span class="lline" style="background:var(--text-faint);"></span>Linear pace</span>
+                @endif
             </div>
         </div>
         <div class="v5-card__b" id="ec-trajectory">
             @if (empty($dailySeries))<div class="empty-state">No revenue series for this period.</div>@endif
         </div>
         <div class="v5-card__f">
-            <b>Reading:</b> Daily run-rate <b>{{ $shortNum($dailyPace) }}{{ $shortUnit($dailyPace, $ccy) }}</b>
-            · {{ $workingDaysSoFar }}/{{ $fullPeriodWorkingDays }} WD ({{ number_format(100 * $workingDaysSoFar / $fullPeriodWorkingDays, 1) }}%)
-            · @if(!$isMtd) year-end at pace: <b>{{ $shortNum($runRate) }}{{ $shortUnit($runRate, $ccy) }}</b> @else month-end: <b>{{ $shortNum($runRate) }}{{ $shortUnit($runRate, $ccy) }}</b> @endif.
-            @if (!$planRevenue)<span class="warn">Budget feed pending</span>.@endif
+            @if ($isMtd)
+              @php
+                  $mtdActual = array_sum($weeklyActual);
+                  $mtdBudget = array_sum($weeklyBudget);
+                  $mtdAchPct = $mtdBudget > 0 ? 100.0 * $mtdActual / $mtdBudget : null;
+              @endphp
+              <b>Reading:</b> MTD <b>{{ $shortNum($mtdActual) }}{{ $shortUnit($mtdActual, $ccy) }}</b>
+              @if ($mtdBudget > 0)
+                vs budget <b>{{ $shortNum($mtdBudget) }}{{ $shortUnit($mtdBudget, $ccy) }}</b>
+                · <span class="{{ $mtdAchPct >= 100 ? 'pos' : ($mtdAchPct >= 80 ? 'warn' : 'neg') }}">{{ number_format($mtdAchPct, 1) }}% of plan</span>.
+              @else
+                · <span class="warn">no budget uploaded for this month</span>.
+              @endif
+            @else
+              <b>Reading:</b> Daily run-rate <b>{{ $shortNum($dailyPace) }}{{ $shortUnit($dailyPace, $ccy) }}</b>
+              · {{ $workingDaysSoFar }}/{{ $fullPeriodWorkingDays }} WD ({{ number_format(100 * $workingDaysSoFar / $fullPeriodWorkingDays, 1) }}%)
+              · year-end at pace: <b>{{ $shortNum($runRate) }}{{ $shortUnit($runRate, $ccy) }}</b>
+              @if ($cumBudgetTotal > 0)
+                vs annual budget <b>{{ $shortNum($cumBudgetTotal) }}{{ $shortUnit($cumBudgetTotal, $ccy) }}</b>
+                · <span class="{{ $runRate >= $cumBudgetTotal ? 'pos' : 'warn' }}">{{ number_format(100 * $runRate / $cumBudgetTotal, 1) }}% of plan at pace</span>.
+              @else
+                . <span class="warn">No annual budget uploaded — upload via /budget-upload to see plan variance.</span>
+              @endif
+            @endif
         </div>
     </div>
 
@@ -452,44 +552,67 @@
         </div>
     </div>
 
-    {{-- Row 2 · Sankey · Reconciliation (span 4) --}}
+    {{-- Row 2 · Sankey · Revenue Reconciliation (scan → cash) (span 4) --}}
+    @php
+        // Scan-to-cash framing — every leakage explicit:
+        //   Reconciliation 1 · Scanned (Expected) → Billed (+ Leakage)
+        //   Reconciliation 2 · Billed → Collected (+ Receivables)
+        // The graph renders both leakages as separate sankey targets so
+        // the user can read "of what was scanned, X went to cash, Y was
+        // never billed, Z is still outstanding AR" in a single glance.
+        $expectedAmt  = (float) ($recH['expected']  ?? 0);
+        $billedAmt    = (float) ($recH['billed']    ?? 0);
+        $collectedAmt = (float) ($recH['collected'] ?? 0);
+        $billLeak     = max(0.0, $expectedAmt - $billedAmt);   // Recon 1 gap
+        $arOutstanding = max(0.0, $billedAmt   - $collectedAmt); // Recon 2 gap
+        // Conversion rates ─ all framed against EXPECTED (the operational baseline)
+        $scanToBillPct  = $expectedAmt > 0 ? 100.0 * $billedAmt    / $expectedAmt : null;
+        $billToCashPct  = $billedAmt   > 0 ? 100.0 * $collectedAmt / $billedAmt   : null;
+        $scanToCashPct  = $expectedAmt > 0 ? 100.0 * $collectedAmt / $expectedAmt : null;
+    @endphp
     <div class="v5-card span-4">
         <div class="v5-card__h">
             <div>
-                <div class="v5-card__t">Revenue Reconciliation</div>
-                <div class="v5-card__sub">Expected → Billed → Cash</div>
+                <div class="v5-card__t">Revenue Reconciliation · Scan → Cash</div>
+                <div class="v5-card__sub">Scanned → Billed (+ Leakage) → Collected (+ AR)</div>
             </div>
         </div>
         <div class="v5-card__b" id="ec-sankey">
             @if (!$recH)<div class="empty-state">Reconciliation not available.</div>@endif
         </div>
         <div class="v5-card__f">
-            @if ($recH && $cashPct !== null)
+            @if ($recH && $expectedAmt > 0)
               <b>Reading:</b>
-              <span class="{{ $cashPct >= 90 ? 'pos' : 'warn' }}">{{ number_format($cashPct, 1) }}% lands in cash</span>
-              · <span class="neg">{{ number_format(100 - $cashPct, 1) }}% as receivables</span>.
+              Scan-to-cash <span class="{{ $scanToCashPct >= 60 ? 'pos' : ($scanToCashPct >= 30 ? 'warn' : 'neg') }}">{{ number_format($scanToCashPct, 1) }}%</span>.
+              Bill leakage <span class="warn">−{{ $shortNum($billLeak) }}{{ $shortUnit($billLeak, $ccy) }}</span>
+              ({{ number_format($scanToBillPct, 1) }}% billed) ·
+              AR <span class="neg">−{{ $shortNum($arOutstanding) }}{{ $shortUnit($arOutstanding, $ccy) }}</span>
+              ({{ number_format($billToCashPct, 1) }}% collected).
             @else
               <b>Reading:</b> Run sync to compute reconciliation.
             @endif
         </div>
     </div>
 
-    {{-- Row 3 · Unit Economics small multiples (span 12) --}}
+    {{-- Row 3 · Unit Economics small multiples (span 12) — only the
+         metrics enabled in /admin/tenants/{id} render. Card hides
+         entirely when all 4 are disabled. --}}
+    @if (count($unitData) > 0)
     <div class="v5-card span-12">
         <div class="v5-card__h">
             <div>
                 <div class="v5-card__t">Unit Economics</div>
-                <div class="v5-card__sub">RPD · OPD · RPO · RPC — current period vs prior year</div>
+                <div class="v5-card__sub">{{ implode(' · ', array_map(fn ($u) => explode(' ', $u[0])[0], $unitData)) }} — current period vs prior year · 1 dp</div>
             </div>
         </div>
         <div class="v5-card__b" id="ec-unit"></div>
         <div class="v5-card__f">
             <b>Reading:</b>
             @php
-                $rpdDelta = $variance($cur['rpd'] ?? null, $prev['rpd'] ?? null);
-                $opdDelta = $variance($cur['opd'] ?? null, $prev['opd'] ?? null);
-                $rpoDelta = $variance($cur['rpo'] ?? null, $prev['rpo'] ?? null);
-                $rpcDelta = $variance($cur['per_customer'] ?? null, $prev['per_customer'] ?? null);
+                $rpdDelta = $kpiOn('rpd') ? $variance($cur['rpd'] ?? null, $prev['rpd'] ?? null) : null;
+                $opdDelta = $kpiOn('opd') ? $variance($cur['opd'] ?? null, $prev['opd'] ?? null) : null;
+                $rpoDelta = $kpiOn('rpo') ? $variance($cur['rpo'] ?? null, $prev['rpo'] ?? null) : null;
+                $rpcDelta = $kpiOn('rpc') ? $variance($cur['per_customer'] ?? null, $prev['per_customer'] ?? null) : null;
             @endphp
             @if ($rpdDelta !== null && $opdDelta !== null && ($rpdDelta > 0 || $opdDelta > 0) && (($rpoDelta ?? 0) < 0 || ($rpcDelta ?? 0) < 0))
               Throughput accelerating, unit pricing eroding — pattern of <span class="warn">volume-led growth at lower contract values</span>.
@@ -500,6 +623,7 @@
             @endif
         </div>
     </div>
+    @endif
 
 </div>
 
@@ -561,31 +685,92 @@
     if (a >= 1e3) return (v / 1e3).toFixed(0) + 'K';
     return v.toString();
   }
+  /* Harmonised 1-decimal formatter — used everywhere on the unit-
+     economics small multiples so prior/current bars line up
+     visually regardless of magnitude. */
+  function fmt1(v) {
+    if (v == null) return '—';
+    const a = Math.abs(v);
+    if (a >= 1e6) return (v / 1e6).toFixed(1) + 'M';
+    if (a >= 1e3) return (v / 1e3).toFixed(1) + 'K';
+    return v.toFixed(1);
+  }
 
-  /* ── 1. Trajectory ───────────────────────────────────────────── */
+  /* ── 1. Trajectory · period-aware ────────────────────────────
+     YTD/Month: cumulative actual line vs cumulative annual budget
+       (uploaded) vs linear pace (synthesised reference). All three
+       lines drawn over Jan→Dec.
+     MTD: 4 weekly bars (actual revenue) vs weekly budget target
+       (monthly budget ÷ 4 — uniform split). Same card, different
+       chart type to match the period the user has selected. */
   const trajectoryEl = document.getElementById('ec-trajectory');
+  const trajMode  = @json($trajectoryMode);                  // 'ytd' or 'mtd'
   const cumActual = @json($cumActualJson);
   const cumLinear = @json($cumLinearJson);
-  if (trajectoryEl && cumActual.some(v => v != null)) {
-    echarts.init(trajectoryEl).setOption({
-      textStyle: { fontFamily: FF, color: '#374151' },
-      grid: { left: 48, right: 16, top: 8, bottom: 22, containLabel: false },
-      tooltip: tip,
-      xAxis: { type: 'category', data: ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'],
-        axisLine: { lineStyle: { color: t.base } }, axisTick: { show: false },
-        axisLabel: { color: t.textM, fontSize: 9 } },
-      yAxis: { type: 'value', axisLine: { show: false }, axisTick: { show: false },
-        splitLine: { lineStyle: { color: t.grid } },
-        axisLabel: { color: t.textM, fontSize: 9, formatter: v => fmt(v) } },
-      series: [
-        { name: 'Actual', type: 'line', data: cumActual,
+  const cumBudget = @json($cumBudgetJson);
+  const wkActual  = @json($weeklyActualJson);
+  const wkBudget  = @json($weeklyBudgetJson);
+  const wkLabels  = @json($weekLabelsJson);
+
+  if (trajectoryEl) {
+    if (trajMode === 'mtd' && wkActual && wkActual.length === 4) {
+      // ── MTD: weekly bars + budget line ─────────────────────────
+      echarts.init(trajectoryEl).setOption({
+        textStyle: { fontFamily: FF, color: '#374151' },
+        grid: { left: 48, right: 16, top: 18, bottom: 22, containLabel: false },
+        tooltip: tip,
+        legend: { right: 8, top: 0, icon: 'roundRect', itemWidth: 14, itemHeight: 4,
+          textStyle: { fontSize: 9, color: t.textM, fontFamily: FF } },
+        xAxis: { type: 'category', data: wkLabels,
+          axisLine: { lineStyle: { color: t.base } }, axisTick: { show: false },
+          axisLabel: { color: t.textM, fontSize: 10 } },
+        yAxis: { type: 'value', axisLine: { show: false }, axisTick: { show: false },
+          splitLine: { lineStyle: { color: t.grid } },
+          axisLabel: { color: t.textM, fontSize: 9, formatter: v => fmt(v) } },
+        series: [
+          { name: 'Actual (week)', type: 'bar', data: wkActual,
+            barWidth: 32, itemStyle: { color: t.pri } },
+          ...(wkBudget && wkBudget.some(v => v > 0) ? [{
+            name: 'Budget (week)', type: 'line', smooth: true, data: wkBudget,
+            lineStyle: { color: t.warn, type: 'dashed', width: 1.6 }, itemStyle: { color: t.warn },
+            symbol: 'circle', symbolSize: 5,
+          }] : []),
+        ],
+      });
+    } else if (cumActual.some(v => v != null)) {
+      // ── YTD/Month: cumulative line + budget overlay + linear pace ─
+      const series = [
+        { name: 'Actual (cum)', type: 'line', data: cumActual,
           lineStyle: { color: t.pri, width: 2 }, itemStyle: { color: t.pri },
           areaStyle: { color: t.area }, symbol: 'circle', symbolSize: 5 },
-        { name: 'Linear', type: 'line', data: cumLinear,
-          lineStyle: { color: t.textF, type: 'dashed', width: 1.5 },
-          itemStyle: { color: t.textF }, symbol: 'none' },
-      ],
-    });
+      ];
+      if (cumBudget && cumBudget.length === 12 && cumBudget[11] > 0) {
+        series.push({
+          name: 'Annual budget (cum)', type: 'line', smooth: true, data: cumBudget,
+          lineStyle: { color: t.warn, type: 'dashed', width: 1.6 }, itemStyle: { color: t.warn },
+          symbol: 'none',
+        });
+      }
+      series.push({
+        name: 'Linear pace', type: 'line', data: cumLinear,
+        lineStyle: { color: t.textF, type: 'dashed', width: 1.5 }, itemStyle: { color: t.textF },
+        symbol: 'none',
+      });
+      echarts.init(trajectoryEl).setOption({
+        textStyle: { fontFamily: FF, color: '#374151' },
+        grid: { left: 48, right: 16, top: 18, bottom: 22, containLabel: false },
+        tooltip: tip,
+        legend: { right: 8, top: 0, icon: 'roundRect', itemWidth: 14, itemHeight: 4,
+          textStyle: { fontSize: 9, color: t.textM, fontFamily: FF } },
+        xAxis: { type: 'category', data: ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'],
+          axisLine: { lineStyle: { color: t.base } }, axisTick: { show: false },
+          axisLabel: { color: t.textM, fontSize: 9 } },
+        yAxis: { type: 'value', axisLine: { show: false }, axisTick: { show: false },
+          splitLine: { lineStyle: { color: t.grid } },
+          axisLabel: { color: t.textM, fontSize: 9, formatter: v => fmt(v) } },
+        series: series,
+      });
+    }
   }
 
   /* ── 2. Waterfall ────────────────────────────────────────────── */
@@ -676,11 +861,22 @@
     });
   }
 
-  /* ── 4. Unit Economics small multiples ──────────────────────── */
+  /* ── 4. Unit Economics small multiples — registry-filtered ─────
+     Card auto-shrinks to whichever metrics the tenant admin has
+     enabled in /admin/tenants/{id} (rpd / opd / rpo / rpc). The
+     grid widths recompute against the actual count, and every
+     visible number uses fmt1 (1 decimal place) so prior vs current
+     bars line up regardless of magnitude. */
   const unitEl = document.getElementById('ec-unit');
   const unit = @json($unitData);
-  if (unitEl && unit.some(u => u[1][1] > 0)) {
-    const grids = unit.map((_, i) => ({ left: `${i * 25 + 3}%`, right: `${100 - (i + 1) * 25 + 1}%`, top: 28, bottom: 22 }));
+  if (unitEl && unit.length > 0 && unit.some(u => u[1][1] > 0)) {
+    const cols = unit.length;
+    const slot = 100 / cols;
+    const grids = unit.map((_, i) => ({
+      left: `${i * slot + 3}%`,
+      right: `${100 - (i + 1) * slot + 1}%`,
+      top: 28, bottom: 22,
+    }));
     const titles = unit.map((u, i) => ({
       text: u[0], left: grids[i].left, top: 4,
       textStyle: { fontSize: 10, fontWeight: 700, color: '#111827', fontFamily: FF }
@@ -693,43 +889,60 @@
         axisLabel: { color: t.textM, fontSize: 9 } })),
       yAxis: unit.map((_, i) => ({ gridIndex: i, type: 'value', axisLine: { show: false }, axisTick: { show: false },
         splitLine: { lineStyle: { color: t.grid } },
-        axisLabel: { color: t.textM, fontSize: 9, formatter: v => fmt(v) } })),
+        axisLabel: { color: t.textM, fontSize: 9, formatter: v => fmt1(v) } })),
       series: unit.map((u, i) => ({
         type: 'bar', xAxisIndex: i, yAxisIndex: i, data: u[1],
         itemStyle: { color: (u[1][1] >= u[1][0]) ? t.pri : t.neg },
         barWidth: '60%',
-        label: { show: true, position: 'top', color: t.textM, fontSize: 9, formatter: p => fmt(p.value) }
+        label: { show: true, position: 'top', color: t.textM, fontSize: 9, formatter: p => fmt1(p.value) }
       })),
     });
   }
 
-  /* ── 5. Sankey · Reconciliation ──────────────────────────────── */
+  /* ── 5. Sankey · Scan-to-Cash flow ────────────────────────────
+     Shows BOTH leakages explicitly:
+       Reconciliation 1 · Scanned → Billed (+ Bill leakage)
+       Reconciliation 2 · Billed  → Collected (+ Receivables)
+     The user reads "of every X scanned, Y reached cash" in one
+     glance because every node and gap is visible, not just the
+     billed-to-cash slice.                                       */
   const sankeyEl = document.getElementById('ec-sankey');
   const recH = @json($recH);
   if (sankeyEl && recH) {
-    const expected = +recH.expected || 0;
-    const billed   = +recH.billed   || 0;
-    const cash     = +recH.collected || 0;
-    const leak     = Math.max(0, billed - cash);
-    if (billed > 0) {
+    const expected   = Math.max(0, +recH.expected  || 0);
+    const billed     = Math.max(0, +recH.billed    || 0);
+    const collected  = Math.max(0, +recH.collected || 0);
+    const billLeak   = Math.max(0, expected - billed);    // Recon 1 gap
+    const arOutstand = Math.max(0, billed   - collected); // Recon 2 gap
+
+    if (expected > 0 || billed > 0) {
       echarts.init(sankeyEl).setOption({
         textStyle: { fontFamily: FF, color: '#374151' },
         series: [{
           type: 'sankey',
-          left: 6, right: 70, top: 4, bottom: 4,
+          left: 6, right: 92, top: 4, bottom: 4,
           data: [
-            { name: 'Expected',    itemStyle: { color: t.warnLt, opacity: 0.5 } },
+            { name: 'Scanned',     itemStyle: { color: t.warnLt } },
             { name: 'Billed',      itemStyle: { color: t.pri } },
-            { name: 'Cash',        itemStyle: { color: t.pos } },
+            { name: 'Leakage',     itemStyle: { color: t.warn, opacity: 0.85 } },
+            { name: 'Collected',   itemStyle: { color: t.pos } },
             { name: 'Receivables', itemStyle: { color: t.neg } },
           ],
           links: [
-            ...(expected > 0 ? [{ source: 'Expected', target: 'Billed', value: Math.min(expected, billed),
-                lineStyle: { color: t.warnLt, opacity: 0.3 } }] : []),
-            { source: 'Billed', target: 'Cash',        value: cash, lineStyle: { color: t.pos, opacity: 0.5 } },
-            { source: 'Billed', target: 'Receivables', value: leak || 1, lineStyle: { color: t.neg, opacity: 0.7 } },
+            // Reconciliation 1 · Scanned → (Billed + Leakage)
+            { source: 'Scanned', target: 'Billed',  value: billed   || 0.001,
+              lineStyle: { color: t.pri,  opacity: 0.55 } },
+            ...(billLeak > 0 ? [{ source: 'Scanned', target: 'Leakage', value: billLeak,
+              lineStyle: { color: t.warn, opacity: 0.50 } }] : []),
+            // Reconciliation 2 · Billed → (Collected + Receivables)
+            ...(billed > 0 ? [
+              { source: 'Billed', target: 'Collected',   value: collected  || 0.001,
+                lineStyle: { color: t.pos, opacity: 0.55 } },
+              { source: 'Billed', target: 'Receivables', value: arOutstand || 0.001,
+                lineStyle: { color: t.neg, opacity: 0.55 } },
+            ] : []),
           ],
-          orient: 'horizontal', nodeAlign: 'justify', nodeWidth: 18, nodeGap: 10,
+          orient: 'horizontal', nodeAlign: 'justify', nodeWidth: 14, nodeGap: 12,
           label: { fontSize: 10, fontWeight: 600, color: '#111827', fontFamily: FF },
           lineStyle: { curveness: 0.5 },
         }],

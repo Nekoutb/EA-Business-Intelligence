@@ -4,9 +4,11 @@ namespace App\Http\Controllers;
 
 use App\Odoo\OdooFactory;
 use App\Services\BillingService;
+use App\Services\BudgetService;
 use App\Services\ProfitLossService;
 use App\Services\RevenueService;
 use App\Services\ReceivablesService;
+use App\Tenancy\TenantContext;
 use Illuminate\Http\Request;
 
 class DashboardController extends Controller
@@ -84,10 +86,39 @@ class DashboardController extends Controller
             $error = $e->getMessage();
         }
 
+        // ── Uploaded annual budget (TenantBudget) for the period-aware
+        // cumulative chart. The synthesised budget series in $data
+        // (RevenueService::buildBudgetPackage) is monthly-flat from
+        // env config; the user-uploaded budget gives true per-month
+        // figures. We pass the monthly revenue vector (1..12) so the
+        // view can render YTD-cumulative or MTD-weekly depending on
+        // the active period filter.
+        $uploadedBudgetMonthly = null;
+        try {
+            $tenantInScope = app(TenantContext::class);
+            if ($tenantInScope->has()) {
+                $summary = (new BudgetService())->summary($tenantInScope->tenant()->id, $year);
+                $rev = $summary['data']['revenue'] ?? null;
+                if (is_array($rev)) {
+                    // Coerce to a flat array indexed 1..12 with floats.
+                    $vec = array_fill(1, 12, 0.0);
+                    foreach ($rev as $k => $v) {
+                        $m = (int) $k;
+                        if ($m >= 1 && $m <= 12) $vec[$m] = (float) $v;
+                    }
+                    $uploadedBudgetMonthly = $vec;
+                }
+            }
+        } catch (\Throwable $e) {
+            // Best-effort: missing budget table or upload row → fall through
+            // and the dashboard renders without the budget overlay.
+        }
+
         return view('dashboard', [
             'data'           => $data,
             'pl'             => $pl,
             'receivables'    => $receivables,
+            'uploadedBudgetMonthly' => $uploadedBudgetMonthly,
             'reconciliation' => $reconciliation,
             'error'          => $error,
             'active'         => 'dashboard',
