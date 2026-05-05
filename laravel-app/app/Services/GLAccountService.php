@@ -1,0 +1,126 @@
+<?php
+declare(strict_types=1);
+
+namespace App\Services;
+
+use App\Odoo\OdooClient;
+
+/**
+ * GL-balance helper — reads sums from account.move.line scoped by
+ * account-code prefix and an optional date range. The same query
+ * pattern an OHADA auditor uses against the trial balance / grand-
+ * livre to compute reconciliation figures by hand.
+ *
+ * Used by ReceivablesService for the GL-backed DSO calculation:
+ *   numerator   = balanceByPrefix('41', null, today)
+ *   denominator = creditByPrefix ('70', today-90d, today)
+ *   DSO         = (numerator / denominator) * 90
+ *
+ * Single round-trip per call: one searchRead on account.account to
+ * resolve the prefix → ids, one read_group on account.move.line to
+ * sum debit/credit. Server-side aggregation, not row-by-row.
+ *
+ * Returns null on any Odoo failure so callers can fall back to a
+ * legacy invoice-derived calculation rather than 500ing the page.
+ */
+final class GLAccountService
+{
+    public function __construct(private OdooClient $odoo) {}
+
+    /**
+     * Net balance (debit − credit) for every account whose code
+     * starts with $prefix, optionally bounded by [from, to] on
+     * line.date. Result is in the company default currency (XAF on
+     * the pilot tenant). Positive for asset/expense classes,
+     * negative for liability/equity/revenue classes — by sign
+     * convention of double-entry.
+     *
+     * For the AR side (class 41 — debtor), this returns positive.
+     * For the revenue side (class 70 — creditor), it returns
+     * negative. Use creditByPrefix() when you want signed-positive
+     * revenue movement.
+     */
+    public function balanceByPrefix(
+        string $prefix,
+        ?\DateTimeImmutable $from = null,
+        ?\DateTimeImmutable $to = null
+    ): ?float {
+        $sums = $this->fetchSums($prefix, $from, $to);
+        if ($sums === null) return null;
+        return ($sums['debit'] ?? 0.0) - ($sums['credit'] ?? 0.0);
+    }
+
+    /**
+     * Net credit (credit − debit) for every account whose code
+     * starts with $prefix, optionally bounded by date. Returns a
+     * signed-positive number for natural credit accounts (revenue,
+     * liabilities) — i.e. "how much was booked TO this class in
+     * the period." For class 70 / 71 / 72 etc this is the right
+     * side of the DSO denominator.
+     */
+    public function creditByPrefix(
+        string $prefix,
+        ?\DateTimeImmutable $from = null,
+        ?\DateTimeImmutable $to = null
+    ): ?float {
+        $sums = $this->fetchSums($prefix, $from, $to);
+        if ($sums === null) return null;
+        return ($sums['credit'] ?? 0.0) - ($sums['debit'] ?? 0.0);
+    }
+
+    // ── internals ────────────────────────────────────────────────────
+
+    /**
+     * Returns ['debit' => float, 'credit' => float] aggregated across
+     * every account whose code starts with $prefix, scoped to posted
+     * lines in the optional date window. Null when the chart returns
+     * no matching accounts or Odoo is unreachable.
+     */
+    private function fetchSums(
+        string $prefix,
+        ?\DateTimeImmutable $from,
+        ?\DateTimeImmutable $to
+    ): ?array {
+        try {
+            // 1) Resolve which accounts match the prefix. account.account.code
+            //    is a string in Odoo, so a like '41%' filter is the natural
+            //    way to find every sub-account under class 41.
+            $accounts = $this->odoo->searchRead(
+                'account.account',
+                [['code', '=like', $prefix . '%']],
+                ['id', 'code'],
+                []
+            );
+            if (empty($accounts)) return null;
+            $ids = array_map(fn ($a) => (int) $a['id'], $accounts);
+
+            // 2) Sum (debit, credit) on posted lines for those accounts.
+            //    read_group server-side — single round trip, no row data
+            //    pulled to PHP.
+            $domain = [
+                ['account_id', 'in', $ids],
+                ['parent_state', '=', 'posted'],
+            ];
+            if ($from) $domain[] = ['date', '>=', $from->format('Y-m-d')];
+            if ($to)   $domain[] = ['date', '<=', $to->format('Y-m-d')];
+
+            $rows = $this->odoo->callModel('account.move.line', 'read_group', [
+                'domain'  => $domain,
+                'fields'  => ['debit:sum', 'credit:sum'],
+                'groupby' => [],
+                'lazy'    => false,
+            ]);
+            $row = $rows[0] ?? null;
+            if (!is_array($row)) return ['debit' => 0.0, 'credit' => 0.0];
+
+            return [
+                'debit'  => (float) ($row['debit']  ?? 0),
+                'credit' => (float) ($row['credit'] ?? 0),
+            ];
+        } catch (\Throwable $e) {
+            // Odoo unreachable, account.move.line not exposed, malformed
+            // chart — caller falls back gracefully on null.
+            return null;
+        }
+    }
+}

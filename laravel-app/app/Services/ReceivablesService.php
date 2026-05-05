@@ -186,8 +186,80 @@ final class ReceivablesService
         // ---- KPIs -------------------------------------------------------
         $overdueRate = $totalAr > 0 ? ($overdueAr / $totalAr) * 100.0 : 0.0;
         $avgAgeDays  = $totalAr > 0 ? ($weightedAgeNum / abs($totalAr)) : 0.0;
-        // DSO = (AR / Revenue) * days_in_window. Defined only with positive revenue.
-        $dso = ($revenueYtd > 0) ? ($totalAr / $revenueYtd) * $daysInYtd : null;
+
+        // ── GL-backed DSO ──────────────────────────────────────────
+        // OHADA standard: DSO = (class 41 balance / class 70 90d credit) × 90.
+        //
+        //   Numerator   = sum of net debit on every 41XX account today.
+        //                 Catches every customer balance regardless of
+        //                 origin (out_invoices, manual journals, advances,
+        //                 reclassifications). Wider than the invoice-derived
+        //                 totalAr by definition.
+        //   Denominator = net credit movement on every 70XX account over
+        //                 the trailing window (default 90 days). Reflects
+        //                 commercial reality on a stable basis that doesn't
+        //                 expand with the calendar.
+        //   Window      = config('bi.dso_window_days', 90).
+        //
+        // If the GL service can't reach Odoo or the chart has no 41/70
+        // accounts (non-OHADA chart), $dso falls back to the legacy
+        // invoice-derived calculation so the page never 500s.
+        $dso = null;
+        $dsoBasis = [
+            'method'        => 'legacy_invoice',
+            'window_days'   => $daysInYtd,
+            'numerator'     => $totalAr,
+            'denominator'   => $revenueYtd,
+            'numerator_label'   => 'AR (invoice-derived)',
+            'denominator_label' => 'Revenue (YTD invoiced)',
+        ];
+
+        try {
+            $glSvc = new GLAccountService($this->odoo);
+            $windowDays = (int) (function_exists('config') ? config('bi.dso_window_days', 90) : 90);
+            $windowDays = $windowDays > 0 ? $windowDays : 90;
+            $windowFrom = $today->modify('-' . $windowDays . ' days');
+
+            $arPrefix    = (string) (function_exists('config') ? config('bi.dso_ar_prefix', '41') : '41');
+            $salesPrefix = (string) (function_exists('config') ? config('bi.dso_sales_prefix', '70') : '70');
+
+            $arBalance     = $glSvc->balanceByPrefix($arPrefix, null, $today);
+            $salesBalance  = $glSvc->creditByPrefix ($salesPrefix, $windowFrom, $today);
+
+            if ($arBalance !== null && $salesBalance !== null && $salesBalance > 0) {
+                $dso = ($arBalance / $salesBalance) * $windowDays;
+                $dsoBasis = [
+                    'method'        => 'gl_class_41_70',
+                    'window_days'   => $windowDays,
+                    'window_from'   => $windowFrom->format('Y-m-d'),
+                    'window_to'     => $today->format('Y-m-d'),
+                    'numerator'     => $arBalance,
+                    'denominator'   => $salesBalance,
+                    'numerator_label'   => "Class {$arPrefix} balance · today",
+                    'denominator_label' => "Class {$salesPrefix} credit · trailing {$windowDays} d",
+                ];
+            } elseif ($arBalance !== null && ($salesBalance === null || $salesBalance <= 0)) {
+                // GL reachable but sales side is dormant → DSO is undefined.
+                $dso = null;
+                $dsoBasis = [
+                    'method'        => 'gl_dormant',
+                    'window_days'   => $windowDays,
+                    'numerator'     => $arBalance,
+                    'denominator'   => $salesBalance ?? 0,
+                    'numerator_label'   => "Class {$arPrefix} balance · today",
+                    'denominator_label' => "Class {$salesPrefix} credit · trailing {$windowDays} d (no sales)",
+                ];
+            }
+        } catch (\Throwable $e) {
+            // Already null — fall through to legacy below.
+        }
+
+        // Legacy fallback: invoice-derived DSO. Only used when the GL
+        // probe returned null/0 and we haven't already computed a
+        // GL-backed value above.
+        if ($dso === null && $dsoBasis['method'] === 'legacy_invoice' && $revenueYtd > 0) {
+            $dso = ($totalAr / $revenueYtd) * $daysInYtd;
+        }
 
         // Concentration of severely overdue balance: high values signal
         // imminent write-off / bad-debt risk.
@@ -276,6 +348,7 @@ final class ReceivablesService
             'overdue_ar' => $overdueAr,
             'overdue_rate' => $overdueRate,
             'dso'        => $dso,
+            'dso_basis'  => $dsoBasis,
             'avg_age'    => $avgAgeDays,
             'top5_pct'   => $top5ConcentrationPct,
             'pct_gt_60'  => $over60Pct,

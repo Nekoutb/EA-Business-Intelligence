@@ -47,5 +47,20 @@ return [
         'model' => env('AI_BUSINESS_INSIGHTS_MODEL', 'claude-haiku-4-5'),
     ],
 
+    /**
+     * GL-backed DSO calculation (ReceivablesService).
+     *
+     *   DSO = (class-{ar_prefix} balance today
+     *          ÷ class-{sales_prefix} credit over trailing window_days)
+     *         × window_days
+     *
+     * Defaults match OHADA / SYSCOHADA practice — class 41 for clients,
+     * class 70 for ventes, 90-day rolling window. Override via .env if
+     * the firm uses a different chart prefix or wants 60 / 120 days.
+     */
+    'dso_window_days'  => (int) env('DSO_WINDOW_DAYS', 90),
+    'dso_ar_prefix'    => env('DSO_AR_PREFIX', '41'),
+    'dso_sales_prefix' => env('DSO_SALES_PREFIX', '70'),
+
     'cache_ttl' => 300, // 5 minutes
 ];
