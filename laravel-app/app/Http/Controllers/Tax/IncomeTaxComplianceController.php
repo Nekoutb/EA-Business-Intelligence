@@ -278,14 +278,14 @@ class IncomeTaxComplianceController extends Controller
         });
 
         $hv     = $analysis['high_value_cash'] ?? [];
-        $rows   = $hv['transactions'] ?? [];
+        $moves  = $hv['moves'] ?? [];           // NEW: per-journal payload (rework 2026-05)
         $cur    = (string) ($analysis['currency'] ?? 'XAF');
         $asOf   = (string) ($analysis['as_of'] ?? date('Y-m-d'));
         $thresh = (float)  ($hv['threshold_xaf'] ?? 100000);
 
         $filename = "income-tax-compliance_high-value-cash_{$asOf}.xlsx";
 
-        return new StreamedResponse(function () use ($rows, $cur, $asOf, $thresh, $hv) {
+        return new StreamedResponse(function () use ($moves, $cur, $asOf, $thresh, $hv) {
             $writer = new Writer();
             $writer->openToFile('php://output');
 
@@ -325,16 +325,24 @@ class IncomeTaxComplianceController extends Controller
                 return new Row($cells);
             };
 
+            // ── Style for the JE-header row that separates moves ────────
+            $jeHeaderStyle = (new Style())
+                ->withFontBold(true)
+                ->withFontSize(11)
+                ->withBackgroundColor('E2E8F0')
+                ->withFontColor('1E3D44')
+                ->withBorder($cellBorder);
+
             // ── Title block ─────────────────────────────────────────────
             $writer->addRow($styledRow(['Income Tax Compliance — High-Value Cash Expenditures'], $titleStyle));
             $writer->addRow($styledRow([
                 'As of: ' . $asOf .
-                '   ·   Threshold: ' . number_format($thresh, 0, '.', ',') . ' ' . $cur . ' per line' .
+                '   ·   Threshold: ' . number_format($thresh, 0, '.', ',') . ' ' . $cur . ' per JOURNAL (sum of 57-credits)' .
                 '   ·   ' . (string) ($hv['threshold_reference'] ?? 'LF current')
             ], $metaStyle));
             $writer->addRow($styledRow([
-                'Transactions: ' . (int) ($hv['count'] ?? 0) .
-                '   ·   Total: ' . number_format((float) ($hv['total_amount'] ?? 0), 0, '.', ',') . ' ' . $cur .
+                'Journals flagged: ' . (int) ($hv['count'] ?? 0) .
+                '   ·   Total cash paid: ' . number_format((float) ($hv['total_amount'] ?? 0), 0, '.', ',') . ' ' . $cur .
                 '   ·   Tax exposure (49.5 %): ' . number_format((float) ($hv['total_impact'] ?? 0), 0, '.', ',') . ' ' . $cur
             ], $metaStyle));
             $writer->addRow($styledRow(['References: Articles 7-A, 17, 26, 91 CGI'], $metaStyle));
@@ -342,35 +350,76 @@ class IncomeTaxComplianceController extends Controller
 
             // ── Header row ──────────────────────────────────────────────
             $writer->addRow($styledRow([
+                'Side',
                 'Date',
+                'Account · Description',
                 'Counterparty',
-                'Narration',
                 'Journal',
-                'Account',
-                'Amount (' . $cur . ')',
+                'Debit (' . $cur . ')',
+                'Credit (' . $cur . ')',
+                'Move ID',
                 'Supporting doc',
             ], $headerStyle));
 
-            // ── Body rows ───────────────────────────────────────────────
-            foreach ($rows as $r) {
-                $missing = (bool) ($r['missing_supporting'] ?? false);
+            // ── Body: one JE-header row per move + every line of that
+            // move (full debit + credit). Lines from the same journal
+            // appear contiguously; the JE header summarises cash_paid +
+            // risk + supporting-doc status so a tax inspector can read
+            // the whole entry without cross-referencing back to Odoo.
+            foreach ($moves as $m) {
+                $missing = (bool) ($m['missing_supporting'] ?? false);
+                $cashPaid = (float) ($m['cash_paid']   ?? 0);
+                $risk     = (float) ($m['risk_amount'] ?? 0);
+                $moveName = (string) ($m['move_name'] ?? '—');
+                $moveId   = (int)    ($m['move_id']   ?? 0);
+                $jeHeader = sprintf(
+                    'JE · %s · cash paid %s %s · risk 49.5%% = %s %s · doc %s',
+                    $moveName,
+                    number_format($cashPaid, 0, '.', ','), $cur,
+                    number_format($risk,     0, '.', ','), $cur,
+                    $missing ? 'MISSING' : 'on file'
+                );
                 $writer->addRow($styledRow([
-                    (string) ($r['date'] ?? ''),
-                    (string) ($r['partner'] ?? '— unrecorded —'),
-                    (string) ($r['narration'] ?? ''),
-                    (string) ($r['journal'] ?? ''),
-                    (string) ($r['account'] ?? ''),
-                    (float)  ($r['amount']  ?? 0),
+                    'JE',
+                    (string) ($m['date'] ?? ''),
+                    $jeHeader,
+                    (string) ($m['partner'] ?? '— unrecorded —'),
+                    (string) ($m['journal'] ?? ''),
+                    '',
+                    '',
+                    $moveId,
                     $missing ? 'MISSING' : 'On file',
-                ], $missing ? $missingStyle : $cellStyle));
+                ], $jeHeaderStyle));
+
+                foreach (($m['lines'] ?? []) as $l) {
+                    $debit   = (float) ($l['debit']  ?? 0);
+                    $credit  = (float) ($l['credit'] ?? 0);
+                    $writer->addRow($styledRow([
+                        (string) ($l['side'] ?? ''),
+                        (string) ($m['date'] ?? ''),
+                        ((string) ($l['account_label'] ?? '')) . (
+                            !empty($l['description']) ? ' · ' . $l['description'] : ''
+                        ),
+                        (string) ($l['partner'] ?? ($m['partner'] ?? '')),
+                        (string) ($m['journal'] ?? ''),
+                        $debit  > 0 ? $debit  : '',
+                        $credit > 0 ? $credit : '',
+                        $moveId,
+                        '',
+                    ], $missing ? $missingStyle : $cellStyle));
+                }
             }
 
             // ── Methodology footer ──────────────────────────────────────
             $writer->addRow(Row::fromValues([''])); // spacer
             $writer->addRow($styledRow([
-                'Methodology: posted move lines whose account_id.code starts with "57" (Caisse, SYSCOHADA), with line credit greater than the LF threshold, in YTD. ' .
-                'Tax exposure stacked at 49.5% = 33% CIT (Article 17 CGI) + 16.5% IRCM (Articles 26, 91 CGI) on the same disallowed amount under Article 7-A CGI. ' .
+                'Methodology (rework 2026-05): per-journal aggregation. Qualifying moves are posted account.move records that ' .
+                '(a) have at least one line crediting account.code starting with "57" (Caisse, SYSCOHADA), AND ' .
+                '(b) have at least one line debiting account.code starting with 6 (charges) OR 1, 2, 3, 4 (balance-sheet items). ' .
+                'cash_paid = SUM of credit on all 57-lines of the move. The journal qualifies when cash_paid > LF threshold (100,000 XAF). ' .
+                'Tax exposure stacked at 49.5% = 33% CIT (Article 17 CGI) + 16.5% IRCM (Articles 26, 91 CGI) on cash_paid under Article 7-A CGI. ' .
                 'Stacking assumes the DGI requalifies the disallowed amount in full as a hidden distribution (revenus réputés distribués). ' .
+                'Each qualifying journal is exported with EVERY debit and credit line so the entry is readable without going back to Odoo. ' .
                 '"MISSING" supporting doc indicates the originating account.move has zero ir.attachment records on file at export time.'
             ], $noteStyle));
 
