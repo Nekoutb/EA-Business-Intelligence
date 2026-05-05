@@ -10,14 +10,28 @@ use App\Odoo\OdooClient;
 /**
  * Donations & libéralités — deductibility test (Article 7 CGI).
  *
+ * Account scope corrected 2026-05 — was wrongly using 6713 / 6588 / 638
+ * (currency-loss + misc-charge buckets that don't represent donations).
+ * SYSCOHADA AUDCIF 2017 codes for donations:
+ *
+ *   • 6582XX — Dons (donations made by the firm)            ← expense
+ *   • 6583XX — Mécenat (corporate sponsorship/patronage)    ← expense
+ *   • 845XX  — Dons et libéralités obtenus (received)       ← HAO income
+ *
  * Methodology
  * ───────────
- *   • Donation accounts (OHADA): 6713 (dons et libéralités), 6588 (charges
- *     diverses), 638 (autres charges externes). Lines on these accounts
- *     for the YTD audit window, posted only.
+ *   • Donations made (deductibility test): SUM of debit balances on
+ *     6582XX + 6583XX for posted lines in YTD. These are the lines that
+ *     enter the Article 7 CGI deductibility test (0.5 % × CA_net ceiling).
  *
- *   • Beneficiary resolution: each line is grouped by partner_id; the
- *     resolved category (1/2/3) is read from the local
+ *   • Donations received (HAO income tracking): SUM of credit balances
+ *     on 845XX for posted lines in YTD. Surfaced as a separate analytical
+ *     view — received donations are taxable under HAO unless specifically
+ *     exempted, and the existing P&L picks them up via class 8 income.
+ *     No deductibility test applies to received donations.
+ *
+ *   • Beneficiary resolution: each line on 6582/6583 is grouped by
+ *     partner_id; the resolved category (1/2/3) is read from the local
  *     partner_donation_categories table (per-tenant, cached after
  *     resolution). NIU and country come from res.partner.
  *
@@ -49,12 +63,15 @@ use App\Odoo\OdooClient;
  *     = 49.5 %.
  *     Plus 15 % TSR (Article 225 CGI) on Cat 3 amounts to non-residents.
  *
- *   • Article references: 7, 17, 26, 91, 225 CGI; SYSCOHADA AUDCIF 2017
- *     (classe 7, comptes 70 / 709).
+ *   • Article references: 7, 17, 26, 91, 225 CGI; SYSCOHADA AUDCIF 2017.
  */
 final class DonationsComplianceService
 {
-    private const DONATION_ACCOUNT_PREFIXES = ['6713', '6588', '638'];
+    /** Donations made (expense) — Article 7 CGI deductibility test. */
+    private const DONATION_ACCOUNT_PREFIXES = ['6582', '6583'];
+
+    /** Donations received (HAO income) — taxable revenue, separate view. */
+    private const RECEIVED_DONATION_PREFIXES = ['845'];
 
     public const DEDUCTION_CEILING_PCT  = 0.5;       // 0.5% of CA_net_YTD
     public const CIT_RATE_PCT           = 33.0;      // 30% IS + 10% CAC
@@ -72,10 +89,20 @@ final class DonationsComplianceService
         $today = ($today ?? new \DateTimeImmutable('today'))->setTime(0, 0, 0);
         $jan1  = new \DateTimeImmutable($today->format('Y') . '-01-01');
 
-        // 1. Resolve donation account ids (6713 / 6588 / 638).
+        // 1. Resolve donation account ids (6582 + 6583 — Dons + Mécenat).
         $donAccountIds = $this->accountIdsByPrefix(self::DONATION_ACCOUNT_PREFIXES);
+        $receivedIds   = $this->accountIdsByPrefix(self::RECEIVED_DONATION_PREFIXES);
+
+        // The deductibility test (the body of analyze() below) requires
+        // expense accounts. If neither 6582 nor 6583 exist on the chart,
+        // we still want to surface received donations if 845 has data.
+        // emptyResult() now carries the received_donations payload too,
+        // built fresh below so a chart-of-accounts gap on the expense
+        // side doesn't suppress the received-donations card.
         if ($donAccountIds === []) {
-            return $this->emptyResult($jan1, $today);
+            $empty = $this->emptyResult($jan1, $today);
+            $empty['donations']['received'] = $this->probeReceivedDonations($receivedIds, $jan1, $today);
+            return $empty;
         }
 
         // 2. Fetch line-level donation lines in YTD.
@@ -329,8 +356,127 @@ final class DonationsComplianceService
                 'exposure_stacked'      => $totalExposureStack,
                 'exposure_tsr'          => round($totalTsr, 2),
                 'exposure_total'        => $totalExposure,
+
+                // Received donations (845XX) — separate analytical view.
+                // Surfaces who gave what; no deductibility test applies
+                // (received donations are HAO income, taxable as revenue
+                // unless specifically exempted). The view renders this
+                // beneath the deductibility-test card.
+                'received'              => $this->probeReceivedDonations($receivedIds, $jan1, $today),
             ],
             'as_of'          => $today->format('Y-m-d'),
+        ];
+    }
+
+    /**
+     * Donations received probe — sum credit balances on 845XX in YTD,
+     * grouped by partner. Returns:
+     *   {
+     *     account_count: int,             // how many 845XX accounts found
+     *     total_received: float,          // total credit-positive balance
+     *     by_partner: [
+     *       { partner: string|null, niu: string|null, country: string|null,
+     *         total: float, line_count: int },
+     *       ...
+     *     ],
+     *   }
+     * Best-effort: any Odoo failure returns a zeroed structure.
+     */
+    private function probeReceivedDonations(
+        array $accountIds,
+        \DateTimeImmutable $from,
+        \DateTimeImmutable $to
+    ): array {
+        $empty = [
+            'account_count' => count($accountIds),
+            'total_received' => 0.0,
+            'by_partner'    => [],
+        ];
+        if ($accountIds === []) return $empty;
+
+        try {
+            // Pull line-level so we can group by partner. Same domain
+            // pattern as the donation-expense probe but the sign is
+            // flipped — received donations are CREDIT balances on 845XX,
+            // so the magnitude lives on the credit column.
+            $lines = $this->odoo->searchRead('account.move.line', [
+                ['account_id', 'in', $accountIds],
+                ['date', '>=', $from->format('Y-m-d')],
+                ['date', '<=', $to->format('Y-m-d')],
+                ['parent_state', '=', 'posted'],
+            ], ['date', 'debit', 'credit', 'balance', 'partner_id', 'name'], []);
+        } catch (\Throwable $e) {
+            return $empty;
+        }
+
+        $byPartner = []; // partner_id => ['name', 'niu', 'country', 'total', 'lines']
+        $unrecorded = ['partner' => null, 'niu' => null, 'country' => null, 'total' => 0.0, 'line_count' => 0];
+        $total = 0.0;
+
+        foreach ($lines as $l) {
+            // Class 8 received donations sit credit-positive. Use
+            // -balance so a credit-positive entry yields a positive
+            // "received" magnitude.
+            $bal    = (float) ($l['balance'] ?? ((float)($l['debit'] ?? 0) - (float)($l['credit'] ?? 0)));
+            $amount = -$bal;
+            if ($amount === 0.0) continue;
+
+            $total += $amount;
+
+            $partnerInfo = $l['partner_id'] ?? null;
+            if (is_array($partnerInfo) && !empty($partnerInfo[0])) {
+                $pid = (int) $partnerInfo[0];
+                $name = (string) ($partnerInfo[1] ?? '');
+                if (!isset($byPartner[$pid])) {
+                    $byPartner[$pid] = [
+                        'partner'    => $name ?: ('Partner #' . $pid),
+                        'niu'        => null,
+                        'country'    => null,
+                        'total'      => 0.0,
+                        'line_count' => 0,
+                    ];
+                }
+                $byPartner[$pid]['total']      += $amount;
+                $byPartner[$pid]['line_count']++;
+            } else {
+                $unrecorded['total']      += $amount;
+                $unrecorded['line_count']++;
+            }
+        }
+
+        // Resolve NIU + country in one batch (best-effort).
+        if (!empty($byPartner)) {
+            try {
+                $partnerRows = $this->odoo->searchRead(
+                    'res.partner',
+                    [['id', 'in', array_keys($byPartner)]],
+                    ['id', 'vat', 'country_id'],
+                    []
+                );
+                foreach ($partnerRows as $p) {
+                    $pid = (int) ($p['id'] ?? 0);
+                    if (!isset($byPartner[$pid])) continue;
+                    $byPartner[$pid]['niu']     = !empty($p['vat']) ? (string) $p['vat'] : null;
+                    $byPartner[$pid]['country'] = (is_array($p['country_id'] ?? null) && !empty($p['country_id'][1]))
+                        ? (string) $p['country_id'][1] : null;
+                }
+            } catch (\Throwable $e) { /* leave NIU + country null */ }
+        }
+
+        // Sort partners by total received DESC; append "unrecorded" if any.
+        $rows = array_values($byPartner);
+        usort($rows, fn ($a, $b) => $b['total'] <=> $a['total']);
+        if ($unrecorded['line_count'] > 0) {
+            $unrecorded['partner'] = '— Unrecorded —';
+            $unrecorded['total']   = round($unrecorded['total'], 2);
+            $rows[] = $unrecorded;
+        }
+        $rows = array_map(fn ($r) => array_merge($r, ['total' => round($r['total'], 2)]), $rows);
+
+        return [
+            'account_count'  => count($accountIds),
+            'total_received' => round($total, 2),
+            'by_partner'     => $rows,
         ];
     }
 
@@ -419,6 +565,15 @@ final class DonationsComplianceService
                 'exposure_stacked'   => 0.0,
                 'exposure_tsr'       => 0.0,
                 'exposure_total'     => 0.0,
+                // received-donations stub — caller may override with a
+                // real probeReceivedDonations() result so a
+                // chart-of-accounts gap on the expense side doesn't
+                // suppress the received-donations card.
+                'received'           => [
+                    'account_count'  => 0,
+                    'total_received' => 0.0,
+                    'by_partner'     => [],
+                ],
             ],
             'as_of'    => $to->format('Y-m-d'),
         ];
