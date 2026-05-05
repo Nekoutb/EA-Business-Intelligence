@@ -261,9 +261,20 @@
                 <div class="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
                     <div class="flex flex-wrap items-center justify-between gap-3 px-5 py-4 border-b border-slate-200 bg-gradient-to-r from-amber-50/60 to-white">
                         <div>
-                            <div class="text-[10px] uppercase tracking-widest text-amber-700 font-semibold">B · Donations &amp; libéralités · YTD {{ $donYear }}</div>
-                            <h2 class="text-lg font-semibold text-slate-900 mt-1">Donations &amp; libéralités — deductibility test</h2>
-                            <p class="text-[11px] text-slate-500 mt-1">Posted lines on accounts 6713 / 6588 / 638 · grouped by beneficiary</p>
+                            <div class="text-[10px] uppercase tracking-widest text-amber-700 font-semibold">B · Donations made (Dons + Mécenat) · YTD {{ $donYear }}</div>
+                            <h2 class="text-lg font-semibold text-slate-900 mt-1">Donations made — deductibility test</h2>
+                            <p class="text-[11px] text-slate-500 mt-1">
+                                Posted debit balances on
+                                <code class="text-[10.5px] bg-slate-100 px-1.5 py-0.5 rounded">6582XX</code> (Dons) +
+                                <code class="text-[10.5px] bg-slate-100 px-1.5 py-0.5 rounded">6583XX</code> (Mécenat) ·
+                                grouped by beneficiary
+                            </p>
+                            <div class="mt-2 inline-flex items-start gap-1.5 text-[10.5px] text-rose-700 bg-rose-50 border border-rose-200 rounded-md px-2 py-1">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="mt-0.5 flex-shrink-0"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3m0 4h.01M5 19h14a2 2 0 001.732-3L13.732 4a2 2 0 00-3.464 0L3.268 16A2 2 0 005 19z"/></svg>
+                                <span>
+                                    <b>Account scope corrected (May 2026).</b> Was previously reading 6713 / 6588 / 638 (currency-loss + misc-charge buckets). Re-export any reviews dated before this change.
+                                </span>
+                            </div>
                         </div>
                         <div class="flex flex-col items-end gap-1.5">
                             <span class="inline-flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-widest text-amber-700 bg-amber-100 border border-amber-300 rounded-full px-2.5 py-1">
@@ -613,18 +624,89 @@
                     </div>
                 @else
                     <div class="bg-white border border-slate-200 rounded-xl p-8 text-center text-slate-500 text-sm">
-                        No donations recorded on accounts 6713 / 6588 / 638 in the YTD window.
+                        No donations recorded on accounts <code class="text-[11px] bg-slate-100 px-1.5 py-0.5 rounded">6582XX</code>
+                        or <code class="text-[11px] bg-slate-100 px-1.5 py-0.5 rounded">6583XX</code> in the YTD window.
                     </div>
                 @endif
+
+                {{-- ─────── Donations received (HAO 845XX) ─────── --}}
+                @php
+                    $rcv         = $don['received'] ?? null;
+                    $rcvTotal    = (float) ($rcv['total_received'] ?? 0);
+                    $rcvAccCount = (int)   ($rcv['account_count']  ?? 0);
+                    $rcvRows     = $rcv['by_partner'] ?? [];
+                @endphp
+                <div class="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden mt-4">
+                    <div class="flex flex-wrap items-center justify-between gap-3 px-5 py-4 border-b border-slate-200 bg-gradient-to-r from-emerald-50/60 to-white">
+                        <div>
+                            <div class="text-[10px] uppercase tracking-widest text-emerald-700 font-semibold">B · Donations received · YTD {{ $donYear }}</div>
+                            <h2 class="text-lg font-semibold text-slate-900 mt-1">Donations received — HAO income</h2>
+                            <p class="text-[11px] text-slate-500 mt-1">
+                                Posted credit balances on
+                                <code class="text-[10.5px] bg-slate-100 px-1.5 py-0.5 rounded">845XX</code>
+                                (Dons et libéralités obtenus, SYSCOHADA classe 8 — HAO).
+                                <span class="ml-1 text-slate-400">No deductibility test applies — these are taxable income unless specifically exempted.</span>
+                            </p>
+                        </div>
+                        <div class="text-right">
+                            <div class="text-[10px] uppercase tracking-widest text-emerald-700 font-semibold">Total received</div>
+                            <div class="text-2xl font-bold text-slate-900 tabular-nums mt-1">{{ number_format($rcvTotal, 0, '.', ',') }}</div>
+                            <div class="text-[10px] text-slate-500 mt-0.5">{{ $donCur }}</div>
+                        </div>
+                    </div>
+
+                    @if (!empty($rcvRows))
+                        <div class="overflow-x-auto">
+                            <table class="min-w-full text-sm">
+                                <thead class="bg-slate-50">
+                                    <tr class="text-left text-[10px] uppercase tracking-widest text-slate-500 font-semibold">
+                                        <th class="px-4 py-2.5">Donor</th>
+                                        <th class="px-4 py-2.5">NIU</th>
+                                        <th class="px-4 py-2.5">Country</th>
+                                        <th class="px-4 py-2.5 text-right">Lines</th>
+                                        <th class="px-4 py-2.5 text-right">Total received ({{ $donCur }})</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-slate-100">
+                                    @foreach ($rcvRows as $row)
+                                        @php
+                                            $isUnrec = ($row['partner'] ?? null) === '— Unrecorded —';
+                                        @endphp
+                                        <tr class="@if($isUnrec) bg-amber-50/40 @endif">
+                                            <td class="px-4 py-2.5 text-slate-900 @if($isUnrec) text-amber-700 italic @endif">
+                                                {{ $row['partner'] ?? '—' }}
+                                            </td>
+                                            <td class="px-4 py-2.5 text-[11px] tabular-nums text-slate-600">{{ $row['niu'] ?? '—' }}</td>
+                                            <td class="px-4 py-2.5 text-[11px] text-slate-600">{{ $row['country'] ?? '—' }}</td>
+                                            <td class="px-4 py-2.5 text-right tabular-nums text-slate-700">{{ number_format((int) ($row['line_count'] ?? 0)) }}</td>
+                                            <td class="px-4 py-2.5 text-right tabular-nums font-semibold text-slate-900">{{ number_format((float) ($row['total'] ?? 0), 0, '.', ',') }}</td>
+                                        </tr>
+                                    @endforeach
+                                </tbody>
+                            </table>
+                        </div>
+                    @else
+                        <div class="p-6 text-center text-slate-500 text-sm">
+                            No donations recorded on <code class="text-[11px] bg-slate-100 px-1.5 py-0.5 rounded">845XX</code>
+                            in the YTD window. {{ $rcvAccCount > 0 ? '(' . $rcvAccCount . ' account(s) found on the chart.)' : '(No 845-prefix accounts on the chart of accounts.)' }}
+                        </div>
+                    @endif
+                </div>
 
                 {{-- Methodology footer (B) --}}
                 <div class="bg-white border border-slate-200 rounded-xl p-5 shadow-sm text-[12px] text-slate-600 leading-relaxed">
                     <strong class="text-slate-900">Methodology.</strong>
-                    Posted move lines on accounts whose <code class="text-[11px] bg-slate-100 px-1.5 py-0.5 rounded">code</code>
-                    starts with <code class="text-[11px] bg-slate-100 px-1.5 py-0.5 rounded">6713</code>,
-                    <code class="text-[11px] bg-slate-100 px-1.5 py-0.5 rounded">6588</code>, or
-                    <code class="text-[11px] bg-slate-100 px-1.5 py-0.5 rounded">638</code> in YTD, grouped by
-                    <code class="text-[11px] bg-slate-100 px-1.5 py-0.5 rounded">partner_id</code>.
+                    <strong>Donations made</strong> — posted debit balances on
+                    <code class="text-[11px] bg-slate-100 px-1.5 py-0.5 rounded">6582XX</code> (Dons) and
+                    <code class="text-[11px] bg-slate-100 px-1.5 py-0.5 rounded">6583XX</code> (Mécenat),
+                    YTD, grouped by
+                    <code class="text-[11px] bg-slate-100 px-1.5 py-0.5 rounded">partner_id</code>
+                    and resolved against per-tenant beneficiary categories. <strong>Donations received</strong> — posted
+                    credit balances on
+                    <code class="text-[11px] bg-slate-100 px-1.5 py-0.5 rounded">845XX</code>
+                    (Dons et libéralités obtenus, classe 8 HAO), grouped by donor. The received side is taxable income
+                    under the HAO regime; no deductibility test applies — surfaced here as an analytical companion to
+                    the deductibility test on the made side.
                     CA net YTD computed as
                     <code class="text-[11px] bg-slate-100 px-1.5 py-0.5 rounded">|Σ balance(70 ex 709)| − |Σ balance(709)|</code>
                     on posted lines in YTD (SYSCOHADA AUDCIF 2017).
