@@ -103,7 +103,37 @@
   $totalAr    = (float) ($data['total_ar']     ?? 0);
   $overdueAr  = (float) ($data['overdue_ar']   ?? 0);
   $overdueRate = (float) ($data['overdue_rate'] ?? 0);
-  $dso        = (float) ($data['dso']          ?? 0);
+  $dso        = $data['dso'] ?? null;
+  $dsoBasis   = $data['dso_basis'] ?? null;
+  // Defensive numeric coerce for downstream arithmetic + display (the
+  // tile keeps showing "—" when null).
+  $dsoNum     = is_numeric($dso) ? (float) $dso : null;
+
+  // Tooltip + tile suffix labels — built here in PHP rather than
+  // inline in the title="" attribute. Blade's tokenizer chokes on
+  // nested ternaries with string-concatenation when they include
+  // unicode separator characters (· × ÷) inside attribute values.
+  $dsoTooltip = 'DSO not available';
+  $dsoMethodSuffix = '';
+  $dsoTileMeta = 'target ≤ 30 d';
+  if ($dsoBasis) {
+      $methodHint = match ($dsoBasis['method'] ?? '') {
+          'gl_class_41_70' => ' · GL-backed (OHADA class 41 ÷ 70)',
+          'gl_dormant'     => ' · GL reachable but no recent sales',
+          'legacy_invoice' => ' · invoice-derived (GL fallback)',
+          default          => '',
+      };
+      $dsoTooltip = ($dsoBasis['numerator_label'] ?? '?')
+                  . ' ÷ ' . ($dsoBasis['denominator_label'] ?? '?')
+                  . ' × ' . ($dsoBasis['window_days'] ?? 0) . ' days'
+                  . $methodHint;
+      if (($dsoBasis['method'] ?? '') === 'gl_class_41_70') {
+          $dsoMethodSuffix = 'GL';
+          $dsoTileMeta = 'rolling ' . ($dsoBasis['window_days'] ?? 90) . ' d · target ≤ 30';
+      }
+  }
+  $dsoDormantHint = ($dsoBasis && ($dsoBasis['method'] ?? '') === 'gl_dormant')
+      ? 'no recent sales' : 'not available';
   $avgAge     = (float) ($data['avg_age']      ?? 0);
   $top5Pct    = (float) ($data['top5_pct']     ?? 0);
   $pctGt60    = (float) ($data['pct_gt_60']    ?? 0);
@@ -156,10 +186,15 @@
         <div class="ar-strip__v {{ $overdueAr > 0 ? 'is-warn' : '' }}">{{ $shortNum($overdueAr) }}<span class="u">{{ $shortUnit($overdueAr) }} {{ $ccy }}</span></div>
         <div class="ar-strip__m">{{ number_format($overdueRate, 1) }}% of AR</div>
     </div>
-    <div class="ar-strip__c">
-        <div class="ar-strip__l">DSO</div>
-        <div class="ar-strip__v {{ $dso > 60 ? 'is-neg' : ($dso > 30 ? 'is-warn' : 'is-pos') }}">{{ number_format($dso, 0) }}<span class="u">days</span></div>
-        <div class="ar-strip__m">target ≤ 30 d</div>
+    <div class="ar-strip__c" title="{{ $dsoTooltip }}">
+        <div class="ar-strip__l">DSO @if ($dsoMethodSuffix !== '')<span style="font-weight:500; color:var(--ea-primary); letter-spacing:.04em;">· {{ $dsoMethodSuffix }}</span>@endif</div>
+        @if ($dsoNum === null)
+          <div class="ar-strip__v">—<span class="u">days</span></div>
+          <div class="ar-strip__m">{{ $dsoDormantHint }}</div>
+        @else
+          <div class="ar-strip__v {{ $dsoNum > 60 ? 'is-neg' : ($dsoNum > 30 ? 'is-warn' : 'is-pos') }}">{{ number_format($dsoNum, 0) }}<span class="u">days</span></div>
+          <div class="ar-strip__m">{{ $dsoTileMeta }}</div>
+        @endif
     </div>
     <div class="ar-strip__c">
         <div class="ar-strip__l">Average Age</div>
