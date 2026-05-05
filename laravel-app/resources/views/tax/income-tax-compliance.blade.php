@@ -41,9 +41,9 @@
                         <div class="text-[10px] uppercase tracking-widest text-rose-700 font-semibold">A · Disallowed expenditures · YTD {{ $year }}</div>
                         <h2 class="text-lg font-semibold text-slate-900 mt-1">High-value cash expenditures</h2>
                         <p class="text-[11px] text-slate-500 mt-1">
-                            Posted credits to cash-on-hand (account 57 — Caisse, SYSCOHADA) above
+                            Posted journals that credit account 57 (Caisse, SYSCOHADA) AND debit class 6 / 1 / 2 / 3 / 4,
+                            with the SUM of 57-credits per journal above
                             <span class="font-medium text-slate-700 tabular-nums">{{ number_format($thresh, 0, '.', ',') }} {{ $cur }}</span>
-                            per transaction
                         </p>
                     </div>
                     <div class="flex flex-col items-end gap-1.5">
@@ -64,7 +64,7 @@
                 {{-- Headline metrics --}}
                 <div class="grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-slate-200">
                     <div class="p-5">
-                        <p class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Number of transactions</p>
+                        <p class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Number of journals flagged</p>
                         <p class="text-3xl font-bold text-slate-900 tabular-nums mt-2">{{ number_format($count) }}</p>
                         <p class="text-[11px] text-slate-500 mt-1">
                             Across <span class="tabular-nums">{{ number_format($grpCnt) }}</span> counterparty/date pair{{ $grpCnt === 1 ? '' : 's' }}
@@ -192,17 +192,31 @@
                 </div>
             @endif
 
-            {{-- Methodology footer --}}
+            {{-- Methodology footer (rework 2026-05 — per-journal aggregation) --}}
             <div class="bg-white border border-slate-200 rounded-xl p-5 shadow-sm text-[12px] text-slate-600 leading-relaxed">
                 <strong class="text-slate-900">Methodology.</strong>
-                Posted move lines whose <code class="text-[11px] bg-slate-100 px-1.5 py-0.5 rounded">account_id.code</code>
+                Per-journal aggregation. Qualifying entries are posted
+                <code class="text-[11px] bg-slate-100 px-1.5 py-0.5 rounded">account.move</code>
+                records that <strong>(a)</strong> have at least one line crediting an account whose
+                <code class="text-[11px] bg-slate-100 px-1.5 py-0.5 rounded">code</code>
                 starts with <code class="text-[11px] bg-slate-100 px-1.5 py-0.5 rounded">57</code>
-                (Caisse, SYSCOHADA), with line credit greater than
-                <code class="text-[11px] bg-slate-100 px-1.5 py-0.5 rounded">{{ number_format($thresh, 0, '.', ',') }}</code>,
-                in the YTD window. Class 52 (Banques) is intentionally excluded.
+                (Caisse, SYSCOHADA), AND <strong>(b)</strong> have at least one line debiting an account
+                starting with <code class="text-[11px] bg-slate-100 px-1.5 py-0.5 rounded">6</code> (charges)
+                or <code class="text-[11px] bg-slate-100 px-1.5 py-0.5 rounded">1</code>,
+                <code class="text-[11px] bg-slate-100 px-1.5 py-0.5 rounded">2</code>,
+                <code class="text-[11px] bg-slate-100 px-1.5 py-0.5 rounded">3</code>,
+                <code class="text-[11px] bg-slate-100 px-1.5 py-0.5 rounded">4</code>
+                (balance-sheet items). The cash-paid figure per journal is the
+                <strong>sum of credit</strong> on every 57-line of that journal. The journal qualifies
+                when that sum exceeds
+                <code class="text-[11px] bg-slate-100 px-1.5 py-0.5 rounded">{{ number_format($thresh, 0, '.', ',') }}</code>.
+                Class 52 (Banques) and 5XX cash transfers are intentionally excluded by the debit-side filter.
                 Threshold reference: {{ $thRef }}.
-                Stacking assumes the DGI requalifies the disallowed amount in full as a hidden distribution.
-                "Missing" supporting doc indicates the originating <code class="text-[11px] bg-slate-100 px-1.5 py-0.5 rounded">account.move</code>
+                Stacking (49.5 %) assumes the DGI requalifies the disallowed amount in full as a hidden distribution.
+                The XLSX export lists <strong>every debit and credit line</strong> of every qualifying journal,
+                grouped by journal — so a tax inspector can read each entry without cross-referencing back to Odoo.
+                "Missing" supporting doc indicates the originating
+                <code class="text-[11px] bg-slate-100 px-1.5 py-0.5 rounded">account.move</code>
                 has zero <code class="text-[11px] bg-slate-100 px-1.5 py-0.5 rounded">ir.attachment</code>
                 records on file.
             </div>
