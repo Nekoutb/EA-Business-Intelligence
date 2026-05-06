@@ -655,8 +655,8 @@
                 @if (!empty($lines))
                 <div id="don-line-table"
                     class="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden mt-4"
-                    data-endpoint-single="{{ url('/tax/income-tax-compliance/donations/lines') }}"
-                    data-endpoint-bulk="{{ url('/tax/income-tax-compliance/donations/lines/bulk-category') }}"
+                    data-endpoint-single="{{ tenant_url('/income-tax-compliance/donations/lines') }}"
+                    data-endpoint-bulk="{{ tenant_url('/income-tax-compliance/donations/lines/bulk-category') }}"
                     data-currency="{{ $donCur }}"
                     data-fallback-count="{{ $fbCount }}"
                     data-fallback-total="{{ $fbTotal }}"
@@ -945,6 +945,18 @@
                         return r.json();
                     }
 
+                    // After any successful save, reload the page so the
+                    // headline tiles (Total deductible / Reintegrated /
+                    // Stacked exposure / TSR) recompute server-side from
+                    // the new line-level resolution. The optimistic in-
+                    // place pill update keeps the row state visible until
+                    // the reload completes.
+                    function reloadSoon() {
+                        // Tiny delay so the pill change is visible before
+                        // the reload jumps the user back to the top.
+                        setTimeout(() => window.location.reload(), 250);
+                    }
+
                     // Wire up per-row dropdowns.
                     for (const tr of rowsAll()) {
                         const sel = tr.querySelector('[data-don-row-select]');
@@ -957,9 +969,9 @@
                                 await postSingle(tr, override);
                                 applyRowState(tr, override, meta.partner_default);
                                 refreshFallbackTallies();
+                                reloadSoon();
                             } catch (err) {
                                 alert('Failed to save category — ' + err.message);
-                            } finally {
                                 sel.disabled = false;
                             }
                         });
@@ -987,9 +999,9 @@
                                 applyRowState(tr, cat, meta.partner_default);
                             }
                             refreshFallbackTallies();
+                            reloadSoon();
                         } catch (err) {
                             alert('Bulk save failed — ' + err.message);
-                        } finally {
                             bulkApplyBtn.disabled = false; bulkLabel.textContent = 'Apply';
                         }
                     });
@@ -1015,9 +1027,9 @@
                                     applyRowState(tr, 3, rowMeta(tr).partner_default);
                                 }
                                 refreshFallbackTallies();
+                                reloadSoon();
                             } catch (err) {
                                 alert('Confirm-all failed — ' + err.message);
-                            } finally {
                                 confirmAllBtn.disabled = false; confirmAllLabel.textContent = 'Confirm all as Cat 3';
                             }
                         });
@@ -1027,90 +1039,24 @@
                 @endif
                 {{-- /Line-level GL detail --}}
 
-                {{-- ─────── Donations received (HAO 845XX) ─────── --}}
-                @php
-                    $rcv         = $don['received'] ?? null;
-                    $rcvTotal    = (float) ($rcv['total_received'] ?? 0);
-                    $rcvAccCount = (int)   ($rcv['account_count']  ?? 0);
-                    $rcvRows     = $rcv['by_partner'] ?? [];
-                @endphp
-                <div class="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden mt-4">
-                    <div class="flex flex-wrap items-center justify-between gap-3 px-5 py-4 border-b border-slate-200 bg-gradient-to-r from-emerald-50/60 to-white">
-                        <div>
-                            <div class="text-[10px] uppercase tracking-widest text-emerald-700 font-semibold">B · Donations received · YTD {{ $donYear }}</div>
-                            <h2 class="text-lg font-semibold text-slate-900 mt-1">Donations received — HAO income</h2>
-                            <p class="text-[11px] text-slate-500 mt-1">
-                                Posted credit balances on
-                                <code class="text-[10.5px] bg-slate-100 px-1.5 py-0.5 rounded">845XX</code>
-                                (Dons et libéralités obtenus, SYSCOHADA classe 8 — HAO).
-                                <span class="ml-1 text-slate-400">No deductibility test applies — these are taxable income unless specifically exempted.</span>
-                            </p>
-                        </div>
-                        <div class="text-right">
-                            <div class="text-[10px] uppercase tracking-widest text-emerald-700 font-semibold">Total received</div>
-                            <div class="text-2xl font-bold text-slate-900 tabular-nums mt-1">{{ number_format($rcvTotal, 0, '.', ',') }}</div>
-                            <div class="text-[10px] text-slate-500 mt-0.5">{{ $donCur }}</div>
-                        </div>
-                    </div>
-
-                    @if (!empty($rcvRows))
-                        <div class="overflow-x-auto">
-                            <table class="min-w-full text-sm">
-                                <thead class="bg-slate-50">
-                                    <tr class="text-left text-[10px] uppercase tracking-widest text-slate-500 font-semibold">
-                                        <th class="px-4 py-2.5">Donor</th>
-                                        <th class="px-4 py-2.5">NIU</th>
-                                        <th class="px-4 py-2.5">Country</th>
-                                        <th class="px-4 py-2.5 text-right">Lines</th>
-                                        <th class="px-4 py-2.5 text-right">Total received ({{ $donCur }})</th>
-                                    </tr>
-                                </thead>
-                                <tbody class="divide-y divide-slate-100">
-                                    @foreach ($rcvRows as $row)
-                                        @php
-                                            $isUnrec = ($row['partner'] ?? null) === '— Unrecorded —';
-                                        @endphp
-                                        <tr class="@if($isUnrec) bg-amber-50/40 @endif">
-                                            <td class="px-4 py-2.5 text-slate-900 @if($isUnrec) text-amber-700 italic @endif">
-                                                {{ $row['partner'] ?? '—' }}
-                                            </td>
-                                            <td class="px-4 py-2.5 text-[11px] tabular-nums text-slate-600">{{ $row['niu'] ?? '—' }}</td>
-                                            <td class="px-4 py-2.5 text-[11px] text-slate-600">{{ $row['country'] ?? '—' }}</td>
-                                            <td class="px-4 py-2.5 text-right tabular-nums text-slate-700">{{ number_format((int) ($row['line_count'] ?? 0)) }}</td>
-                                            <td class="px-4 py-2.5 text-right tabular-nums font-semibold text-slate-900">{{ number_format((float) ($row['total'] ?? 0), 0, '.', ',') }}</td>
-                                        </tr>
-                                    @endforeach
-                                </tbody>
-                            </table>
-                        </div>
-                    @else
-                        <div class="p-6 text-center text-slate-500 text-sm">
-                            No donations recorded on <code class="text-[11px] bg-slate-100 px-1.5 py-0.5 rounded">845XX</code>
-                            in the YTD window. {{ $rcvAccCount > 0 ? '(' . $rcvAccCount . ' account(s) found on the chart.)' : '(No 845-prefix accounts on the chart of accounts.)' }}
-                        </div>
-                    @endif
-                </div>
-
                 {{-- Methodology footer (B) --}}
                 <div class="bg-white border border-slate-200 rounded-xl p-5 shadow-sm text-[12px] text-slate-600 leading-relaxed">
                     <strong class="text-slate-900">Methodology.</strong>
-                    <strong>Donations made</strong> — posted debit balances on
+                    Posted debit balances on
                     <code class="text-[11px] bg-slate-100 px-1.5 py-0.5 rounded">6582XX</code> (Dons) and
-                    <code class="text-[11px] bg-slate-100 px-1.5 py-0.5 rounded">6583XX</code> (Mécenat),
-                    YTD, grouped by
-                    <code class="text-[11px] bg-slate-100 px-1.5 py-0.5 rounded">partner_id</code>
-                    and resolved against per-tenant beneficiary categories. <strong>Donations received</strong> — posted
-                    credit balances on
-                    <code class="text-[11px] bg-slate-100 px-1.5 py-0.5 rounded">845XX</code>
-                    (Dons et libéralités obtenus, classe 8 HAO), grouped by donor. The received side is taxable income
-                    under the HAO regime; no deductibility test applies — surfaced here as an analytical companion to
-                    the deductibility test on the made side.
+                    <code class="text-[11px] bg-slate-100 px-1.5 py-0.5 rounded">6583XX</code> (Mécenat) in YTD,
+                    resolved per line by precedence
+                    <code class="text-[11px] bg-slate-100 px-1.5 py-0.5 rounded">line override</code> →
+                    <code class="text-[11px] bg-slate-100 px-1.5 py-0.5 rounded">partner default</code> →
+                    <code class="text-[11px] bg-slate-100 px-1.5 py-0.5 rounded">Cat 3 fallback</code> (conservative).
                     CA net YTD computed as
                     <code class="text-[11px] bg-slate-100 px-1.5 py-0.5 rounded">|Σ balance(70 ex 709)| − |Σ balance(709)|</code>
                     on posted lines in YTD (SYSCOHADA AUDCIF 2017).
-                    Ceiling = {{ number_format($ceilingPct, 1) }} % × CA net.
-                    Cat 2 cap is collective and apportioned pro-rata to each Cat 2 beneficiary.
-                    Resolved categories cached locally and best-effort written to
+                    Ceiling = {{ number_format($ceilingPct, 1) }} % × CA net. Cat 2 + Cat 3 are collectively tested
+                    against the ceiling; the excess is reintegrated pro-rata. Stacked exposure on the
+                    reintegrated portion = 49.5 % (33 % CIT + 16.5 % IRCM); +15 % TSR (Article 225) on Cat 3
+                    amounts paid to non-residents. Resolved partner categories cached locally and best-effort
+                    written to
                     <code class="text-[11px] bg-slate-100 px-1.5 py-0.5 rounded">res.partner.x_donation_category_cm</code>;
                     if the custom field is not defined in your Odoo, the local cache remains the source of truth.
                 </div>
