@@ -12,6 +12,7 @@ use App\Models\TenantSetting;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Validation\Rule;
 use Illuminate\Support\Str;
 
 /**
@@ -510,11 +511,23 @@ class TenantController extends Controller
     }
 
     /**
-     * Rename a tenant — change display name, brand and/or plan.
-     * Slug is intentionally NOT changeable here: the URL `/t/{slug}` is
-     * baked into bookmarks, audit logs, and any third-party integrations
-     * that have already connected to this workspace. If a slug change is
-     * ever needed, that's a separate operation with redirect bookkeeping.
+     * Rename a tenant — change display name, brand, plan and/or URL slug.
+     *
+     * Slug used to be intentionally immutable; admins now need to be able
+     * to repair an unfortunate slug after the fact. Trade-off:
+     *   • Bookmarks for the old `/t/{old-slug}/...` 404 immediately. Tenant
+     *     users with an active session lose their tenant-scoped page until
+     *     they re-navigate; admin URLs (this page) use the tenant id so
+     *     the admin's session is unaffected.
+     *   • Audit history is preserved — old slugs remain in past audit log
+     *     payloads (target column captures the slug at the time of the
+     *     event), and this rename creates a new audit row carrying the
+     *     before/after slug so the trail is reconstructible.
+     *
+     * Slug validation:
+     *   • lowercase a-z, 0-9, hyphens; must start with a letter; 3..64 chars
+     *   • unique across `tenants.slug` (DB has a unique index)
+     *   • a small reserved-words list to prevent accidents (e.g. "admin")
      */
     public function rename(Request $request, Tenant $tenant)
     {
@@ -522,18 +535,35 @@ class TenantController extends Controller
             'name'  => ['required', 'string', 'max:191'],
             'brand' => ['nullable', 'string', 'max:191'],
             'plan'  => ['nullable', 'string', 'max:32'],
+            'slug'  => [
+                'nullable', 'string', 'min:3', 'max:64',
+                'regex:/^[a-z][a-z0-9\-]+[a-z0-9]$/',
+                Rule::notIn(['admin', 'api', 'login', 'logout', 'register',
+                             'settings', 'users', 't', 'tenant', 'tenants',
+                             'public', 'storage', 'health']),
+                Rule::unique('tenants', 'slug')->ignore($tenant->id),
+            ],
+        ], [
+            'slug.regex' => 'Slug must start with a letter, contain only lowercase letters, digits and hyphens, and end alphanumerically.',
+            'slug.not_in' => 'That slug is reserved and cannot be used.',
         ]);
 
         $before = [
             'name'  => $tenant->name,
             'brand' => $tenant->brand,
             'plan'  => $tenant->plan,
+            'slug'  => $tenant->slug,
         ];
+
+        $newSlug = !empty($data['slug']) && $data['slug'] !== $tenant->slug
+            ? $data['slug']
+            : $tenant->slug;
 
         $tenant->update([
             'name'  => $data['name'],
             'brand' => $data['brand'] ?? $tenant->brand,
             'plan'  => $data['plan']  ?? $tenant->plan,
+            'slug'  => $newSlug,
         ]);
 
         // Mirror APP_BRAND on tenant_settings so the tenant-facing
@@ -552,12 +582,18 @@ class TenantController extends Controller
                 'name'  => $tenant->name,
                 'brand' => $tenant->brand,
                 'plan'  => $tenant->plan,
+                'slug'  => $tenant->slug,
             ]],
         ]);
 
+        $slugChanged = $before['slug'] !== $tenant->slug;
+        $msg = $slugChanged
+            ? "Tenant renamed to '{$tenant->name}' and slug changed to '{$tenant->slug}'. Bookmarks for the old slug will 404."
+            : "Tenant renamed to '{$tenant->name}'.";
+
         return back()->with('flash', [
             'type' => 'success',
-            'msg'  => "Tenant renamed to '{$tenant->name}'.",
+            'msg'  => $msg,
         ]);
     }
 

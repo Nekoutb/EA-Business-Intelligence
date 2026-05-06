@@ -16,6 +16,80 @@
 @endsection
 
 @section('content')
+{{-- ─────── One-time credentials banner — only shows after a user
+     has just been created via /admin/users/create. The password
+     is never persisted in plaintext, so this is the admin's one
+     chance to copy it (besides the welcome email if it dispatched
+     successfully). The banner is dismiss-only — refreshing the
+     page or navigating away makes it disappear forever. ─────── --}}
+@if (session()->has('new_user_credentials'))
+    @php $nc = session('new_user_credentials'); @endphp
+    <div class="mb-4 bg-gradient-to-r from-indigo-50 to-emerald-50 border border-indigo-200 rounded-xl p-5 shadow-sm" id="ea-new-user-banner">
+        <div class="flex items-start justify-between gap-4">
+            <div class="flex-1">
+                <div class="flex items-center gap-2 mb-2">
+                    <svg class="w-4 h-4 text-emerald-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+                    <h3 class="text-sm font-semibold text-slate-900">User created — credentials below</h3>
+                </div>
+                <p class="text-[12px] text-slate-600 mb-3">
+                    Copy these now — the password is <strong>only shown once</strong> for security; it isn't stored in plaintext anywhere we can show it again.
+                    @if ($nc['mail']['attempted'])
+                        @if ($nc['mail']['error'])
+                            <span class="block mt-1 text-rose-700">
+                                <strong>Welcome email failed</strong> — share the credentials manually.
+                                Reason: <code class="bg-rose-50 border border-rose-200 px-1 rounded text-[10.5px]">{{ $nc['mail']['error'] }}</code>
+                            </span>
+                        @elseif ($nc['mail']['driver'] === 'log')
+                            <span class="block mt-1 text-amber-700">
+                                Mail driver is <code class="bg-amber-50 border border-amber-200 px-1 rounded text-[10.5px]">log</code> —
+                                the welcome email was written to <code class="bg-amber-50 border border-amber-200 px-1 rounded text-[10.5px]">storage/logs/laravel.log</code>
+                                instead of being delivered. Set <code class="bg-amber-50 border border-amber-200 px-1 rounded text-[10.5px]">MAIL_MAILER=smtp</code>
+                                + SMTP credentials in <code class="bg-amber-50 border border-amber-200 px-1 rounded text-[10.5px]">.env</code> for real delivery, or share the credentials manually now.
+                            </span>
+                        @else
+                            <span class="block mt-1 text-emerald-700">
+                                ✓ Welcome email dispatched via <code class="bg-emerald-50 border border-emerald-200 px-1 rounded text-[10.5px]">{{ $nc['mail']['driver'] }}</code>.
+                            </span>
+                        @endif
+                    @else
+                        <span class="block mt-1 text-slate-500">No welcome email sent — the credentials below are the only delivery channel.</span>
+                    @endif
+                </p>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Email</div>
+                        <div class="flex items-center gap-2 mt-1">
+                            <code class="flex-1 bg-white border border-slate-200 rounded px-2 py-1.5 text-[12px] font-mono text-slate-900 truncate select-all">{{ $nc['email'] }}</code>
+                            <button type="button" onclick="navigator.clipboard?.writeText(this.previousElementSibling.textContent.trim()); this.textContent='Copied!'; setTimeout(()=>this.textContent='Copy',1500);"
+                                    class="text-[11px] font-medium text-indigo-700 border border-indigo-300 rounded px-2 py-1.5 hover:bg-indigo-50">Copy</button>
+                        </div>
+                    </div>
+                    <div>
+                        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Temporary password</div>
+                        <div class="flex items-center gap-2 mt-1">
+                            <code class="flex-1 bg-white border border-slate-200 rounded px-2 py-1.5 text-[12px] font-mono text-slate-900 truncate select-all">{{ $nc['password'] }}</code>
+                            <button type="button" onclick="navigator.clipboard?.writeText(this.previousElementSibling.textContent.trim()); this.textContent='Copied!'; setTimeout(()=>this.textContent='Copy',1500);"
+                                    class="text-[11px] font-medium text-indigo-700 border border-indigo-300 rounded px-2 py-1.5 hover:bg-indigo-50">Copy</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="mt-3">
+                    <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Login link</div>
+                    <div class="flex items-center gap-2 mt-1">
+                        <code class="flex-1 bg-white border border-slate-200 rounded px-2 py-1.5 text-[12px] font-mono text-slate-700 truncate select-all">{{ $nc['login_url'] }}</code>
+                        <button type="button" onclick="navigator.clipboard?.writeText(this.previousElementSibling.textContent.trim()); this.textContent='Copied!'; setTimeout(()=>this.textContent='Copy',1500);"
+                                class="text-[11px] font-medium text-indigo-700 border border-indigo-300 rounded px-2 py-1.5 hover:bg-indigo-50">Copy</button>
+                        <a href="{{ $nc['login_url'] }}" target="_blank" rel="noopener"
+                           class="text-[11px] font-medium text-slate-500 border border-slate-300 rounded px-2 py-1.5 hover:bg-slate-50">Open ↗</a>
+                    </div>
+                </div>
+            </div>
+            <button type="button" onclick="document.getElementById('ea-new-user-banner').remove()"
+                    class="text-slate-400 hover:text-slate-700 text-lg leading-none flex-shrink-0" title="Dismiss">×</button>
+        </div>
+    </div>
+@endif
+
 <form method="GET" class="panel p-3 mb-4 flex gap-2">
     <input name="q" value="{{ $search }}" placeholder="Search name or email..."
            class="flex-1 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
