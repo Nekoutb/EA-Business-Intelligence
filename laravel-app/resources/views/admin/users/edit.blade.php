@@ -19,7 +19,14 @@
           ? $editing->permOverride($bucket, $key)
           : null;
   };
-  $tenantValue = $editing ? ($editing->tenant_id ? (string) $editing->tenant_id : 'platform') : 'platform';
+  // Tenant pre-select: editing → user's tenant_id; new + ?tenant=id → that
+  // tenant; new + no query → platform (super admin) by default.
+  $preselect = $preselectTenantId ?? null;
+  $tenantValue = $editing
+      ? ($editing->tenant_id ? (string) $editing->tenant_id : 'platform')
+      : ($preselect !== null ? (string) $preselect : 'platform');
+  // Suggested random password — only relevant for new-user flow.
+  $defaultPassword = $editing ? '' : ($suggestedPassword ?? '');
 @endphp
 
 @if (isset($errors) && $errors->any())
@@ -76,11 +83,43 @@
             <div class="md:col-span-2">
                 <label class="block text-xs font-medium text-slate-600 mb-1">
                     Password
-                    @if ($editing)<span class="text-slate-400 font-normal">· leave blank to keep current</span>@endif
+                    @if ($editing)
+                        <span class="text-slate-400 font-normal">· leave blank to keep current</span>
+                    @else
+                        <span class="text-slate-400 font-normal">· suggestion pre-filled, edit if you want</span>
+                    @endif
                 </label>
-                <input name="password" type="password" autocomplete="new-password" minlength="8"
-                       {{ $editing ? '' : 'required' }}
-                       class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm font-mono">
+                <div class="flex items-center gap-2">
+                    <input id="ea-pw-input" name="password" type="text" autocomplete="new-password" minlength="8"
+                           value="{{ old('password', $defaultPassword) }}"
+                           {{ $editing ? '' : 'required' }}
+                           class="flex-1 border border-slate-300 rounded-lg px-3 py-2 text-sm font-mono">
+                    <button type="button" onclick="document.getElementById('ea-pw-input').type = (document.getElementById('ea-pw-input').type==='password'?'text':'password')"
+                            class="text-[11px] text-slate-500 border border-slate-300 rounded px-2 py-2 hover:bg-slate-50" title="Toggle visibility">
+                        Show / hide
+                    </button>
+                    <button type="button" onclick="(function(){const a='abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789@#';let s='';for(let i=0;i<14;i++)s+=a[Math.floor(Math.random()*a.length)];document.getElementById('ea-pw-input').value=s;})()"
+                            class="text-[11px] text-slate-500 border border-slate-300 rounded px-2 py-2 hover:bg-slate-50" title="Generate a fresh random password">
+                        Regenerate
+                    </button>
+                </div>
+
+                @unless ($editing)
+                    <label class="mt-3 flex items-start gap-2 text-[12px] text-slate-700 cursor-pointer">
+                        <input type="checkbox" name="send_welcome_email" value="1" checked
+                               class="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500">
+                        <span>
+                            <strong>Email these credentials to the user.</strong>
+                            <span class="block text-[11px] text-slate-500">
+                                If SMTP is configured, a welcome email goes out with the email + temporary password + login link.
+                                If the mail driver is <code class="bg-slate-100 px-1 rounded text-[10.5px]">log</code> (default), the
+                                rendered email is written to <code class="bg-slate-100 px-1 rounded text-[10.5px]">storage/logs/laravel.log</code>
+                                so you can copy the credentials from there. Either way the password is also shown to you on-screen
+                                once after creation.
+                            </span>
+                        </span>
+                    </label>
+                @endunless
             </div>
         </div>
     </div>

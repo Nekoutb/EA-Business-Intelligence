@@ -81,9 +81,8 @@
                 <div>
                     <h3 class="text-sm font-semibold text-slate-900">Rename tenant</h3>
                     <p class="text-[11px] text-slate-500 mt-0.5">
-                        Updates the display name, brand and plan. The URL slug
-                        <code class="bg-slate-100 px-1 py-0.5 rounded">/t/{{ $tenant->slug }}</code>
-                        is immutable to keep bookmarks &amp; audit history consistent.
+                        Updates the display name, brand, plan and (carefully) the URL slug
+                        <code class="bg-slate-100 px-1 py-0.5 rounded">/t/{{ $tenant->slug }}</code>.
                     </p>
                 </div>
                 <button type="button" onclick="document.getElementById('ea-rename-panel').classList.add('hidden')"
@@ -112,6 +111,41 @@
                            value="{{ old('plan', $tenant->plan) }}"
                            placeholder="standard"
                            class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent">
+                </div>
+            </div>
+
+            {{-- Slug-edit row: separate row with a prominent warning so
+                 nobody flips it casually. Leave blank to keep the
+                 existing slug. --}}
+            <div class="border border-amber-200 bg-amber-50/60 rounded-lg p-4 space-y-2">
+                <div class="flex items-start gap-2">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-amber-700 mt-0.5 flex-shrink-0"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3m0 4h.01M5 19h14a2 2 0 001.732-3L13.732 4a2 2 0 00-3.464 0L3.268 16A2 2 0 005 19z"/></svg>
+                    <div>
+                        <h4 class="text-[12px] font-semibold text-amber-900">URL slug — change with care</h4>
+                        <p class="text-[11px] text-amber-800 mt-0.5 leading-relaxed">
+                            Changing the slug rewrites the workspace URL from
+                            <code class="bg-amber-100 px-1 rounded">/t/{{ $tenant->slug }}</code>
+                            to <code class="bg-amber-100 px-1 rounded">/t/&lt;new-slug&gt;</code>.
+                            <strong>All bookmarks pointing at the old slug will 404</strong>, and tenant users with
+                            an active session will lose their tenant context until they re-navigate. Audit history
+                            is preserved (this change is recorded in the audit log with both before/after slugs).
+                        </p>
+                    </div>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
+                    <div>
+                        <label class="block text-[11px] font-medium text-slate-600 mb-1">URL slug</label>
+                        <div class="flex items-center gap-1">
+                            <span class="text-[12px] font-mono text-slate-400 select-none">/t/</span>
+                            <input name="slug" maxlength="64" pattern="[a-z][a-z0-9\-]+[a-z0-9]"
+                                   value="{{ old('slug', $tenant->slug) }}"
+                                   placeholder="{{ $tenant->slug }}"
+                                   class="flex-1 border border-amber-300 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-amber-500 focus:border-transparent bg-white">
+                        </div>
+                        <p class="text-[10px] text-amber-700 mt-1">
+                            Lowercase letters, digits and hyphens · 3–64 chars · must start with a letter and end alphanumerically. Leave unchanged to keep the current slug.
+                        </p>
+                    </div>
                 </div>
             </div>
             @if ($errors->any())
@@ -272,19 +306,28 @@
     {{-- ── Sidebar: users + audit ─────────────────────────────────── --}}
     <div class="space-y-4">
         <div class="panel p-5">
-            <h2 class="text-sm font-semibold text-slate-900 mb-3">Users ({{ $users->count() }})</h2>
+            <div class="flex items-center justify-between gap-2 mb-3">
+                <h2 class="text-sm font-semibold text-slate-900">Users ({{ $users->count() }})</h2>
+                <a href="/admin/users/create?tenant={{ $tenant->id }}"
+                   class="inline-flex items-center gap-1 text-[11px] font-semibold text-white bg-indigo-600 hover:bg-indigo-700 px-2.5 py-1 rounded-md shadow-sm"
+                   title="Create a new user under this tenant">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>
+                    Add user
+                </a>
+            </div>
             <div class="space-y-2 text-sm">
                 @forelse ($users as $u)
                     <div class="flex items-center justify-between gap-3">
-                        <div>
+                        <div class="min-w-0 flex-1">
                             <div class="text-slate-800 truncate">{{ $u->name }}</div>
                             <div class="text-[11px] text-slate-500 truncate">{{ $u->email }}</div>
                         </div>
-                        <span class="text-[10px] uppercase tracking-wider rounded px-1.5 py-0.5
-                                     bg-slate-100 text-slate-600">{{ $u->role }}</span>
+                        <a href="/admin/users/{{ $u->id }}/edit"
+                           class="text-[10px] uppercase tracking-wider rounded px-1.5 py-0.5 bg-slate-100 text-slate-600 hover:bg-indigo-100 hover:text-indigo-700"
+                           title="Edit user — change role, permissions, password">{{ $u->role }}</a>
                     </div>
                 @empty
-                    <p class="text-xs text-slate-400 italic">No users yet.</p>
+                    <p class="text-xs text-slate-400 italic">No users yet — click <em>Add user</em> above.</p>
                 @endforelse
             </div>
         </div>
