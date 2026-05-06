@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace App\Services\Tax;
 
+use App\Models\LineDonationCategory;
 use App\Models\PartnerDonationCategory;
 use App\Models\Tenant;
 use App\Odoo\OdooClient;
@@ -30,10 +31,33 @@ use App\Odoo\OdooClient;
  *     exempted, and the existing P&L picks them up via class 8 income.
  *     No deductibility test applies to received donations.
  *
- *   • Beneficiary resolution: each line on 6582/6583 is grouped by
- *     partner_id; the resolved category (1/2/3) is read from the local
- *     partner_donation_categories table (per-tenant, cached after
- *     resolution). NIU and country come from res.partner.
+ *   • Line-level category resolution (refined 2026-05-05):
+ *
+ *       Each posted line on 6582/6583 carries an effective category
+ *       resolved by this precedence:
+ *
+ *         line override (line_donation_categories.category)
+ *           ──→ if absent ──→  partner default
+ *                              (partner_donation_categories.category)
+ *           ──→ if absent ──→  Cat 3 fallback (conservative)
+ *
+ *       Line override = auditor's professional judgement on a specific
+ *       posting. Partner default = same auditor's judgement on the
+ *       beneficiary in general. Cat 3 fallback = "non-deductible until
+ *       proven otherwise" — a line with no explicit categorisation
+ *       still enters the deductibility test, but flagged in the UI so
+ *       the auditor knows what's outstanding.
+ *
+ *       Categorisation is "complete" when no line is resolving via the
+ *       Cat 3 fallback (i.e., every line has either a line override or
+ *       a partner default). Surfaced via the categorisation_complete
+ *       flag and cat3_fallback_total/count metadata.
+ *
+ *   • Beneficiary roll-up: each line is grouped by partner_id for the
+ *     summary table; deductible/reintegrated/exposure are summed from
+ *     line-level resolution (so a beneficiary with mixed line
+ *     overrides shows the correct math). NIU + country come from
+ *     res.partner.
  *
  *   • Turnover net of taxes (CA_net_YTD), SYSCOHADA-anchored:
  *         CA_net = |Σ balance(70 except 709)| − |Σ balance(709)|
@@ -105,19 +129,24 @@ final class DonationsComplianceService
             return $empty;
         }
 
-        // 2. Fetch line-level donation lines in YTD.
+        // 2. Fetch line-level donation lines in YTD. Carry `id` on the
+        // payload so we can match line-level category overrides further
+        // down (step 6.5).
         $rawLines = $this->odoo->searchRead('account.move.line', [
             ['account_id', 'in', $donAccountIds],
             ['date', '>=', $jan1->format('Y-m-d')],
             ['date', '<=', $today->format('Y-m-d')],
             ['parent_state', '=', 'posted'],
-        ], ['date', 'debit', 'credit', 'balance', 'partner_id', 'journal_id', 'account_id', 'move_id', 'name'],
+        ], ['id', 'date', 'debit', 'credit', 'balance', 'partner_id', 'journal_id', 'account_id', 'move_id', 'name'],
             ['order' => 'date desc']);
 
-        // 3. Group by partner_id; collect partner ids + line metadata for export.
+        // 3. Group by partner_id (back-compat with the partner roll-up
+        // table) AND build a flat $flatLines[] keyed by line id for the
+        // line-level deductibility resolution further down.
         $byPartner = [];   // [partner_id => ['name' => ?, 'total' => 0, 'lines' => [...]]]
         $unrecordedTotal = 0.0;
         $unrecordedLines = [];
+        $flatLines = [];   // canonical line-level list — drives the new line table + totals
 
         foreach ($rawLines as $l) {
             // Donation expense → debit-positive on 6*. Use balance which is
@@ -126,10 +155,17 @@ final class DonationsComplianceService
             $amount = (float) ($l['balance'] ?? ((float)($l['debit'] ?? 0) - (float)($l['credit'] ?? 0)));
             if ($amount === 0.0) continue;
 
+            $lineId  = (int)    ($l['id'] ?? 0);
             $partner = $l['partner_id'] ?? null;
             $journal = (is_array($l['journal_id'] ?? null)) ? (string) $l['journal_id'][1] : '—';
             $account = (is_array($l['account_id'] ?? null)) ? (string) $l['account_id'][1] : '—';
+            // account_id from Odoo is [id, "code label"] — extract the code prefix
+            // for storage in the line-override table denormalised column.
+            $accountCode = '';
+            if (preg_match('/^(\d+)/', $account, $m)) $accountCode = $m[1];
             $moveId  = (is_array($l['move_id']    ?? null)) ? (int)    $l['move_id'][0]    : 0;
+            $pid     = (is_array($partner) && isset($partner[0])) ? (int) $partner[0] : null;
+            $pname   = (is_array($partner) && isset($partner[1])) ? (string) $partner[1] : null;
 
             $line = [
                 'date'      => (string) ($l['date'] ?? ''),
@@ -140,12 +176,11 @@ final class DonationsComplianceService
                 'move_id'   => $moveId,
             ];
 
-            if (is_array($partner) && isset($partner[0])) {
-                $pid = (int) $partner[0];
+            if ($pid !== null) {
                 if (!isset($byPartner[$pid])) {
                     $byPartner[$pid] = [
                         'partner_id' => $pid,
-                        'name'       => (string) ($partner[1] ?? ''),
+                        'name'       => (string) ($pname ?? ''),
                         'total'      => 0.0,
                         'lines'      => [],
                     ];
@@ -156,6 +191,20 @@ final class DonationsComplianceService
                 $unrecordedTotal += $amount;
                 $unrecordedLines[] = $line;
             }
+
+            // Flat record for line-level resolution. Effective category
+            // and downstream apportionment fields are filled in step 6.5.
+            $flatLines[] = [
+                'id'           => $lineId,
+                'move_id'      => $moveId,
+                'date'         => (string) ($l['date'] ?? ''),
+                'narration'    => (string) ($l['name'] ?? ''),
+                'account'      => $account,
+                'account_code' => $accountCode,
+                'partner_id'   => $pid,
+                'partner_name' => $pname,
+                'amount'       => round($amount, 2),
+            ];
         }
 
         // 4. Hydrate partner detail (NIU, country) from Odoo for the partners we collected.
@@ -239,88 +288,179 @@ final class DonationsComplianceService
         if ($caNet < 0) $caNet = 0;                 // never negative for a healthy ledger
         $ceiling   = round(self::DEDUCTION_CEILING_PCT / 100.0 * $caNet, 2);
 
-        // 7. Apply category rules.
-        $totalDonations = array_sum(array_column($beneficiaries, 'total'));
-        $cat1Total = 0.0; $cat2Total = 0.0; $cat3Total = 0.0; $unresolvedTotal = 0.0;
-        foreach ($beneficiaries as $b) {
-            $a = (float) $b['total'];
-            switch ((int) ($b['category'] ?? 0)) {
+        // ─────────────────────────────────────────────────────────────────
+        // 6.5. Line-level category resolution.
+        //
+        // Each line gets an effective_category (1/2/3) by the precedence:
+        //
+        //     line override  →  partner default  →  Cat 3 fallback
+        //
+        // Cat 3 fallback is the conservative default: if the auditor
+        // hasn't explicitly categorised a line and there's no partner-
+        // level default to inherit from, we treat it as non-deductible
+        // until proven otherwise. The UI surfaces these via the
+        // categorisation_complete flag + cat3_fallback_total/count
+        // metadata so the auditor knows what's outstanding.
+        // ─────────────────────────────────────────────────────────────────
+        $lineIdsInScope = array_filter(array_column($flatLines, 'id'));
+        $lineOverrides  = LineDonationCategory::where('tenant_id', $this->tenant->id)
+            ->whereIn('odoo_move_line_id', $lineIdsInScope === [] ? [0] : array_values($lineIdsInScope))
+            ->get()
+            ->keyBy('odoo_move_line_id');
+
+        // Build partner-default lookup for fast inheritance during the
+        // per-line walk (partner id → category int|null, is_non_resident).
+        $partnerDefaultCat = [];
+        $partnerNonResident = [];
+        foreach ($localRows as $pid => $local) {
+            $partnerDefaultCat[(int) $pid]   = $local->category !== null ? (int) $local->category : null;
+            $partnerNonResident[(int) $pid] = (bool) ($local->is_non_resident ?? false);
+        }
+
+        // Resolve each line's effective category + source.
+        foreach ($flatLines as &$fl) {
+            $override = $lineOverrides->get($fl['id']);
+            $partnerDefault = $fl['partner_id'] !== null
+                ? ($partnerDefaultCat[$fl['partner_id']] ?? null)
+                : null;
+            $isForeign = $fl['partner_id'] !== null
+                ? ($partnerInfo[$fl['partner_id']]['is_foreign'] ?? false)
+                : false;
+            $isNonResident = $fl['partner_id'] !== null
+                ? (($partnerNonResident[$fl['partner_id']] ?? false) || $isForeign)
+                : false;
+
+            $fl['line_override_category']   = $override !== null ? (int) $override->category : null;
+            $fl['line_override_note']       = $override?->note;
+            $fl['line_override_assigned_by']= $override?->assigned_by;
+            $fl['line_override_assigned_at']= $override?->updated_at?->toIso8601String();
+            $fl['partner_default_category'] = $partnerDefault;
+            $fl['is_non_resident']          = $isNonResident;
+
+            if ($fl['line_override_category'] !== null) {
+                $fl['effective_category'] = $fl['line_override_category'];
+                $fl['category_source']    = 'line_override';
+            } elseif ($partnerDefault !== null) {
+                $fl['effective_category'] = $partnerDefault;
+                $fl['category_source']    = 'partner_default';
+            } else {
+                // Conservative fallback: non-deductible until proven otherwise.
+                $fl['effective_category'] = 3;
+                $fl['category_source']    = 'cat3_fallback';
+            }
+        }
+        unset($fl);
+
+        // 7. Apply category rules — totals now sourced from line-level
+        // effective categories. unresolved_total is retained for back-
+        // compat (always 0 under the new resolution since fallback rolls
+        // into Cat 3) so the existing view doesn't break.
+        $totalDonations = 0.0;
+        $cat1Total = 0.0; $cat2Total = 0.0; $cat3Total = 0.0;
+        $cat3FallbackTotal = 0.0; $cat3FallbackCount = 0;
+        foreach ($flatLines as $fl) {
+            $a = (float) $fl['amount'];
+            $totalDonations += $a;
+            switch ((int) $fl['effective_category']) {
                 case 1:  $cat1Total += $a; break;
                 case 2:  $cat2Total += $a; break;
                 case 3:  $cat3Total += $a; break;
-                default: $unresolvedTotal += $a; break;     // null/0
+            }
+            if ($fl['category_source'] === 'cat3_fallback') {
+                $cat3FallbackTotal += $a;
+                $cat3FallbackCount++;
             }
         }
+        $unresolvedTotal = 0.0;     // back-compat; fallback rolls into cat3
 
         // ── Apply ceiling collectively to the non-Cat-1 pool ─────────────
-        // Methodology refinement (2026-04-28):
-        //   The 0.5% × CA_net ceiling is treated as a materiality threshold
-        //   over the WHOLE non-Cat-1 spend, not just over Cat 2. If the
-        //   firm's combined Cat 2 + Cat 3 + Unresolved spending is ≤ ceiling,
-        //   nothing is reintegrated — the actual disbursement falls below
-        //   the deductibility cap so there is no exposure.
-        //
-        //   Above the ceiling, the *excess* is reintegrated and apportioned
-        //   pro-rata across the contributing categories by share. Cat 1
-        //   amounts are always exempt regardless of ceiling.
-        $cat1Allowed     = $cat1Total;                      // always deductible
-        $nonCat1Total    = $cat2Total + $cat3Total + $unresolvedTotal;
+        // Methodology unchanged from the partner-grouped pass — the pool
+        // tested against the 0.5% × CA_net ceiling is everything that
+        // isn't Cat 1, line-level. Excess over ceiling is reintegrated
+        // pro-rata across Cat 2 / Cat 3 by share of the non-Cat-1 pool.
+        $cat1Allowed     = $cat1Total;
+        $nonCat1Total    = $cat2Total + $cat3Total;
         $excessOverCap   = max(0.0, $nonCat1Total - $ceiling);
 
-        // Pro-rata distribution of the excess back onto each non-Cat-1 bucket.
-        $shareCat2  = $nonCat1Total > 0 ? $cat2Total      / $nonCat1Total : 0.0;
-        $shareCat3  = $nonCat1Total > 0 ? $cat3Total      / $nonCat1Total : 0.0;
-        $shareUnres = $nonCat1Total > 0 ? $unresolvedTotal / $nonCat1Total : 0.0;
+        $shareCat2 = $nonCat1Total > 0 ? $cat2Total / $nonCat1Total : 0.0;
+        $shareCat3 = $nonCat1Total > 0 ? $cat3Total / $nonCat1Total : 0.0;
 
-        $cat2Reintegrated  = round($excessOverCap * $shareCat2,  2);
-        $cat3Reintegrated  = round($excessOverCap * $shareCat3,  2);
-        $unresReintegrated = round($excessOverCap * $shareUnres, 2);
-        $cat2Allowed       = $cat2Total      - $cat2Reintegrated;
-        $cat3Allowed       = $cat3Total      - $cat3Reintegrated;
-        $unresAllowed      = $unresolvedTotal - $unresReintegrated;
+        $cat2Reintegrated = round($excessOverCap * $shareCat2, 2);
+        $cat3Reintegrated = round($excessOverCap * $shareCat3, 2);
+        $cat2Allowed      = $cat2Total - $cat2Reintegrated;
+        $cat3Allowed      = $cat3Total - $cat3Reintegrated;
 
-        $totalDeductible   = $cat1Allowed + $cat2Allowed + $cat3Allowed + $unresAllowed;
-        $totalReintegrated = $cat2Reintegrated + $cat3Reintegrated + $unresReintegrated;
+        $totalDeductible   = $cat1Allowed + $cat2Allowed + $cat3Allowed;
+        $totalReintegrated = $cat2Reintegrated + $cat3Reintegrated;
 
-        // Per-beneficiary apportionment: each beneficiary's reintegrated
-        // share is the same proportion of its category's total as the
-        // category-level reintegration ratio.
+        // Per-line apportionment: each line's reintegrated share is the
+        // same proportion of its category's total as the category-level
+        // reintegration ratio.
         $reintRatioByCat = [
             1 => 0.0,
-            2 => $cat2Total      > 0 ? $cat2Reintegrated  / $cat2Total      : 0.0,
-            3 => $cat3Total      > 0 ? $cat3Reintegrated  / $cat3Total      : 0.0,
-            0 => $unresolvedTotal > 0 ? $unresReintegrated / $unresolvedTotal : 0.0,
+            2 => $cat2Total > 0 ? $cat2Reintegrated / $cat2Total : 0.0,
+            3 => $cat3Total > 0 ? $cat3Reintegrated / $cat3Total : 0.0,
         ];
-        foreach ($beneficiaries as &$b) {
-            $a   = (float) $b['total'];
-            $cat = (int) ($b['category'] ?? 0);
-            $deductible = $reintegrated = 0.0; $tsr = 0.0;
+        foreach ($flatLines as &$fl) {
+            $a    = (float) $fl['amount'];
+            $cat  = (int)   $fl['effective_category'];
+            $ratio = $reintRatioByCat[$cat] ?? 0.0;
+            $reint = round($a * $ratio, 2);
+            $ded   = round($a - $reint, 2);
 
-            $ratio        = $reintRatioByCat[$cat] ?? $reintRatioByCat[0];
-            $reintegrated = round($a * $ratio, 2);
-            $deductible   = round($a - $reintegrated, 2);
-
-            // 15% TSR (Article 225 CGI) applies on the reintegrated portion
-            // for Cat 3 / Unresolved beneficiaries flagged as non-resident.
-            if ($reintegrated > 0 && ($cat === 3 || $cat === 0) && $b['is_non_resident']) {
-                $tsr = round($reintegrated * (self::TSR_NON_RESIDENT_PCT / 100.0), 2);
+            // 15% TSR (Article 225 CGI) on the reintegrated portion of
+            // Cat 3 lines whose partner is flagged non-resident.
+            $tsr = 0.0;
+            if ($reint > 0 && $cat === 3 && $fl['is_non_resident']) {
+                $tsr = round($reint * (self::TSR_NON_RESIDENT_PCT / 100.0), 2);
             }
+            $cit = round($reint * (self::STACKED_RATE_PCT / 100.0), 2);
 
-            $citWht = round($reintegrated * (self::STACKED_RATE_PCT / 100.0), 2);
-            $b['deductible']     = $deductible;
-            $b['reintegrated']   = $reintegrated;
-            $b['exposure_stack'] = $citWht;
-            $b['exposure_tsr']   = $tsr;
-            $b['exposure_total'] = round($citWht + $tsr, 2);
+            $fl['deductible']     = $ded;
+            $fl['reintegrated']   = $reint;
+            $fl['exposure_stack'] = $cit;
+            $fl['exposure_tsr']   = $tsr;
+            $fl['exposure_total'] = round($cit + $tsr, 2);
+        }
+        unset($fl);
+
+        // 8. Roll line-level math up to the existing beneficiaries[] table
+        // (back-compat with the partner roll-up UI). A beneficiary with
+        // mixed line overrides will show the correct math because the
+        // sums come from line-level resolution.
+        $beneAggByPid = [];     // partner_id => [ded, reint, cit, tsr]
+        foreach ($flatLines as $fl) {
+            $pid = $fl['partner_id'] ?? 0;        // 0 = unrecorded
+            if (!isset($beneAggByPid[$pid])) {
+                $beneAggByPid[$pid] = ['ded' => 0.0, 'reint' => 0.0, 'cit' => 0.0, 'tsr' => 0.0];
+            }
+            $beneAggByPid[$pid]['ded']   += (float) $fl['deductible'];
+            $beneAggByPid[$pid]['reint'] += (float) $fl['reintegrated'];
+            $beneAggByPid[$pid]['cit']   += (float) $fl['exposure_stack'];
+            $beneAggByPid[$pid]['tsr']   += (float) $fl['exposure_tsr'];
+        }
+        foreach ($beneficiaries as &$b) {
+            $pid = (int) $b['partner_id'];
+            $agg = $beneAggByPid[$pid] ?? ['ded' => 0.0, 'reint' => 0.0, 'cit' => 0.0, 'tsr' => 0.0];
+            $b['deductible']     = round($agg['ded'], 2);
+            $b['reintegrated']   = round($agg['reint'], 2);
+            $b['exposure_stack'] = round($agg['cit'], 2);
+            $b['exposure_tsr']   = round($agg['tsr'], 2);
+            $b['exposure_total'] = round($agg['cit'] + $agg['tsr'], 2);
         }
         unset($b);
 
-        $totalExposureStack = round($totalReintegrated * (self::STACKED_RATE_PCT / 100.0), 2);
+        $totalExposureStack = 0.0;
         $totalTsr           = 0.0;
-        foreach ($beneficiaries as $b) {
-            $totalTsr += (float) ($b['exposure_tsr'] ?? 0);
+        foreach ($flatLines as $fl) {
+            $totalExposureStack += (float) $fl['exposure_stack'];
+            $totalTsr           += (float) $fl['exposure_tsr'];
         }
-        $totalExposure = round($totalExposureStack + $totalTsr, 2);
+        $totalExposureStack = round($totalExposureStack, 2);
+        $totalTsr           = round($totalTsr, 2);
+        $totalExposure      = round($totalExposureStack + $totalTsr, 2);
+
+        $categorisationComplete = ($cat3FallbackCount === 0);
 
         return [
             'currency'       => $this->detectCurrency(),
@@ -331,11 +471,20 @@ final class DonationsComplianceService
             ],
             'donations'      => [
                 'beneficiaries'         => $beneficiaries,
+                'lines'                 => $flatLines,         // line-level detail (new)
                 'total_donations'       => round($totalDonations, 2),
                 'cat1_total'            => round($cat1Total, 2),
                 'cat2_total'            => round($cat2Total, 2),
                 'cat3_total'            => round($cat3Total, 2),
                 'unresolved_total'      => round($unresolvedTotal, 2),
+
+                // Cat 3 fallback metadata — drives the categorisation
+                // banner in the UI. count = number of lines resolving
+                // via fallback; total = their summed magnitude.
+                'cat3_fallback_total'   => round($cat3FallbackTotal, 2),
+                'cat3_fallback_count'   => $cat3FallbackCount,
+                'categorisation_complete' => $categorisationComplete,
+                'line_count'            => count($flatLines),
 
                 'ca_net_ytd'            => round($caNet, 2),
                 'ceiling_pct'           => self::DEDUCTION_CEILING_PCT,
@@ -544,32 +693,37 @@ final class DonationsComplianceService
                 'year' => (int) $to->format('Y'),
             ],
             'donations' => [
-                'beneficiaries'      => [],
-                'total_donations'    => 0.0,
-                'cat1_total'         => 0.0,
-                'cat2_total'         => 0.0,
-                'cat3_total'         => 0.0,
-                'unresolved_total'   => 0.0,
-                'ca_net_ytd'         => 0.0,
-                'ceiling_pct'        => self::DEDUCTION_CEILING_PCT,
-                'ceiling_xaf'        => 0.0,
-                'cat2_allowed'       => 0.0,
-                'cat2_reintegrated'  => 0.0,
-                'cat3_reintegrated'  => 0.0,
-                'total_deductible'   => 0.0,
-                'total_reintegrated' => 0.0,
-                'cit_rate_pct'       => self::CIT_RATE_PCT,
-                'ircm_rate_pct'      => self::IRCM_RATE_PCT,
-                'stacked_rate_pct'   => self::STACKED_RATE_PCT,
-                'tsr_rate_pct'       => self::TSR_NON_RESIDENT_PCT,
-                'exposure_stacked'   => 0.0,
-                'exposure_tsr'       => 0.0,
-                'exposure_total'     => 0.0,
+                'beneficiaries'           => [],
+                'lines'                   => [],          // line-level detail (new)
+                'total_donations'         => 0.0,
+                'cat1_total'              => 0.0,
+                'cat2_total'              => 0.0,
+                'cat3_total'              => 0.0,
+                'unresolved_total'        => 0.0,
+                'cat3_fallback_total'     => 0.0,
+                'cat3_fallback_count'     => 0,
+                'categorisation_complete' => true,        // empty = vacuously complete
+                'line_count'              => 0,
+                'ca_net_ytd'              => 0.0,
+                'ceiling_pct'             => self::DEDUCTION_CEILING_PCT,
+                'ceiling_xaf'             => 0.0,
+                'cat2_allowed'            => 0.0,
+                'cat2_reintegrated'       => 0.0,
+                'cat3_reintegrated'       => 0.0,
+                'total_deductible'        => 0.0,
+                'total_reintegrated'      => 0.0,
+                'cit_rate_pct'            => self::CIT_RATE_PCT,
+                'ircm_rate_pct'           => self::IRCM_RATE_PCT,
+                'stacked_rate_pct'        => self::STACKED_RATE_PCT,
+                'tsr_rate_pct'            => self::TSR_NON_RESIDENT_PCT,
+                'exposure_stacked'        => 0.0,
+                'exposure_tsr'            => 0.0,
+                'exposure_total'          => 0.0,
                 // received-donations stub — caller may override with a
                 // real probeReceivedDonations() result so a
                 // chart-of-accounts gap on the expense side doesn't
                 // suppress the received-donations card.
-                'received'           => [
+                'received'                => [
                     'account_count'  => 0,
                     'total_received' => 0.0,
                     'by_partner'     => [],
@@ -588,6 +742,52 @@ final class DonationsComplianceService
             }
         } catch (\Throwable $e) { /* fall through */ }
         return 'XAF';
+    }
+
+    /**
+     * Upsert a line-level category override. Idempotent — calling with
+     * the same line_id replaces the previous override. Pass $category
+     * = null to clear the override (line falls back to partner default
+     * or Cat 3 fallback). Returns the resulting LineDonationCategory
+     * model, or null if the override was cleared.
+     *
+     * The caller is expected to have already validated $category ∈
+     * {1, 2, 3, null} and that the line is one of this tenant's.
+     */
+    public function setLineCategory(
+        int $moveLineId,
+        int $moveId,
+        ?int $partnerId,
+        string $accountCode,
+        \DateTimeImmutable $lineDate,
+        float $amount,
+        ?int $category,
+        ?string $note,
+        int $assignedByUserId
+    ): ?LineDonationCategory {
+        if ($category === null) {
+            LineDonationCategory::where('tenant_id', $this->tenant->id)
+                ->where('odoo_move_line_id', $moveLineId)
+                ->delete();
+            return null;
+        }
+
+        return LineDonationCategory::updateOrCreate(
+            [
+                'tenant_id'         => $this->tenant->id,
+                'odoo_move_line_id' => $moveLineId,
+            ],
+            [
+                'odoo_move_id'    => $moveId,
+                'odoo_partner_id' => $partnerId,
+                'account_code'    => $accountCode,
+                'line_date'       => $lineDate->format('Y-m-d'),
+                'amount'          => $amount,
+                'category'        => $category,
+                'note'            => $note,
+                'assigned_by'     => $assignedByUserId,
+            ]
+        );
     }
 
     /**

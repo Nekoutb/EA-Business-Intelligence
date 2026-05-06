@@ -1181,6 +1181,8 @@ Route::prefix('t/{tenant}')
                 Route::get ('/income-tax-compliance/export',                [IncomeTaxComplianceController::class, 'export'])          ->middleware('module:income_tax_compliance');
                 Route::post('/income-tax-compliance/donations/category',    [IncomeTaxComplianceController::class, 'setCategory'])     ->middleware('module:income_tax_compliance');
                 Route::post('/income-tax-compliance/donations/upload',      [IncomeTaxComplianceController::class, 'uploadDoc'])       ->middleware('module:income_tax_compliance');
+                Route::post('/income-tax-compliance/donations/lines/{moveLineId}/category', [IncomeTaxComplianceController::class, 'setLineCategory'])     ->whereNumber('moveLineId')->middleware('module:income_tax_compliance');
+                Route::post('/income-tax-compliance/donations/lines/bulk-category',         [IncomeTaxComplianceController::class, 'setLineCategoriesBulk'])->middleware('module:income_tax_compliance');
                 Route::get ('/income-tax-compliance/donations/export',      [IncomeTaxComplianceController::class, 'exportDonations']) ->middleware('module:income_tax_compliance');
                 Route::get('/vat-compliance',         [VATComplianceController::class, 'index'])->middleware('module:vat_compliance');
                 Route::get('/vat-invoice-compliance', [VATInvoiceComplianceController::class, 'index'])->middleware('module:vat_invoice_compliance');
