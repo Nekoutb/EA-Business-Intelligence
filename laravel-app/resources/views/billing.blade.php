@@ -129,7 +129,13 @@
         </div>
     @endforeach
 
-    {{-- ── Revenue Reconciliation (Expected → Billed → Collected) ────────── --}}
+    {{-- ── Revenue Reconciliation (Expected → Billed → Collected) ──────────
+         Gated by the per-tenant `revenue_reconciliation` module flag.
+         When the super-admin disables it from /admin/tenants/{id}, the
+         entire block (panels + summary + trend chart + per-invoice
+         details + XLS export link) is skipped. The XLS route itself
+         is gated by the same flag at the route layer (web.php). --}}
+    @if (tenant()?->moduleEnabled('revenue_reconciliation'))
     @php
         $recon = $billing['reconciliation'] ?? null;
         $reconHasError = $recon && !empty($recon['error']);
@@ -572,6 +578,7 @@
           <strong>Reconciliation unavailable:</strong> {{ $recon['error'] }}
       </div>
     @endif
+    @endif {{-- /revenue_reconciliation module flag --}}
 
     {{-- ── Time-to-Invoice distribution + slowest billings ──────────────── --}}
     @php

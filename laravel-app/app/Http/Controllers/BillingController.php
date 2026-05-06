@@ -55,15 +55,24 @@ class BillingController extends Controller
                 fn () => (new BillingService($client))->analyze(null, $period)
             );
 
-            // Reconciliation details (per-invoice rows for the expandable
-            // panel + CSV export). Cached alongside the headline so the
-            // first paint of /billing only does Odoo work once.
-            $details = ea_cached(
-                "billing_details_{$type}_{$year}_{$month}",
-                fn () => (new BillingService($client))->reconciliationDetails(null, $period)
-            );
-            if (is_array($billing) && is_array($details)) {
-                $billing['reconciliation_details'] = $details;
+            // Reconciliation block is gated by the per-tenant
+            // `revenue_reconciliation` module flag. When disabled we both
+            // skip the second Odoo round-trip AND strip the headline
+            // reconciliation payload out of $billing, so the view's
+            // @if check sees a clean "off" state and no heuristics from
+            // the analyze() pass leak through.
+            if (tenant()?->moduleEnabled('revenue_reconciliation')) {
+                $details = ea_cached(
+                    "billing_details_{$type}_{$year}_{$month}",
+                    fn () => (new BillingService($client))->reconciliationDetails(null, $period)
+                );
+                if (is_array($billing) && is_array($details)) {
+                    $billing['reconciliation_details'] = $details;
+                }
+            } else {
+                if (is_array($billing)) {
+                    unset($billing['reconciliation'], $billing['reconciliation_details']);
+                }
             }
         } catch (\Throwable $e) {
             $error = $e->getMessage();

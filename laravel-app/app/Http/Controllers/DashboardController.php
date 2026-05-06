@@ -76,11 +76,18 @@ class DashboardController extends Controller
             // BillingService so the headline figures match /billing exactly.
             // Cached separately so the dashboard reload is fast even if
             // /billing hasn't been hit yet this session.
-            try {
-                $reconciliation = ea_cached("recon_{$cacheTag}",
-                    fn () => (new BillingService($client))->reconciliationOnly(null, $period));
-            } catch (\Throwable $e) {
-                $reconciliation = null;
+            //
+            // Gated by the per-tenant `revenue_reconciliation` module flag.
+            // When the super-admin disables it from /admin/tenants/{id},
+            // we skip the Odoo round-trip entirely and the dashboard view
+            // hides the sankey card.
+            if (tenant()?->moduleEnabled('revenue_reconciliation')) {
+                try {
+                    $reconciliation = ea_cached("recon_{$cacheTag}",
+                        fn () => (new BillingService($client))->reconciliationOnly(null, $period));
+                } catch (\Throwable $e) {
+                    $reconciliation = null;
+                }
             }
         } catch (\Throwable $e) {
             $error = $e->getMessage();

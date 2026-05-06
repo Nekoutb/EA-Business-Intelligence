@@ -1142,7 +1142,7 @@ Route::prefix('t/{tenant}')
                 Route::get('/operations',        [OperationsController::class, 'index'])->middleware('module:operations');
                 Route::get('/billing',           [BillingController::class, 'index'])->middleware('module:billing');
                 Route::get('/billing/reconciliation-export',
-                    [BillingController::class, 'reconciliationExcel'])->middleware('module:billing');
+                    [BillingController::class, 'reconciliationExcel'])->middleware('module:revenue_reconciliation');
                 Route::get('/procurement',       [ProcurementController::class, 'index'])->middleware('module:procurement');
 
                 // ── Financial Planning service ────────────────────────────────
