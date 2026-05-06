@@ -629,6 +629,404 @@
                     </div>
                 @endif
 
+                {{-- ─────── Line-level GL detail with per-line categorisation ─────── --}}
+                @php
+                    $lines           = $don['lines'] ?? [];
+                    $catComplete     = (bool) ($don['categorisation_complete'] ?? true);
+                    $fbCount         = (int)  ($don['cat3_fallback_count']  ?? 0);
+                    $fbTotal         = (float)($don['cat3_fallback_total']  ?? 0);
+                    $totalLineCount  = (int)  ($don['line_count'] ?? count($lines));
+
+                    // Per-line label / pill metadata derived once on the server
+                    // so the JS only deals with state changes, not first-render
+                    // formatting.
+                    $catLabel = function (int $cat, string $src): string {
+                        if ($src === 'line_override')   return 'Cat ' . $cat . ' · override';
+                        if ($src === 'partner_default') return 'Cat ' . $cat . ' · partner';
+                        return 'Cat 3 · fallback';
+                    };
+                    $catPillClasses = function (int $cat, string $src): string {
+                        if ($src === 'cat3_fallback')                  return 'text-amber-800 bg-amber-100 border border-amber-300';
+                        if ($cat === 1)                                return 'text-emerald-700 bg-emerald-50 border border-emerald-200';
+                        if ($cat === 2)                                return 'text-amber-700 bg-amber-50 border border-amber-200';
+                        return 'text-rose-700 bg-rose-50 border border-rose-200';
+                    };
+                @endphp
+                @if (!empty($lines))
+                <div id="don-line-table"
+                    class="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden mt-4"
+                    data-endpoint-single="{{ url('/tax/income-tax-compliance/donations/lines') }}"
+                    data-endpoint-bulk="{{ url('/tax/income-tax-compliance/donations/lines/bulk-category') }}"
+                    data-currency="{{ $donCur }}"
+                    data-fallback-count="{{ $fbCount }}"
+                    data-fallback-total="{{ $fbTotal }}"
+                    data-total-count="{{ $totalLineCount }}"
+                >
+                    {{-- Header --}}
+                    <div class="flex flex-wrap items-center justify-between gap-3 px-5 py-4 border-b border-slate-200 bg-gradient-to-r from-indigo-50/60 to-white">
+                        <div>
+                            <div class="text-[10px] uppercase tracking-widest text-indigo-700 font-semibold">B · GL line detail · YTD {{ $donYear }}</div>
+                            <h2 class="text-lg font-semibold text-slate-900 mt-1">Per-line categorisation (Article 7 CGI)</h2>
+                            <p class="text-[11px] text-slate-500 mt-1">
+                                Each line resolves through:
+                                <code class="text-[10.5px] bg-slate-100 px-1.5 py-0.5 rounded">line override</code> →
+                                <code class="text-[10.5px] bg-slate-100 px-1.5 py-0.5 rounded">partner default</code> →
+                                <code class="text-[10.5px] bg-slate-100 px-1.5 py-0.5 rounded">Cat 3 fallback</code>.
+                                Cat 3 is the conservative default — <em>non-deductible until proven otherwise</em>.
+                            </p>
+                        </div>
+                        <div class="flex flex-col items-end gap-1.5">
+                            <span data-don-status="complete" class="@if(!$catComplete) hidden @endif inline-flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-widest text-emerald-700 bg-emerald-50 border border-emerald-300 rounded-full px-2.5 py-1">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+                                Fully categorised
+                            </span>
+                            <span data-don-status="incomplete" class="@if($catComplete) hidden @endif inline-flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-widest text-amber-700 bg-amber-50 border border-amber-300 rounded-full px-2.5 py-1">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3m0 4h.01M5 19h14a2 2 0 001.732-3L13.732 4a2 2 0 00-3.464 0L3.268 16A2 2 0 005 19z"/></svg>
+                                <span data-don-fallback-pill>{{ $fbCount }} line{{ $fbCount === 1 ? '' : 's' }} on Cat 3 fallback</span>
+                            </span>
+                            <span class="text-[10px] text-slate-500">{{ number_format($totalLineCount) }} line{{ $totalLineCount === 1 ? '' : 's' }} in scope</span>
+                        </div>
+                    </div>
+
+                    {{-- Cat 3 fallback banner (visible when not fully categorised) --}}
+                    <div data-don-fallback-banner class="@if($catComplete) hidden @endif flex flex-wrap items-center justify-between gap-3 px-5 py-3 border-b border-amber-200 bg-amber-50/70">
+                        <div class="text-[12px] text-amber-900 leading-relaxed">
+                            <strong data-don-fallback-count>{{ $fbCount }}</strong>
+                            of <strong>{{ number_format($totalLineCount) }}</strong> lines resolving via
+                            <strong>Cat 3 fallback</strong>
+                            (<span class="tabular-nums" data-don-fallback-total>{{ number_format($fbTotal, 0, '.', ',') }}</span> {{ $donCur }}) —
+                            no line override and no partner default. Review and confirm each line's category, or
+                            lock them all in as Cat 3 with one click.
+                        </div>
+                        <button type="button" data-don-confirm-all
+                            class="inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-semibold text-white bg-amber-700 hover:bg-amber-800 disabled:opacity-60 rounded-md shadow-sm whitespace-nowrap">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+                            <span data-don-confirm-label>Confirm all as Cat 3</span>
+                        </button>
+                    </div>
+
+                    {{-- Selection toolbar (hidden by default; shown when ≥1 row selected) --}}
+                    <div data-don-selection-bar class="hidden flex-wrap items-center justify-between gap-3 px-5 py-3 border-b border-indigo-200 bg-indigo-50/60">
+                        <div class="text-[12px] text-indigo-900">
+                            <strong data-don-sel-count>0</strong> lines selected ·
+                            <span class="tabular-nums" data-don-sel-total>0</span> {{ $donCur }}
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <select data-don-bulk-cat class="text-[12px] border-slate-300 rounded-md px-2 py-1.5">
+                                <option value="3" selected>Apply: Cat 3 — Non-deductible (default)</option>
+                                <option value="1">Apply: Cat 1 — Fully deductible</option>
+                                <option value="2">Apply: Cat 2 — Ceiling-tested</option>
+                            </select>
+                            <button type="button" data-don-bulk-apply
+                                class="inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-semibold text-white bg-indigo-700 hover:bg-indigo-800 disabled:opacity-60 rounded-md shadow-sm">
+                                <span data-don-bulk-label>Apply</span>
+                            </button>
+                            <button type="button" data-don-bulk-clear
+                                class="inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium text-indigo-700 bg-white border border-indigo-300 hover:bg-indigo-50 rounded-md">
+                                Clear
+                            </button>
+                        </div>
+                    </div>
+
+                    {{-- Line table --}}
+                    <div class="overflow-x-auto max-h-[640px]">
+                        <table class="min-w-full text-sm">
+                            <thead class="bg-slate-50 sticky top-0 z-10">
+                                <tr class="text-left text-[10px] uppercase tracking-widest text-slate-500 font-semibold">
+                                    <th class="px-3 py-2.5 w-8">
+                                        <input type="checkbox" data-don-toggle-all class="rounded border-slate-400 text-indigo-600 focus:ring-indigo-500">
+                                    </th>
+                                    <th class="px-3 py-2.5">Date</th>
+                                    <th class="px-3 py-2.5">Description</th>
+                                    <th class="px-3 py-2.5">Account</th>
+                                    <th class="px-3 py-2.5">Partner</th>
+                                    <th class="px-3 py-2.5 text-right">Amount ({{ $donCur }})</th>
+                                    <th class="px-3 py-2.5">Category</th>
+                                    <th class="px-3 py-2.5 w-32">Status</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-slate-100">
+                                @foreach ($lines as $ln)
+                                    @php
+                                        $lnId       = (int)   $ln['id'];
+                                        $lnSrc      = (string)$ln['category_source'];
+                                        $lnEff      = (int)   $ln['effective_category'];
+                                        $lnOverride = $ln['line_override_category'] ?? null;
+                                        $lnPDef     = $ln['partner_default_category'] ?? null;
+                                        $rowBg      = $lnSrc === 'cat3_fallback' ? 'bg-amber-50/40' : '';
+                                        $emptyOptionLabel = $lnPDef !== null
+                                            ? 'Inherit from partner — Cat ' . (int) $lnPDef
+                                            : '— No partner default — fallback Cat 3';
+                                    @endphp
+                                    <tr data-don-row="{{ $lnId }}" class="{{ $rowBg }}"
+                                        data-line-id="{{ $lnId }}"
+                                        data-move-id="{{ (int) $ln['move_id'] }}"
+                                        data-partner-id="{{ $ln['partner_id'] !== null ? (int) $ln['partner_id'] : '' }}"
+                                        data-account-code="{{ $ln['account_code'] ?? '' }}"
+                                        data-line-date="{{ $ln['date'] }}"
+                                        data-amount="{{ (float) $ln['amount'] }}"
+                                        data-partner-default="{{ $lnPDef ?? '' }}"
+                                    >
+                                        <td class="px-3 py-2.5">
+                                            <input type="checkbox" data-don-row-check class="rounded border-slate-400 text-indigo-600 focus:ring-indigo-500">
+                                        </td>
+                                        <td class="px-3 py-2.5 text-[12px] text-slate-700 tabular-nums whitespace-nowrap">{{ $ln['date'] }}</td>
+                                        <td class="px-3 py-2.5 text-[12px] text-slate-900" title="{{ $ln['narration'] ?? '' }}">
+                                            <span class="block max-w-xs truncate">{{ $ln['narration'] ?: '—' }}</span>
+                                        </td>
+                                        <td class="px-3 py-2.5 text-[11px] tabular-nums text-slate-600 whitespace-nowrap">{{ $ln['account'] }}</td>
+                                        <td class="px-3 py-2.5 text-[12px] text-slate-700">{{ $ln['partner_name'] ?: '— No partner —' }}</td>
+                                        <td class="px-3 py-2.5 text-right tabular-nums font-semibold text-slate-900">{{ number_format((float) $ln['amount'], 0, '.', ',') }}</td>
+                                        <td class="px-3 py-2.5">
+                                            <select data-don-row-select class="text-[12px] border-slate-300 rounded-md px-2 py-1 max-w-[18rem]">
+                                                <option value="" {{ $lnOverride === null ? 'selected' : '' }}>{{ $emptyOptionLabel }}</option>
+                                                <option value="1" {{ $lnOverride === 1 ? 'selected' : '' }}>Cat 1 — Fully deductible</option>
+                                                <option value="2" {{ $lnOverride === 2 ? 'selected' : '' }}>Cat 2 — Ceiling-tested</option>
+                                                <option value="3" {{ $lnOverride === 3 ? 'selected' : '' }}>Cat 3 — Non-deductible</option>
+                                            </select>
+                                        </td>
+                                        <td class="px-3 py-2.5">
+                                            <span data-don-row-pill class="inline-flex items-center text-[10px] font-medium px-2 py-0.5 rounded-full whitespace-nowrap {{ $catPillClasses($lnEff, $lnSrc) }}">
+                                                {{ $catLabel($lnEff, $lnSrc) }}
+                                            </span>
+                                        </td>
+                                    </tr>
+                                @endforeach
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <script>
+                (function () {
+                    const root = document.getElementById('don-line-table');
+                    if (!root) return;
+
+                    const csrf = document.querySelector('meta[name="csrf-token"]')?.content
+                              || document.querySelector('input[name="_token"]')?.value || '';
+                    const epSingle = root.dataset.endpointSingle;
+                    const epBulk   = root.dataset.endpointBulk;
+                    const totalCount = parseInt(root.dataset.totalCount || '0', 10);
+
+                    const selBar       = root.querySelector('[data-don-selection-bar]');
+                    const selCountEl   = root.querySelector('[data-don-sel-count]');
+                    const selTotalEl   = root.querySelector('[data-don-sel-total]');
+                    const bulkCatSel   = root.querySelector('[data-don-bulk-cat]');
+                    const bulkApplyBtn = root.querySelector('[data-don-bulk-apply]');
+                    const bulkClearBtn = root.querySelector('[data-don-bulk-clear]');
+                    const bulkLabel    = root.querySelector('[data-don-bulk-label]');
+                    const toggleAll    = root.querySelector('[data-don-toggle-all]');
+                    const fbBanner     = root.querySelector('[data-don-fallback-banner]');
+                    const fbCountEl    = root.querySelector('[data-don-fallback-count]');
+                    const fbTotalEl    = root.querySelector('[data-don-fallback-total]');
+                    const fbPillEl     = root.querySelector('[data-don-fallback-pill]');
+                    const statusComplete   = root.querySelector('[data-don-status="complete"]');
+                    const statusIncomplete = root.querySelector('[data-don-status="incomplete"]');
+                    const confirmAllBtn    = root.querySelector('[data-don-confirm-all]');
+                    const confirmAllLabel  = root.querySelector('[data-don-confirm-label]');
+
+                    const fmt = (v) => Math.round(v).toLocaleString('en-US');
+
+                    function rowsAll() {
+                        return Array.from(root.querySelectorAll('tr[data-don-row]'));
+                    }
+                    function rowMeta(tr) {
+                        return {
+                            line_id:      parseInt(tr.dataset.lineId, 10),
+                            move_id:      parseInt(tr.dataset.moveId, 10),
+                            partner_id:   tr.dataset.partnerId !== '' ? parseInt(tr.dataset.partnerId, 10) : null,
+                            account_code: tr.dataset.accountCode,
+                            line_date:    tr.dataset.lineDate,
+                            amount:       parseFloat(tr.dataset.amount),
+                            partner_default: tr.dataset.partnerDefault !== '' ? parseInt(tr.dataset.partnerDefault, 10) : null,
+                        };
+                    }
+                    function selectedRows() {
+                        return rowsAll().filter(tr => tr.querySelector('[data-don-row-check]').checked);
+                    }
+                    function refreshSelection() {
+                        const sel = selectedRows();
+                        if (sel.length === 0) {
+                            selBar.classList.add('hidden');
+                            selBar.classList.remove('flex');
+                            return;
+                        }
+                        selBar.classList.remove('hidden');
+                        selBar.classList.add('flex');
+                        selCountEl.textContent = sel.length;
+                        const total = sel.reduce((s, tr) => s + parseFloat(tr.dataset.amount || '0'), 0);
+                        selTotalEl.textContent = fmt(total);
+                    }
+                    function refreshFallbackTallies() {
+                        // Walk every row, count those whose pill currently shows fallback.
+                        let count = 0, total = 0;
+                        for (const tr of rowsAll()) {
+                            const pill = tr.querySelector('[data-don-row-pill]');
+                            if (pill && pill.textContent.includes('fallback')) {
+                                count += 1;
+                                total += parseFloat(tr.dataset.amount || '0');
+                            }
+                        }
+                        fbCountEl.textContent = count;
+                        fbTotalEl.textContent = fmt(total);
+                        fbPillEl.textContent = count + ' line' + (count === 1 ? '' : 's') + ' on Cat 3 fallback';
+
+                        if (count === 0) {
+                            fbBanner.classList.add('hidden');
+                            statusComplete.classList.remove('hidden');
+                            statusIncomplete.classList.add('hidden');
+                        } else {
+                            fbBanner.classList.remove('hidden');
+                            statusComplete.classList.add('hidden');
+                            statusIncomplete.classList.remove('hidden');
+                        }
+                    }
+                    function pillForCategory(cat, source) {
+                        if (source === 'line_override')   return { label: 'Cat ' + cat + ' · override', src: 'line_override' };
+                        if (source === 'partner_default') return { label: 'Cat ' + cat + ' · partner',  src: 'partner_default' };
+                        return { label: 'Cat 3 · fallback', src: 'cat3_fallback' };
+                    }
+                    function applyPill(tr, cat, source) {
+                        const pill = tr.querySelector('[data-don-row-pill]');
+                        const meta = pillForCategory(cat, source);
+                        pill.textContent = meta.label;
+                        pill.className = 'inline-flex items-center text-[10px] font-medium px-2 py-0.5 rounded-full whitespace-nowrap ';
+                        if (source === 'cat3_fallback')        pill.className += 'text-amber-800 bg-amber-100 border border-amber-300';
+                        else if (cat === 1)                    pill.className += 'text-emerald-700 bg-emerald-50 border border-emerald-200';
+                        else if (cat === 2)                    pill.className += 'text-amber-700 bg-amber-50 border border-amber-200';
+                        else                                    pill.className += 'text-rose-700 bg-rose-50 border border-rose-200';
+
+                        if (source === 'cat3_fallback') tr.classList.add('bg-amber-50/40');
+                        else                            tr.classList.remove('bg-amber-50/40');
+                    }
+                    function applyRowState(tr, override, partnerDefault) {
+                        let cat, source;
+                        if (override !== null) { cat = override; source = 'line_override'; }
+                        else if (partnerDefault !== null) { cat = partnerDefault; source = 'partner_default'; }
+                        else { cat = 3; source = 'cat3_fallback'; }
+                        applyPill(tr, cat, source);
+                    }
+                    async function postSingle(tr, category) {
+                        const meta = rowMeta(tr);
+                        const url  = epSingle + '/' + meta.line_id + '/category';
+                        const body = new FormData();
+                        if (category !== null) body.append('category', String(category));
+                        body.append('odoo_move_id',    String(meta.move_id));
+                        if (meta.partner_id !== null) body.append('odoo_partner_id', String(meta.partner_id));
+                        body.append('account_code', meta.account_code);
+                        body.append('line_date',    meta.line_date);
+                        body.append('amount',       String(meta.amount));
+                        const r = await fetch(url, {
+                            method: 'POST',
+                            headers: { 'X-CSRF-TOKEN': csrf, 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+                            body: body,
+                        });
+                        if (!r.ok) throw new Error('HTTP ' + r.status);
+                        return r.json();
+                    }
+                    async function postBulk(rows, category) {
+                        const body = new FormData();
+                        body.append('category', String(category));
+                        rows.forEach((tr, i) => {
+                            const m = rowMeta(tr);
+                            body.append(`lines[${i}][odoo_move_line_id]`, String(m.line_id));
+                            body.append(`lines[${i}][odoo_move_id]`,      String(m.move_id));
+                            if (m.partner_id !== null) body.append(`lines[${i}][odoo_partner_id]`, String(m.partner_id));
+                            body.append(`lines[${i}][account_code]`, m.account_code);
+                            body.append(`lines[${i}][line_date]`,    m.line_date);
+                            body.append(`lines[${i}][amount]`,       String(m.amount));
+                        });
+                        const r = await fetch(epBulk, {
+                            method: 'POST',
+                            headers: { 'X-CSRF-TOKEN': csrf, 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+                            body: body,
+                        });
+                        if (!r.ok) throw new Error('HTTP ' + r.status);
+                        return r.json();
+                    }
+
+                    // Wire up per-row dropdowns.
+                    for (const tr of rowsAll()) {
+                        const sel = tr.querySelector('[data-don-row-select]');
+                        sel.addEventListener('change', async (e) => {
+                            const raw = e.target.value;
+                            const override = raw === '' ? null : parseInt(raw, 10);
+                            const meta = rowMeta(tr);
+                            sel.disabled = true;
+                            try {
+                                await postSingle(tr, override);
+                                applyRowState(tr, override, meta.partner_default);
+                                refreshFallbackTallies();
+                            } catch (err) {
+                                alert('Failed to save category — ' + err.message);
+                            } finally {
+                                sel.disabled = false;
+                            }
+                        });
+                        tr.querySelector('[data-don-row-check]').addEventListener('change', refreshSelection);
+                    }
+
+                    // "Toggle all" header checkbox.
+                    toggleAll.addEventListener('change', (e) => {
+                        const checked = e.target.checked;
+                        for (const tr of rowsAll()) tr.querySelector('[data-don-row-check]').checked = checked;
+                        refreshSelection();
+                    });
+
+                    // Bulk apply.
+                    bulkApplyBtn.addEventListener('click', async () => {
+                        const sel = selectedRows();
+                        if (sel.length === 0) return;
+                        const cat = parseInt(bulkCatSel.value, 10);
+                        bulkApplyBtn.disabled = true; bulkLabel.textContent = 'Saving…';
+                        try {
+                            await postBulk(sel, cat);
+                            for (const tr of sel) {
+                                const meta = rowMeta(tr);
+                                tr.querySelector('[data-don-row-select]').value = String(cat);
+                                applyRowState(tr, cat, meta.partner_default);
+                            }
+                            refreshFallbackTallies();
+                        } catch (err) {
+                            alert('Bulk save failed — ' + err.message);
+                        } finally {
+                            bulkApplyBtn.disabled = false; bulkLabel.textContent = 'Apply';
+                        }
+                    });
+                    bulkClearBtn.addEventListener('click', () => {
+                        for (const tr of rowsAll()) tr.querySelector('[data-don-row-check]').checked = false;
+                        toggleAll.checked = false;
+                        refreshSelection();
+                    });
+
+                    // "Confirm all as Cat 3" — bulk-set every fallback row to Cat 3.
+                    if (confirmAllBtn) {
+                        confirmAllBtn.addEventListener('click', async () => {
+                            const fbRows = rowsAll().filter(tr => {
+                                const pill = tr.querySelector('[data-don-row-pill]');
+                                return pill && pill.textContent.includes('fallback');
+                            });
+                            if (fbRows.length === 0) return;
+                            confirmAllBtn.disabled = true; confirmAllLabel.textContent = 'Saving…';
+                            try {
+                                await postBulk(fbRows, 3);
+                                for (const tr of fbRows) {
+                                    tr.querySelector('[data-don-row-select]').value = '3';
+                                    applyRowState(tr, 3, rowMeta(tr).partner_default);
+                                }
+                                refreshFallbackTallies();
+                            } catch (err) {
+                                alert('Confirm-all failed — ' + err.message);
+                            } finally {
+                                confirmAllBtn.disabled = false; confirmAllLabel.textContent = 'Confirm all as Cat 3';
+                            }
+                        });
+                    }
+                })();
+                </script>
+                @endif
+                {{-- /Line-level GL detail --}}
+
                 {{-- ─────── Donations received (HAO 845XX) ─────── --}}
                 @php
                     $rcv         = $don['received'] ?? null;

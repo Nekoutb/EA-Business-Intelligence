@@ -3,12 +3,15 @@
 namespace App\Http\Controllers\Tax;
 
 use App\Http\Controllers\Controller;
+use App\Models\AuditLog;
+use App\Models\LineDonationCategory;
 use App\Models\PartnerDonationCategory;
 use App\Odoo\OdooFactory;
 use App\Services\Tax\DonationsComplianceService;
 use App\Services\Tax\IncomeTaxComplianceService;
 use App\Tenancy\TenantContext;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use OpenSpout\Common\Entity\Cell;
 use OpenSpout\Common\Entity\Row;
@@ -148,6 +151,202 @@ class IncomeTaxComplianceController extends Controller
     }
 
     /**
+     * Set or clear a line-level donation category override. POSTed
+     * from the line table dropdown via fetch().
+     *
+     * Returns JSON:
+     *   { ok: true, category: 1|2|3|null, source: 'line_override'|... }
+     *
+     * Audit-log: action='donation.line_category.set', payload includes
+     * old + new + line meta. Cache cleared so the next render reflects.
+     */
+    public function setLineCategory(Request $request, TenantContext $ctx, int $moveLineId)
+    {
+        $tenant = $ctx->tenant();
+        abort_unless($tenant, 404);
+
+        $data = $request->validate([
+            'category'      => ['nullable', 'integer', 'in:1,2,3'],
+            'note'          => ['nullable', 'string', 'max:500'],
+            // Denormalised line metadata — we trust the client here only
+            // for the convenience of populating the audit-trail columns,
+            // since round-tripping Odoo on every dropdown change would
+            // be slow. The values on the line are read-only from the
+            // auditor's perspective (they come from the GL).
+            'odoo_move_id'    => ['required', 'integer', 'min:1'],
+            'odoo_partner_id' => ['nullable', 'integer'],
+            'account_code'    => ['required', 'string', 'max:16'],
+            'line_date'       => ['required', 'date'],
+            'amount'          => ['required', 'numeric'],
+        ]);
+
+        $oldCat = LineDonationCategory::where('tenant_id', $tenant->id)
+            ->where('odoo_move_line_id', $moveLineId)
+            ->value('category');
+
+        $svc = new DonationsComplianceService(OdooFactory::fromConfig(), $tenant);
+        $result = $svc->setLineCategory(
+            moveLineId:       $moveLineId,
+            moveId:           (int) $data['odoo_move_id'],
+            partnerId:        isset($data['odoo_partner_id']) ? (int) $data['odoo_partner_id'] : null,
+            accountCode:      (string) $data['account_code'],
+            lineDate:         new \DateTimeImmutable($data['line_date']),
+            amount:           (float) $data['amount'],
+            category:         isset($data['category']) ? (int) $data['category'] : null,
+            note:             $data['note'] ?? null,
+            assignedByUserId: (int) $request->user()->id,
+        );
+
+        AuditLog::record('donation.line_category.set', [
+            'tenant_id' => $tenant->id,
+            'target'    => 'move_line:' . $moveLineId,
+            'payload'   => [
+                'odoo_move_line_id' => $moveLineId,
+                'odoo_move_id'      => (int) $data['odoo_move_id'],
+                'odoo_partner_id'   => $data['odoo_partner_id'] ?? null,
+                'account_code'      => $data['account_code'],
+                'line_date'         => $data['line_date'],
+                'amount'            => $data['amount'],
+                'old_category'      => $oldCat !== null ? (int) $oldCat : null,
+                'new_category'      => isset($data['category']) ? (int) $data['category'] : null,
+                'note'              => $data['note'] ?? null,
+            ],
+        ]);
+
+        ea_cache_clear();
+
+        if ($request->expectsJson() || $request->ajax()) {
+            return response()->json([
+                'ok'         => true,
+                'line_id'    => $moveLineId,
+                'category'   => $result?->category,
+                'cleared'    => $result === null,
+            ]);
+        }
+
+        return back()->with('flash', [
+            'type' => 'success',
+            'msg'  => $result === null ? 'Line category cleared.' : 'Line category saved.',
+        ]);
+    }
+
+    /**
+     * Bulk-set a line category for many lines at once. Used by the
+     * "Confirm all as Cat 3" button (default) and the bulk-action
+     * footer of the line table when ≥1 row is checked.
+     *
+     * Body:
+     *   {
+     *     category: 1|2|3,            // null not allowed in bulk (use single endpoint to clear)
+     *     note?: string,              // optional, applied to all
+     *     lines: [
+     *       { odoo_move_line_id, odoo_move_id, odoo_partner_id?, account_code, line_date, amount },
+     *       ...
+     *     ]
+     *   }
+     *
+     * Single transaction → single batch audit-log entry.
+     */
+    public function setLineCategoriesBulk(Request $request, TenantContext $ctx)
+    {
+        $tenant = $ctx->tenant();
+        abort_unless($tenant, 404);
+
+        $data = $request->validate([
+            'category'                       => ['required', 'integer', 'in:1,2,3'],
+            'note'                           => ['nullable', 'string', 'max:500'],
+            'lines'                          => ['required', 'array', 'min:1', 'max:5000'],
+            'lines.*.odoo_move_line_id'      => ['required', 'integer', 'min:1'],
+            'lines.*.odoo_move_id'           => ['required', 'integer', 'min:1'],
+            'lines.*.odoo_partner_id'        => ['nullable', 'integer'],
+            'lines.*.account_code'           => ['required', 'string', 'max:16'],
+            'lines.*.line_date'              => ['required', 'date'],
+            'lines.*.amount'                 => ['required', 'numeric'],
+        ]);
+
+        $cat       = (int) $data['category'];
+        $note      = $data['note'] ?? null;
+        $userId    = (int) $request->user()->id;
+        $now       = now();
+        $lineIds   = array_column($data['lines'], 'odoo_move_line_id');
+
+        // Pre-load existing categories for diff in audit log.
+        $existing = LineDonationCategory::where('tenant_id', $tenant->id)
+            ->whereIn('odoo_move_line_id', $lineIds)
+            ->pluck('category', 'odoo_move_line_id');
+
+        $rows = [];
+        foreach ($data['lines'] as $l) {
+            $rows[] = [
+                'tenant_id'         => $tenant->id,
+                'odoo_move_line_id' => (int) $l['odoo_move_line_id'],
+                'odoo_move_id'      => (int) $l['odoo_move_id'],
+                'odoo_partner_id'   => isset($l['odoo_partner_id']) ? (int) $l['odoo_partner_id'] : null,
+                'account_code'      => (string) $l['account_code'],
+                'line_date'         => $l['line_date'],
+                'amount'            => (float) $l['amount'],
+                'category'          => $cat,
+                'note'              => $note,
+                'assigned_by'       => $userId,
+                'created_at'        => $now,
+                'updated_at'        => $now,
+            ];
+        }
+
+        DB::transaction(function () use ($rows) {
+            // Upsert by (tenant_id, odoo_move_line_id) — composite unique.
+            // Using upsert here keeps it to a single statement.
+            LineDonationCategory::upsert(
+                $rows,
+                ['tenant_id', 'odoo_move_line_id'],
+                ['odoo_move_id', 'odoo_partner_id', 'account_code', 'line_date',
+                 'amount', 'category', 'note', 'assigned_by', 'updated_at']
+            );
+        });
+
+        // Diff for audit log: count how many were new vs changed vs unchanged.
+        $newCount = $changedCount = $sameCount = 0;
+        foreach ($lineIds as $lid) {
+            $old = $existing->get($lid);
+            if ($old === null)            $newCount++;
+            elseif ((int) $old === $cat)  $sameCount++;
+            else                          $changedCount++;
+        }
+
+        AuditLog::record('donation.line_category.bulk_set', [
+            'tenant_id' => $tenant->id,
+            'target'    => 'move_lines:' . count($lineIds),
+            'payload'   => [
+                'category'       => $cat,
+                'note'           => $note,
+                'line_count'     => count($lineIds),
+                'new_overrides'  => $newCount,
+                'changed'        => $changedCount,
+                'unchanged'      => $sameCount,
+                'sample_line_ids'=> array_slice($lineIds, 0, 25),  // bound payload size
+            ],
+        ]);
+
+        ea_cache_clear();
+
+        if ($request->expectsJson() || $request->ajax()) {
+            return response()->json([
+                'ok'             => true,
+                'category'       => $cat,
+                'line_count'     => count($lineIds),
+                'new_overrides'  => $newCount,
+                'changed'        => $changedCount,
+                'unchanged'      => $sameCount,
+            ]);
+        }
+
+        return back()->with('flash', [
+            'type' => 'success',
+            'msg'  => sprintf('%d lines categorised as Cat %d.', count($lineIds), $cat),
+        ]);
+    }
+
+    /**
      * Stream an XLSX of every individual donation line, with category
      * apportionment (deductible / reintegrated / exposure).
      */
@@ -162,13 +361,21 @@ class IncomeTaxComplianceController extends Controller
 
         $don   = $analysis['donations'] ?? [];
         $bens  = $don['beneficiaries'] ?? [];
+        $lines = $don['lines'] ?? [];
         $cur   = (string) ($analysis['currency'] ?? 'XAF');
         $asOf  = (string) ($analysis['as_of'] ?? date('Y-m-d'));
         $cap   = (float)  ($don['ceiling_xaf'] ?? 0);
 
+        // NIU lookup so the line-level export carries partner NIU without
+        // round-tripping Odoo (NIU was already resolved during analyze()).
+        $niuByPartner = [];
+        foreach ($bens as $b) {
+            $niuByPartner[(int) $b['partner_id']] = (string) ($b['niu'] ?? '');
+        }
+
         $filename = "income-tax-compliance_donations_{$asOf}.xlsx";
 
-        return new StreamedResponse(function () use ($bens, $cur, $asOf, $don, $cap) {
+        return new StreamedResponse(function () use ($bens, $lines, $niuByPartner, $cur, $asOf, $don, $cap) {
             $writer = new Writer();
             $writer->openToFile('php://output');
 
@@ -211,51 +418,62 @@ class IncomeTaxComplianceController extends Controller
             $writer->addRow($styledRow(['References: Articles 7, 17, 26, 91, 225 CGI'], $metaStyle));
             $writer->addRow(Row::fromValues(['']));
 
-            // Header.
+            // Header — line-level layout including effective category +
+            // resolution source so the auditor can immediately see which
+            // lines were explicitly categorised vs falling through the
+            // Cat 3 fallback.
             $writer->addRow($styledRow([
-                'Date', 'Beneficiary', 'NIU', 'Doc type', 'Doc reference',
-                'Category', 'Non-resident', 'Account', 'Journal', 'Narration',
-                'Amount', 'Deductible', 'Reintegrated', 'Exposure',
+                'Date', 'Move ID', 'Line ID', 'Account', 'Partner', 'NIU',
+                'Non-resident', 'Narration',
+                'Effective category', 'Source', 'Override?',
+                'Amount', 'Deductible', 'Reintegrated', 'Exposure (CIT+IRCM)', 'Exposure (TSR)', 'Exposure total',
             ], $headerStyle));
 
-            foreach ($bens as $b) {
-                $cat        = (int) ($b['category'] ?? 0);
-                $catLabel   = $cat === 1 ? 'Cat 1' : ($cat === 2 ? 'Cat 2' : ($cat === 3 ? 'Cat 3' : 'Unresolved'));
-                $nonRes     = (bool) ($b['is_non_resident'] ?? false);
-                $beneTotal  = (float) ($b['total'] ?? 0);
-                $deductible = (float) ($b['deductible'] ?? 0);
-                $reintRatio = $beneTotal > 0 ? (((float)$b['reintegrated']) / $beneTotal) : 0.0;
-                $expRatio   = $beneTotal > 0 ? (((float)$b['exposure_total']) / $beneTotal) : 0.0;
-                $dedRatio   = $beneTotal > 0 ? ($deductible / $beneTotal) : 0.0;
+            foreach ($lines as $l) {
+                $cat        = (int) ($l['effective_category'] ?? 3);
+                $src        = (string) ($l['category_source'] ?? 'cat3_fallback');
+                $catLabel   = match ($cat) { 1 => 'Cat 1', 2 => 'Cat 2', 3 => 'Cat 3', default => 'Cat 3' };
+                $sourceLabel = match ($src) {
+                    'line_override'   => 'Line override',
+                    'partner_default' => 'Partner default',
+                    'cat3_fallback'   => 'Cat 3 fallback (no override + no partner default)',
+                    default           => $src,
+                };
+                $isOverride = $src === 'line_override';
+                $rowStyle = $src === 'cat3_fallback' ? $unresStyle : $cellStyle;
+                $pid    = $l['partner_id'] ?? null;
+                $niu    = $pid !== null ? ($niuByPartner[(int) $pid] ?? '') : '';
 
-                foreach (($b['lines'] ?? []) as $l) {
-                    $amount = (float) ($l['amount'] ?? 0);
-                    $writer->addRow($styledRow([
-                        (string) ($l['date'] ?? ''),
-                        (string) ($b['name'] ?? ''),
-                        (string) ($b['niu']  ?? ''),
-                        (string) ($b['supporting_doc_type'] ?? ''),
-                        (string) ($b['supporting_doc_reference'] ?? ''),
-                        $catLabel,
-                        $nonRes ? 'Yes' : 'No',
-                        (string) ($l['account']   ?? ''),
-                        (string) ($l['journal']   ?? ''),
-                        (string) ($l['narration'] ?? ''),
-                        $amount,
-                        round($amount * $dedRatio, 2),
-                        round($amount * $reintRatio, 2),
-                        round($amount * $expRatio, 2),
-                    ], $cat === 0 ? $unresStyle : $cellStyle));
-                }
+                $writer->addRow($styledRow([
+                    (string) ($l['date'] ?? ''),
+                    (int)    ($l['move_id'] ?? 0),
+                    (int)    ($l['id'] ?? 0),
+                    (string) ($l['account'] ?? ''),
+                    (string) ($l['partner_name'] ?? ($pid !== null ? '' : '— No partner —')),
+                    $niu,
+                    ($l['is_non_resident'] ?? false) ? 'Yes' : 'No',
+                    (string) ($l['narration'] ?? ''),
+                    $catLabel,
+                    $sourceLabel,
+                    $isOverride ? 'Yes' : 'No',
+                    (float) ($l['amount'] ?? 0),
+                    (float) ($l['deductible'] ?? 0),
+                    (float) ($l['reintegrated'] ?? 0),
+                    (float) ($l['exposure_stack'] ?? 0),
+                    (float) ($l['exposure_tsr'] ?? 0),
+                    (float) ($l['exposure_total'] ?? 0),
+                ], $rowStyle));
             }
 
             $writer->addRow(Row::fromValues(['']));
             $writer->addRow($styledRow([
-                'Methodology: posted move lines on accounts 6713, 6588, 638 in YTD, grouped by partner_id. '
-                . 'Category resolved per Article 7 CGI (Cat 1 fully deductible; Cat 2 collectively capped at 0.5 % of CA_net = |70 ex 709| − |709|; Cat 3 fully reintegrated). '
-                . 'Stacked exposure on reintegrated portion = 49.5 % (33 % CIT, Article 17; 16.5 % IRCM, Articles 26, 91). '
-                . 'Additional 15 % TSR (Article 225 CGI) on Catégorie 3 amounts paid to non-resident beneficiaries. '
-                . 'Unresolved beneficiaries are treated as Cat 3 conservatively until documentation is uploaded.'
+                'Methodology: posted move lines on accounts 6582XX (Dons) and 6583XX (Mécenat) in YTD. '
+                . 'Per-line category resolved by precedence: line override → partner default → Cat 3 fallback (conservative; non-deductible until proven otherwise). '
+                . 'Categories per Article 7 CGI: Cat 1 fully deductible; Cat 2 + Cat 3 collectively tested against the 0.5 % × CA_net ceiling, with the excess apportioned pro-rata; CA_net = |Σ 70 ex 709| − |Σ 709| YTD. '
+                . 'Stacked exposure on the reintegrated portion = 49.5 % (33 % CIT, Article 17; 16.5 % IRCM on revenus réputés distribués, Articles 26, 91). '
+                . 'Additional 15 % TSR (Article 225 CGI) on Cat 3 reintegrated amounts paid to non-resident beneficiaries. '
+                . 'Lines flagged "Cat 3 fallback" did not have either a line-level override or a partner default at export time — treated as Cat 3 by the engine. '
+                . 'Account scope corrected (May 2026) — was previously reading 6713 / 6588 / 638 (currency-loss + misc-charge buckets); re-export anything dated before this change.'
             ], $noteStyle));
 
             $writer->close();
