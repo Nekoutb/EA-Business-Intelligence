@@ -72,6 +72,15 @@ return [
             'default'     => true,
             'status'      => 'live',
         ],
+        [
+            'key'         => 'human_resources',
+            'label'       => 'Human Resources',
+            'description' => 'Payroll processing, statutory contributions, and employee-benefits accounting connected to the live ledger.',
+            'icon'        => 'M17 20h5v-2a4 4 0 00-3-3.87M9 20H4v-2a4 4 0 014-4h.5m4-2a4 4 0 100-8 4 4 0 000 8zm6-2a3 3 0 100-6 3 3 0 000 6z',
+            'order'       => 50,
+            'default'     => false,
+            'status'      => 'live',
+        ],
     ],
 
     'modules' => [
@@ -316,6 +325,24 @@ return [
             'core'    => false,
             'status'  => 'live',
         ],
+        [
+            // Return Reconciliation — sub-feature positioned under
+            // Tax Returns. Reconciles filed returns to the GL so the
+            // auditor can spot mis-declarations or carry-forward gaps
+            // between successive periods. Coming-soon placeholder until
+            // the page is built; sidebar entry shows greyed-out with a
+            // "Soon" badge so users discover it without being able to
+            // navigate yet.
+            'key'     => 'return_reconciliation',
+            'service' => 'tax_compliance',
+            'label'   => 'Return Reconciliation',
+            'url'     => '/return-reconciliation',
+            'active'  => 'return_reconciliation',
+            'icon'    => 'M4 4v16h16M8 14l3-4 3 3 4-6M16 4h4v4',
+            'default' => false,
+            'core'    => false,
+            'status'  => 'coming_soon',
+        ],
 
         // ── Financial Reporting ───────────────────────────────────────────
         [
@@ -369,6 +396,40 @@ return [
             'url'     => '/cash-flow',
             'active'  => 'cash_flow',
             'icon'    => 'M12 2v20M5 9l7-7 7 7M5 15l7 7 7-7',
+            'default' => false,
+            'core'    => false,
+            'status'  => 'coming_soon',
+        ],
+        [
+            // Post-Retirement Benefits Calculator — IAS 19 / OHADA
+            // actuarial valuation of long-service awards, end-of-
+            // service indemnities, and post-retirement medical. Sits
+            // in Financial Reporting because the output feeds the
+            // employee-benefits provision on the balance sheet.
+            // Coming-soon placeholder until the calculator is built.
+            'key'     => 'post_retirement_benefits',
+            'service' => 'financial_reporting',
+            'label'   => 'Post-Retirement Benefits Calculator',
+            'url'     => '/post-retirement-benefits',
+            'active'  => 'post_retirement_benefits',
+            'icon'    => 'M12 14l9-5-9-5-9 5 9 5zM12 14v7M5 13.18v3.82a8 8 0 0014 0v-3.82',
+            'default' => false,
+            'core'    => false,
+            'status'  => 'coming_soon',
+        ],
+        [
+            // Bank Reconciliation Tool — pairs cleared bank-statement
+            // lines against journal entries on the matching cash
+            // account, surfaces unreconciled stragglers, and produces
+            // the period-end reconciliation statement auditors expect
+            // alongside the trial balance. Coming-soon placeholder
+            // until the matcher is wired up.
+            'key'     => 'bank_reconciliation',
+            'service' => 'financial_reporting',
+            'label'   => 'Bank Reconciliation Tool',
+            'url'     => '/bank-reconciliation',
+            'active'  => 'bank_reconciliation',
+            'icon'    => 'M3 21h18M3 10l9-7 9 7M5 10v11M19 10v11M9 14h6M9 18h6',
             'default' => false,
             'core'    => false,
             'status'  => 'coming_soon',
@@ -476,6 +537,25 @@ return [
             'url'     => '/scenarios',
             'active'  => 'scenarios',
             'icon'    => 'M4 6h16M4 12h10M4 18h7M14 14l3 3 5-5',
+            'default' => false,
+            'core'    => false,
+            'status'  => 'coming_soon',
+        ],
+
+        // ── Human Resources ──────────────────────────────────────────────
+        [
+            // Payroll Processing — gross-to-net engine plus statutory
+            // contributions (CNPS, IRPP, CAC, FNE, etc.) feeding the
+            // payroll provision and payment journals on the ledger.
+            // Coming-soon placeholder until the calc engine and the
+            // monthly-cycle UI are built; super admin enables per-tenant
+            // once the tenant's HR data feed is live.
+            'key'     => 'payroll_processing',
+            'service' => 'human_resources',
+            'label'   => 'Payroll Processing',
+            'url'     => '/payroll',
+            'active'  => 'payroll',
+            'icon'    => 'M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z',
             'default' => false,
             'core'    => false,
             'status'  => 'coming_soon',
