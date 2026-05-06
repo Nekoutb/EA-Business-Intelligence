@@ -552,7 +552,12 @@
         </div>
     </div>
 
-    {{-- Row 2 · Sankey · Revenue Reconciliation (scan → cash) (span 4) --}}
+    {{-- Row 2 · Sankey · Revenue Reconciliation (scan → cash) (span 4)
+         Gated by the per-tenant `revenue_reconciliation` module flag.
+         When the flag is off, the controller doesn't fetch $recH and
+         this entire card is skipped — the row collapses to whatever
+         else lives on Row 2. --}}
+    @if (tenant()?->moduleEnabled('revenue_reconciliation'))
     @php
         // Scan-to-cash framing — every leakage explicit:
         //   Reconciliation 1 · Scanned (Expected) → Billed (+ Leakage)
@@ -593,6 +598,7 @@
             @endif
         </div>
     </div>
+    @endif {{-- /revenue_reconciliation module flag --}}
 
     {{-- Row 3 · Unit Economics small multiples (span 12) — only the
          metrics enabled in /admin/tenants/{id} render. Card hides

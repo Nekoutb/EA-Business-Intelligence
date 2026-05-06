@@ -211,6 +211,27 @@ return [
             'status'  => 'live',
         ],
         [
+            // Revenue Reconciliation — sub-feature of Billing that surfaces
+            // the Expected → Billed → Collected three-way reconciliation
+            // (the scan-to-cash sankey on /Dashboard, the two-step panel +
+            // detail table + XLS export on /Billing).
+            //
+            // Modelled as a hidden module (`url => null` so it doesn't
+            // appear in the sidebar) so super-admins can toggle it per-
+            // tenant from /admin/tenants/{id} without disabling the rest
+            // of Billing — useful for clients whose ledger doesn't carry
+            // the operational scan data the "Expected" leg requires.
+            'key'     => 'revenue_reconciliation',
+            'service' => 'business_intelligence',
+            'label'   => 'Revenue Reconciliation',
+            'url'     => null,
+            'active'  => null,
+            'icon'    => 'M3 4v16h18M9 17V9m4 8V5m4 12v-7',
+            'default' => true,
+            'core'    => false,
+            'status'  => 'live',
+        ],
+        [
             // Procurement — PO lifecycle lens (volume + spend, cycle time,
             // PO compliance / maverick spend). Complements Payables (which
             // lives in the what-we-owe lens).
