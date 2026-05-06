@@ -12,6 +12,7 @@ use App\Services\Tax\IncomeTaxComplianceService;
 use App\Tenancy\TenantContext;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use OpenSpout\Common\Entity\Cell;
 use OpenSpout\Common\Entity\Row;
@@ -180,54 +181,93 @@ class IncomeTaxComplianceController extends Controller
             'amount'          => ['required', 'numeric'],
         ]);
 
-        $oldCat = LineDonationCategory::where('tenant_id', $tenant->id)
-            ->where('odoo_move_line_id', $moveLineId)
-            ->value('category');
+        // Direct DB upsert — this endpoint never needs Odoo, so don't
+        // instantiate the full DonationsComplianceService (which would
+        // pull in OdooFactory::fromConfig() and risk a 500 if the Odoo
+        // env vars are momentarily unavailable). The cache clear at the
+        // bottom handles staleness.
+        try {
+            $oldCat = LineDonationCategory::where('tenant_id', $tenant->id)
+                ->where('odoo_move_line_id', $moveLineId)
+                ->value('category');
 
-        $svc = new DonationsComplianceService(OdooFactory::fromConfig(), $tenant);
-        $result = $svc->setLineCategory(
-            moveLineId:       $moveLineId,
-            moveId:           (int) $data['odoo_move_id'],
-            partnerId:        isset($data['odoo_partner_id']) ? (int) $data['odoo_partner_id'] : null,
-            accountCode:      (string) $data['account_code'],
-            lineDate:         new \DateTimeImmutable($data['line_date']),
-            amount:           (float) $data['amount'],
-            category:         isset($data['category']) ? (int) $data['category'] : null,
-            note:             $data['note'] ?? null,
-            assignedByUserId: (int) $request->user()->id,
-        );
+            $newCategory = isset($data['category']) ? (int) $data['category'] : null;
+            $cleared     = $newCategory === null;
 
-        AuditLog::record('donation.line_category.set', [
-            'tenant_id' => $tenant->id,
-            'target'    => 'move_line:' . $moveLineId,
-            'payload'   => [
-                'odoo_move_line_id' => $moveLineId,
-                'odoo_move_id'      => (int) $data['odoo_move_id'],
-                'odoo_partner_id'   => $data['odoo_partner_id'] ?? null,
-                'account_code'      => $data['account_code'],
-                'line_date'         => $data['line_date'],
-                'amount'            => $data['amount'],
-                'old_category'      => $oldCat !== null ? (int) $oldCat : null,
-                'new_category'      => isset($data['category']) ? (int) $data['category'] : null,
-                'note'              => $data['note'] ?? null,
-            ],
-        ]);
+            if ($cleared) {
+                LineDonationCategory::where('tenant_id', $tenant->id)
+                    ->where('odoo_move_line_id', $moveLineId)
+                    ->delete();
+                $resultCat = null;
+            } else {
+                $row = LineDonationCategory::updateOrCreate(
+                    [
+                        'tenant_id'         => $tenant->id,
+                        'odoo_move_line_id' => $moveLineId,
+                    ],
+                    [
+                        'odoo_move_id'    => (int) $data['odoo_move_id'],
+                        'odoo_partner_id' => isset($data['odoo_partner_id']) ? (int) $data['odoo_partner_id'] : null,
+                        'account_code'    => (string) $data['account_code'],
+                        'line_date'       => $data['line_date'],
+                        'amount'          => (float) $data['amount'],
+                        'category'        => $newCategory,
+                        'note'            => $data['note'] ?? null,
+                        'assigned_by'     => (int) $request->user()->id,
+                    ]
+                );
+                $resultCat = (int) $row->category;
+            }
 
-        ea_cache_clear();
-
-        if ($request->expectsJson() || $request->ajax()) {
-            return response()->json([
-                'ok'         => true,
-                'line_id'    => $moveLineId,
-                'category'   => $result?->category,
-                'cleared'    => $result === null,
+            AuditLog::record('donation.line_category.set', [
+                'tenant_id' => $tenant->id,
+                'target'    => 'move_line:' . $moveLineId,
+                'payload'   => [
+                    'odoo_move_line_id' => $moveLineId,
+                    'odoo_move_id'      => (int) $data['odoo_move_id'],
+                    'odoo_partner_id'   => $data['odoo_partner_id'] ?? null,
+                    'account_code'      => $data['account_code'],
+                    'line_date'         => $data['line_date'],
+                    'amount'            => $data['amount'],
+                    'old_category'      => $oldCat !== null ? (int) $oldCat : null,
+                    'new_category'      => $newCategory,
+                    'note'              => $data['note'] ?? null,
+                ],
             ]);
-        }
 
-        return back()->with('flash', [
-            'type' => 'success',
-            'msg'  => $result === null ? 'Line category cleared.' : 'Line category saved.',
-        ]);
+            ea_cache_clear();
+
+            if ($request->expectsJson() || $request->ajax()) {
+                return response()->json([
+                    'ok'       => true,
+                    'line_id'  => $moveLineId,
+                    'category' => $resultCat,
+                    'cleared'  => $cleared,
+                ]);
+            }
+
+            return back()->with('flash', [
+                'type' => 'success',
+                'msg'  => $cleared ? 'Line category cleared.' : 'Line category saved.',
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('setLineCategory failed', [
+                'tenant_id'   => $tenant->id,
+                'move_line'   => $moveLineId,
+                'category'    => $data['category'] ?? null,
+                'exception'   => get_class($e),
+                'message'     => $e->getMessage(),
+                'file'        => $e->getFile() . ':' . $e->getLine(),
+            ]);
+            if ($request->expectsJson() || $request->ajax()) {
+                return response()->json([
+                    'ok'      => false,
+                    'error'   => $e->getMessage(),
+                    'class'   => get_class($e),
+                ], 500);
+            }
+            throw $e;
+        }
     }
 
     /**
@@ -270,39 +310,58 @@ class IncomeTaxComplianceController extends Controller
         $now       = now();
         $lineIds   = array_column($data['lines'], 'odoo_move_line_id');
 
-        // Pre-load existing categories for diff in audit log.
-        $existing = LineDonationCategory::where('tenant_id', $tenant->id)
-            ->whereIn('odoo_move_line_id', $lineIds)
-            ->pluck('category', 'odoo_move_line_id');
+        try {
+            // Pre-load existing categories for diff in audit log.
+            $existing = LineDonationCategory::where('tenant_id', $tenant->id)
+                ->whereIn('odoo_move_line_id', $lineIds)
+                ->pluck('category', 'odoo_move_line_id');
 
-        $rows = [];
-        foreach ($data['lines'] as $l) {
-            $rows[] = [
-                'tenant_id'         => $tenant->id,
-                'odoo_move_line_id' => (int) $l['odoo_move_line_id'],
-                'odoo_move_id'      => (int) $l['odoo_move_id'],
-                'odoo_partner_id'   => isset($l['odoo_partner_id']) ? (int) $l['odoo_partner_id'] : null,
-                'account_code'      => (string) $l['account_code'],
-                'line_date'         => $l['line_date'],
-                'amount'            => (float) $l['amount'],
-                'category'          => $cat,
-                'note'              => $note,
-                'assigned_by'       => $userId,
-                'created_at'        => $now,
-                'updated_at'        => $now,
-            ];
+            $rows = [];
+            foreach ($data['lines'] as $l) {
+                $rows[] = [
+                    'tenant_id'         => $tenant->id,
+                    'odoo_move_line_id' => (int) $l['odoo_move_line_id'],
+                    'odoo_move_id'      => (int) $l['odoo_move_id'],
+                    'odoo_partner_id'   => isset($l['odoo_partner_id']) ? (int) $l['odoo_partner_id'] : null,
+                    'account_code'      => (string) $l['account_code'],
+                    'line_date'         => $l['line_date'],
+                    'amount'            => (float) $l['amount'],
+                    'category'          => $cat,
+                    'note'              => $note,
+                    'assigned_by'       => $userId,
+                    'created_at'        => $now,
+                    'updated_at'        => $now,
+                ];
+            }
+
+            DB::transaction(function () use ($rows) {
+                // Upsert by (tenant_id, odoo_move_line_id) — composite unique.
+                // Using upsert here keeps it to a single statement.
+                LineDonationCategory::upsert(
+                    $rows,
+                    ['tenant_id', 'odoo_move_line_id'],
+                    ['odoo_move_id', 'odoo_partner_id', 'account_code', 'line_date',
+                     'amount', 'category', 'note', 'assigned_by', 'updated_at']
+                );
+            });
+        } catch (\Throwable $e) {
+            Log::error('setLineCategoriesBulk failed', [
+                'tenant_id'  => $tenant->id,
+                'category'   => $cat,
+                'line_count' => count($lineIds),
+                'exception'  => get_class($e),
+                'message'    => $e->getMessage(),
+                'file'       => $e->getFile() . ':' . $e->getLine(),
+            ]);
+            if ($request->expectsJson() || $request->ajax()) {
+                return response()->json([
+                    'ok'    => false,
+                    'error' => $e->getMessage(),
+                    'class' => get_class($e),
+                ], 500);
+            }
+            throw $e;
         }
-
-        DB::transaction(function () use ($rows) {
-            // Upsert by (tenant_id, odoo_move_line_id) — composite unique.
-            // Using upsert here keeps it to a single statement.
-            LineDonationCategory::upsert(
-                $rows,
-                ['tenant_id', 'odoo_move_line_id'],
-                ['odoo_move_id', 'odoo_partner_id', 'account_code', 'line_date',
-                 'amount', 'category', 'note', 'assigned_by', 'updated_at']
-            );
-        });
 
         // Diff for audit log: count how many were new vs changed vs unchanged.
         $newCount = $changedCount = $sameCount = 0;

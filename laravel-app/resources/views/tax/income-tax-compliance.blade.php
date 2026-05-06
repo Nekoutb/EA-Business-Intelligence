@@ -906,6 +906,24 @@
                         else { cat = 3; source = 'cat3_fallback'; }
                         applyPill(tr, cat, source);
                     }
+                    // Surface the server's actual error message (not just
+                    // "HTTP 500") so the auditor can tell the dev team
+                    // what went wrong.
+                    async function readError(r) {
+                        let detail = 'HTTP ' + r.status;
+                        try {
+                            const ct = r.headers.get('content-type') || '';
+                            if (ct.includes('application/json')) {
+                                const j = await r.json();
+                                if (j?.error) detail += ' · ' + j.error;
+                                else if (j?.message) detail += ' · ' + j.message;
+                            } else {
+                                const t = await r.text();
+                                if (t && t.length < 500) detail += ' · ' + t.replace(/<[^>]+>/g, ' ').trim().slice(0, 200);
+                            }
+                        } catch (_) { /* ignore */ }
+                        return detail;
+                    }
                     async function postSingle(tr, category) {
                         const meta = rowMeta(tr);
                         const url  = epSingle + '/' + meta.line_id + '/category';
@@ -921,7 +939,7 @@
                             headers: { 'X-CSRF-TOKEN': csrf, 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
                             body: body,
                         });
-                        if (!r.ok) throw new Error('HTTP ' + r.status);
+                        if (!r.ok) throw new Error(await readError(r));
                         return r.json();
                     }
                     async function postBulk(rows, category) {
@@ -941,7 +959,7 @@
                             headers: { 'X-CSRF-TOKEN': csrf, 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
                             body: body,
                         });
-                        if (!r.ok) throw new Error('HTTP ' + r.status);
+                        if (!r.ok) throw new Error(await readError(r));
                         return r.json();
                     }
 
