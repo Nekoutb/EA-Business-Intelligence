@@ -257,13 +257,13 @@ final class GLAccountService
                 $journalDomain, ['id', 'code', 'name', 'type'], []);
 
             if (empty($journals)) {
-                \Illuminate\Support\Facades\Log::info('cashJournalDebitsByPrefixes: no cash/bank journals found', [
+                \Illuminate\Support\Facades\Log::warning('DIAG cashJournalDebitsByPrefixes: no cash/bank journals found', [
                     'domain_used' => 'type IN (cash,bank) OR code LIKE CSH% OR code LIKE BNK%',
                 ]);
                 return array_fill_keys($prefixes, 0.0);
             }
             $journalIds = array_map(fn ($j) => (int) $j['id'], $journals);
-            \Illuminate\Support\Facades\Log::info('cashJournalDebitsByPrefixes: cash journals identified', [
+            \Illuminate\Support\Facades\Log::warning('DIAG cashJournalDebitsByPrefixes: cash journals identified', [
                 'count'    => count($journals),
                 'journals' => array_map(fn ($j) => [
                     'id'   => $j['id']   ?? null,
@@ -280,7 +280,7 @@ final class GLAccountService
             $accounts = $this->odoo->searchRead('account.account',
                 $domain, ['id', 'code'], []);
             if (empty($accounts)) {
-                \Illuminate\Support\Facades\Log::info('cashJournalDebitsByPrefixes: no accounts match prefixes', [
+                \Illuminate\Support\Facades\Log::warning('DIAG cashJournalDebitsByPrefixes: no accounts match prefixes', [
                     'prefixes' => $prefixes,
                 ]);
                 return array_fill_keys($prefixes, 0.0);
@@ -325,7 +325,7 @@ final class GLAccountService
                 if ($aid === null || !isset($prefixById[$aid])) continue;
                 $sums[$prefixById[$aid]] += (float) ($r['debit'] ?? 0);
             }
-            \Illuminate\Support\Facades\Log::info('cashJournalDebitsByPrefixes: sums computed', [
+            \Illuminate\Support\Facades\Log::warning('DIAG cashJournalDebitsByPrefixes: sums computed', [
                 'sums'                 => $sums,
                 'journals_used'        => count($journalIds),
                 'prefix_account_ids'   => count($prefixById),
