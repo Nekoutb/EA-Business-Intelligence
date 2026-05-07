@@ -25,6 +25,7 @@
             $fmtMoney = fn($value) => ea_money_short((float) ($value ?? 0), $currency);
             $topCustomers   = $profitability['most_profitable']  ?? [];
             $leastCustomers = $profitability['least_profitable'] ?? [];
+            $scatter        = $insights['scatter'] ?? null;
         @endphp
 
         {{-- Summary KPIs --}}
@@ -284,85 +285,253 @@
             </div>
         </div>
 
-        {{-- Profitability Tables --}}
-        <div class="grid lg:grid-cols-2 gap-4">
-            <div class="section-card p-5">
-                <div class="flex items-center justify-between mb-4">
-                    <div>
-                        <h2 class="text-[13px] font-semibold text-[#1e3d44]">Top 5 Most Profitable Customers</h2>
-                        <p class="text-[11px] text-[#8a8578]">Share of current-period revenue</p>
+        {{-- ── Profitability scatter ──────────────────────────────────
+             Replaces the legacy "Top 5 Most/Least Profitable" tables.
+             X = revenue (spend) · Y = gross margin contribution
+             Median split into 3 visual bands:
+               • GREEN  — Stars (top-right): above median on both axes
+               • RED    — Underperformers (bottom-left): below median on both
+               • ORANGE — Mixed: high on one axis, low on the other
+             Click any dot to highlight + populate the side panel with
+             that customer's revenue, margin, margin %, orders, and
+             share of total margin. ──────────────────────────────── --}}
+        @if ($scatter && !empty($scatter['points']))
+            @php
+                $sumGreen  = $scatter['summary']['green']  ?? ['count' => 0];
+                $sumOrange = $scatter['summary']['orange'] ?? ['count' => 0];
+                $sumRed    = $scatter['summary']['red']    ?? ['count' => 0];
+                $totRev    = (float) ($scatter['total_revenue'] ?? 0);
+                $totMar    = (float) ($scatter['total_margin']  ?? 0);
+                $thr       = $scatter['thresholds'] ?? ['revenue_median' => 0, 'margin_median' => 0];
+            @endphp
+
+            <div class="grid lg:grid-cols-3 gap-4 mb-4">
+                {{-- Chart card spans 2 columns --}}
+                <div class="section-card p-5 lg:col-span-2">
+                    <div class="flex items-start justify-between mb-3 gap-3 flex-wrap">
+                        <div>
+                            <h2 class="text-[13px] font-semibold text-[#1e3d44]">Customer Profitability Map</h2>
+                            <p class="text-[11px] text-[#8a8578]">
+                                X = revenue · Y = gross margin contribution · click any dot for details
+                            </p>
+                        </div>
+                        <div class="flex items-center gap-3 text-[11px]">
+                            <span class="inline-flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full" style="background:#16a34a"></span>Stars ({{ $sumGreen['count'] }})</span>
+                            <span class="inline-flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full" style="background:#ea580c"></span>Mixed ({{ $sumOrange['count'] }})</span>
+                            <span class="inline-flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full" style="background:#dc2626"></span>Underperformers ({{ $sumRed['count'] }})</span>
+                            <span class="text-[#a09d95]">·</span>
+                            <span class="text-[#a09d95] font-medium">Currency {{ $currency }}</span>
+                        </div>
                     </div>
-                    <span class="text-[10px] text-[#a09d95] font-medium">Currency {{ $currency }}</span>
+                    <div id="ec-customer-scatter" style="height: 420px;"></div>
+                    <div class="mt-3 grid grid-cols-3 gap-3 text-[11px]">
+                        <div class="rounded-lg border border-emerald-200 bg-emerald-50/60 p-2">
+                            <div class="font-semibold text-emerald-800">Stars · {{ $sumGreen['count'] }}</div>
+                            <div class="text-emerald-700/80">{{ number_format($sumGreen['share_revenue_pct'] ?? 0, 1) }}% of revenue · {{ number_format($sumGreen['share_margin_pct'] ?? 0, 1) }}% of margin</div>
+                        </div>
+                        <div class="rounded-lg border border-orange-200 bg-orange-50/60 p-2">
+                            <div class="font-semibold text-orange-800">Mixed · {{ $sumOrange['count'] }}</div>
+                            <div class="text-orange-700/80">{{ number_format($sumOrange['share_revenue_pct'] ?? 0, 1) }}% of revenue · {{ number_format($sumOrange['share_margin_pct'] ?? 0, 1) }}% of margin</div>
+                        </div>
+                        <div class="rounded-lg border border-rose-200 bg-rose-50/60 p-2">
+                            <div class="font-semibold text-rose-800">Underperformers · {{ $sumRed['count'] }}</div>
+                            <div class="text-rose-700/80">{{ number_format($sumRed['share_revenue_pct'] ?? 0, 1) }}% of revenue · {{ number_format($sumRed['share_margin_pct'] ?? 0, 1) }}% of margin</div>
+                        </div>
+                    </div>
                 </div>
-                <div class="overflow-x-auto">
-                    <table class="w-full text-sm">
-                        <thead>
-                            <tr class="text-left text-[10px] text-[#8a8578] uppercase tracking-wider border-b border-[#e8e4de]">
-                                <th class="pb-2.5 font-semibold">Customer</th>
-                                <th class="pb-2.5 text-right font-semibold">Revenue</th>
-                                <th class="pb-2.5 text-right font-semibold">Share</th>
-                                <th class="pb-2.5 text-right font-semibold">Orders</th>
-                                <th class="pb-2.5 text-right font-semibold">Avg Order</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            @forelse ($topCustomers as $row)
-                                <tr class="table-row-hover border-b border-[#f0ede7]">
-                                    <td class="py-2.5">
-                                        <div class="text-[13px] font-medium text-[#2d3748]">{{ $row['name'] }}</div>
-                                        <div class="text-[10px] text-[#a09d95]">ID: {{ $row['id'] }}</div>
-                                    </td>
-                                    <td class="py-2.5 text-right tabular-nums text-[13px] font-semibold text-sage-700">{{ $fmtMoney($row['revenue']) }}</td>
-                                    <td class="py-2.5 text-right tabular-nums text-[13px]">{{ $fmtPct($row['share']) }}</td>
-                                    <td class="py-2.5 text-right tabular-nums text-[13px]">{{ $fmtCount($row['orders']) }}</td>
-                                    <td class="py-2.5 text-right tabular-nums text-[13px]">{{ $fmtMoney($row['avg_order']) }}</td>
-                                </tr>
-                            @empty
-                                <tr><td colspan="5" class="py-4 text-center text-xs text-[#8a8578]">No customer data.</td></tr>
-                            @endforelse
-                        </tbody>
-                    </table>
+
+                {{-- Selected-customer detail panel — populated on click --}}
+                <div class="section-card p-5">
+                    <h2 class="text-[13px] font-semibold text-[#1e3d44]">Selected customer</h2>
+                    <p class="text-[11px] text-[#8a8578] mb-3" id="cs-detail-hint">Click a dot on the chart to see details</p>
+                    <div id="cs-detail-card" class="hidden">
+                        <div class="border-l-4 pl-3 py-1 mb-3" id="cs-detail-band-bar" style="border-color:#16a34a;">
+                            <div class="text-[14px] font-semibold text-[#1e3d44]" id="cs-detail-name">—</div>
+                            <div class="text-[10px] text-[#a09d95] font-mono" id="cs-detail-id">ID: —</div>
+                        </div>
+                        <dl class="space-y-2.5">
+                            <div class="flex items-baseline justify-between gap-3">
+                                <dt class="text-[11px] uppercase tracking-wider text-[#8a8578]">Revenue</dt>
+                                <dd class="text-[14px] font-semibold tabular-nums text-[#1e3d44]" id="cs-detail-revenue">—</dd>
+                            </div>
+                            <div class="flex items-baseline justify-between gap-3">
+                                <dt class="text-[11px] uppercase tracking-wider text-[#8a8578]">Margin contribution</dt>
+                                <dd class="text-[14px] font-semibold tabular-nums" id="cs-detail-margin">—</dd>
+                            </div>
+                            <div class="flex items-baseline justify-between gap-3">
+                                <dt class="text-[11px] uppercase tracking-wider text-[#8a8578]">Margin %</dt>
+                                <dd class="text-[13px] font-medium tabular-nums" id="cs-detail-marginpct">—</dd>
+                            </div>
+                            <div class="flex items-baseline justify-between gap-3">
+                                <dt class="text-[11px] uppercase tracking-wider text-[#8a8578]">Orders</dt>
+                                <dd class="text-[13px] font-medium tabular-nums" id="cs-detail-orders">—</dd>
+                            </div>
+                            <div class="flex items-baseline justify-between gap-3">
+                                <dt class="text-[11px] uppercase tracking-wider text-[#8a8578]">Share of revenue</dt>
+                                <dd class="text-[13px] font-medium tabular-nums" id="cs-detail-share-rev">—</dd>
+                            </div>
+                            <div class="flex items-baseline justify-between gap-3">
+                                <dt class="text-[11px] uppercase tracking-wider text-[#8a8578]">Share of margin</dt>
+                                <dd class="text-[13px] font-medium tabular-nums" id="cs-detail-share-mar">—</dd>
+                            </div>
+                            <div class="flex items-baseline justify-between gap-3">
+                                <dt class="text-[11px] uppercase tracking-wider text-[#8a8578]">Band</dt>
+                                <dd class="text-[11px] font-semibold uppercase tracking-wider" id="cs-detail-band">—</dd>
+                            </div>
+                        </dl>
+                    </div>
+                    <div class="mt-4 pt-3 border-t border-[#e8e4de] text-[10.5px] text-[#8a8578] leading-relaxed">
+                        <strong class="text-[#1e3d44]">Methodology.</strong>
+                        Margin = <code class="text-[10px] bg-[#f5f3ed] px-1 rounded">price_subtotal − qty × product.standard_price</code>
+                        per posted out_invoice line. Manual lines without a product (discounts, freight) are excluded.
+                        Products with no cost set in Odoo contribute their full subtotal as margin (treat as zero-cost services).
+                        Median split: above-median revenue AND margin → Stars · below-median both → Underperformers · otherwise Mixed.
+                        Median revenue = {{ $fmtMoney($thr['revenue_median']) }} · Median margin = {{ $fmtMoney($thr['margin_median']) }}.
+                    </div>
                 </div>
             </div>
 
-            <div class="section-card p-5">
-                <div class="flex items-center justify-between mb-4">
-                    <div>
-                        <h2 class="text-[13px] font-semibold text-[#1e3d44]">Top 5 Least Profitable Customers</h2>
-                        <p class="text-[11px] text-[#8a8578]">Focus for pricing / cost-to-serve reviews</p>
-                    </div>
-                    <span class="text-[10px] text-[#a09d95] font-medium">Currency {{ $currency }}</span>
-                </div>
-                <div class="overflow-x-auto">
-                    <table class="w-full text-sm">
-                        <thead>
-                            <tr class="text-left text-[10px] text-[#8a8578] uppercase tracking-wider border-b border-[#e8a8578]">
-                                <th class="pb-2.5 font-semibold">Customer</th>
-                                <th class="pb-2.5 text-right font-semibold">Revenue</th>
-                                <th class="pb-2.5 text-right font-semibold">Share</th>
-                                <th class="pb-2.5 text-right font-semibold">Orders</th>
-                                <th class="pb-2.5 text-right font-semibold">Avg Order</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            @forelse ($leastCustomers as $row)
-                                <tr class="table-row-hover border-b border-[#f0ede7]">
-                                    <td class="py-2.5">
-                                        <div class="text-[13px] font-medium text-[#2d3748]">{{ $row['name'] }}</div>
-                                        <div class="text-[10px] text-[#a09d95]">ID: {{ $row['id'] }}</div>
-                                    </td>
-                                    <td class="py-2.5 text-right tabular-nums text-[13px] text-coral-700">{{ $fmtMoney($row['revenue']) }}</td>
-                                    <td class="py-2.5 text-right tabular-nums text-[13px]">{{ $fmtPct($row['share']) }}</td>
-                                    <td class="py-2.5 text-right tabular-nums text-[13px]">{{ $fmtCount($row['orders']) }}</td>
-                                    <td class="py-2.5 text-right tabular-nums text-[13px]">{{ $fmtMoney($row['avg_order']) }}</td>
-                                </tr>
-                            @empty
-                                <tr><td colspan="5" class="py-4 text-center text-xs text-[#8a8578]">No customer data.</td></tr>
-                            @endforelse
-                        </tbody>
-                    </table>
-                </div>
+            @push('scripts')
+            <script>
+                (function () {
+                    const el = document.getElementById('ec-customer-scatter');
+                    if (!el || typeof echarts === 'undefined') return;
+
+                    const points     = @json($scatter['points']);
+                    const revMedian  = {{ (float) ($thr['revenue_median'] ?? 0) }};
+                    const marMedian  = {{ (float) ($thr['margin_median'] ?? 0) }};
+                    const ccy        = @json($currency);
+
+                    // Compact number formatter — same vibe as the dashboard's
+                    // shortNum helper. Keeps axis ticks legible at any scale.
+                    const fmt = (v) => {
+                        const a = Math.abs(v);
+                        if (a >= 1_000_000_000) return (v / 1_000_000_000).toFixed(2) + 'B';
+                        if (a >= 1_000_000)     return (v / 1_000_000).toFixed(2) + 'M';
+                        if (a >= 1_000)         return (v / 1_000).toFixed(0) + 'K';
+                        return Math.round(v).toLocaleString();
+                    };
+                    const fmtFull = (v) =>
+                        ccy + ' ' + Math.round(v).toLocaleString('en-US');
+
+                    const COLORS = { green: '#16a34a', orange: '#ea580c', red: '#dc2626' };
+                    const BAND_LABELS = { green: 'Star', orange: 'Mixed', red: 'Underperformer' };
+
+                    // Build per-series data — one series per band so legend
+                    // toggling and colour assignment work cleanly. Symbol
+                    // size is order-count-driven so high-frequency
+                    // customers visually pop without dominating the axes.
+                    const series = ['green', 'orange', 'red'].map((band) => ({
+                        name: { green: 'Stars', orange: 'Mixed', red: 'Underperformers' }[band],
+                        type: 'scatter',
+                        data: points.filter(p => p.band === band).map(p => ({
+                            value: [p.revenue, p.margin],
+                            name: p.name, _meta: p,
+                        })),
+                        itemStyle: { color: COLORS[band], opacity: 0.75, borderColor: '#fff', borderWidth: 1 },
+                        emphasis: { scale: 1.5, itemStyle: { opacity: 1, shadowBlur: 10, shadowColor: COLORS[band] } },
+                        symbolSize: (val, p) => {
+                            const orders = (p.data && p.data._meta && p.data._meta.orders) || 1;
+                            // sqrt scaling so 100-order customers don't drown 1-order ones
+                            return Math.max(8, Math.min(28, 6 + Math.sqrt(orders) * 2.5));
+                        },
+                    }));
+
+                    // Median quadrant divider lines drawn via markLine
+                    // on the first series so coordinate translation is
+                    // automatic (saves us from doing pixel math).
+                    series[0].markLine = {
+                        silent: true,
+                        symbol: 'none',
+                        lineStyle: { type: 'dashed', color: '#94a3b8', width: 1 },
+                        label: { show: false },
+                        data: [
+                            { xAxis: revMedian },
+                            { yAxis: marMedian },
+                        ],
+                    };
+
+                    const chart = echarts.init(el);
+                    chart.setOption({
+                        grid:    { left: 60, right: 16, top: 16, bottom: 48 },
+                        tooltip: {
+                            trigger: 'item',
+                            backgroundColor: '#1e3d44', borderWidth: 0, padding: [8, 12],
+                            textStyle: { color: '#fff', fontSize: 12 },
+                            formatter: (p) => {
+                                const m = p.data._meta;
+                                return [
+                                    `<b>${m.name}</b>`,
+                                    `Revenue: ${fmtFull(m.revenue)}`,
+                                    `Margin: ${fmtFull(m.margin)} (${m.margin_pct.toFixed(1)}%)`,
+                                    `Orders: ${m.orders.toLocaleString()}`,
+                                    `Band: ${BAND_LABELS[m.band]}`,
+                                ].join('<br>');
+                            },
+                        },
+                        xAxis: {
+                            type: 'value', name: 'Revenue (' + ccy + ')',
+                            nameLocation: 'middle', nameGap: 30, nameTextStyle: { color: '#5a6a70', fontSize: 11 },
+                            axisLabel: { formatter: fmt, color: '#8a8578', fontSize: 10 },
+                            splitLine: { lineStyle: { color: '#f0ede7' } },
+                            axisLine: { lineStyle: { color: '#cbd5e1' } },
+                        },
+                        yAxis: {
+                            type: 'value', name: 'Margin (' + ccy + ')',
+                            nameLocation: 'middle', nameGap: 50, nameTextStyle: { color: '#5a6a70', fontSize: 11 },
+                            axisLabel: { formatter: fmt, color: '#8a8578', fontSize: 10 },
+                            splitLine: { lineStyle: { color: '#f0ede7' } },
+                            axisLine: { lineStyle: { color: '#cbd5e1' } },
+                        },
+                        series: series,
+                    });
+
+                    // Click handler — populate the side detail panel + visually
+                    // emphasise the clicked point via dispatchAction.
+                    let lastSelected = null;
+                    chart.on('click', (params) => {
+                        const m = params.data && params.data._meta;
+                        if (!m) return;
+
+                        // De-emphasise previous + emphasise current
+                        if (lastSelected) chart.dispatchAction({ type: 'downplay', ...lastSelected });
+                        chart.dispatchAction({ type: 'highlight', seriesIndex: params.seriesIndex, dataIndex: params.dataIndex });
+                        lastSelected = { seriesIndex: params.seriesIndex, dataIndex: params.dataIndex };
+
+                        // Populate detail panel
+                        document.getElementById('cs-detail-hint').classList.add('hidden');
+                        document.getElementById('cs-detail-card').classList.remove('hidden');
+                        const bar = document.getElementById('cs-detail-band-bar');
+                        bar.style.borderColor = COLORS[m.band];
+
+                        document.getElementById('cs-detail-name').textContent       = m.name;
+                        document.getElementById('cs-detail-id').textContent         = 'ID: ' + m.id;
+                        document.getElementById('cs-detail-revenue').textContent    = fmtFull(m.revenue);
+                        document.getElementById('cs-detail-margin').textContent     = fmtFull(m.margin);
+                        document.getElementById('cs-detail-margin').style.color     = COLORS[m.band];
+                        document.getElementById('cs-detail-marginpct').textContent  = m.margin_pct.toFixed(1) + '%';
+                        document.getElementById('cs-detail-orders').textContent     = m.orders.toLocaleString();
+                        document.getElementById('cs-detail-share-rev').textContent  = m.share_revenue.toFixed(1) + '%';
+                        document.getElementById('cs-detail-share-mar').textContent  = m.share_margin.toFixed(1) + '%';
+                        const bandEl = document.getElementById('cs-detail-band');
+                        bandEl.textContent = BAND_LABELS[m.band];
+                        bandEl.style.color = COLORS[m.band];
+                    });
+
+                    // Keep the chart responsive
+                    window.addEventListener('resize', () => chart.resize());
+                })();
+            </script>
+            @endpush
+        @else
+            <div class="bg-warm-50 border border-warm-200 rounded-xl p-5 mb-4 text-sm">
+                <strong class="text-[#1e3d44]">Profitability map unavailable.</strong>
+                <p class="text-xs text-[#7c7466] mt-1">
+                    No posted out_invoices with product lines were found in the selected period, or product cost data
+                    (<code class="bg-[#f5f3ed] px-1 rounded">standard_price</code>) is missing on every line.
+                    Set product costs in Odoo and run a sync to enable this chart.
+                </p>
             </div>
-        </div>
+        @endif
     @endif
 @endsection
