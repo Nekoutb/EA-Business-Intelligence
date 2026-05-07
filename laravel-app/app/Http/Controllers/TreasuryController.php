@@ -306,7 +306,7 @@ class TreasuryController extends Controller
             // future zero-result report is one log-line away from a
             // root cause. Keeps the disb shape small enough to be
             // friendly to grep.
-            \Illuminate\Support\Facades\Log::info('treasury.index: disbursements payload', [
+            \Illuminate\Support\Facades\Log::warning('DIAG treasury.index: disbursements payload', [
                 'fresh'       => $request->boolean('fresh'),
                 'tenant'      => optional(tenant())->slug,
                 'rows'        => collect($treasury['disbursements']['rows'] ?? [])->map(fn ($r) => [
