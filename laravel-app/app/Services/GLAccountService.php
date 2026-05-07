@@ -117,6 +117,88 @@ final class GLAccountService
         return $this->sumPerAccountSigned($prefix, $asOf, signCredit: false);
     }
 
+    /**
+     * Per-account balances (with name) for every account whose code
+     * starts with $prefix. Returns one row per account with its
+     * Odoo-resolved name and the signed balance (debit − credit).
+     *
+     * Used by the Treasury liquidity-snapshot card to list each bank
+     * and cash account individually with its current balance.
+     *
+     * Two Odoo round-trips:
+     *   1. searchRead(account.account, code =like prefix%) → id+code+name
+     *   2. read_group(account.move.line, account_id) → debit:sum + credit:sum
+     *
+     * Returns:
+     *   [
+     *     ['id' => 12, 'code' => '521001', 'name' => 'Bank (ECOBANK)',
+     *      'debit' => 50000000.0, 'credit' => 2750000.0,
+     *      'balance' => 47250000.0],
+     *     ...
+     *   ]
+     *
+     * Accounts with no posted lines appear with debit/credit/balance
+     * all 0.0 — caller decides whether to suppress, grey out, or show
+     * them. Returns null on Odoo failure so callers can fall back.
+     */
+    public function accountBalancesByPrefix(
+        string $prefix,
+        ?\DateTimeImmutable $asOf = null
+    ): ?array {
+        try {
+            $accounts = $this->odoo->searchRead(
+                'account.account',
+                [['code', '=like', $prefix . '%']],
+                ['id', 'code', 'name'],
+                ['order' => 'code asc']
+            );
+            if (empty($accounts)) return [];
+
+            $ids = array_map(fn ($a) => (int) $a['id'], $accounts);
+
+            $domain = [
+                ['account_id', 'in', $ids],
+                ['parent_state', '=', 'posted'],
+            ];
+            if ($asOf) $domain[] = ['date', '<=', $asOf->format('Y-m-d')];
+
+            $groups = $this->odoo->callModel('account.move.line', 'read_group', [
+                'domain'  => $domain,
+                'fields'  => ['debit:sum', 'credit:sum'],
+                'groupby' => ['account_id'],
+                'lazy'    => false,
+            ]);
+
+            // Index group results by account_id for an O(1) join below.
+            $byId = [];
+            foreach ((array) $groups as $g) {
+                $aid = is_array($g['account_id'] ?? null) ? (int) $g['account_id'][0] : null;
+                if ($aid === null) continue;
+                $byId[$aid] = [
+                    'debit'  => (float) ($g['debit']  ?? 0),
+                    'credit' => (float) ($g['credit'] ?? 0),
+                ];
+            }
+
+            $rows = [];
+            foreach ($accounts as $a) {
+                $aid = (int) $a['id'];
+                $sum = $byId[$aid] ?? ['debit' => 0.0, 'credit' => 0.0];
+                $rows[] = [
+                    'id'      => $aid,
+                    'code'    => (string) ($a['code'] ?? ''),
+                    'name'    => (string) ($a['name'] ?? ''),
+                    'debit'   => (float)  $sum['debit'],
+                    'credit'  => (float)  $sum['credit'],
+                    'balance' => (float)  ($sum['debit'] - $sum['credit']),
+                ];
+            }
+            return $rows;
+        } catch (\Throwable $e) {
+            return null;
+        }
+    }
+
     // ── internals ────────────────────────────────────────────────────
 
     /**

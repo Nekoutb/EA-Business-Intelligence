@@ -25,7 +25,12 @@
   .topbar__meta { font: 500 11px var(--font); color: var(--text-subtle); }
   .topbar__meta b { color: var(--text); font-weight: 600; }
 
-  .grid-treasury { display: grid; gap: 8px; grid-template-columns: repeat(4, 1fr); margin-bottom: 12px; }
+  /* Two-row grid: row 1 = the four KPI cards, row 2 reserved for
+     the liquidity snapshot under col 1 only. grid-auto-rows:
+     min-content keeps each row as tall as its tallest item, so the
+     snapshot grows with its account list and the empty cells in
+     row 2 cols 2-4 collapse to nothing. */
+  .grid-treasury { display: grid; gap: 8px; grid-template-columns: repeat(4, 1fr); grid-auto-rows: min-content; margin-bottom: 12px; }
   @media (max-width: 1100px) { .grid-treasury { grid-template-columns: repeat(2, 1fr); } }
   @media (max-width: 600px)  { .grid-treasury { grid-template-columns: 1fr; } }
 
@@ -54,6 +59,34 @@
 
   .empty-state { display: flex; align-items: center; justify-content: center; min-height: 60px; color: var(--text-faint); font: 500 11px var(--font); text-align: center; padding: 8px; }
   .error-card { padding: 12px 16px; background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; border-radius: var(--r); font-size: 12px; margin-bottom: 8px; }
+
+  /* ── Liquidity snapshot · narrow column under the Cash card ──────
+     Sits in row 2 col 1 of .grid-treasury so it aligns directly under
+     "Cash & cash equivalents". One flat list of debit-positive 52+57
+     accounts sorted high→low, with a single TOTAL that ties to the
+     Cash headline above. Type sizes are 0.5px tighter than the full-
+     width version so 30-char account names fit a 1/4-viewport column.
+     The grid placement (rows 2-3 col 1) means tall lists overflow the
+     row and stay narrow rather than stretching the row. */
+  .snap { grid-column: 1 / 2; grid-row: 2 / span 1; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); }
+  .snap__h { padding: 10px 14px 8px; border-bottom: 1px solid var(--border-faint); }
+  .snap__t { font: 700 12px var(--font); color: var(--text); }
+  .snap__sub { font: 400 10.5px var(--font); color: var(--text-subtle); margin-top: 1px; }
+  .snap__hint { font: 500 9px var(--font); color: var(--text-faint); letter-spacing: .04em; margin-top: 4px; text-transform: uppercase; }
+  .snap__list { padding: 4px 0; }
+  .snap__row { display: grid; grid-template-columns: 1fr max-content; gap: 8px; align-items: baseline; padding: 5px 14px; }
+  .snap__row + .snap__row { border-top: 1px solid var(--border-faint); }
+  .snap__row.is-zero .snap__n,
+  .snap__row.is-zero .snap__v { color: var(--text-faint); }
+  .snap__n { font: 500 11.5px var(--font); color: var(--text); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .snap__v { font: 600 11.5px var(--font); color: var(--text); text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .snap__tot { padding: 8px 14px; border-top: 2px solid var(--text); background: var(--border-faint); display: grid; grid-template-columns: 1fr max-content; gap: 8px; align-items: baseline; border-bottom-left-radius: var(--r-lg); border-bottom-right-radius: var(--r-lg); }
+  .snap__tot .snap__n { font: 700 10px var(--font); letter-spacing: .08em; text-transform: uppercase; color: var(--text); }
+  .snap__tot .snap__v { font: 700 13px var(--font); color: var(--text); }
+  /* On narrow viewports where the grid collapses to 1-2 columns, the
+     snapshot loses its column-1 anchor — let it span the available
+     width naturally instead. */
+  @media (max-width: 1100px) { .snap { grid-column: 1 / -1; grid-row: auto; } }
 
   .methodology { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); padding: 14px 16px; font: 500 11.5px var(--font); color: var(--text-muted); line-height: 1.6; }
   .methodology h3 { font: 700 12px var(--font); color: var(--text); margin-bottom: 6px; letter-spacing: -.01em; }
@@ -218,6 +251,52 @@
       Mirrors <a href="{{ tenant_url('/working-capital') }}" style="color: var(--text); text-decoration: underline;">Working Capital</a> service exactly.
     </div>
   </div>
+
+  {{-- ── Liquidity snapshot · per-account list under the Cash card ──
+       Lives INSIDE .grid-treasury so its CSS grid-column/grid-row
+       placement (1/2, 2/3) anchors it directly under the Cash card
+       in column 1, row 2. Cells in row 2 cols 2-4 stay empty — the
+       grid's `grid-auto-rows: min-content` collapses them so the
+       methodology footer sits right under whichever ends taller
+       (the snapshot or the row-1 cards). Detailed copy:
+        • flat list, no subtotals
+        • account name only (no code)
+        • full-precision XAF amounts with thousands separators
+        • sorted high→low; zeros greyed and sink to the bottom
+        • TOTAL ties exactly to Cash & cash equivalents headline
+        • overdrafts excluded (they live on the ST-debt card) --}}
+  @php
+    $snap   = $t['liquidity_snapshot'] ?? null;
+    $rows   = $snap['rows'] ?? [];
+    $snTot  = (float) ($snap['total'] ?? 0);
+    // "XAF 47,250,000" formatter — same XAF-prefix style every row,
+    // matching the user spec: "Description : XAF XXX amount".
+    $xaf = function (float $v) use ($ccy): string {
+        return $ccy . ' ' . number_format($v, 0, '.', ',');
+    };
+  @endphp
+  @if (!empty($rows))
+  <div class="snap">
+    <div class="snap__h">
+      <div class="snap__t">Liquidity snapshot</div>
+      <div class="snap__sub">Per-account · sorted high → low</div>
+      <div class="snap__hint">All amounts {{ $ccy }}</div>
+    </div>
+    <div class="snap__list">
+      @foreach ($rows as $r)
+        @php $isZero = ((float) $r['balance']) <= 0.5; @endphp
+        <div class="snap__row {{ $isZero ? 'is-zero' : '' }}">
+          <div class="snap__n" title="{{ $r['name'] }}">{{ $r['name'] }}</div>
+          <div class="snap__v">{{ $xaf((float) $r['balance']) }}</div>
+        </div>
+      @endforeach
+    </div>
+    <div class="snap__tot">
+      <div class="snap__n">Total</div>
+      <div class="snap__v">{{ $xaf($snTot) }}</div>
+    </div>
+  </div>
+  @endif
 
 </div>
 
