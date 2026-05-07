@@ -245,6 +245,16 @@ final class GLAccountService
         ?\DateTimeImmutable $to
     ): ?array {
         if ($prefixes === []) return [];
+        // CRITICAL: cast every prefix to string. The caller passes prefixes
+        // as the keys of TreasuryController::DISBURSEMENT_PREFIXES, which
+        // PHP auto-converts from numeric strings to integers ('401' → 401).
+        // With declare(strict_types=1) at the top of this file, calling
+        // str_starts_with($code, $p) below where $p is int throws TypeError
+        // → caught silently → method returns null → controller defaults
+        // every category to zero. Casting upfront eliminates the class of
+        // "all zero" bugs from numeric-string key auto-conversion. Root
+        // cause of the 2026-05-07 prod outage on /treasury disbursements.
+        $prefixes = array_map('strval', $prefixes);
         try {
             // 1) Cash/bank journals — type filter OR'd with code prefix.
             $journalDomain = [
@@ -337,10 +347,11 @@ final class GLAccountService
             ]);
             return $sums;
         } catch (\Throwable $e) {
-            \Illuminate\Support\Facades\Log::warning('cashJournalDebitsByPrefixes: Odoo error', [
+            \Illuminate\Support\Facades\Log::warning('DIAG cashJournalDebitsByPrefixes: Odoo error', [
                 'prefixes' => $prefixes,
                 'error'    => $e->getMessage(),
                 'class'    => get_class($e),
+                'file'     => $e->getFile() . ':' . $e->getLine(),
             ]);
             return null;
         }
