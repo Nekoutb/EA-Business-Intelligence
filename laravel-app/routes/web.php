@@ -1132,6 +1132,52 @@ Route::prefix('admin')->group(function () {
          * Read-only — performs no mutations. Remove after the
          * disbursements engine is verified correct on this tenant.
          */
+        /*
+         * ── DIAGNOSTIC: Tail of laravel.log ─────────────────────────────
+         *
+         * Quick way to read the production log without SSH. Returns
+         * the last N lines (default 200) of storage/logs/laravel.log
+         * as plain-text. Super-admin only. Used to read the
+         * `treasury.index: disbursements payload` log line written by
+         * TreasuryController on every render — confirms whether the
+         * engine is computing zeros (engine bug) or non-zeros that
+         * the view drops (rendering bug).
+         *
+         * URL:
+         *   /admin/log-tail            (last 200 lines)
+         *   /admin/log-tail?lines=500  (last 500 lines)
+         *   /admin/log-tail?grep=treasury  (only lines containing 'treasury')
+         */
+        Route::get('/log-tail', function (\Illuminate\Http\Request $request) {
+            $path  = storage_path('logs/laravel.log');
+            $lines = max(10, min(2000, (int) $request->query('lines', 200)));
+            $grep  = (string) $request->query('grep', '');
+
+            if (!file_exists($path)) {
+                return response("Log file not found at: {$path}", 404, ['Content-Type' => 'text/plain']);
+            }
+
+            // Tail using shell — efficient even on large logs. Falls back
+            // to PHP-level read if `tail` is unavailable for some reason.
+            $output = '';
+            if (function_exists('shell_exec') && shell_exec('which tail')) {
+                $cmd = 'tail -n ' . escapeshellarg((string) $lines) . ' ' . escapeshellarg($path);
+                if ($grep !== '') {
+                    $cmd .= ' | grep -i ' . escapeshellarg($grep);
+                }
+                $output = (string) shell_exec($cmd . ' 2>&1');
+            } else {
+                $allLines = file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [];
+                $tail = array_slice($allLines, -$lines);
+                if ($grep !== '') {
+                    $tail = array_filter($tail, fn ($l) => stripos($l, $grep) !== false);
+                }
+                $output = implode("\n", $tail);
+            }
+
+            return response($output ?: '(no matching lines)', 200, ['Content-Type' => 'text/plain; charset=utf-8']);
+        });
+
         Route::get('/tenants/{tenant:slug}/treasury-probe', function (\App\Models\Tenant $tenant) {
             @set_time_limit(60);
 
