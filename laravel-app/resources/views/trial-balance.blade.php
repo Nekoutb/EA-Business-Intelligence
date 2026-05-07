@@ -46,7 +46,16 @@
           ];
       @endphp
 
-      <div class="bg-white border border-[#e8e4de] rounded-xl overflow-hidden">
+      {{-- shrink-0 is REQUIRED, not cosmetic. The layout shell sets
+           .ea-main as `display:flex; flex-direction:column; overflow:auto`,
+           and a flex child with `overflow:hidden` (used here for rounded
+           corners) loses its `min-height: auto` per the flexbox spec —
+           the parent then shrinks it to viewport height and the rest of
+           the table is clipped, with no scrollbar appearing because
+           .ea-main never sees the full natural height. shrink-0 forces
+           the flex parent to honour the table's intrinsic height,
+           letting .ea-main scroll the full account list. --}}
+      <div class="bg-white border border-[#e8e4de] rounded-xl overflow-hidden shrink-0">
 
           {{-- Top legend strip --}}
           <div class="flex items-center justify-between gap-3 px-4 py-2.5 border-b border-[#e8e4de] bg-[#faf8f5] flex-wrap">
