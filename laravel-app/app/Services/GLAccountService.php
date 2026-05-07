@@ -68,7 +68,105 @@ final class GLAccountService
         return ($sums['credit'] ?? 0.0) - ($sums['debit'] ?? 0.0);
     }
 
+    /**
+     * Sum of per-account credit-positive balances under $prefix.
+     *
+     * For each account whose code starts with $prefix, compute
+     * (credit − debit) and KEEP ONLY the positive results (i.e.
+     * accounts in net-credit position), then sum those.
+     *
+     * Why per-account, not net? When the prefix straddles accounts
+     * with mixed sign convention, a net total is misleading. Example —
+     * "short-term debt = sum of credit balances on 4XXX":
+     *
+     *   • 401 (Suppliers): credit-positive ⇒ contributes to ST debt
+     *   • 411 (Customers): debit-positive  ⇒ DOES NOT contribute
+     *   • 411 with overpayment: credit-positive ⇒ DOES contribute
+     *
+     * Netting all 4XXX accounts together would let AR (411) cancel AP
+     * (401), giving a meaningless number. Per-account positive-credit
+     * captures the actual short-term obligations the way an OHADA
+     * balance sheet would aggregate them.
+     *
+     * Same shape applies to bank overdrafts (52 in credit) for short
+     * term debt while their normal debit balance feeds cash & equivalents.
+     *
+     * Returns 0.0 when no accounts match (clean zero, distinguishable
+     * from null), null when Odoo is unreachable so callers can fall
+     * back gracefully.
+     */
+    public function sumPositiveCreditBalancesByPrefix(
+        string $prefix,
+        ?\DateTimeImmutable $asOf = null
+    ): ?float {
+        return $this->sumPerAccountSigned($prefix, $asOf, signCredit: true);
+    }
+
+    /**
+     * Mirror of sumPositiveCreditBalancesByPrefix() for the debit
+     * side: sums (debit − credit) per matching account, keeping only
+     * net-debit-positive accounts. Used for cash & equivalents on
+     * 52 + 57 — accounts in overdraft (credit-positive 52) are
+     * excluded so a single overdrawn current account doesn't
+     * silently reduce the company's cash position.
+     */
+    public function sumPositiveDebitBalancesByPrefix(
+        string $prefix,
+        ?\DateTimeImmutable $asOf = null
+    ): ?float {
+        return $this->sumPerAccountSigned($prefix, $asOf, signCredit: false);
+    }
+
     // ── internals ────────────────────────────────────────────────────
+
+    /**
+     * Per-account sign-positive aggregation. Single Odoo round-trip:
+     * resolve prefix → account ids, then read_group by account_id
+     * summing debit:sum + credit:sum, then filter in PHP.
+     *
+     * @param bool $signCredit  true ⇒ keep credit-positive accounts (credit − debit > 0)
+     *                          false ⇒ keep debit-positive accounts  (debit − credit > 0)
+     */
+    private function sumPerAccountSigned(
+        string $prefix,
+        ?\DateTimeImmutable $asOf,
+        bool $signCredit
+    ): ?float {
+        try {
+            $accounts = $this->odoo->searchRead(
+                'account.account',
+                [['code', '=like', $prefix . '%']],
+                ['id', 'code'],
+                []
+            );
+            if (empty($accounts)) return 0.0;
+            $ids = array_map(fn ($a) => (int) $a['id'], $accounts);
+
+            $domain = [
+                ['account_id', 'in', $ids],
+                ['parent_state', '=', 'posted'],
+            ];
+            if ($asOf) $domain[] = ['date', '<=', $asOf->format('Y-m-d')];
+
+            $rows = $this->odoo->callModel('account.move.line', 'read_group', [
+                'domain'  => $domain,
+                'fields'  => ['debit:sum', 'credit:sum'],
+                'groupby' => ['account_id'],
+                'lazy'    => false,
+            ]);
+
+            $total = 0.0;
+            foreach ((array) $rows as $r) {
+                $debit  = (float) ($r['debit']  ?? 0);
+                $credit = (float) ($r['credit'] ?? 0);
+                $signedBalance = $signCredit ? ($credit - $debit) : ($debit - $credit);
+                if ($signedBalance > 0) $total += $signedBalance;
+            }
+            return $total;
+        } catch (\Throwable $e) {
+            return null;
+        }
+    }
 
     /**
      * Returns ['debit' => float, 'credit' => float] aggregated across
