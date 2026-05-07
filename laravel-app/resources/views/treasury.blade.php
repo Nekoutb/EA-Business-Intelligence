@@ -1,469 +1,253 @@
 @extends('layouts.app')
 @section('title', 'Treasury')
+@section('page-title', 'Treasury')
 
-@section('page-title', 'Treasury & Working Capital')
+{{-- ════════════════════════════════════════════════════════════════════
+     Treasury · as-of-now snapshot
+
+     Four KPI sandboxes at the top — same visual language as the
+     /dashboard cards (.v5-card, --surface, --text variables) — driven
+     by GLAccountService. No filters: every figure is the latest
+     posted balance. Methodology footer at the bottom spells out each
+     OHADA prefix the engine reads.
+   ════════════════════════════════════════════════════════════════════ --}}
+
+@push('styles')
+<style>
+  /* Page-local dashboard-language overrides — copied verbatim from
+     dashboard.blade.php so the four sandboxes match exactly. */
+  .topbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; flex-shrink: 0; gap: 12px; }
+  .topbar__t  { display: flex; align-items: baseline; gap: 12px; }
+  .topbar__eb { font: 600 10px var(--font); color: var(--text-subtle); letter-spacing: .12em; text-transform: uppercase; display: flex; align-items: center; gap: 6px; }
+  .topbar__eb::before { content:''; width:5px; height:5px; border-radius: 50%; background: var(--ea-primary); }
+  .topbar__h  { font: 700 20px var(--font); color: var(--text); letter-spacing: -0.02em; margin-top: 2px; }
+  .topbar__c  { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .topbar__meta { font: 500 11px var(--font); color: var(--text-subtle); }
+  .topbar__meta b { color: var(--text); font-weight: 600; }
+
+  .grid-treasury { display: grid; gap: 8px; grid-template-columns: repeat(4, 1fr); margin-bottom: 12px; }
+  @media (max-width: 1100px) { .grid-treasury { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 600px)  { .grid-treasury { grid-template-columns: 1fr; } }
+
+  .v5-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); padding: 12px 14px; display: flex; flex-direction: column; min-height: 0; min-height: 130px; }
+  .v5-card__h { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; margin-bottom: 4px; flex-shrink: 0; }
+  .v5-card__t { font: 700 12px var(--font); color: var(--text); }
+  .v5-card__sub { font: 400 10.5px var(--font); color: var(--text-subtle); margin-top: 1px; }
+  .v5-card__b { flex: 1; min-height: 0; width: 100%; position: relative; padding: 8px 0; }
+  .v5-card__f { font: 500 10px var(--font); color: var(--text-subtle); margin-top: 4px; padding-top: 6px; border-top: 1px solid var(--border-faint); flex-shrink: 0; line-height: 1.4; }
+  .v5-card__f b { color: var(--text); font-weight: 600; }
+
+  /* Headline number — bigger than the strip__v on dashboard so the four
+     KPIs read at a glance. Same font + color tokens as the dashboard. */
+  .kpi-hl { font: 700 26px var(--font); color: var(--text); line-height: 1.1; letter-spacing: -.02em; tabular-nums: true; }
+  .kpi-hl .u { font: 500 12px var(--font); color: var(--text-subtle); margin-left: 4px; }
+  .kpi-hl.is-pos { color: var(--pos); }
+  .kpi-hl.is-neg { color: var(--neg); }
+  .kpi-hl.is-warn { color: var(--warn); }
+
+  .kpi-pair { display: flex; align-items: baseline; gap: 18px; }
+  .kpi-pair__c { font: 700 22px var(--font); color: var(--text); line-height: 1.1; letter-spacing: -.02em; }
+  .kpi-pair__c .l { display: block; font: 700 9px var(--font); color: var(--text-subtle); letter-spacing: .06em; text-transform: uppercase; margin-bottom: 2px; }
+
+  .breakdown { font: 500 10px var(--font); color: var(--text-subtle); }
+  .breakdown b { color: var(--text); font-weight: 600; }
+
+  .empty-state { display: flex; align-items: center; justify-content: center; min-height: 60px; color: var(--text-faint); font: 500 11px var(--font); text-align: center; padding: 8px; }
+  .error-card { padding: 12px 16px; background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; border-radius: var(--r); font-size: 12px; margin-bottom: 8px; }
+
+  .methodology { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); padding: 14px 16px; font: 500 11.5px var(--font); color: var(--text-muted); line-height: 1.6; }
+  .methodology h3 { font: 700 12px var(--font); color: var(--text); margin-bottom: 6px; letter-spacing: -.01em; }
+  .methodology code { background: var(--border-faint); color: var(--text); padding: 1px 5px; border-radius: 3px; font-size: 10.5px; }
+  .methodology dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin-top: 4px; }
+  .methodology dt { font-weight: 600; color: var(--text); }
+  .methodology dd { color: var(--text-muted); }
+</style>
+@endpush
+
 @section('content')
-    @if ($error)
-        <div class="bg-coral-50 border border-coral-200 text-coral-800 rounded-xl p-4 text-sm">{{ $error }}</div>
-        @return
-    @endif
 
-    @php
-        $ccy = $summary['currency'] ?? ($cashflowDirect['currency'] ?? 'USD');
-    @endphp
+@php
+  // Defensive pulls — every figure can be null when Odoo hiccups.
+  $t   = $treasury ?? null;
+  $ccy = $t['currency'] ?? 'XAF';
+  $asOf = $t['as_of'] ?? '';
 
-    {{-- ════════════════════════════════════════════════════════════════
-         DIRECT CASH FLOW STATEMENT (GL-sourced, not P&L proxy)
-         Equation:  Opening + Collections − Σ(outflows) − Other = Closing
-       ════════════════════════════════════════════════════════════════ --}}
-    @if (!empty($cashflowDirect))
-        @php
-            $cf       = $cashflowDirect;
-            $year     = $cf['period']['year'] ?? date('Y');
-            $openAt   = $cf['period']['opening_as_of'] ?? '';
-            $closeAt  = $cf['period']['closing_as_of'] ?? '';
-            $netMove  = ($cf['closing_balance'] ?? 0) - ($cf['opening_balance'] ?? 0);
-            $otherAbs = abs($cf['other'] ?? 0);
-            $totalIn  = (float) ($cf['collections'] ?? 0);
-            $totalOut = (float) ($cf['total_outflows'] ?? 0);
-        @endphp
-        <div class="mb-7">
-            <div class="flex items-center justify-between mb-3">
-                <div class="flex items-center gap-2">
-                    <div class="w-1 h-4 rounded bg-brand-400"></div>
-                    <h2 class="text-xs font-semibold uppercase tracking-wider text-[#5a6a70]">Direct Cash Flow Statement · {{ $year }} YTD</h2>
-                </div>
-                <span class="text-[10px] text-[#a09d95]">From GL movement on cash &amp; bank accounts</span>
-            </div>
+  // Compact number formatter — same rules as the dashboard's
+  // $shortNum / $shortUnit pair so the two pages format identically.
+  $shortNum = function (?float $v): string {
+      if ($v === null) return '—';
+      $a = abs($v);
+      if ($a >= 1_000_000_000) return number_format($v / 1_000_000_000, 2);
+      if ($a >= 1_000_000)     return number_format($v / 1_000_000, 2);
+      if ($a >= 1_000)         return number_format($v / 1_000, 0);
+      return number_format($v, 0);
+  };
+  $shortUnit = function (?float $v, string $ccy = 'XAF'): string {
+      if ($v === null) return '';
+      $a = abs($v);
+      $scale = $a >= 1_000_000_000 ? 'B ' : ($a >= 1_000_000 ? 'M ' : ($a >= 1_000 ? 'K ' : ''));
+      return $scale . $ccy;
+  };
+  $ratio = function (?float $v): string {
+      if ($v === null) return '—';
+      return number_format($v, 2);
+  };
+@endphp
 
-            <div class="section-card p-0 overflow-hidden">
-                {{-- Headline strip: net change at-a-glance --}}
-                <div class="grid grid-cols-2 lg:grid-cols-4 border-b border-[#e8e4de] bg-[#faf8f3]">
-                    <div class="p-4 border-r border-[#e8e4de]">
-                        <div class="text-[10px] uppercase tracking-wider text-[#8a8578] font-medium">Opening</div>
-                        <div class="text-lg font-bold text-[#1e3d44] mt-1 tabular-nums">{{ ea_money_short((float)($cf['opening_balance'] ?? 0), $ccy) }}</div>
-                        <div class="text-[10px] text-[#a09d95] mt-0.5">as of {{ $openAt }}</div>
-                    </div>
-                    <div class="p-4 border-r border-[#e8e4de]">
-                        <div class="text-[10px] uppercase tracking-wider text-[#8a8578] font-medium">Closing</div>
-                        <div class="text-lg font-bold text-[#1e3d44] mt-1 tabular-nums">{{ ea_money_short((float)($cf['closing_balance'] ?? 0), $ccy) }}</div>
-                        <div class="text-[10px] text-[#a09d95] mt-0.5">as of {{ $closeAt }}</div>
-                    </div>
-                    <div class="p-4 border-r border-[#e8e4de]">
-                        <div class="text-[10px] uppercase tracking-wider text-[#8a8578] font-medium">Net Movement</div>
-                        <div class="text-lg font-bold {{ $netMove >= 0 ? 'text-sage-600' : 'text-coral-600' }} mt-1 tabular-nums">
-                            {{ ($netMove >= 0 ? '+' : '−') }}{{ ea_money_short(abs($netMove), $ccy) }}
-                        </div>
-                        <div class="text-[10px] text-[#a09d95] mt-0.5">closing − opening</div>
-                    </div>
-                    <div class="p-4">
-                        <div class="text-[10px] uppercase tracking-wider text-[#8a8578] font-medium">Net Cash Flow</div>
-                        <div class="text-lg font-bold text-[#1e3d44] mt-1 tabular-nums">{{ ea_money_short($totalIn - $totalOut - ($cf['other'] ?? 0), $ccy) }}</div>
-                        <div class="text-[10px] text-[#a09d95] mt-0.5">collections − outflows − other</div>
-                    </div>
-                </div>
+@if ($error)
+  <div class="error-card">
+    <strong>Error:</strong> {{ $error }} ·
+    <a href="{{ tenant_url('/settings') }}" style="color:#991b1b; text-decoration:underline;">Check Odoo settings</a>
+  </div>
+@endif
 
-                {{-- Statement table --}}
-                <div class="overflow-x-auto">
-                    <table class="w-full text-sm">
-                        <thead>
-                            <tr class="text-left text-[10px] text-[#8a8578] uppercase tracking-wider border-b border-[#e8e4de] bg-[#fdfcf8]">
-                                <th class="px-5 py-3 font-semibold">Description</th>
-                                <th class="px-5 py-3 text-right font-semibold w-48">Amount ({{ $ccy }})</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {{-- Opening (subtotal) --}}
-                            <tr class="bg-brand-50/40 border-b border-[#e8e4de]">
-                                <td class="px-5 py-3 font-semibold text-[#1e3d44]">Opening balance — cash &amp; bank</td>
-                                <td class="px-5 py-3 text-right tabular-nums font-bold text-[#1e3d44]">{{ ea_money((float)($cf['opening_balance'] ?? 0), $ccy) }}</td>
-                            </tr>
-
-                            {{-- Collections --}}
-                            <tr class="border-b border-[#f0ede7] hover:bg-sage-50/30">
-                                <td class="px-5 py-2.5 text-[#2d3748]">
-                                    <span class="text-sage-600 font-semibold mr-2">+</span>Collections from customers
-                                </td>
-                                <td class="px-5 py-2.5 text-right tabular-nums text-sage-700">
-                                    +{{ ea_money($totalIn, $ccy) }}
-                                </td>
-                            </tr>
-
-                            {{-- Outflows --}}
-                            @foreach ($cf['outflows'] ?? [] as $row)
-                                <tr class="border-b border-[#f0ede7] hover:bg-coral-50/30">
-                                    <td class="px-5 py-2.5 text-[#2d3748] pl-9">
-                                        <span class="text-coral-600 font-semibold mr-2">−</span>{{ $row['label'] }}
-                                    </td>
-                                    <td class="px-5 py-2.5 text-right tabular-nums {{ ($row['amount'] ?? 0) > 0 ? 'text-coral-700' : 'text-[#a09d95]' }}">
-                                        @if (($row['amount'] ?? 0) > 0)−@endif{{ ea_money((float)($row['amount'] ?? 0), $ccy) }}
-                                    </td>
-                                </tr>
-                            @endforeach
-
-                            {{-- Other (balancing figure) --}}
-                            <tr class="border-b border-[#f0ede7] hover:bg-warm-50/30">
-                                <td class="px-5 py-2.5 text-[#2d3748] pl-9">
-                                    <span class="font-semibold mr-2 {{ ($cf['other'] ?? 0) >= 0 ? 'text-coral-600' : 'text-sage-600' }}">{{ ($cf['other'] ?? 0) >= 0 ? '−' : '+' }}</span>
-                                    Other
-                                    <span class="text-[10px] text-[#a09d95] ml-1.5">(balancing — non-categorised cash movement)</span>
-                                </td>
-                                <td class="px-5 py-2.5 text-right tabular-nums {{ ($cf['other'] ?? 0) >= 0 ? 'text-coral-700' : 'text-sage-700' }}">
-                                    {{ ($cf['other'] ?? 0) >= 0 ? '−' : '+' }}{{ ea_money($otherAbs, $ccy) }}
-                                </td>
-                            </tr>
-
-                            {{-- Closing (subtotal) --}}
-                            <tr class="bg-brand-50/40 border-t-2 border-[#1e3d44]">
-                                <td class="px-5 py-3 font-semibold text-[#1e3d44]">Closing balance — cash &amp; bank (today)</td>
-                                <td class="px-5 py-3 text-right tabular-nums font-bold text-[#1e3d44]">{{ ea_money((float)($cf['closing_balance'] ?? 0), $ccy) }}</td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-
-                {{-- Methodology footer --}}
-                <div class="px-5 py-2.5 bg-[#fdfcf8] border-t border-[#e8e4de] text-[10px] text-[#8a8578] leading-relaxed">
-                    Direct method · Opening = Trial balance of cash &amp; bank ({{ $openAt }}) · Collections = cash debits to bank with corresponding AR credit · Outflows = cash credits with corresponding debit to the named expense category · Other plugs the equation to today's actual closing balance.
-                </div>
-            </div>
-        </div>
-    @endif
-
-    {{-- ── Section: Working Capital KPIs ──────────────────────────────── --}}
-    <div class="mb-7">
-        <div class="flex items-center gap-2 mb-3">
-            <div class="w-1 h-4 rounded bg-brand-400"></div>
-            <h2 class="text-xs font-semibold uppercase tracking-wider text-[#5a6a70]">Working Capital Status</h2>
-        </div>
-        <div class="grid grid-cols-2 xl:grid-cols-4 gap-3">
-            <div class="kpi-card bg-white rounded-xl border border-[#e8e4de] shadow-sm overflow-hidden flex">
-                <div class="accent-bar bg-brand-500 shrink-0"></div>
-                <div class="p-4 flex-1">
-                    <div class="text-[10px] uppercase tracking-wider text-[#8a8578] font-medium">Working Capital</div>
-                    <div class="text-xl font-bold text-[#1e3d44] mt-1 tabular-nums">{{ ea_money_short((float)($summary['working_capital'] ?? 0), $ccy) }}</div>
-                    <div class="text-[10px] text-[#a09d95] mt-0.5">AR – AP obligations</div>
-                </div>
-            </div>
-            <div class="kpi-card bg-white rounded-xl border border-[#e8e4de] shadow-sm overflow-hidden flex">
-                <div class="accent-bar bg-sage-500 shrink-0"></div>
-                <div class="p-4 flex-1">
-                    <div class="text-[10px] uppercase tracking-wider text-[#8a8578] font-medium">Net Cash Outcome</div>
-                    <div class="text-xl font-bold text-[#1e3d44] mt-1 tabular-nums">{{ ea_money_short((float)($summary['net_cash'] ?? 0), $ccy) }}</div>
-                    <div class="text-[10px] text-[#a09d95] mt-0.5">YTD net profit signal</div>
-                </div>
-            </div>
-            <div class="kpi-card bg-white rounded-xl border border-[#e8e4de] shadow-sm overflow-hidden flex">
-                <div class="accent-bar bg-warm-500 shrink-0"></div>
-                <div class="p-4 flex-1">
-                    <div class="text-[10px] uppercase tracking-wider text-[#8a8578] font-medium">Collection Health</div>
-                    <div class="text-xl font-bold text-[#1e3d44] mt-1 tabular-nums">{{ number_format((float)($summary['collection_score'] ?? 0), 1) }}%</div>
-                    <div class="text-[10px] text-[#a09d95] mt-0.5">100 − overdue rate</div>
-                </div>
-            </div>
-            <div class="kpi-card bg-white rounded-xl border border-[#e8e4de] shadow-sm overflow-hidden flex">
-                <div class="accent-bar bg-coral-500 shrink-0"></div>
-                <div class="p-4 flex-1">
-                    <div class="text-[10px] uppercase tracking-wider text-[#8a8578] font-medium">Runway</div>
-                    <div class="text-xl font-bold text-[#1e3d44] mt-1 tabular-nums">
-                        @if ($summary['runway_months'] ?? null)
-                            {{ number_format((float) $summary['runway_months'], 1) }} mo
-                        @else
-                            —
-                        @endif
-                    </div>
-                    <div class="text-[10px] text-[#a09d95] mt-0.5">AR coverage ÷ monthly burn</div>
-                </div>
-            </div>
-        </div>
+<div class="topbar">
+  <div class="topbar__t">
+    <div>
+      <div class="topbar__eb">Treasury · live</div>
+      <div class="topbar__h">Cash, debt &amp; liquidity — as of now</div>
     </div>
+  </div>
+  <div class="topbar__c">
+    <span class="topbar__meta">As of <b>{{ $asOf ?: 'now' }}</b> · live GL · no period filter</span>
+  </div>
+</div>
 
-    {{-- ── Section: Cash Balance Evolution (GL) + Journal Balances ─────── --}}
-    <div class="grid lg:grid-cols-[1.4fr_1fr] gap-4 mb-7">
-        {{-- Cash Balance Evolution Chart (GL-sourced, month-end 52* + 57*) --}}
-        <div class="section-card p-5">
-            <div class="flex items-center gap-2 mb-4">
-                <div class="w-1 h-4 rounded bg-sage-400"></div>
-                <div>
-                    <h2 class="text-[13px] font-semibold text-[#1e3d44]">Cash Balance Evolution · YTD</h2>
-                    <p class="text-[11px] text-[#8a8578]">Cumulative cash &amp; bank balance at month-end · accounts 52* + 57* ({{ $ccy }})</p>
-                </div>
-            </div>
-            <div class="h-56"><canvas id="cashEvolutionChart"></canvas></div>
-        </div>
+@if ($t)
+<div class="grid-treasury">
 
-        {{-- Journal Balances Table (bank & cash journals as of today) --}}
-        @php
-            $jb = $journalBalances ?? null;
-            $jbRows  = $jb['rows']  ?? [];
-            $jbTotal = $jb['total'] ?? 0;
-            $jbAsOf  = $jb['as_of'] ?? '';
-        @endphp
-        <div class="section-card p-5">
-            <div class="flex items-center justify-between mb-4">
-                <div class="flex items-center gap-2">
-                    <div class="w-1 h-4 rounded bg-brand-400"></div>
-                    <div>
-                        <h2 class="text-[13px] font-semibold text-[#1e3d44]">Bank &amp; Cash Journals</h2>
-                        <p class="text-[11px] text-[#8a8578]">Closing balance per journal · {{ $jbAsOf }}</p>
-                    </div>
-                </div>
-                <span class="text-[10px] text-[#a09d95] font-medium">{{ count($jbRows) }} journal{{ count($jbRows) === 1 ? '' : 's' }}</span>
-            </div>
-
-            @if (empty($jbRows))
-                <div class="text-[12px] text-[#a09d95] italic py-6 text-center">No bank or cash journals configured.</div>
-            @else
-                <div class="overflow-x-auto">
-                    <table class="w-full text-sm">
-                        <thead>
-                            <tr class="text-left text-[10px] text-[#8a8578] uppercase tracking-wider border-b border-[#e8e4de]">
-                                <th class="pb-2.5 font-semibold">Journal</th>
-                                <th class="pb-2.5 text-right font-semibold">Balance</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            @foreach ($jbRows as $j)
-                                <tr class="table-row-hover border-b border-[#f0ede7]">
-                                    <td class="py-2.5">
-                                        <div class="text-[13px] font-medium text-[#2d3748] flex items-center gap-2">
-                                            <span class="inline-block w-1.5 h-1.5 rounded-full {{ $j['type'] === 'bank' ? 'bg-brand-400' : 'bg-sage-400' }}"></span>
-                                            {{ $j['name'] }}
-                                        </div>
-                                        <div class="text-[10px] text-[#a09d95] uppercase tracking-wider">{{ $j['type'] }}</div>
-                                    </td>
-                                    <td class="py-2.5 text-right tabular-nums text-[13px] {{ $j['balance'] < 0 ? 'text-coral-700' : 'text-[#1e3d44]' }}">
-                                        {{ ea_money((float) $j['balance'], $ccy) }}
-                                    </td>
-                                </tr>
-                            @endforeach
-                        </tbody>
-                        <tfoot>
-                            <tr class="border-t-2 border-[#1e3d44]">
-                                <td class="pt-2.5 text-[12px] font-bold text-[#1e3d44] uppercase tracking-wider">Total</td>
-                                <td class="pt-2.5 text-right tabular-nums text-[14px] font-bold text-[#1e3d44]">{{ ea_money((float) $jbTotal, $ccy) }}</td>
-                            </tr>
-                        </tfoot>
-                    </table>
-                </div>
-                @if (!empty($cashflowDirect) && abs($jbTotal - ($cashflowDirect['closing_balance'] ?? 0)) > 0.5)
-                    <div class="mt-3 text-[10px] text-warm-700 bg-warm-50 border border-warm-200 px-3 py-2 rounded">
-                        Reconciliation note: total above differs from cash-flow closing by
-                        <span class="font-semibold tabular-nums">{{ ea_money(abs($jbTotal - ($cashflowDirect['closing_balance'] ?? 0)), $ccy) }}</span>.
-                        This usually means a journal posts to a non-52*/57* default account.
-                    </div>
-                @endif
-            @endif
-        </div>
+  {{-- ── 1. Cash & cash equivalents ─────────────────────────── --}}
+  <div class="v5-card">
+    <div class="v5-card__h">
+      <div>
+        <div class="v5-card__t">Cash &amp; cash equivalents</div>
+        <div class="v5-card__sub">OHADA classes 57 + 52 · debit-positive only</div>
+      </div>
     </div>
-
-    {{-- ── Section: Conversion Cycle ──────────────────────────────────── --}}
-    <div class="mb-7">
-        <div class="flex items-center gap-2 mb-3">
-            <div class="w-1 h-4 rounded bg-brand-400"></div>
-            <h2 class="text-xs font-semibold uppercase tracking-wider text-[#5a6a70]">Cash Conversion Cycle</h2>
-        </div>
-        <div class="grid grid-cols-3 gap-3">
-            <div class="section-card p-4 text-center">
-                <div class="text-[10px] uppercase tracking-wider text-[#8a8578] font-medium">DSO</div>
-                <div class="text-2xl font-bold text-brand-600 mt-1">{{ number_format((float)($summary['dso'] ?? 0), 0) }}</div>
-                <div class="text-[10px] text-[#a09d95]">days to collect</div>
-            </div>
-            <div class="section-card p-4 text-center">
-                <div class="text-[10px] uppercase tracking-wider text-[#8a8578] font-medium">DPO</div>
-                <div class="text-2xl font-bold text-sage-600 mt-1">{{ number_format((float)($summary['dpo'] ?? 0), 0) }}</div>
-                <div class="text-[10px] text-[#a09d95]">days to pay</div>
-            </div>
-            <div class="section-card p-4 text-center">
-                <div class="text-[10px] uppercase tracking-wider text-[#8a8578] font-medium">Net Cycle</div>
-                @php $cycle = (float)($summary['conversion_cycle'] ?? 0); @endphp
-                <div class="text-2xl font-bold {{ $cycle > 0 ? 'text-coral-600' : 'text-sage-600' }} mt-1">{{ number_format($cycle, 0) }}</div>
-                <div class="text-[10px] text-[#a09d95]">days gap (DSO − DPO)</div>
-            </div>
-        </div>
+    <div class="v5-card__b">
+      @php $cash = $t['cash_equivalents'] ?? null; @endphp
+      <div class="kpi-hl {{ $cash !== null && $cash > 0 ? 'is-pos' : '' }}">
+        {{ $shortNum($cash) }}<span class="u">{{ $shortUnit($cash, $ccy) }}</span>
+      </div>
+      @php $cb = $t['cash_breakdown'] ?? []; @endphp
+      <div class="breakdown" style="margin-top: 8px;">
+        <span>Banks (52):</span> <b>{{ $shortNum($cb['banks'] ?? null) }}{{ $shortUnit($cb['banks'] ?? null, $ccy) }}</b><br>
+        <span>Caisse (57):</span> <b>{{ $shortNum($cb['vault'] ?? null) }}{{ $shortUnit($cb['vault'] ?? null, $ccy) }}</b>
+      </div>
     </div>
-
-    {{-- ── Section: Receivables & Payables Posture ────────────────────── --}}
-    <div class="grid lg:grid-cols-2 gap-4 mb-7">
-        <div class="section-card p-5">
-            <div class="flex items-center gap-2 mb-4">
-                <div class="w-1 h-4 rounded bg-brand-400"></div>
-                <div>
-                    <h2 class="text-[13px] font-semibold text-[#1e3d44]">Receivables Posture</h2>
-                    <p class="text-[11px] text-[#8a8578]">DSO {{ number_format((float)($summary['dso'] ?? 0), 0) }}d · overdue {{ number_format((float)($receivables['overdue_rate'] ?? 0), 1) }}%</p>
-                </div>
-            </div>
-            <dl class="grid grid-cols-2 gap-3 text-sm">
-                <div class="rounded-lg bg-brand-50 p-3 border border-brand-100">
-                    <dt class="text-[10px] uppercase tracking-wider text-[#8a8578] font-medium">Total AR</dt>
-                    <dd class="text-lg font-bold text-[#1e3d44] mt-1">{{ ea_money_short((float)($receivables['total_ar'] ?? 0), $ccy) }}</dd>
-                </div>
-                <div class="rounded-lg bg-coral-50 p-3 border border-coral-100">
-                    <dt class="text-[10px] uppercase tracking-wider text-[#8a8578] font-medium">Overdue</dt>
-                    <dd class="text-lg font-bold text-[#1e3d44] mt-1">{{ ea_money_short((float)($receivables['overdue_ar'] ?? 0), $ccy) }}</dd>
-                </div>
-                <div class="rounded-lg bg-warm-50 p-3 border border-warm-100">
-                    <dt class="text-[10px] uppercase tracking-wider text-[#8a8578] font-medium">Avg Age</dt>
-                    <dd class="text-lg font-bold text-[#1e3d44] mt-1">{{ number_format((float)($receivables['avg_age'] ?? 0), 0) }} d</dd>
-                </div>
-                <div class="rounded-lg bg-sage-50 p-3 border border-sage-100">
-                    <dt class="text-[10px] uppercase tracking-wider text-[#8a8578] font-medium">Top-5 Share</dt>
-                    <dd class="text-lg font-bold text-[#1e3d44] mt-1">{{ number_format((float)($receivables['top5_pct'] ?? 0), 1) }}%</dd>
-                </div>
-            </dl>
-        </div>
-
-        <div class="section-card p-5">
-            <div class="flex items-center gap-2 mb-4">
-                <div class="w-1 h-4 rounded bg-coral-400"></div>
-                <div>
-                    <h2 class="text-[13px] font-semibold text-[#1e3d44]">Payables Commitments</h2>
-                    <p class="text-[11px] text-[#8a8578]">DPO {{ number_format((float)($summary['dpo'] ?? 0), 0) }} days</p>
-                </div>
-            </div>
-            <dl class="grid grid-cols-2 gap-3 text-sm">
-                <div class="rounded-lg bg-coral-50 p-3 border border-coral-100">
-                    <dt class="text-[10px] uppercase tracking-wider text-[#8a8578] font-medium">Total AP</dt>
-                    <dd class="text-lg font-bold text-[#1e3d44] mt-1">{{ ea_money_short((float)($payables['kpis']['total_ap'] ?? 0), $ccy) }}</dd>
-                </div>
-                <div class="rounded-lg bg-brand-50 p-3 border border-brand-100">
-                    <dt class="text-[10px] uppercase tracking-wider text-[#8a8578] font-medium">Overdue AP</dt>
-                    <dd class="text-lg font-bold text-[#1e3d44] mt-1">{{ ea_money_short((float)($payables['kpis']['overdue_ap'] ?? 0), $ccy) }}</dd>
-                </div>
-                <div class="rounded-lg bg-sage-50 p-3 border border-sage-100">
-                    <dt class="text-[10px] uppercase tracking-wider text-[#8a8578] font-medium">Avg Age</dt>
-                    <dd class="text-lg font-bold text-[#1e3d44] mt-1">{{ number_format((float)($payables['kpis']['avg_age_days'] ?? 0), 0) }} d</dd>
-                </div>
-                <div class="rounded-lg bg-warm-50 p-3 border border-warm-100">
-                    <dt class="text-[10px] uppercase tracking-wider text-[#8a8578] font-medium">Top-5 Share</dt>
-                    <dd class="text-lg font-bold text-[#1e3d44] mt-1">{{ number_format((float)($payables['kpis']['top5_concentration_pct'] ?? 0), 1) }}%</dd>
-                </div>
-            </dl>
-        </div>
+    <div class="v5-card__f">
+      Σ debit-positive balances per account · overdrafts excluded.
     </div>
+  </div>
 
-    {{-- ── Section: Top Debtors & Suppliers ───────────────────────────── --}}
-    @if (!empty($receivables['top_partners']) || !empty($payables['top_creditors']))
-        <div class="grid lg:grid-cols-2 gap-4">
-            @if (!empty($receivables['top_partners']))
-                <div class="section-card p-5">
-                    <div class="flex items-center justify-between mb-4">
-                        <div class="flex items-center gap-2">
-                            <div class="w-1 h-4 rounded bg-brand-400"></div>
-                            <h3 class="text-[13px] font-semibold text-[#1e3d44]">Top Debtors</h3>
-                        </div>
-                        <span class="text-[10px] text-[#a09d95] font-medium">Worst 6 by AR</span>
-                    </div>
-                    <div class="overflow-x-auto">
-                        <table class="w-full text-sm">
-                            <thead>
-                                <tr class="text-left text-[10px] text-[#8a8578] uppercase tracking-wider border-b border-[#e8e4de]">
-                                    <th class="pb-2.5 font-semibold">Customer</th>
-                                    <th class="pb-2.5 text-right font-semibold">AR</th>
-                                    <th class="pb-2.5 text-right font-semibold">Overdue</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                @foreach (array_slice($receivables['top_partners'], 0, 6) as $partner)
-                                    <tr class="table-row-hover border-b border-[#f0ede7]">
-                                        <td class="py-2.5">
-                                            <div class="text-[13px] font-medium text-[#2d3748]">{{ $partner['name'] ?? '—' }}</div>
-                                            <div class="text-[10px] text-[#a09d95]">{{ $partner['rating_label'] ?? '' }}</div>
-                                        </td>
-                                        <td class="py-2.5 text-right tabular-nums text-[13px]">{{ ea_money((float)($partner['ar'] ?? 0), $ccy) }}</td>
-                                        <td class="py-2.5 text-right tabular-nums text-[13px] {{ ($partner['overdue'] ?? 0) > 0 ? 'text-coral-600' : 'text-[#a09d95]' }}">
-                                            {{ ($partner['overdue'] ?? 0) > 0 ? ea_money((float) $partner['overdue'], $ccy) : '—' }}
-                                        </td>
-                                    </tr>
-                                @endforeach
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            @endif
+  {{-- ── 2. Long-term debt ──────────────────────────────────── --}}
+  <div class="v5-card">
+    <div class="v5-card__h">
+      <div>
+        <div class="v5-card__t">Long-term debt</div>
+        <div class="v5-card__sub">OHADA class 16 · emprunts &amp; dettes assimilées</div>
+      </div>
+    </div>
+    <div class="v5-card__b">
+      @php $ltd = $t['long_term_debt'] ?? null; @endphp
+      <div class="kpi-hl {{ $ltd !== null && $ltd > 0 ? 'is-warn' : '' }}">
+        {{ $shortNum($ltd) }}<span class="u">{{ $shortUnit($ltd, $ccy) }}</span>
+      </div>
+      <div class="breakdown" style="margin-top: 8px;">
+        Net credit balance on
+        <code style="background: var(--border-faint); padding: 1px 4px; border-radius: 2px; font: 600 10px var(--font);">16XX</code>
+        across all sub-accounts.
+      </div>
+    </div>
+    <div class="v5-card__f">
+      Net liability magnitude · sign-flipped to display positive.
+    </div>
+  </div>
 
-            @if (!empty($payables['top_creditors']))
-                <div class="section-card p-5">
-                    <div class="flex items-center justify-between mb-4">
-                        <div class="flex items-center gap-2">
-                            <div class="w-1 h-4 rounded bg-coral-400"></div>
-                            <h3 class="text-[13px] font-semibold text-[#1e3d44]">Top Suppliers Payable</h3>
-                        </div>
-                        <span class="text-[10px] text-[#a09d95] font-medium">Greatest leverage</span>
-                    </div>
-                    <div class="overflow-x-auto">
-                        <table class="w-full text-sm">
-                            <thead>
-                                <tr class="text-left text-[10px] text-[#8a8578] uppercase tracking-wider border-b border-[#e8e4de]">
-                                    <th class="pb-2.5 font-semibold">Supplier</th>
-                                    <th class="pb-2.5 text-right font-semibold">AP</th>
-                                    <th class="pb-2.5 text-right font-semibold">Overdue</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                @foreach (array_slice($payables['top_creditors'], 0, 6) as $cred)
-                                    <tr class="table-row-hover border-b border-[#f0ede7]">
-                                        <td class="py-2.5">
-                                            <div class="text-[13px] font-medium text-[#2d3748]">{{ $cred['name'] ?? '—' }}</div>
-                                            <div class="text-[10px] text-[#a09d95]">Invoices: {{ $cred['invoices'] ?? 0 }}</div>
-                                        </td>
-                                        <td class="py-2.5 text-right tabular-nums text-[13px]">{{ ea_money((float)($cred['residual'] ?? 0), $ccy) }}</td>
-                                        <td class="py-2.5 text-right tabular-nums text-[13px] {{ ($cred['overdue'] ?? 0) > 0 ? 'text-coral-600' : 'text-[#a09d95]' }}">
-                                            {{ ($cred['overdue'] ?? 0) > 0 ? ea_money((float) $cred['overdue'], $ccy) : '—' }}
-                                        </td>
-                                    </tr>
-                                @endforeach
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            @endif
+  {{-- ── 3. Short-term debt ─────────────────────────────────── --}}
+  <div class="v5-card">
+    <div class="v5-card__h">
+      <div>
+        <div class="v5-card__t">Short-term debt</div>
+        <div class="v5-card__sub">OHADA classes 4 + 52 · per-account credit</div>
+      </div>
+    </div>
+    <div class="v5-card__b">
+      @php $std = $t['short_term_debt'] ?? null; @endphp
+      <div class="kpi-hl {{ $std !== null && $std > 0 ? 'is-warn' : '' }}">
+        {{ $shortNum($std) }}<span class="u">{{ $shortUnit($std, $ccy) }}</span>
+      </div>
+      @php $sb = $t['short_term_breakdown'] ?? []; @endphp
+      <div class="breakdown" style="margin-top: 8px;">
+        <span>3rd-party (4XXX):</span> <b>{{ $shortNum($sb['third_parties'] ?? null) }}{{ $shortUnit($sb['third_parties'] ?? null, $ccy) }}</b><br>
+        <span>Bank overdraft (52):</span> <b>{{ $shortNum($sb['overdraft'] ?? null) }}{{ $shortUnit($sb['overdraft'] ?? null, $ccy) }}</b>
+      </div>
+    </div>
+    <div class="v5-card__f">
+      Σ per-account credit balances · receivables don't cancel payables.
+    </div>
+  </div>
+
+  {{-- ── 4. Liquidity ratio ─────────────────────────────────── --}}
+  <div class="v5-card">
+    <div class="v5-card__h">
+      <div>
+        <div class="v5-card__t">Liquidity ratios</div>
+        <div class="v5-card__sub">From Working Capital · live</div>
+      </div>
+    </div>
+    <div class="v5-card__b">
+      @php $lq = $t['liquidity'] ?? []; @endphp
+      <div class="kpi-pair">
+        <div class="kpi-pair__c">
+          <span class="l">Current</span>
+          {{ $ratio($lq['current'] ?? null) }}<span class="u" style="font: 500 11px var(--font); color: var(--text-subtle); margin-left: 2px;">x</span>
         </div>
-    @endif
+        <div class="kpi-pair__c">
+          <span class="l">Quick</span>
+          {{ $ratio($lq['quick'] ?? null) }}<span class="u" style="font: 500 11px var(--font); color: var(--text-subtle); margin-left: 2px;">x</span>
+        </div>
+      </div>
+      @if (!empty($lq['reason']))
+        <div class="breakdown" style="margin-top: 8px;">{{ $lq['reason'] }}</div>
+      @else
+        <div class="breakdown" style="margin-top: 8px;">Higher = more cushion. Below 1.0 = liabilities exceed liquid assets.</div>
+      @endif
+    </div>
+    <div class="v5-card__f">
+      Mirrors <a href="{{ tenant_url('/working-capital') }}" style="color: var(--text); text-decoration: underline;">Working Capital</a> service exactly.
+    </div>
+  </div>
+
+</div>
+
+{{-- ── Methodology footer (single block, all four KPIs) ──────── --}}
+<div class="methodology">
+  <h3>How these figures are computed</h3>
+  <p style="margin-bottom: 10px;">
+    Every value reads <b>as of right now</b> from the latest Odoo refresh.
+    No filters, no period selector. The engine queries posted move lines
+    on the OHADA chart of accounts and aggregates server-side.
+  </p>
+  <dl>
+    <dt>Cash &amp; equivalents</dt>
+    <dd>Σ debit-positive balances per account, on classes <code>52</code> (banques) + <code>57</code> (caisse). Bank accounts in overdraft are excluded — their credit balances surface under Short-term debt instead.</dd>
+
+    <dt>Long-term debt</dt>
+    <dd>Net credit balance on class <code>16</code> (emprunts et dettes assimilées) — borrowings and similar liabilities recognised on the balance sheet.</dd>
+
+    <dt>Short-term debt</dt>
+    <dd>Σ per-account credit-positive balances on classes <code>4</code> (third parties: suppliers, social, tax, personnel, group) + <code>52</code> (bank overdrafts). Per-account aggregation prevents AR (411 in normal debit position) from offsetting AP (401 in normal credit position).</dd>
+
+    <dt>Liquidity ratios</dt>
+    <dd>Current Ratio = current assets ÷ current liabilities. Quick Ratio = (current assets − inventory) ÷ current liabilities. Both copied verbatim from the <a href="{{ tenant_url('/working-capital') }}" style="color: var(--text); text-decoration: underline;">Working Capital</a> service so the two pages can't disagree.</dd>
+  </dl>
+</div>
+
+@else
+  <div class="empty-state">
+    Live GL data not available. Check Odoo connectivity.
+  </div>
+@endif
 
 @endsection
-
-@push('scripts')
-<script>
-(function () {
-    // ── Cash Balance Evolution (Area Chart) ──────────────────────────
-    const evoData = @json($cashEvolution ?? []);
-    const evoCtx = document.getElementById('cashEvolutionChart');
-    if (evoCtx && evoData.length) {
-        new Chart(evoCtx, {
-            type: 'line',
-            data: {
-                labels: evoData.map(d => d.label),
-                datasets: [{
-                    label: 'Cash Balance',
-                    data: evoData.map(d => d.balance),
-                    borderColor: '#3b8f9c',
-                    backgroundColor: 'rgba(59,143,156,.1)',
-                    fill: true,
-                    tension: 0.35,
-                    pointRadius: 3,
-                    pointBackgroundColor: '#3b8f9c',
-                    pointBorderColor: '#fff',
-                    pointBorderWidth: 2,
-                    borderWidth: 2,
-                }],
-            },
-            options: {
-                responsive: true, maintainAspectRatio: false,
-                interaction: { intersect: false, mode: 'index' },
-                plugins: {
-                    legend: { display: false },
-                    tooltip: { backgroundColor: '#1c2637', titleFont: { size: 11 }, bodyFont: { size: 11 }, padding: 10, cornerRadius: 8 }
-                },
-                scales: {
-                    x: { grid: { display: false }, ticks: { font: { size: 10 }, color: '#8a8578' } },
-                    y: { grid: { color: '#f0ede7' }, ticks: { font: { size: 10 }, color: '#8a8578',
-                          callback: v => v >= 1e6 ? (v/1e6).toFixed(1)+'M' : v >= 1e3 ? (v/1e3).toFixed(0)+'K' : v } },
-                },
-            },
-        });
-    }
-
-})();
-</script>
-@endpush

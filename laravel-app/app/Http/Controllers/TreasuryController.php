@@ -3,90 +3,142 @@
 namespace App\Http\Controllers;
 
 use App\Odoo\OdooFactory;
-use App\Services\CashFlowService;
-use App\Services\PayablesService;
-use App\Services\ProfitLossService;
-use App\Services\ReceivablesService;
-use App\Services\RevenueService;
+use App\Services\GLAccountService;
+use App\Services\WorkingCapitalService;
 
+/**
+ * Treasury — focused as-of-now snapshot.
+ *
+ * The page presents four sandboxes at the top of the page, all
+ * computed from the live GL with no period filter applied:
+ *
+ *   1. Cash & cash equivalents — Σ debit-positive balances on
+ *      OHADA accounts 57 (caisse) + 52 (banques). Bank accounts
+ *      currently in overdraft (credit-positive 52) are excluded
+ *      from this figure — they show up under Short-term debt.
+ *
+ *   2. Long-term debt — net credit balance on OHADA class 16
+ *      (emprunts et dettes assimilées).
+ *
+ *   3. Short-term debt — Σ per-account credit-positive balances
+ *      on classes 4* (third-party payables, social, tax) + 52*
+ *      (bank overdrafts). Per-account aggregation, not net, so
+ *      receivables (411 in normal debit position) don't cancel
+ *      payables (401 in normal credit position).
+ *
+ *   4. Liquidity ratios — current ratio + quick ratio, copied
+ *      verbatim from WorkingCapitalService so the two pages tell
+ *      the same story.
+ *
+ * No filter, no period selector. Whatever the latest Odoo refresh
+ * has is what gets surfaced. Cached briefly per-tenant via
+ * ea_cached so re-renders within the session don't re-query.
+ *
+ * Each KPI returns null when the underlying Odoo query fails so
+ * the view can render a graceful "—" rather than crashing the
+ * whole page.
+ */
 class TreasuryController extends Controller
 {
+    /** OHADA prefix groups — single source of truth for the four KPIs. */
+    private const PREFIX_CASH_BANKS    = '52';   // Banques — debit-positive at rest
+    private const PREFIX_CASH_VAULT    = '57';   // Caisse — physical cash
+    private const PREFIX_LONG_TERM_DEBT = '16';   // Emprunts et dettes assimilées
+    private const PREFIX_THIRD_PARTIES = '4';    // Tiers (suppliers/customers/state/personnel)
+
     public function index()
     {
-        $error           = null;
-        $receivables     = null;
-        $payables        = null;
-        $pl              = null;
-        $revenue         = null;
-        $summary         = null;
-        $cashEvolution   = [];
-        $cashflowDirect  = null;
-        $journalBalances = null;
+        $error    = null;
+        $treasury = null;
 
         try {
             $client = OdooFactory::fromConfig();
-            $source = (string) config_env('REVENUE_SOURCE', 'invoice');
+            $gl     = new GLAccountService($client);
 
-            $cashFlowSvc = new CashFlowService($client);
-            $cashflowDirect  = ea_cached('cf_direct',     fn () => $cashFlowSvc->directCashFlow());
-            $cashEvolution   = ea_cached('cf_evolution',  fn () => $cashFlowSvc->cashEvolution());
-            $journalBalances = ea_cached('cf_journals',   fn () => $cashFlowSvc->journalBalances());
+            // Cache key includes 'asof' (no period) so re-renders within
+            // the session reuse the result. Cleared by ea_cache_clear()
+            // on data-mutation actions elsewhere.
+            $treasury = ea_cached('treasury_asof', function () use ($client, $gl) {
+                // ── 1. Cash & cash equivalents ────────────────────────────
+                // Sum of debit-positive balances on 52 + 57 (per-account so
+                // an overdrawn current account in 52 doesn't cancel the
+                // standing cash on hand).
+                $cash52 = $gl->sumPositiveDebitBalancesByPrefix(self::PREFIX_CASH_BANKS);
+                $cash57 = $gl->sumPositiveDebitBalancesByPrefix(self::PREFIX_CASH_VAULT);
+                $cash   = ($cash52 === null || $cash57 === null)
+                    ? null
+                    : ($cash52 + $cash57);
 
-            $revenue = ea_cached('revenue_ytd',
-                fn() => (new RevenueService($client, $source))->analyze());
-            $pl = ea_cached('pl', fn() => (new ProfitLossService($client))->analyze());
+                // ── 2. Long-term debt ────────────────────────────────────
+                // Class 16 (emprunts et dettes assimilées) — naturally
+                // credit-positive. creditByPrefix returns signed positive
+                // for liabilities so this reads as expected.
+                $longTermDebt = $gl->creditByPrefix(self::PREFIX_LONG_TERM_DEBT);
 
-            $currency   = (string) ($cashflowDirect['currency'] ?? $revenue['currency'] ?? $pl['currency'] ?? 'XAF');
-            $daysInYtd  = max(1, (int) ($revenue['period']['days'] ?? 1));
-            $revenueYtd = (float) ($revenue['current']['total'] ?? 0);
+                // ── 3. Short-term debt ───────────────────────────────────
+                // Per-account credit-positive balances on 4* + bank
+                // overdrafts on 52*. Aggregating per account avoids AR
+                // (411 normal debit) cancelling AP (401 normal credit).
+                $stClass4 = $gl->sumPositiveCreditBalancesByPrefix(self::PREFIX_THIRD_PARTIES);
+                $stOverdraft = $gl->sumPositiveCreditBalancesByPrefix(self::PREFIX_CASH_BANKS);
+                $shortTermDebt = ($stClass4 === null || $stOverdraft === null)
+                    ? null
+                    : ($stClass4 + $stOverdraft);
 
-            $receivables = ea_cached('ar',
-                fn() => (new ReceivablesService($client))->analyze($revenueYtd, $daysInYtd, $currency));
+                // ── 4. Liquidity ratios — copied from Working Capital ────
+                // Same numbers /working-capital displays, so the two
+                // pages don't diverge on rounding or methodology. The
+                // service runs as-of-now by default (no asOf passed).
+                $wcRatios = ['current' => null, 'quick' => null, 'reason' => null];
+                try {
+                    $wc = (new WorkingCapitalService($client))->analyze();
+                    $wcRatios = [
+                        'current' => $wc['ratios']['current_ratio'] ?? null,
+                        'quick'   => $wc['ratios']['quick_ratio'] ?? null,
+                        'reason'  => $wc['ratios']['quick_ratio_reason'] ?? null,
+                    ];
+                } catch (\Throwable $e) {
+                    // Ratios fall back to null/—; shouldn't sink the page.
+                }
 
-            $expensesYtd = (float) ($pl['current']['cogs'] ?? 0)
-                         + (float) ($pl['current']['opex'] ?? 0);
-            $payables = ea_cached('ap',
-                fn() => (new PayablesService($client))->analyze($expensesYtd, $daysInYtd, $currency));
+                return [
+                    'currency' => $this->detectCurrency($client),
+                    'as_of'    => (new \DateTimeImmutable('now'))->format('Y-m-d H:i'),
 
-            $workingCapital = ($receivables['total_ar'] ?? 0)
-                            - ($payables['kpis']['total_ap'] ?? 0);
-            $netCash = ($pl['current']['net_profit'] ?? 0);
-            $dso = (float) ($receivables['dso'] ?? $receivables['kpis']['dso_days'] ?? 0);
-            $dpo = (float) ($payables['kpis']['dpo_days'] ?? 0);
-            $netConversion = $dso - $dpo;
-            $collectionScore = max(0, 100 - (float) ($receivables['overdue_rate'] ?? $receivables['kpis']['overdue_rate_pct'] ?? 0));
+                    'cash_equivalents'  => $cash,
+                    'cash_breakdown'    => ['banks' => $cash52, 'vault' => $cash57],
 
-            $runwayMonths = null;
-            $monthlyBurn  = ($pl['current']['opex'] ?? 0) / max(1, $daysInYtd / 30);
-            if ($monthlyBurn > 0) {
-                $runwayMonths = max(0, ($receivables['total_ar'] ?? 0) / $monthlyBurn);
-            }
+                    'long_term_debt'    => $longTermDebt !== null ? abs($longTermDebt) : null,
 
-            $summary = [
-                'working_capital'      => $workingCapital,
-                'collection_score'     => $collectionScore,
-                'net_cash'             => $netCash,
-                'dso'                  => $dso,
-                'dpo'                  => $dpo,
-                'conversion_cycle'     => $netConversion,
-                'runway_months'        => $runwayMonths,
-                'currency'             => $currency,
-            ];
+                    'short_term_debt'        => $shortTermDebt,
+                    'short_term_breakdown'   => ['third_parties' => $stClass4, 'overdraft' => $stOverdraft],
+
+                    'liquidity'         => $wcRatios,
+                ];
+            });
         } catch (\Throwable $e) {
             $error = $e->getMessage();
         }
 
         return view('treasury', [
-            'summary'           => $summary,
-            'receivables'       => $receivables,
-            'payables'          => $payables,
-            'pl'                => $pl,
-            'cashEvolution'     => $cashEvolution,
-            'cashflowDirect'    => $cashflowDirect,
-            'journalBalances'   => $journalBalances,
-            'error'             => $error,
-            'active'            => 'treasury',
-            'aiPage'            => 'dashboard',
+            'treasury' => $treasury,
+            'error'    => $error,
+            'active'   => 'treasury',
+            'aiPage'   => 'dashboard',
         ]);
+    }
+
+    /**
+     * Pull the company default currency once. Independent of the
+     * GLAccountService methods so it stays small + cacheable.
+     */
+    private function detectCurrency($client): string
+    {
+        try {
+            $rows = $client->searchRead('res.company', [], ['currency_id'], [], 1);
+            return (string) (($rows[0]['currency_id'][1] ?? null) ?: 'XAF');
+        } catch (\Throwable $e) {
+            return 'XAF';
+        }
     }
 }
