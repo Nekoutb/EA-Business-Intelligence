@@ -1132,7 +1132,7 @@ Route::prefix('admin')->group(function () {
          * Read-only — performs no mutations. Remove after the
          * disbursements engine is verified correct on this tenant.
          */
-        Route::get('/tenants/{tenant}/treasury-probe', function (\App\Models\Tenant $tenant) {
+        Route::get('/tenants/{tenant:slug}/treasury-probe', function (\App\Models\Tenant $tenant) {
             @set_time_limit(60);
 
             $ctx = app(\App\Tenancy\TenantContext::class);
