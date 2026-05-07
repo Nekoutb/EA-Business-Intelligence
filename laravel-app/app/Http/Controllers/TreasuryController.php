@@ -80,7 +80,13 @@ class TreasuryController extends Controller
             // Cache key includes 'asof' (no period) so re-renders within
             // the session reuse the result. Cleared by ea_cache_clear()
             // on data-mutation actions elsewhere.
-            $treasury = ea_cached('treasury_asof', function () use ($client, $gl) {
+            //
+            // Bumped 'treasury_asof' → 'treasury_asof_v2' on 2026-05-07
+            // to bust stale cached zero-disbursement results from the
+            // pre-fix journal-type bug (cash journals filter was too
+            // narrow; rewritten to "moves crediting 52/57" which captures
+            // general-journal cash payments too).
+            $treasury = ea_cached('treasury_asof_v2', function () use ($client, $gl) {
                 // ── 1. Cash & cash equivalents ────────────────────────────
                 // Sum of debit-positive balances on 52 + 57 (per-account so
                 // an overdrawn current account in 52 doesn't cancel the
