@@ -85,6 +85,29 @@ class TreasuryController extends Controller
                     ? null
                     : ($stClass4 + $stOverdraft);
 
+                // ── Liquidity snapshot (per-account list under the cards) ─
+                // Pull every account on classes 52 + 57 with its name and
+                // signed balance, then keep only the debit-positive ones
+                // (overdrafts excluded — they belong to Short-term debt
+                // per the user's spec). Sort high → low so the largest
+                // balances are at the top of the snapshot list.
+                $liquidityRows = [];
+                $rows52 = $gl->accountBalancesByPrefix(self::PREFIX_CASH_BANKS) ?? [];
+                $rows57 = $gl->accountBalancesByPrefix(self::PREFIX_CASH_VAULT) ?? [];
+                foreach (array_merge($rows52, $rows57) as $r) {
+                    if (($r['balance'] ?? 0) < 0) continue;   // overdraft — excluded
+                    $liquidityRows[] = [
+                        'name'    => $r['name'],
+                        'balance' => round((float) $r['balance'], 2),
+                    ];
+                }
+                // Sort by balance desc (greyed zeros sink to the bottom).
+                usort($liquidityRows, fn ($a, $b) => $b['balance'] <=> $a['balance']);
+                $liquiditySnapshot = [
+                    'rows'  => $liquidityRows,
+                    'total' => array_sum(array_column($liquidityRows, 'balance')),
+                ];
+
                 // ── 4. Liquidity ratios — copied from Working Capital ────
                 // Same numbers /working-capital displays, so the two
                 // pages don't diverge on rounding or methodology. The
@@ -107,6 +130,8 @@ class TreasuryController extends Controller
 
                     'cash_equivalents'  => $cash,
                     'cash_breakdown'    => ['banks' => $cash52, 'vault' => $cash57],
+
+                    'liquidity_snapshot' => $liquiditySnapshot,
 
                     'long_term_debt'    => $longTermDebt !== null ? abs($longTermDebt) : null,
 
