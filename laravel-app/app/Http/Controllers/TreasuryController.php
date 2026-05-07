@@ -86,7 +86,7 @@ class TreasuryController extends Controller
             // pre-fix journal-type bug (cash journals filter was too
             // narrow; rewritten to "moves crediting 52/57" which captures
             // general-journal cash payments too).
-            $treasury = ea_cached('treasury_asof_v2', function () use ($client, $gl) {
+            $treasury = ea_cached('treasury_asof_v3', function () use ($client, $gl) {
                 // ── 1. Cash & cash equivalents ────────────────────────────
                 // Sum of debit-positive balances on 52 + 57 (per-account so
                 // an overdrawn current account in 52 doesn't cancel the

@@ -200,7 +200,7 @@ final class GLAccountService
     }
 
     /**
-     * Σ debit on cash-payment lines for accounts matching ANY of the
+     * Σ debit on cash-journal lines for accounts matching ANY of the
      * given prefixes, in the [from, to] window. Returns one entry
      * per prefix, e.g.:
      *
@@ -210,30 +210,34 @@ final class GLAccountService
      * average each prefix's YTD cash-out by the number of complete
      * months elapsed → monthly run-rate → next-month projection.
      *
-     * "Cash payment" definition (auditor-correct, NOT journal-type-based):
-     *   any move that has a credit on a cash account (52 or 57). This
-     *   captures cash payments regardless of which journal type Odoo
-     *   classifies them under — `cash`, `bank`, `general`, or anything
-     *   else all count. Mirrors how CashFlowService::moveIdsTouchingCash()
-     *   defines cash flow for the Direct Cash Flow Statement.
+     * "Cash journal" identification (per the user's 2026-05-07 spec):
+     *   A journal is a cash journal if EITHER:
+     *     • account.journal.type ∈ {'cash', 'bank'}                   OR
+     *     • account.journal.code starts with 'CSH' or 'BNK'
      *
-     *   Why not filter by journal.type ∈ {cash,bank}? Because many
-     *   tenants book cash payments through `general`/miscellaneous
-     *   journals (no dedicated cash journal in their setup). A strict
-     *   type filter silently returned zero across every category in
-     *   production 2026-05-07 — exact symptom that prompted this fix.
+     *   The user identified cash journals on this tenant by their
+     *   sequence prefix (CSH1, CSH2, CSH3, CSH5, CSH6, CSHOM, BNK1,
+     *   BNK2, etc.) — the visible identifier on every move line in
+     *   the Odoo UI ("CSHOM/2026/00156"). Filtering by both type AND
+     *   code prefix is belt-and-suspenders: type catches conventionally
+     *   typed journals, code prefix catches journals whose type was
+     *   left at default 'general' but whose code clearly marks them
+     *   as cash/bank.
      *
-     * 4 Odoo round-trips total:
-     *   1) account.account — resolve cash account ids (52 + 57)
-     *   2) account.move.line — distinct move_ids that credit cash in window
-     *   3) account.account — resolve accounts matching any prefix
-     *   4) account.move.line — read_group debit:sum by account_id,
-     *      restricted to those move ids + prefix accounts
+     *   Earlier attempts (PR #103: type filter only; PR #104: "moves
+     *   crediting 52/57") both returned zero on this tenant — the
+     *   diagnostic logs in this version surface which step bails out
+     *   so the next misfire is instantly diagnosable.
+     *
+     * 3 Odoo round-trips total:
+     *   1) account.journal — resolve cash/bank journal ids by type+code
+     *   2) account.account — resolve accounts matching any prefix
+     *   3) account.move.line — read_group debit:sum by account_id,
+     *      filtered to those journals + prefix accounts + window
      *
      * Returns null on Odoo failure (caller falls back gracefully) and
-     * logs a warning so the failure is diagnosable on production.
-     * Empty input returns []; no matching accounts/moves returns zero
-     * per prefix (clean zero, distinguishable from null).
+     * logs at every empty-result branch + on success, so production
+     * "all zero" reports surface the cause from laravel.log directly.
      */
     public function cashJournalDebitsByPrefixes(
         array $prefixes,
@@ -242,46 +246,39 @@ final class GLAccountService
     ): ?array {
         if ($prefixes === []) return [];
         try {
-            // 1) Cash account ids (classes 52 + 57)
-            $cashAccounts = $this->odoo->searchRead('account.account',
-                ['|', ['code', '=like', '52%'], ['code', '=like', '57%']],
-                ['id'], []);
-            if (empty($cashAccounts)) {
-                \Illuminate\Support\Facades\Log::info('cashJournalDebitsByPrefixes: no cash accounts (52/57) on chart');
-                return array_fill_keys($prefixes, 0.0);
-            }
-            $cashIds = array_map(fn ($a) => (int) $a['id'], $cashAccounts);
-
-            // 2) Distinct move_ids that CREDIT a cash account in window.
-            // Auditor's "cash payment" definition — captures moves
-            // through cash/bank journals AND general journals alike.
-            $cashCreditDomain = [
-                ['account_id',   'in', $cashIds],
-                ['credit',       '>',  0],
-                ['parent_state', '=',  'posted'],
+            // 1) Cash/bank journals — type filter OR'd with code prefix.
+            $journalDomain = [
+                '|', '|',
+                ['type', 'in',     ['cash', 'bank']],
+                ['code', '=like',  'CSH%'],
+                ['code', '=like',  'BNK%'],
             ];
-            if ($from) $cashCreditDomain[] = ['date', '>=', $from->format('Y-m-d')];
-            if ($to)   $cashCreditDomain[] = ['date', '<=', $to->format('Y-m-d')];
+            $journals = $this->odoo->searchRead('account.journal',
+                $journalDomain, ['id', 'code', 'name', 'type'], []);
 
-            $cashLines = $this->odoo->searchRead('account.move.line',
-                $cashCreditDomain, ['move_id'], []);
-            if (empty($cashLines)) {
-                \Illuminate\Support\Facades\Log::info('cashJournalDebitsByPrefixes: no cash-credit lines in window', [
-                    'from' => $from?->format('Y-m-d'),
-                    'to'   => $to?->format('Y-m-d'),
+            if (empty($journals)) {
+                \Illuminate\Support\Facades\Log::info('cashJournalDebitsByPrefixes: no cash/bank journals found', [
+                    'domain_used' => 'type IN (cash,bank) OR code LIKE CSH% OR code LIKE BNK%',
                 ]);
                 return array_fill_keys($prefixes, 0.0);
             }
-            $moveIds = array_values(array_unique(array_map(
-                fn ($l) => is_array($l['move_id']) ? (int) $l['move_id'][0] : 0,
-                $cashLines
-            )));
+            $journalIds = array_map(fn ($j) => (int) $j['id'], $journals);
+            \Illuminate\Support\Facades\Log::info('cashJournalDebitsByPrefixes: cash journals identified', [
+                'count'    => count($journals),
+                'journals' => array_map(fn ($j) => [
+                    'id'   => $j['id']   ?? null,
+                    'code' => $j['code'] ?? '',
+                    'name' => $j['name'] ?? '',
+                    'type' => $j['type'] ?? '',
+                ], $journals),
+            ]);
 
-            // 3) Accounts matching any prefix — single OR domain
+            // 2) Accounts matching any prefix — single OR domain
             $domain = [];
             for ($i = 0; $i < count($prefixes) - 1; $i++) $domain[] = '|';
             foreach ($prefixes as $p) $domain[] = ['code', '=like', $p . '%'];
-            $accounts = $this->odoo->searchRead('account.account', $domain, ['id', 'code'], []);
+            $accounts = $this->odoo->searchRead('account.account',
+                $domain, ['id', 'code'], []);
             if (empty($accounts)) {
                 \Illuminate\Support\Facades\Log::info('cashJournalDebitsByPrefixes: no accounts match prefixes', [
                     'prefixes' => $prefixes,
@@ -305,9 +302,9 @@ final class GLAccountService
             }
             if (empty($prefixById)) return array_fill_keys($prefixes, 0.0);
 
-            // 4) Sum debit by account_id, scoped to cash-credit moves
+            // 3) Sum debit by account_id, scoped to cash journals + window
             $mlDomain = [
-                ['move_id',      'in', $moveIds],
+                ['journal_id',   'in', $journalIds],
                 ['account_id',   'in', array_keys($prefixById)],
                 ['parent_state', '=',  'posted'],
                 ['debit',        '>',  0],
@@ -328,10 +325,15 @@ final class GLAccountService
                 if ($aid === null || !isset($prefixById[$aid])) continue;
                 $sums[$prefixById[$aid]] += (float) ($r['debit'] ?? 0);
             }
-            \Illuminate\Support\Facades\Log::debug('cashJournalDebitsByPrefixes: sums computed', [
-                'sums'           => $sums,
-                'cash_move_ids'  => count($moveIds),
-                'prefix_account_ids' => count($prefixById),
+            \Illuminate\Support\Facades\Log::info('cashJournalDebitsByPrefixes: sums computed', [
+                'sums'                 => $sums,
+                'journals_used'        => count($journalIds),
+                'prefix_account_ids'   => count($prefixById),
+                'read_group_rows'      => count((array) $rows),
+                'window'               => [
+                    'from' => $from?->format('Y-m-d'),
+                    'to'   => $to?->format('Y-m-d'),
+                ],
             ]);
             return $sums;
         } catch (\Throwable $e) {
