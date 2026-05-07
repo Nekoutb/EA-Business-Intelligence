@@ -1103,6 +1103,209 @@ Route::prefix('admin')->group(function () {
         // Platform-wide AI provider configuration (super-admin only).
         Route::get('/settings/ai',  [AdminAiSettingsController::class, 'show']);
         Route::post('/settings/ai', [AdminAiSettingsController::class, 'save']);
+
+        /*
+         * ── DIAGNOSTIC: Treasury disbursements probe ──────────────────────
+         *
+         * Real-time JSON dump of every step the disbursements engine takes
+         * for a given tenant. Built 2026-05-07 to find why the
+         * "Next 30-day disbursements" sandbox kept reading XAF 0 across
+         * every category despite the tenant having posted cash payments
+         * throughout the year. The engine writes diagnostic logs but
+         * tailing the prod log file requires SSH; this endpoint exposes
+         * the same state as JSON in a single browser hit, no SSH needed.
+         *
+         * URL:
+         *   /admin/tenants/{tenant}/treasury-probe
+         *
+         * Output (JSON):
+         *   {
+         *     window: {from, to, months_basis},
+         *     journals: { domain_used, count, list:[{id,code,name,type}, ...] },
+         *     prefix_accounts: { '16':[...], '42':[...], ... },
+         *     read_group_rows: [...],
+         *     sums_by_prefix: { '16':X, '42':Y, ... },
+         *     ap_due_30d: float,
+         *     errors: [...]
+         *   }
+         *
+         * Read-only — performs no mutations. Remove after the
+         * disbursements engine is verified correct on this tenant.
+         */
+        Route::get('/tenants/{tenant}/treasury-probe', function (\App\Models\Tenant $tenant) {
+            @set_time_limit(60);
+
+            $ctx = app(\App\Tenancy\TenantContext::class);
+            $previous = $ctx->has() ? $ctx->tenant() : null;
+            $ctx->set($tenant);
+
+            $report = [
+                'tenant'    => $tenant->slug,
+                'probed_at' => now()->toIso8601String(),
+                'errors'    => [],
+            ];
+
+            try {
+                $client = \App\Odoo\OdooFactory::fromConfig();
+                $client->authenticate();
+
+                // Replicate the controller's window logic
+                $today    = new \DateTimeImmutable('today');
+                $year     = (int) $today->format('Y');
+                $monthNow = (int) $today->format('n');
+                $jan1     = new \DateTimeImmutable("{$year}-01-01");
+                if ($monthNow >= 2) {
+                    $ytdEnd      = (new \DateTimeImmutable("{$year}-{$monthNow}-01"))->modify('-1 day');
+                    $monthsBasis = $monthNow - 1;
+                } else {
+                    $ytdEnd      = $today;
+                    $monthsBasis = 1;
+                }
+                $report['window'] = [
+                    'today'        => $today->format('Y-m-d'),
+                    'from'         => $jan1->format('Y-m-d'),
+                    'to'           => $ytdEnd->format('Y-m-d'),
+                    'months_basis' => $monthsBasis,
+                ];
+
+                // ── 1. Identify cash journals (same domain as service) ──
+                $journalDomain = [
+                    '|', '|',
+                    ['type', 'in',     ['cash', 'bank']],
+                    ['code', '=like',  'CSH%'],
+                    ['code', '=like',  'BNK%'],
+                ];
+                $report['journals']['domain_used'] = 'type IN (cash,bank) OR code LIKE CSH% OR code LIKE BNK%';
+                $journals = $client->searchRead('account.journal', $journalDomain,
+                    ['id', 'code', 'name', 'type'], []);
+                $report['journals']['count'] = count($journals);
+                $report['journals']['list']  = $journals;
+                $journalIds = array_map(fn ($j) => (int) $j['id'], $journals);
+
+                // ── 1b. Compare with the broader pull (no filter) so we
+                // can see every journal Odoo has, useful if the type+code
+                // filter returns zero. ────────────────────────────────────
+                $allJournals = $client->searchRead('account.journal', [],
+                    ['id', 'code', 'name', 'type'], ['order' => 'code asc']);
+                $report['journals']['_all_journals_for_reference'] = $allJournals;
+
+                // ── 2. Resolve the disbursement-prefix accounts ──────────
+                $prefixes = ['16', '42', '43', '44', '401'];
+                $domain   = [];
+                for ($i = 0; $i < count($prefixes) - 1; $i++) $domain[] = '|';
+                foreach ($prefixes as $p) $domain[] = ['code', '=like', $p . '%'];
+                $accounts = $client->searchRead('account.account', $domain,
+                    ['id', 'code', 'name'], ['order' => 'code asc']);
+                $report['prefix_accounts']['count'] = count($accounts);
+                $report['prefix_accounts']['list']  = $accounts;
+
+                // Reverse map: account_id → which prefix matches (longest wins)
+                $sortedPrefixes = $prefixes;
+                usort($sortedPrefixes, fn ($a, $b) => strlen($b) - strlen($a));
+                $prefixById = [];
+                foreach ($accounts as $a) {
+                    $code = (string) ($a['code'] ?? '');
+                    foreach ($sortedPrefixes as $p) {
+                        if (str_starts_with($code, $p)) {
+                            $prefixById[(int) $a['id']] = $p;
+                            break;
+                        }
+                    }
+                }
+                $report['prefix_accounts']['mapping_count'] = count($prefixById);
+
+                // ── 3. read_group debits per account ─────────────────────
+                if (count($journalIds) === 0) {
+                    $report['errors'][] = 'No journals matched the cash-journal filter — sums will be zero.';
+                    $report['sums_by_prefix'] = array_fill_keys($prefixes, 0.0);
+                } elseif (count($prefixById) === 0) {
+                    $report['errors'][] = 'No accounts matched the disbursement prefixes — sums will be zero.';
+                    $report['sums_by_prefix'] = array_fill_keys($prefixes, 0.0);
+                } else {
+                    $mlDomain = [
+                        ['journal_id',   'in', $journalIds],
+                        ['account_id',   'in', array_keys($prefixById)],
+                        ['parent_state', '=',  'posted'],
+                        ['debit',        '>',  0],
+                        ['date',         '>=', $jan1->format('Y-m-d')],
+                        ['date',         '<=', $ytdEnd->format('Y-m-d')],
+                    ];
+                    $report['read_group']['domain'] = $mlDomain;
+
+                    $rows = $client->callModel('account.move.line', 'read_group', [
+                        'domain'  => $mlDomain,
+                        'fields'  => ['debit:sum'],
+                        'groupby' => ['account_id'],
+                        'lazy'    => false,
+                    ]);
+                    $report['read_group']['row_count'] = count((array) $rows);
+                    $report['read_group']['rows']      = $rows;
+
+                    $sums = array_fill_keys($prefixes, 0.0);
+                    foreach ((array) $rows as $r) {
+                        $aid = is_array($r['account_id'] ?? null) ? (int) $r['account_id'][0] : null;
+                        if ($aid === null || !isset($prefixById[$aid])) continue;
+                        $sums[$prefixById[$aid]] += (float) ($r['debit'] ?? 0);
+                    }
+                    $report['sums_by_prefix'] = $sums;
+                    $report['monthly_run_rate'] = array_map(
+                        fn ($v) => $monthsBasis > 0 ? round($v / $monthsBasis, 2) : 0.0,
+                        $sums
+                    );
+                }
+
+                // ── 4. Sample raw move lines on 401, no filter besides
+                // the date window — confirms there ARE 401 debits in scope
+                // even if the journal filter mismatched. ──────────────────
+                $sampleAcc = collect($accounts)->first(fn ($a) => str_starts_with((string)($a['code'] ?? ''), '401'));
+                if ($sampleAcc) {
+                    $sample = $client->searchRead('account.move.line', [
+                        ['account_id',   '=',  (int) $sampleAcc['id']],
+                        ['debit',        '>',  0],
+                        ['parent_state', '=',  'posted'],
+                        ['date',         '>=', $jan1->format('Y-m-d')],
+                        ['date',         '<=', $ytdEnd->format('Y-m-d')],
+                    ], ['id', 'date', 'debit', 'name', 'journal_id', 'move_id'],
+                       ['limit' => 10, 'order' => 'date desc']);
+                    $report['sample_401_debits_any_journal'] = [
+                        'account' => $sampleAcc,
+                        'count'   => count($sample),
+                        'sample'  => $sample,
+                    ];
+                }
+
+                // ── 5. AP invoices due in next 30d ────────────────────────
+                $apDueWindow = $today->modify('+30 days');
+                try {
+                    $apInvoices = $client->searchRead('account.move', [
+                        ['move_type', '=', 'in_invoice'],
+                        ['state', '=', 'posted'],
+                        ['payment_state', 'in', ['not_paid', 'partial', 'in_payment']],
+                        ['invoice_date_due', '>=', $today->format('Y-m-d')],
+                        ['invoice_date_due', '<=', $apDueWindow->format('Y-m-d')],
+                    ], ['id', 'name', 'invoice_date_due', 'amount_residual'], ['limit' => 50]);
+                    $apDue = 0.0;
+                    foreach ($apInvoices as $inv) $apDue += (float) ($inv['amount_residual'] ?? 0);
+                    $report['ap_due_30d'] = [
+                        'window'  => ['from' => $today->format('Y-m-d'), 'to' => $apDueWindow->format('Y-m-d')],
+                        'count'   => count($apInvoices),
+                        'total'   => $apDue,
+                        'sample'  => array_slice($apInvoices, 0, 5),
+                    ];
+                } catch (\Throwable $e) {
+                    $report['errors'][] = 'AP-due query failed: ' . $e->getMessage();
+                }
+
+            } catch (\Throwable $e) {
+                $report['errors'][] = 'Top-level exception: ' . $e->getMessage();
+                $report['_exception_class'] = get_class($e);
+                $report['_exception_trace'] = explode("\n", $e->getTraceAsString());
+            } finally {
+                $previous ? $ctx->set($previous) : $ctx->clear();
+            }
+
+            return response()->json($report, 200, [], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        });
     });
 });
 
