@@ -88,6 +88,32 @@
      width naturally instead. */
   @media (max-width: 1100px) { .snap { grid-column: 1 / -1; grid-row: auto; } }
 
+  /* ── Next 30-day disbursements · cols 2-3 of row 2 ────────────────
+     Wider than the liquidity snapshot (spans 2 columns) because the
+     row labels are longer ("Social insurance contributions",
+     "Supplier invoices due (next 30d)"). Same vertical row layout
+     and total-bar treatment as .snap so the two cards visually
+     pair. Each row shows the projected amount on the right with an
+     optional "ytd avg · N mo" basis hint underneath for the auditor. */
+  .disb { grid-column: 2 / 4; grid-row: 2 / span 1; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); }
+  .disb__h { padding: 10px 14px 8px; border-bottom: 1px solid var(--border-faint); display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+  .disb__t { font: 700 12px var(--font); color: var(--text); }
+  .disb__sub { font: 400 10.5px var(--font); color: var(--text-subtle); margin-top: 1px; }
+  .disb__hint { font: 500 9px var(--font); color: var(--text-faint); letter-spacing: .04em; margin-top: 4px; text-transform: uppercase; text-align: right; }
+  .disb__list { padding: 4px 0; }
+  .disb__row { display: grid; grid-template-columns: 1fr max-content; gap: 12px; align-items: baseline; padding: 6px 14px; }
+  .disb__row + .disb__row { border-top: 1px solid var(--border-faint); }
+  .disb__n { font: 500 11.5px var(--font); color: var(--text); min-width: 0; }
+  .disb__nb { display: block; font: 500 9.5px var(--font); color: var(--text-subtle); margin-top: 1px; }
+  .disb__v { font: 600 11.5px var(--font); color: var(--text); text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .disb__tag { font: 600 8.5px var(--font); padding: 1px 5px; border-radius: 3px; margin-left: 6px; letter-spacing: .04em; vertical-align: middle; }
+  .disb__tag.is-due { color: #ad1f1f; background: #fee2e2; border: 1px solid #fca5a5; }
+  .disb__tot { padding: 8px 14px; border-top: 2px solid var(--text); background: var(--border-faint); display: grid; grid-template-columns: 1fr max-content; gap: 12px; align-items: baseline; border-bottom-left-radius: var(--r-lg); border-bottom-right-radius: var(--r-lg); }
+  .disb__tot .disb__n { font: 700 10px var(--font); letter-spacing: .08em; text-transform: uppercase; color: var(--text); }
+  .disb__tot .disb__v { font: 700 13px var(--font); color: var(--text); }
+  /* Mobile: drop the column anchor so the card spans full width. */
+  @media (max-width: 1100px) { .disb { grid-column: 1 / -1; grid-row: auto; } }
+
   .methodology { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); padding: 14px 16px; font: 500 11.5px var(--font); color: var(--text-muted); line-height: 1.6; }
   .methodology h3 { font: 700 12px var(--font); color: var(--text); margin-bottom: 6px; letter-spacing: -.01em; }
   .methodology code { background: var(--border-faint); color: var(--text); padding: 1px 5px; border-radius: 3px; font-size: 10.5px; }
@@ -298,6 +324,59 @@
   </div>
   @endif
 
+  {{-- ── Next 30-day disbursements · cols 2-3 of row 2 ────────────
+       Forward-looking projection of cash outflows. Each row's
+       "projection" is the YTD-monthly-average (Source 1+2 in
+       methodology) or — for the supplier-invoices-due line —
+       the actual amount due from the AP ledger (Source 3).
+       Pairs visually with the liquidity snapshot in col 1: same
+       row, same total-bar treatment, similar typography. --}}
+  @php
+    $disb       = $t['disbursements'] ?? null;
+    $disbRows   = $disb['rows'] ?? [];
+    $disbTotal  = (float) ($disb['total'] ?? 0);
+    $disbBasis  = (int)   ($disb['months_basis'] ?? 0);
+  @endphp
+  @if (!empty($disbRows))
+  <div class="disb">
+    <div class="disb__h">
+      <div>
+        <div class="disb__t">Next 30-day disbursements</div>
+        <div class="disb__sub">YTD-monthly-average projection · {{ $disbBasis }} mo basis · sorted high → low</div>
+      </div>
+      <div class="disb__hint">All amounts {{ $ccy }}</div>
+    </div>
+    <div class="disb__list">
+      @foreach ($disbRows as $r)
+        @php
+          $hasAPDue = (bool) ($r['includes_ap_due'] ?? false);
+          $basisHint = $disbBasis > 0
+              ? 'YTD avg · ' . $disbBasis . ' mo basis'
+              : 'YTD avg';
+          // The supplier-payments row folds in actual AP invoices due
+          // in the next 30 days on top of the YTD average. Surface
+          // this in the row hint so the auditor knows the projection
+          // is "average + due", not pure historical average.
+          if ($hasAPDue) {
+              $basisHint .= ' · plus AP due 30d (' . $xaf((float) $r['ap_due_30d']) . ')';
+          }
+        @endphp
+        <div class="disb__row">
+          <div class="disb__n">
+            {{ $r['label'] }}
+            <span class="disb__nb">{{ $basisHint }}</span>
+          </div>
+          <div class="disb__v">{{ $xaf((float) $r['projection']) }}</div>
+        </div>
+      @endforeach
+    </div>
+    <div class="disb__tot">
+      <div class="disb__n">Total projected · next 30d</div>
+      <div class="disb__v">{{ $xaf($disbTotal) }}</div>
+    </div>
+  </div>
+  @endif
+
 </div>
 
 {{-- ── Methodology footer (single block, all four KPIs) ──────── --}}
@@ -320,6 +399,12 @@
 
     <dt>Liquidity ratios</dt>
     <dd>Current Ratio = current assets ÷ current liabilities. Quick Ratio = (current assets − inventory) ÷ current liabilities. Both copied verbatim from the <a href="{{ tenant_url('/working-capital') }}" style="color: var(--text); text-decoration: underline;">Working Capital</a> service so the two pages can't disagree.</dd>
+
+    <dt>Liquidity snapshot</dt>
+    <dd>Per-account list of every <code>52</code> + <code>57</code> account with a positive debit balance, sorted high → low. Zero-balance and overdrawn accounts are excluded — overdrafts surface under Short-term debt instead.</dd>
+
+    <dt>Next 30-day disbursements</dt>
+    <dd>Forward-looking cash-outflow projection based on YTD history, by category. For each prefix (<code>16</code> long-term debt, <code>42</code> salaries, <code>43</code> social, <code>44</code> tax, <code>401</code> suppliers), sum debits posted via cash journals (type <code>cash</code> or <code>bank</code>) from <strong>1 January through the end of the last full month</strong>, divide by the number of full months elapsed → monthly run-rate. <strong>Supplier payments</strong> combine three components into a single row: (i) the <code>401</code> cash-journal average, (ii) the average of <em>direct expense-to-cash</em> entries (Dr 6XX / Cr 52|57 in the same move — petty-cash purchases that bypass the AP step), and (iii) the actual amount of AP invoices already posted with a due-date in the next 30 days (from the AP ledger). Class 2 (fixed assets) is excluded as non-recurrent; class 5 (cash) is excluded as internal transfers.</dd>
   </dl>
 </div>
 

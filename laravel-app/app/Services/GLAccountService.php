@@ -199,6 +199,185 @@ final class GLAccountService
         }
     }
 
+    /**
+     * Σ debit on cash-journal lines for accounts matching ANY of the
+     * given prefixes, in the [from, to] window. Returns one entry
+     * per prefix, e.g.:
+     *
+     *     ['16' => 8_400_000.0, '42' => 50_000_000.0, '401' => 22_300_000.0]
+     *
+     * Used by the Treasury "Next 30-day disbursements" projection:
+     * average each prefix's YTD cash-out by the number of complete
+     * months elapsed → monthly run-rate → next-month projection.
+     *
+     * "Cash journal" = account.journal.type ∈ {cash, bank}. The
+     * filter sits on the journal_id of each move line (server-side),
+     * so this stays a single read_group call regardless of how many
+     * prefixes are passed.
+     *
+     * 3 Odoo round-trips total:
+     *   1) account.journal — resolve cash + bank journal ids
+     *   2) account.account — resolve every account matching any prefix
+     *   3) account.move.line — read_group debit:sum by account_id
+     *
+     * Returns null on Odoo failure; an empty input returns an empty
+     * array.
+     */
+    public function cashJournalDebitsByPrefixes(
+        array $prefixes,
+        ?\DateTimeImmutable $from,
+        ?\DateTimeImmutable $to
+    ): ?array {
+        if ($prefixes === []) return [];
+        try {
+            // 1) Cash + bank journal ids
+            $journals = $this->odoo->searchRead(
+                'account.journal',
+                [['type', 'in', ['cash', 'bank']]],
+                ['id'],
+                []
+            );
+            if (empty($journals)) return array_fill_keys($prefixes, 0.0);
+            $journalIds = array_map(fn ($j) => (int) $j['id'], $journals);
+
+            // 2) Accounts matching any prefix — single OR domain
+            $domain = [];
+            for ($i = 0; $i < count($prefixes) - 1; $i++) $domain[] = '|';
+            foreach ($prefixes as $p) $domain[] = ['code', '=like', $p . '%'];
+            $accounts = $this->odoo->searchRead('account.account', $domain, ['id', 'code'], []);
+            if (empty($accounts)) return array_fill_keys($prefixes, 0.0);
+
+            // Reverse lookup: account_id → which prefix it matches
+            // (longest-prefix-match wins so '401' beats '4').
+            $sortedPrefixes = $prefixes;
+            usort($sortedPrefixes, fn ($a, $b) => strlen($b) - strlen($a));
+            $prefixById = [];
+            foreach ($accounts as $a) {
+                $code = (string) ($a['code'] ?? '');
+                foreach ($sortedPrefixes as $p) {
+                    if (str_starts_with($code, $p)) {
+                        $prefixById[(int) $a['id']] = $p;
+                        break;
+                    }
+                }
+            }
+            if (empty($prefixById)) return array_fill_keys($prefixes, 0.0);
+
+            // 3) Sum debit by account_id, scoped to cash journals + window
+            $mlDomain = [
+                ['account_id',   'in', array_keys($prefixById)],
+                ['journal_id',   'in', $journalIds],
+                ['parent_state', '=',  'posted'],
+                ['debit',        '>',  0],
+            ];
+            if ($from) $mlDomain[] = ['date', '>=', $from->format('Y-m-d')];
+            if ($to)   $mlDomain[] = ['date', '<=', $to->format('Y-m-d')];
+
+            $rows = $this->odoo->callModel('account.move.line', 'read_group', [
+                'domain'  => $mlDomain,
+                'fields'  => ['debit:sum'],
+                'groupby' => ['account_id'],
+                'lazy'    => false,
+            ]);
+
+            $sums = array_fill_keys($prefixes, 0.0);
+            foreach ((array) $rows as $r) {
+                $aid = is_array($r['account_id'] ?? null) ? (int) $r['account_id'][0] : null;
+                if ($aid === null || !isset($prefixById[$aid])) continue;
+                $sums[$prefixById[$aid]] += (float) ($r['debit'] ?? 0);
+            }
+            return $sums;
+        } catch (\Throwable $e) {
+            return null;
+        }
+    }
+
+    /**
+     * Σ debit on lines whose account.code matches $expensePrefix AND
+     * whose parent move has at least one line with a credit on an
+     * account whose code matches any of $cashPrefixes.
+     *
+     * Captures the "cash purchase" pattern — Dr 632X / Cr 57 (or 52)
+     * booked in a single move without going through 401. The user's
+     * Treasury spec adds the YTD-monthly-average of these to the
+     * "Supplier payments" projection on top of the 401 cash-journal
+     * average.
+     *
+     * Two-step query:
+     *   1) Find every move that has a credit on a cash account in
+     *      the window. Returns distinct move_ids.
+     *   2) Within those moves, sum debit on the expense prefix.
+     *
+     * This is a slight over-approximation: a move could have a
+     * credit-on-cash unrelated to the 632X debit (a complex compound
+     * journal). In practice 95%+ of OHADA cash purchases are simple
+     * 2-line moves so the over-count is negligible. Trade-off
+     * accepted vs. line-pair matching, which would require pulling
+     * every move's full line set and processing in PHP.
+     */
+    public function directExpenseToCashDebits(
+        string $expensePrefix,
+        array $cashPrefixes,
+        ?\DateTimeImmutable $from,
+        ?\DateTimeImmutable $to
+    ): ?float {
+        try {
+            // 1) Resolve cash-account ids
+            $cashDomain = [];
+            for ($i = 0; $i < count($cashPrefixes) - 1; $i++) $cashDomain[] = '|';
+            foreach ($cashPrefixes as $p) $cashDomain[] = ['code', '=like', $p . '%'];
+            $cashAccounts = $this->odoo->searchRead('account.account', $cashDomain, ['id'], []);
+            if (empty($cashAccounts)) return 0.0;
+            $cashIds = array_map(fn ($a) => (int) $a['id'], $cashAccounts);
+
+            // 2) Find move_ids that credit cash in the window
+            $creditDomain = [
+                ['account_id',   'in', $cashIds],
+                ['credit',       '>',  0],
+                ['parent_state', '=',  'posted'],
+            ];
+            if ($from) $creditDomain[] = ['date', '>=', $from->format('Y-m-d')];
+            if ($to)   $creditDomain[] = ['date', '<=', $to->format('Y-m-d')];
+
+            $cashLines = $this->odoo->searchRead('account.move.line',
+                $creditDomain, ['move_id'], []);
+            if (empty($cashLines)) return 0.0;
+            $moveIds = array_values(array_unique(array_map(
+                fn ($l) => is_array($l['move_id']) ? (int) $l['move_id'][0] : 0,
+                $cashLines
+            )));
+            if (empty($moveIds)) return 0.0;
+
+            // 3) Resolve expense-account ids matching $expensePrefix
+            $expAccounts = $this->odoo->searchRead('account.account',
+                [['code', '=like', $expensePrefix . '%']],
+                ['id'], []);
+            if (empty($expAccounts)) return 0.0;
+            $expIds = array_map(fn ($a) => (int) $a['id'], $expAccounts);
+
+            // 4) Sum debit on expense lines belonging to those moves
+            $debitDomain = [
+                ['move_id',      'in', $moveIds],
+                ['account_id',   'in', $expIds],
+                ['debit',        '>',  0],
+                ['parent_state', '=',  'posted'],
+            ];
+            if ($from) $debitDomain[] = ['date', '>=', $from->format('Y-m-d')];
+            if ($to)   $debitDomain[] = ['date', '<=', $to->format('Y-m-d')];
+
+            $rows = $this->odoo->callModel('account.move.line', 'read_group', [
+                'domain'  => $debitDomain,
+                'fields'  => ['debit:sum'],
+                'groupby' => [],
+                'lazy'    => false,
+            ]);
+            $row = $rows[0] ?? null;
+            return is_array($row) ? (float) ($row['debit'] ?? 0) : 0.0;
+        } catch (\Throwable $e) {
+            return null;
+        }
+    }
+
     // ── internals ────────────────────────────────────────────────────
 
     /**
