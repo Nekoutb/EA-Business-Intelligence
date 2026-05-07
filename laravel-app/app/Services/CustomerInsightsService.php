@@ -3,16 +3,34 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\Odoo\OdooClient;
+
 final class CustomerInsightsService
 {
     /**
+     * Optional Odoo client — required only for the per-customer margin
+     * computation that drives the profitability scatter chart. Older
+     * call-sites that just want the revenue-based insights can still
+     * instantiate the service without arguments.
+     */
+    public function __construct(private ?OdooClient $odoo = null) {}
+
+    /**
      * Build customer-facing insights from the RevenueService analysis payload.
+     *
+     * Optional [from, to] window enables the per-customer margin
+     * computation (Odoo round-trip). Without dates, the scatter
+     * payload is omitted from the response and callers fall back to
+     * the legacy revenue-only view.
      *
      * @param array $analysis Output from RevenueService::analyze()
      * @return array<string,mixed>
      */
-    public function analyze(array $analysis): array
-    {
+    public function analyze(
+        array $analysis,
+        ?\DateTimeImmutable $from = null,
+        ?\DateTimeImmutable $to = null
+    ): array {
         if ($analysis === []) {
             return [];
         }
@@ -79,6 +97,19 @@ final class CustomerInsightsService
             'declining'     => $declining,
         ]);
 
+        // ── Profitability scatter — replaces the top/bottom 5 tables ──────
+        // For every customer in the YTD window, plot revenue (X) against
+        // gross margin contribution (Y). Margin per customer is computed
+        // line-by-line from product cost in Odoo (Option A per the user's
+        // 2026-05-07 design spec): margin = subtotal − qty × standard_price.
+        // Median split classifies into 3 visual bands: Stars (top-right),
+        // Underperformers (bottom-left), Mixed (off-diagonal).
+        $scatter = null;
+        if ($this->odoo !== null && $from !== null && $to !== null && $revenueMap !== []) {
+            $marginMap = $this->computeMarginPerCustomer($from, $to);
+            $scatter   = $this->buildScatter($revenueMap, $marginMap, $orderMap, $nameMap, $totalRevenue);
+        }
+
         return [
             'currency' => $currency,
             'summary' => [
@@ -97,6 +128,7 @@ final class CustomerInsightsService
                 'most_profitable'  => $topCustomers,
                 'least_profitable' => $bottomCustomers,
             ],
+            'scatter' => $scatter,
             'concentration' => [
                 'top5_share_pct'  => $concentrationTop5,
                 'top10_share_pct' => $concentrationTop10,
@@ -362,5 +394,247 @@ final class CustomerInsightsService
             ];
         }
         return $series;
+    }
+
+    /**
+     * Per-customer gross-margin contribution for posted out_invoices in
+     * the [from, to] window (Option A per the user's 2026-05-07 spec):
+     *
+     *   margin_per_line = price_subtotal − (quantity × product.standard_price)
+     *
+     * Aggregated by partner_id. Lines with no `product_id` (manual rows
+     * — discounts, surcharges, freight) are skipped because there's no
+     * cost reference. Products with `standard_price = 0` (typically
+     * services or products where cost wasn't captured in Odoo) yield
+     * margin == revenue for that line — accurate for true zero-cost
+     * services, slightly overstated where cost was simply unrecorded.
+     * The methodology footer surfaces this assumption to the auditor.
+     *
+     * Three Odoo round-trips total:
+     *   1) account.move          — sales invoices in window (id, partner)
+     *   2) account.move.line     — product lines on those moves
+     *   3) product.product       — standard_price for the products seen
+     *
+     * Returns [partner_id => margin_total]. Returns empty array on any
+     * Odoo failure so the caller can render a degraded scatter (X-axis
+     * only) rather than crash the whole page.
+     *
+     * @return array<int,float>
+     */
+    private function computeMarginPerCustomer(
+        \DateTimeImmutable $from,
+        \DateTimeImmutable $to
+    ): array {
+        if ($this->odoo === null) return [];
+
+        try {
+            // 1. Sales invoices in window
+            $moves = $this->odoo->searchRead('account.move', [
+                ['move_type', '=',  'out_invoice'],
+                ['state',     '=',  'posted'],
+                ['invoice_date', '>=', $from->format('Y-m-d')],
+                ['invoice_date', '<=', $to->format('Y-m-d')],
+            ], ['id', 'partner_id'], []);
+            if (empty($moves)) return [];
+
+            $movePartner = [];
+            foreach ($moves as $m) {
+                $pid = is_array($m['partner_id'] ?? null) ? (int) $m['partner_id'][0] : null;
+                if ($pid !== null) {
+                    $movePartner[(int) $m['id']] = $pid;
+                }
+            }
+            if (empty($movePartner)) return [];
+
+            // 2. Product lines on those invoices
+            $lines = $this->odoo->searchRead('account.move.line', [
+                ['move_id',    'in', array_keys($movePartner)],
+                ['product_id', '!=', false],
+                ['quantity',   '>',  0],
+            ], ['move_id', 'product_id', 'quantity', 'price_subtotal'], []);
+            if (empty($lines)) return [];
+
+            // 3. Product costs (standard_price)
+            $productIds = [];
+            foreach ($lines as $l) {
+                $pid = is_array($l['product_id'] ?? null) ? (int) $l['product_id'][0] : null;
+                if ($pid !== null) $productIds[$pid] = true;
+            }
+            if (empty($productIds)) return [];
+
+            $products = $this->odoo->searchRead('product.product',
+                [['id', 'in', array_keys($productIds)]],
+                ['id', 'standard_price'], []
+            );
+            $cost = [];
+            foreach ($products as $p) {
+                $cost[(int) $p['id']] = (float) ($p['standard_price'] ?? 0);
+            }
+
+            // 4. Aggregate margin per partner
+            $margin = [];
+            foreach ($lines as $l) {
+                $moveId = is_array($l['move_id'] ?? null)    ? (int) $l['move_id'][0]    : null;
+                $prodId = is_array($l['product_id'] ?? null) ? (int) $l['product_id'][0] : null;
+                if (!$moveId || !$prodId) continue;
+                $partner = $movePartner[$moveId] ?? null;
+                if (!$partner) continue;
+                $qty      = (float) ($l['quantity'] ?? 0);
+                $subtotal = (float) ($l['price_subtotal'] ?? 0);
+                $unitCost = $cost[$prodId] ?? 0.0;
+                $lineMargin = $subtotal - ($qty * $unitCost);
+                $margin[$partner] = ($margin[$partner] ?? 0.0) + $lineMargin;
+            }
+            return $margin;
+        } catch (\Throwable $e) {
+            return [];
+        }
+    }
+
+    /**
+     * Build the scatter chart payload from per-customer revenue + margin
+     * maps. Median split classifies each point into one of three visual
+     * bands:
+     *
+     *   • GREEN — Stars: above-median revenue AND above-median margin
+     *   • RED   — Underperformers: below-median revenue AND below-median margin
+     *   • ORANGE — Mixed: high revenue + low margin (or vice versa)
+     *
+     * Median split is the most readable for a non-quant auditor — every
+     * point is in exactly one bucket and the explanation fits in one
+     * sentence ("above-median on both axes = star"). Percentile bands
+     * (25/75) were considered but rejected: a 50-customer dataset would
+     * leave only ~12 stars, leaking customers into "mixed" who really
+     * are stars by any reasonable definition.
+     *
+     * Customers with zero revenue are filtered out (they shouldn't be
+     * on the chart at all). Customers with revenue but no margin data
+     * (i.e. partner_id never appeared in the line-level margin pull —
+     * usually because their invoices had no product lines, just manual
+     * rows) get margin = 0 and land in the bottom-left red band, which
+     * is the correct "no visibility" signal for the auditor.
+     *
+     * @param array<int,float>      $revenueMap
+     * @param array<int,float>      $marginMap
+     * @param array<int,int>        $orderMap
+     * @param array<int,string>     $nameMap
+     * @return array{
+     *   points: array<int,array<string,mixed>>,
+     *   thresholds: array<string,float>,
+     *   summary: array<string,array<string,float|int>>,
+     *   total_revenue: float, total_margin: float
+     * }
+     */
+    private function buildScatter(
+        array $revenueMap,
+        array $marginMap,
+        array $orderMap,
+        array $nameMap,
+        float $totalRevenue
+    ): array {
+        $points = [];
+        $totalMargin = 0.0;
+
+        foreach ($revenueMap as $pid => $revenue) {
+            $rev = (float) $revenue;
+            if ($rev <= 0) continue;
+            $margin  = (float) ($marginMap[$pid] ?? 0.0);
+            $totalMargin += $margin;
+            $points[] = [
+                'id'         => (int) $pid,
+                'name'       => (string) ($nameMap[$pid] ?? ('Customer #' . $pid)),
+                'revenue'    => round($rev, 2),
+                'margin'     => round($margin, 2),
+                'margin_pct' => $rev > 0 ? round($margin / $rev * 100.0, 1) : 0.0,
+                'orders'     => (int) ($orderMap[$pid] ?? 0),
+                'share_revenue' => $totalRevenue > 0 ? round($rev / $totalRevenue * 100.0, 1) : 0.0,
+                // share_margin computed in second pass (we need totalMargin first)
+            ];
+        }
+        if ($points === []) {
+            return [
+                'points'        => [],
+                'thresholds'    => ['revenue_median' => 0, 'margin_median' => 0],
+                'summary'       => $this->emptyScatterSummary(),
+                'total_revenue' => $totalRevenue,
+                'total_margin'  => 0.0,
+            ];
+        }
+
+        // Compute medians for the quadrant split
+        $revenueValues = array_column($points, 'revenue');
+        $marginValues  = array_column($points, 'margin');
+        $revenueMedian = $this->median($revenueValues);
+        $marginMedian  = $this->median($marginValues);
+
+        // Classify + finalize share_margin
+        $summary = [
+            'green'  => ['count' => 0, 'revenue' => 0.0, 'margin' => 0.0],
+            'orange' => ['count' => 0, 'revenue' => 0.0, 'margin' => 0.0],
+            'red'    => ['count' => 0, 'revenue' => 0.0, 'margin' => 0.0],
+        ];
+        foreach ($points as &$p) {
+            $hiRev = $p['revenue'] >= $revenueMedian;
+            $hiMar = $p['margin']  >= $marginMedian;
+            if ($hiRev && $hiMar)         $band = 'green';
+            elseif (!$hiRev && !$hiMar)   $band = 'red';
+            else                          $band = 'orange';
+            $p['band']         = $band;
+            $p['share_margin'] = $totalMargin > 0
+                ? round($p['margin'] / $totalMargin * 100.0, 1)
+                : 0.0;
+            $summary[$band]['count']++;
+            $summary[$band]['revenue'] += $p['revenue'];
+            $summary[$band]['margin']  += $p['margin'];
+        }
+        unset($p);
+
+        // Sort points by revenue desc (so the top-right green dots draw
+        // last and sit on top of the orange ones)
+        usort($points, fn ($a, $b) => $b['revenue'] <=> $a['revenue']);
+
+        // Finalize summary share %
+        foreach ($summary as $band => &$row) {
+            $row['share_revenue_pct'] = $totalRevenue > 0
+                ? round($row['revenue'] / $totalRevenue * 100.0, 1)
+                : 0.0;
+            $row['share_margin_pct']  = $totalMargin > 0
+                ? round($row['margin'] / $totalMargin * 100.0, 1)
+                : 0.0;
+            $row['revenue'] = round($row['revenue'], 2);
+            $row['margin']  = round($row['margin'], 2);
+        }
+        unset($row);
+
+        return [
+            'points'        => $points,
+            'thresholds'    => [
+                'revenue_median' => round($revenueMedian, 2),
+                'margin_median'  => round($marginMedian, 2),
+            ],
+            'summary'       => $summary,
+            'total_revenue' => round($totalRevenue, 2),
+            'total_margin'  => round($totalMargin, 2),
+        ];
+    }
+
+    /** @param array<int,float> $values */
+    private function median(array $values): float
+    {
+        $n = count($values);
+        if ($n === 0) return 0.0;
+        sort($values);
+        $mid = (int) floor($n / 2);
+        if ($n % 2 === 1) return (float) $values[$mid];
+        return ((float) $values[$mid - 1] + (float) $values[$mid]) / 2.0;
+    }
+
+    private function emptyScatterSummary(): array
+    {
+        return [
+            'green'  => ['count' => 0, 'revenue' => 0.0, 'margin' => 0.0, 'share_revenue_pct' => 0.0, 'share_margin_pct' => 0.0],
+            'orange' => ['count' => 0, 'revenue' => 0.0, 'margin' => 0.0, 'share_revenue_pct' => 0.0, 'share_margin_pct' => 0.0],
+            'red'    => ['count' => 0, 'revenue' => 0.0, 'margin' => 0.0, 'share_revenue_pct' => 0.0, 'share_margin_pct' => 0.0],
+        ];
     }
 }

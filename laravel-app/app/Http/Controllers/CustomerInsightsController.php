@@ -26,15 +26,25 @@ class CustomerInsightsController extends Controller
             $client = OdooFactory::fromConfig();
             $source = (string) config_env('REVENUE_SOURCE', 'invoice');
             $revenueService = new RevenueService($client, $source);
-            $customerService = new CustomerInsightsService();
+            // OdooClient is passed to the customer service so it can run
+            // the per-customer margin computation (line-level pull from
+            // account.move.line + product.product.standard_price) that
+            // drives the profitability scatter chart.
+            $customerService = new CustomerInsightsService($client);
 
             $analysis = ea_cached($cacheKey, fn() => $revenueService->analyze(null, $period));
-            $insights = $customerService->analyze($analysis);
+            // Resolve the period window once so we can pass [$from, $to]
+            // to the service (used for the margin Odoo round-trip).
+            [$from, $to, $label] = ea_resolve_period($today, $period);
+            $insights = ea_cached($cacheKey . '_insights',
+                fn () => $customerService->analyze($analysis, $from, $to));
         } catch (\Throwable $e) {
             $error = $e->getMessage();
         }
 
-        [$from, $to, $label] = ea_resolve_period($today, $period);
+        if (!isset($from, $to, $label)) {
+            [$from, $to, $label] = ea_resolve_period($today, $period);
+        }
 
         return view('customer-insights', [
             'data'             => $analysis,
