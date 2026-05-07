@@ -68,7 +68,7 @@ class TreasuryController extends Controller
         '401' => 'Supplier payments',
     ];
 
-    public function index()
+    public function index(\Illuminate\Http\Request $request)
     {
         $error    = null;
         $treasury = null;
@@ -77,16 +77,21 @@ class TreasuryController extends Controller
             $client = OdooFactory::fromConfig();
             $gl     = new GLAccountService($client);
 
-            // Cache key includes 'asof' (no period) so re-renders within
-            // the session reuse the result. Cleared by ea_cache_clear()
-            // on data-mutation actions elsewhere.
+            // Cache key 'asof' (no period) — re-renders within the
+            // session reuse the result; cleared by ea_cache_clear() on
+            // data-mutation actions. TTL is 5 min via session storage.
             //
-            // Bumped 'treasury_asof' → 'treasury_asof_v2' on 2026-05-07
-            // to bust stale cached zero-disbursement results from the
-            // pre-fix journal-type bug (cash journals filter was too
-            // narrow; rewritten to "moves crediting 52/57" which captures
-            // general-journal cash payments too).
-            $treasury = ea_cached('treasury_asof_v3', function () use ($client, $gl) {
+            // ?fresh=1 query param bypasses the cache entirely — useful
+            // for debugging or when the auditor wants a guaranteed
+            // re-fetch without waiting for the TTL.
+            //
+            // Bumped to v4 on 2026-05-07: the disbursements probe at
+            // /admin/tenants/{slug}/treasury-probe confirmed the GL
+            // engine returns non-zero sums (401 = 1.88M, 42 = 3.66M YTD)
+            // but the page still rendered zeros, indicating sessions
+            // were holding stale v3 caches from earlier broken builds.
+            // v4 forces every session to recompute on next render.
+            $producer = function () use ($client, $gl) {
                 // ── 1. Cash & cash equivalents ────────────────────────────
                 // Sum of debit-positive balances on 52 + 57 (per-account so
                 // an overdrawn current account in 52 doesn't cancel the
@@ -289,9 +294,36 @@ class TreasuryController extends Controller
 
                     'liquidity'         => $wcRatios,
                 ];
-            });
+            };
+
+            // Bypass cache when ?fresh=1 — handy for verifying that the
+            // current GL state (not a stale cache) is what's being shown.
+            $treasury = $request->boolean('fresh')
+                ? $producer()
+                : ea_cached('treasury_asof_v4', $producer);
+
+            // Log the disbursements payload on every render so any
+            // future zero-result report is one log-line away from a
+            // root cause. Keeps the disb shape small enough to be
+            // friendly to grep.
+            \Illuminate\Support\Facades\Log::info('treasury.index: disbursements payload', [
+                'fresh'       => $request->boolean('fresh'),
+                'tenant'      => optional(tenant())->slug,
+                'rows'        => collect($treasury['disbursements']['rows'] ?? [])->map(fn ($r) => [
+                    'label'      => $r['label'] ?? null,
+                    'projection' => $r['projection'] ?? null,
+                    'ytd'        => $r['ytd']        ?? null,
+                ])->all(),
+                'total'        => $treasury['disbursements']['total']        ?? null,
+                'months_basis' => $treasury['disbursements']['months_basis'] ?? null,
+            ]);
         } catch (\Throwable $e) {
             $error = $e->getMessage();
+            \Illuminate\Support\Facades\Log::error('treasury.index: exception', [
+                'tenant' => optional(tenant())->slug,
+                'class'  => get_class($e),
+                'error'  => $e->getMessage(),
+            ]);
         }
 
         return view('treasury', [
