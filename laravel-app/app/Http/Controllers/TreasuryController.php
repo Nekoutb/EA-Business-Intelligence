@@ -145,18 +145,23 @@ class TreasuryController extends Controller
                     'total' => array_sum(array_column($liquidityRows, 'balance')),
                 ];
 
-                // ── 4. Liquidity ratios — copied from Working Capital ────
-                // Same numbers /working-capital displays, so the two
-                // pages don't diverge on rounding or methodology. The
-                // service runs as-of-now by default (no asOf passed).
+                // ── 4. Liquidity trend — 12 prior month-ends + today ─────
+                // Replaces the static current/quick KPI tile from earlier
+                // builds. Single-pass computation in WorkingCapitalService
+                // (2 Odoo round-trips for any trend length). The current
+                // month's right-most point evolves day-to-day as new
+                // entries post.
                 $wcRatios = ['current' => null, 'quick' => null, 'reason' => null];
+                $liquidityTrend = ['series' => [], 'threshold' => 1.0];
                 try {
-                    $wc = (new WorkingCapitalService($client))->analyze();
-                    $wcRatios = [
+                    $wcService = new WorkingCapitalService($client);
+                    $wc        = $wcService->analyze();
+                    $wcRatios  = [
                         'current' => $wc['ratios']['current_ratio'] ?? null,
                         'quick'   => $wc['ratios']['quick_ratio'] ?? null,
                         'reason'  => $wc['ratios']['quick_ratio_reason'] ?? null,
                     ];
+                    $liquidityTrend = $wcService->liquidityTrend(12);
                 } catch (\Throwable $e) {
                     // Ratios fall back to null/—; shouldn't sink the page.
                 }
@@ -293,6 +298,7 @@ class TreasuryController extends Controller
                     'short_term_breakdown'   => ['third_parties' => $stClass4, 'overdraft' => $stOverdraft],
 
                     'liquidity'         => $wcRatios,
+                    'liquidity_trend'   => $liquidityTrend,
                 ];
             };
 
@@ -300,7 +306,7 @@ class TreasuryController extends Controller
             // current GL state (not a stale cache) is what's being shown.
             $treasury = $request->boolean('fresh')
                 ? $producer()
-                : ea_cached('treasury_asof_v5', $producer);
+                : ea_cached('treasury_asof_v6', $producer);
 
             // Log the disbursements payload on every render so any
             // future zero-result report is one log-line away from a

@@ -495,4 +495,264 @@ final class WorkingCapitalService
         } catch (\Throwable $e) { /* fall through */ }
         return 'XAF';
     }
+
+    /**
+     * Liquidity-ratio time-series for the trend chart on Treasury.
+     *
+     * Returns N+1 data points: N prior month-ends + 1 "as of today"
+     * snapshot. Each point carries Current, Quick, and Cash ratios
+     * computed from cumulative GL balances at that moment.
+     *
+     *   Current = Current Assets / Current Liabilities
+     *   Quick   = (Current Assets − Inventory) / Current Liabilities
+     *   Cash    = (Class 52 + 57 debit) / Current Liabilities
+     *
+     * Asset / liability classification mirrors fetchBalanceSheet() —
+     * see that method's class breakdown for the OHADA code rules.
+     *
+     * Performance — single big read_group across all time grouped by
+     * (account_id, date:month). PHP walks results in chronological
+     * order, accumulating per-account cumulative balance, snapshotting
+     * at each target date, and computing the three ratios. Two Odoo
+     * round-trips total regardless of trend length:
+     *
+     *   1) account.account searchRead — chart of accounts in classes 3/4/5
+     *   2) account.move.line read_group — monthly debit:sum + credit:sum
+     *
+     * For the current-month "today" snapshot, the read_group's
+     * current-month bucket already contains only month-to-date
+     * activity (because we filter date <= today). Cumulative-through-
+     * current-month therefore = balance as-of-today.
+     *
+     * Returns:
+     *   [
+     *     'series'    => [{label, date, current, quick, cash}, ...],
+     *     'threshold' => 1.0,
+     *     'currency'  => 'XAF',
+     *     'as_of'     => '2026-05-07',
+     *   ]
+     */
+    public function liquidityTrend(int $months = 12, ?\DateTimeImmutable $today = null): array
+    {
+        $today = ($today ?? new \DateTimeImmutable('today'))->setTime(0, 0, 0);
+
+        $emptyResult = [
+            'series'    => [],
+            'threshold' => 1.0,
+            'currency'  => $this->detectCurrency(),
+            'as_of'     => $today->format('Y-m-d'),
+        ];
+
+        try {
+            // 1) Chart of accounts in classes 3, 4, 5
+            $accounts = $this->odoo->searchRead('account.account', [
+                '|', '|',
+                ['code', '=like', '3%'],
+                ['code', '=like', '4%'],
+                ['code', '=like', '5%'],
+            ], ['id', 'code'], []);
+            if (empty($accounts)) return $emptyResult;
+
+            $codeByAccount = [];
+            foreach ($accounts as $a) {
+                $aid  = (int)    ($a['id']   ?? 0);
+                $code = (string) ($a['code'] ?? '');
+                if ($aid > 0 && $code !== '') $codeByAccount[$aid] = $code;
+            }
+            if (empty($codeByAccount)) return $emptyResult;
+
+            // 2) Monthly aggregates per account, all time up to today
+            $rows = $this->odoo->callModel('account.move.line', 'read_group', [
+                'domain'  => [
+                    ['parent_state', '=',  'posted'],
+                    ['date',         '<=', $today->format('Y-m-d')],
+                    ['account_id',   'in', array_keys($codeByAccount)],
+                ],
+                'fields'  => ['debit:sum', 'credit:sum'],
+                'groupby' => ['account_id', 'date:month'],
+                'lazy'    => false,
+            ]);
+            if (empty($rows)) return $emptyResult;
+
+            // 3) Build a time-indexed map: monthKey ('YYYY-MM') → [account_id => deltaBalance]
+            // The date:month groupby returns labels like "March 2026" or
+            // "Mar 2026" depending on Odoo locale, but also a __range
+            // field on each row with the from/to dates. Use __range when
+            // present, fall back to parsing the label.
+            $monthDeltas = [];
+            $monthKeys   = [];
+
+            foreach ($rows as $r) {
+                $aid = is_array($r['account_id'] ?? null) ? (int) $r['account_id'][0] : null;
+                if ($aid === null || !isset($codeByAccount[$aid])) continue;
+
+                $monthKey = $this->extractMonthKey($r);
+                if ($monthKey === null) continue;
+
+                $delta = (float) ($r['debit'] ?? 0) - (float) ($r['credit'] ?? 0);
+                $monthDeltas[$monthKey][$aid] = ($monthDeltas[$monthKey][$aid] ?? 0.0) + $delta;
+                $monthKeys[$monthKey] = true;
+            }
+            if (empty($monthDeltas)) return $emptyResult;
+
+            // 4) Sort month keys chronologically. Build a continuous
+            // sequence from earliest data through current month so we
+            // don't skip months that had no activity (cumulative carries
+            // forward unchanged).
+            $allKeys = array_keys($monthKeys);
+            sort($allKeys);
+            $earliest = $allKeys[0];
+            $latest   = $today->format('Y-m');
+            $continuous = [];
+            $cursor = new \DateTimeImmutable($earliest . '-01');
+            $end    = new \DateTimeImmutable($latest . '-01');
+            while ($cursor <= $end) {
+                $continuous[] = $cursor->format('Y-m');
+                $cursor = $cursor->modify('+1 month');
+            }
+
+            // 5) Walk continuous month sequence, accumulate per-account
+            // cumulative balance, snapshot at each target month-end.
+            // Target dates: $months prior month-ends + today.
+            $targetMonthKeys = [];
+            for ($i = $months; $i >= 1; $i--) {
+                $targetMonthKeys[] = $today->modify("first day of -{$i} month")->format('Y-m');
+            }
+            $targetMonthKeys[] = $today->format('Y-m');   // last point = today's month
+            $targetSet = array_flip($targetMonthKeys);
+
+            $cumulative = [];                              // account_id => running balance
+            $series     = [];
+
+            foreach ($continuous as $mk) {
+                if (isset($monthDeltas[$mk])) {
+                    foreach ($monthDeltas[$mk] as $aid => $delta) {
+                        $cumulative[$aid] = ($cumulative[$aid] ?? 0.0) + $delta;
+                    }
+                }
+                if (!isset($targetSet[$mk])) continue;
+
+                // Snapshot at end of this month — classify into balance-
+                // sheet buckets per the same OHADA rules as fetchBalanceSheet.
+                $snap = $this->classifyBalances($cumulative, $codeByAccount);
+                $cl   = $snap['current_liabilities'];
+                $ca   = $snap['current_assets'];
+                $inv  = $snap['inventory'];
+                $cash = $snap['cash_5257'];
+
+                $current = $cl > 0 ? $ca / $cl                   : null;
+                $quick   = $cl > 0 ? max(0.0, $ca - $inv) / $cl  : null;
+                $cashR   = $cl > 0 ? $cash / $cl                 : null;
+
+                // Label: "Mon YY" — matches the screenshot the user shared.
+                $dt    = new \DateTimeImmutable($mk . '-01');
+                $isToday = ($mk === $today->format('Y-m'));
+                $date    = $isToday ? $today->format('Y-m-d') : $dt->modify('last day of this month')->format('Y-m-d');
+                $label   = $dt->format('M y');
+
+                $series[] = [
+                    'label'   => $label,
+                    'date'    => $date,
+                    'current' => $current === null ? null : round($current, 4),
+                    'quick'   => $quick   === null ? null : round($quick,   4),
+                    'cash'    => $cashR   === null ? null : round($cashR,   4),
+                ];
+            }
+
+            return [
+                'series'    => $series,
+                'threshold' => 1.0,
+                'currency'  => $this->detectCurrency(),
+                'as_of'     => $today->format('Y-m-d'),
+            ];
+        } catch (\Throwable $e) {
+            return $emptyResult;
+        }
+    }
+
+    /**
+     * Read a monthKey ('YYYY-MM') from an Odoo read_group row whose
+     * groupby includes 'date:month'. Odoo returns the bucket label
+     * either as a string in `date:month` (e.g. "March 2026") or as a
+     * structured `__range` array with `from`/`to` ISO dates. Try the
+     * range first since it's locale-independent.
+     */
+    private function extractMonthKey(array $row): ?string
+    {
+        if (isset($row['__range']['date:month']['from'])) {
+            return substr((string) $row['__range']['date:month']['from'], 0, 7);
+        }
+        // Locale-dependent label. Parse via DateTime — handles "March 2026",
+        // "Mar 2026", "mars 2026" (French), etc.
+        $label = (string) ($row['date:month'] ?? $row['date_month'] ?? '');
+        if ($label === '') return null;
+        try {
+            return (new \DateTimeImmutable($label))->format('Y-m');
+        } catch (\Throwable $e) {
+            return null;
+        }
+    }
+
+    /**
+     * Apply OHADA classification rules to a per-account balance map
+     * and return aggregated balance-sheet buckets. Mirrors the
+     * single-snapshot logic in fetchBalanceSheet() so trend points
+     * align exactly with the live "as of now" tile.
+     *
+     * Adds a `cash_5257` bucket (debit-positive sum on classes 52 + 57
+     * only) for the strict-cash-ratio numerator the user asked for.
+     */
+    private function classifyBalances(array $cumulative, array $codeByAccount): array
+    {
+        $r = [
+            'current_assets'      => 0.0,
+            'current_liabilities' => 0.0,
+            'inventory'           => 0.0,
+            'cash_5257'           => 0.0,
+        ];
+        foreach ($cumulative as $aid => $bal) {
+            $code = $codeByAccount[$aid] ?? '';
+            if ($code === '') continue;
+
+            // Class 3 — Inventory (debit-normal)
+            if ($this->codeStartsWithAny($code, self::INVENTORY_PREFIXES)) {
+                if ($bal >= 0) {
+                    $r['inventory']      += $bal;
+                    $r['current_assets'] += $bal;
+                } else {
+                    $r['current_liabilities'] += -$bal;
+                }
+                continue;
+            }
+            // Class 41 — AR
+            if ($this->codeStartsWithAny($code, self::AR_PREFIXES)) {
+                if ($bal >= 0) $r['current_assets']      += $bal;
+                else           $r['current_liabilities'] += -$bal;
+                continue;
+            }
+            // Class 40 — AP
+            if ($this->codeStartsWithAny($code, self::AP_PREFIXES)) {
+                if ($bal <= 0) $r['current_liabilities'] += -$bal;
+                else           $r['current_assets']      += $bal;
+                continue;
+            }
+            // Class 5 — Cash & banks (and cash_5257 strict bucket)
+            if ($this->codeStartsWithAny($code, self::CASH_PREFIXES)) {
+                $isStrictCash = str_starts_with($code, '52') || str_starts_with($code, '57');
+                if ($bal >= 0) {
+                    $r['current_assets'] += $bal;
+                    if ($isStrictCash) $r['cash_5257'] += $bal;
+                } else {
+                    $r['current_liabilities'] += -$bal;
+                }
+                continue;
+            }
+            // Class 4 other (42-49) — split by sign
+            if ($this->codeStartsWithAny($code, self::CURRENT_TIERS_PREFIXES)) {
+                if ($bal >= 0) $r['current_assets']      += $bal;
+                else           $r['current_liabilities'] += -$bal;
+            }
+        }
+        return $r;
+    }
 }

@@ -199,82 +199,64 @@
     </div>
   </div>
 
-  {{-- ── 2. Long-term debt ──────────────────────────────────── --}}
+  {{-- ── 2. Debt — long-term + short-term combined ─────────────
+       Merged from the two earlier cards (2026-05-08 spec) to free
+       up two columns of row 1 for the liquidity-trend chart. Same
+       typography as the other KPI cards; the headline number is the
+       TOTAL debt obligation, with the LTD / STD breakdown listed
+       beneath in the same .breakdown block style as Cash. --}}
   <div class="v5-card">
     <div class="v5-card__h">
       <div>
-        <div class="v5-card__t">Long-term debt</div>
-        <div class="v5-card__sub">OHADA class 16 · emprunts &amp; dettes assimilées</div>
+        <div class="v5-card__t">Debt</div>
+        <div class="v5-card__sub">OHADA classes 16 + 4 + 52 · long-term + short-term</div>
       </div>
     </div>
     <div class="v5-card__b">
-      @php $ltd = $t['long_term_debt'] ?? null; @endphp
-      <div class="kpi-hl {{ $ltd !== null && $ltd > 0 ? 'is-warn' : '' }}">
-        {{ $shortNum($ltd) }}<span class="u">{{ $shortUnit($ltd, $ccy) }}</span>
+      @php
+        $ltd = $t['long_term_debt']  ?? null;
+        $std = $t['short_term_debt'] ?? null;
+        $totalDebt = ($ltd !== null && $std !== null) ? ($ltd + $std) : null;
+      @endphp
+      <div class="kpi-hl {{ $totalDebt !== null && $totalDebt > 0 ? 'is-warn' : '' }}">
+        {{ $shortNum($totalDebt) }}<span class="u">{{ $shortUnit($totalDebt, $ccy) }}</span>
       </div>
       <div class="breakdown" style="margin-top: 8px;">
-        Net credit balance on
-        <code style="background: var(--border-faint); padding: 1px 4px; border-radius: 2px; font: 600 10px var(--font);">16XX</code>
-        across all sub-accounts.
+        <span>Long-term (16):</span> <b>{{ $shortNum($ltd) }}{{ $shortUnit($ltd, $ccy) }}</b><br>
+        <span>Short-term (4 + 52):</span> <b>{{ $shortNum($std) }}{{ $shortUnit($std, $ccy) }}</b>
       </div>
     </div>
     <div class="v5-card__f">
-      Net liability magnitude · sign-flipped to display positive.
+      Σ net credit balances · per-account aggregation.
     </div>
   </div>
 
-  {{-- ── 3. Short-term debt ─────────────────────────────────── --}}
-  <div class="v5-card">
+  {{-- ── 3. Liquidity ratios trend — 12 prior months + today ──
+       Replaces the static current/quick KPI tile (2026-05-08 spec).
+       Spans 2 columns so the 13-point line chart has room to
+       breathe. Series painted on the chart:
+         • Current ratio  (CA ÷ CL)              — black solid
+         • Quick   ratio  ((CA − Inv) ÷ CL)      — rose solid
+         • Cash    ratio  ((52+57) ÷ CL)         — slate dotted
+         • Threshold      = 1.0×                 — amber dashed
+       Hover any point for month label + all 3 ratio values.
+       The right-most point evolves day-to-day as new entries post. --}}
+  <div class="v5-card" style="grid-column: 3 / 5;">
     <div class="v5-card__h">
       <div>
-        <div class="v5-card__t">Short-term debt</div>
-        <div class="v5-card__sub">OHADA classes 4 + 52 · per-account credit</div>
+        <div class="v5-card__t">Liquidity ratios · 12 months</div>
+        <div class="v5-card__sub">Current, Quick &amp; Cash with 1.0× threshold</div>
+      </div>
+      <div class="v5-card__leg" style="font-size: 10px;">
+        <span><span class="lline" style="background: #1e3d44;"></span>Current</span>
+        <span><span class="lline" style="background: #b91c1c;"></span>Quick</span>
+        <span><span class="lline" style="background: #94a3b8; border-top: 1px dotted #94a3b8;"></span>Cash</span>
+        <span><span class="lline" style="background: transparent; border-top: 1px dashed #c97a1f;"></span>1.0×</span>
       </div>
     </div>
-    <div class="v5-card__b">
-      @php $std = $t['short_term_debt'] ?? null; @endphp
-      <div class="kpi-hl {{ $std !== null && $std > 0 ? 'is-warn' : '' }}">
-        {{ $shortNum($std) }}<span class="u">{{ $shortUnit($std, $ccy) }}</span>
-      </div>
-      @php $sb = $t['short_term_breakdown'] ?? []; @endphp
-      <div class="breakdown" style="margin-top: 8px;">
-        <span>3rd-party (4XXX):</span> <b>{{ $shortNum($sb['third_parties'] ?? null) }}{{ $shortUnit($sb['third_parties'] ?? null, $ccy) }}</b><br>
-        <span>Bank overdraft (52):</span> <b>{{ $shortNum($sb['overdraft'] ?? null) }}{{ $shortUnit($sb['overdraft'] ?? null, $ccy) }}</b>
-      </div>
-    </div>
+    <div class="v5-card__b" id="ec-liq-trend" style="min-height: 200px;"></div>
     <div class="v5-card__f">
-      Σ per-account credit balances · receivables don't cancel payables.
-    </div>
-  </div>
-
-  {{-- ── 4. Liquidity ratio ─────────────────────────────────── --}}
-  <div class="v5-card">
-    <div class="v5-card__h">
-      <div>
-        <div class="v5-card__t">Liquidity ratios</div>
-        <div class="v5-card__sub">From Working Capital · live</div>
-      </div>
-    </div>
-    <div class="v5-card__b">
-      @php $lq = $t['liquidity'] ?? []; @endphp
-      <div class="kpi-pair">
-        <div class="kpi-pair__c">
-          <span class="l">Current</span>
-          {{ $ratio($lq['current'] ?? null) }}<span class="u" style="font: 500 11px var(--font); color: var(--text-subtle); margin-left: 2px;">x</span>
-        </div>
-        <div class="kpi-pair__c">
-          <span class="l">Quick</span>
-          {{ $ratio($lq['quick'] ?? null) }}<span class="u" style="font: 500 11px var(--font); color: var(--text-subtle); margin-left: 2px;">x</span>
-        </div>
-      </div>
-      @if (!empty($lq['reason']))
-        <div class="breakdown" style="margin-top: 8px;">{{ $lq['reason'] }}</div>
-      @else
-        <div class="breakdown" style="margin-top: 8px;">Higher = more cushion. Below 1.0 = liabilities exceed liquid assets.</div>
-      @endif
-    </div>
-    <div class="v5-card__f">
-      Mirrors <a href="{{ tenant_url('/working-capital') }}" style="color: var(--text); text-decoration: underline;">Working Capital</a> service exactly.
+      Cash = Σ debit-positive 52 + 57 ÷ Current liabilities · prior months at month-end · current month evolving day-to-day.
     </div>
   </div>
 
@@ -391,14 +373,11 @@
     <dt>Cash &amp; equivalents</dt>
     <dd>Σ debit-positive balances per account, on classes <code>52</code> (banques) + <code>57</code> (caisse). Bank accounts in overdraft are excluded — their credit balances surface under Short-term debt instead.</dd>
 
-    <dt>Long-term debt</dt>
-    <dd>Net credit balance on class <code>16</code> (emprunts et dettes assimilées) — borrowings and similar liabilities recognised on the balance sheet.</dd>
+    <dt>Debt</dt>
+    <dd>Long-term + short-term liabilities combined into a single tile. <strong>Long-term</strong> = net credit balance on class <code>16</code> (emprunts et dettes assimilées). <strong>Short-term</strong> = Σ per-account credit-positive balances on class <code>4</code> (third parties) + class <code>52</code> (bank overdrafts). Per-account aggregation on class 4 prevents AR (411 in normal debit position) from offsetting AP (401 in normal credit position).</dd>
 
-    <dt>Short-term debt</dt>
-    <dd>Σ per-account credit-positive balances on classes <code>4</code> (third parties: suppliers, social, tax, personnel, group) + <code>52</code> (bank overdrafts). Per-account aggregation prevents AR (411 in normal debit position) from offsetting AP (401 in normal credit position).</dd>
-
-    <dt>Liquidity ratios</dt>
-    <dd>Current Ratio = current assets ÷ current liabilities. Quick Ratio = (current assets − inventory) ÷ current liabilities. Both copied verbatim from the <a href="{{ tenant_url('/working-capital') }}" style="color: var(--text); text-decoration: underline;">Working Capital</a> service so the two pages can't disagree.</dd>
+    <dt>Liquidity ratios · 12 months</dt>
+    <dd>Three-line trend chart with a 1.0× threshold reference. <strong>Current</strong> = current assets ÷ current liabilities. <strong>Quick</strong> = (current assets − inventory) ÷ current liabilities. <strong>Cash</strong> = Σ debit-positive balances on classes <code>52</code> + <code>57</code> ÷ current liabilities (strictest view — bank + caisse only). The 12 prior data points are computed from cumulative GL balances at month-end; the right-most point evolves day-to-day as new entries post in the current month. Single-pass query (groupby account + month) so trend length is free; mirrors the as-of-now ratios on <a href="{{ tenant_url('/working-capital') }}" style="color: var(--text); text-decoration: underline;">Working Capital</a>.</dd>
 
     <dt>Liquidity snapshot</dt>
     <dd>Per-account list of every <code>52</code> + <code>57</code> account with a positive debit balance, sorted high → low. Zero-balance and overdrawn accounts are excluded — overdrafts surface under Short-term debt instead.</dd>
@@ -415,3 +394,98 @@
 @endif
 
 @endsection
+
+@push('scripts')
+<script>
+(function () {
+    const el = document.getElementById('ec-liq-trend');
+    if (!el || typeof echarts === 'undefined') return;
+
+    const trend = @json($treasury['liquidity_trend'] ?? ['series' => [], 'threshold' => 1.0]);
+    const series = trend.series || [];
+    if (series.length === 0) {
+        el.innerHTML = '<div class="empty-state" style="height:200px; display:flex; align-items:center; justify-content:center; color: var(--text-faint); font: 500 11px var(--font);">No GL history available for trend.</div>';
+        return;
+    }
+
+    // Format helpers — ratio always rendered as "X.XX×" to match the
+    // user's screenshot. Null values show as em-dash.
+    const fmtRatio = (v) => (v == null) ? '—' : v.toFixed(2) + '×';
+    const labels   = series.map(p => p.label);
+    const current  = series.map(p => p.current);
+    const quick    = series.map(p => p.quick);
+    const cash     = series.map(p => p.cash);
+
+    // Y-axis: auto-scale but always include 0 and the 1.0 threshold so
+    // the reference line stays visible even when all ratios are <1.0.
+    const allVals = current.concat(quick, cash).filter(v => v != null);
+    const dataMax = allVals.length ? Math.max(...allVals) : 1.0;
+    const yMax    = Math.max(1.4, Math.ceil(dataMax * 10) / 10 + 0.1);
+
+    const chart = echarts.init(el);
+    chart.setOption({
+        grid:    { left: 42, right: 12, top: 8, bottom: 36 },
+        tooltip: {
+            trigger: 'axis',
+            backgroundColor: '#1e3d44', borderWidth: 0, padding: [8, 12],
+            textStyle: { color: '#fff', fontSize: 11 },
+            formatter: (params) => {
+                if (!params || params.length === 0) return '';
+                const ix = params[0].dataIndex;
+                const point = series[ix];
+                const lines = [
+                    `<b>${point.label}</b>`,
+                    `Current: ${fmtRatio(point.current)}`,
+                    `Quick: ${fmtRatio(point.quick)}`,
+                    `Cash: ${fmtRatio(point.cash)}`,
+                ];
+                return lines.join('<br>');
+            },
+            axisPointer: { type: 'cross', label: { show: false }, lineStyle: { color: '#94a3b8', type: 'dashed' } },
+        },
+        xAxis: {
+            type: 'category', data: labels, boundaryGap: false,
+            axisLabel: { color: '#8a8578', fontSize: 9, interval: 'auto' },
+            axisLine:  { lineStyle: { color: '#cbd5e1' } },
+            axisTick:  { show: false },
+        },
+        yAxis: {
+            type: 'value', min: 0, max: yMax,
+            axisLabel: { formatter: (v) => v.toFixed(2) + '×', color: '#8a8578', fontSize: 9 },
+            splitLine: { lineStyle: { color: '#f0ede7', type: 'solid' } },
+            axisLine:  { lineStyle: { color: '#cbd5e1' } },
+        },
+        series: [
+            {
+                name: 'Current ratio', type: 'line', data: current, smooth: false, showSymbol: true,
+                symbol: 'circle', symbolSize: 5,
+                itemStyle: { color: '#1e3d44' },
+                lineStyle: { color: '#1e3d44', width: 2 },
+                emphasis: { focus: 'series', scale: 1.5 },
+                markLine: {
+                    silent: true, symbol: 'none',
+                    lineStyle: { type: 'dashed', color: '#c97a1f', width: 1.5, opacity: 0.7 },
+                    label: { show: true, formatter: '1.0×', position: 'end', color: '#c97a1f', fontSize: 10, fontWeight: 600 },
+                    data: [{ yAxis: 1.0 }],
+                },
+            },
+            {
+                name: 'Quick ratio', type: 'line', data: quick, smooth: false, showSymbol: true,
+                symbol: 'circle', symbolSize: 5,
+                itemStyle: { color: '#b91c1c' },
+                lineStyle: { color: '#b91c1c', width: 2 },
+                emphasis: { focus: 'series', scale: 1.5 },
+            },
+            {
+                name: 'Cash ratio', type: 'line', data: cash, smooth: false, showSymbol: true,
+                symbol: 'circle', symbolSize: 4,
+                itemStyle: { color: '#94a3b8' },
+                lineStyle: { color: '#94a3b8', width: 1.5, type: 'dotted' },
+                emphasis: { focus: 'series', scale: 1.5 },
+            },
+        ],
+    });
+    window.addEventListener('resize', () => chart.resize());
+})();
+</script>
+@endpush
