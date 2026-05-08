@@ -68,7 +68,14 @@
      width version so 30-char account names fit a 1/4-viewport column.
      The grid placement (rows 2-3 col 1) means tall lists overflow the
      row and stay narrow rather than stretching the row. */
-  .snap { grid-column: 1 / 2; grid-row: 2 / span 1; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); }
+  /* ── Cash conversion cycle chart ─ full-width row 2 ──────────────
+     Sits between the row-1 KPI cards and the row-3 snapshot panels.
+     Uses the same styling vocabulary as the liquidity-ratio chart
+     so they read as a pair. */
+  .ccc-card { grid-column: 1 / -1; grid-row: 2 / span 1; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); padding: 12px 14px; display: flex; flex-direction: column; min-height: 240px; }
+  @media (max-width: 1100px) { .ccc-card { grid-column: 1 / -1; grid-row: auto; } }
+
+  .snap { grid-column: 1 / 2; grid-row: 3 / span 1; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); }
   .snap__h { padding: 10px 14px 8px; border-bottom: 1px solid var(--border-faint); }
   .snap__t { font: 700 12px var(--font); color: var(--text); }
   .snap__sub { font: 400 10.5px var(--font); color: var(--text-subtle); margin-top: 1px; }
@@ -95,7 +102,7 @@
      and total-bar treatment as .snap so the two cards visually
      pair. Each row shows the projected amount on the right with an
      optional "ytd avg · N mo" basis hint underneath for the auditor. */
-  .disb { grid-column: 2 / 4; grid-row: 2 / span 1; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); }
+  .disb { grid-column: 2 / 4; grid-row: 3 / span 1; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); }
   .disb__h { padding: 10px 14px 8px; border-bottom: 1px solid var(--border-faint); display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
   .disb__t { font: 700 12px var(--font); color: var(--text); }
   .disb__sub { font: 400 10.5px var(--font); color: var(--text-subtle); margin-top: 1px; }
@@ -175,59 +182,54 @@
 @if ($t)
 <div class="grid-treasury">
 
-  {{-- ── 1. Cash & cash equivalents ─────────────────────────── --}}
+  {{-- ── 1. Cash & obligations (merged 2026-05-08) ─────────────
+       Single card with two stacked KPI blocks: cash on top, debt
+       on bottom. Frees columns 2-4 of row 1 for the wider
+       liquidity-ratio trend chart. Same typography (.kpi-hl,
+       .breakdown) as the previous standalone cards so visual
+       weight matches the rest of the dashboard. --}}
   <div class="v5-card">
     <div class="v5-card__h">
       <div>
-        <div class="v5-card__t">Cash &amp; cash equivalents</div>
-        <div class="v5-card__sub">OHADA classes 57 + 52 · debit-positive only</div>
+        <div class="v5-card__t">Cash &amp; obligations</div>
+        <div class="v5-card__sub">As of now · live GL</div>
       </div>
     </div>
     <div class="v5-card__b">
-      @php $cash = $t['cash_equivalents'] ?? null; @endphp
+      {{-- Cash block --}}
+      @php
+        $cash = $t['cash_equivalents'] ?? null;
+        $cb   = $t['cash_breakdown']  ?? [];
+      @endphp
+      <div style="font: 600 9px var(--font); color: var(--text-subtle); letter-spacing: .06em; text-transform: uppercase; margin-bottom: 2px;">Cash &amp; cash equivalents</div>
       <div class="kpi-hl {{ $cash !== null && $cash > 0 ? 'is-pos' : '' }}">
         {{ $shortNum($cash) }}<span class="u">{{ $shortUnit($cash, $ccy) }}</span>
       </div>
-      @php $cb = $t['cash_breakdown'] ?? []; @endphp
-      <div class="breakdown" style="margin-top: 8px;">
+      <div class="breakdown" style="margin-top: 4px;">
         <span>Banks (52):</span> <b>{{ $shortNum($cb['banks'] ?? null) }}{{ $shortUnit($cb['banks'] ?? null, $ccy) }}</b><br>
         <span>Caisse (57):</span> <b>{{ $shortNum($cb['vault'] ?? null) }}{{ $shortUnit($cb['vault'] ?? null, $ccy) }}</b>
       </div>
-    </div>
-    <div class="v5-card__f">
-      Σ debit-positive balances per account · overdrafts excluded.
-    </div>
-  </div>
 
-  {{-- ── 2. Debt — long-term + short-term combined ─────────────
-       Merged from the two earlier cards (2026-05-08 spec) to free
-       up two columns of row 1 for the liquidity-trend chart. Same
-       typography as the other KPI cards; the headline number is the
-       TOTAL debt obligation, with the LTD / STD breakdown listed
-       beneath in the same .breakdown block style as Cash. --}}
-  <div class="v5-card">
-    <div class="v5-card__h">
-      <div>
-        <div class="v5-card__t">Debt</div>
-        <div class="v5-card__sub">OHADA classes 16 + 4 + 52 · long-term + short-term</div>
-      </div>
-    </div>
-    <div class="v5-card__b">
+      {{-- Hairline divider --}}
+      <div style="height: 1px; background: var(--border-faint); margin: 12px 0;"></div>
+
+      {{-- Debt block --}}
       @php
-        $ltd = $t['long_term_debt']  ?? null;
-        $std = $t['short_term_debt'] ?? null;
+        $ltd       = $t['long_term_debt']  ?? null;
+        $std       = $t['short_term_debt'] ?? null;
         $totalDebt = ($ltd !== null && $std !== null) ? ($ltd + $std) : null;
       @endphp
+      <div style="font: 600 9px var(--font); color: var(--text-subtle); letter-spacing: .06em; text-transform: uppercase; margin-bottom: 2px;">Debt · long + short</div>
       <div class="kpi-hl {{ $totalDebt !== null && $totalDebt > 0 ? 'is-warn' : '' }}">
         {{ $shortNum($totalDebt) }}<span class="u">{{ $shortUnit($totalDebt, $ccy) }}</span>
       </div>
-      <div class="breakdown" style="margin-top: 8px;">
+      <div class="breakdown" style="margin-top: 4px;">
         <span>Long-term (16):</span> <b>{{ $shortNum($ltd) }}{{ $shortUnit($ltd, $ccy) }}</b><br>
         <span>Short-term (4 + 52):</span> <b>{{ $shortNum($std) }}{{ $shortUnit($std, $ccy) }}</b>
       </div>
     </div>
     <div class="v5-card__f">
-      Σ net credit balances · per-account aggregation.
+      Cash = Σ debit-positive 52 + 57 · Debt = Σ net credit on 16 + per-account credit on 4 + 52.
     </div>
   </div>
 
@@ -241,7 +243,7 @@
          • Threshold      = 1.0×                 — amber dashed
        Hover any point for month label + all 3 ratio values.
        The right-most point evolves day-to-day as new entries post. --}}
-  <div class="v5-card" style="grid-column: 3 / 5;">
+  <div class="v5-card" style="grid-column: 2 / 5;">
     <div class="v5-card__h">
       <div>
         <div class="v5-card__t">Liquidity ratios · 12 months</div>
@@ -250,13 +252,34 @@
       <div class="v5-card__leg" style="font-size: 10px;">
         <span><span class="lline" style="background: #1e3d44;"></span>Current</span>
         <span><span class="lline" style="background: #b91c1c;"></span>Quick</span>
-        <span><span class="lline" style="background: #94a3b8; border-top: 1px dotted #94a3b8;"></span>Cash</span>
+        <span><span class="lline" style="background: #0d9488;"></span>Cash</span>
         <span><span class="lline" style="background: transparent; border-top: 1px dashed #c97a1f;"></span>1.0×</span>
       </div>
     </div>
-    <div class="v5-card__b" id="ec-liq-trend" style="min-height: 200px;"></div>
+    <div class="v5-card__b" id="ec-liq-trend" style="min-height: 220px;"></div>
     <div class="v5-card__f">
       Cash = Σ debit-positive 52 + 57 ÷ Current liabilities · prior months at month-end · current month evolving day-to-day.
+    </div>
+  </div>
+
+  {{-- ── Cash conversion cycle · row 2, full width (12 cols) ─────
+       Same 12-month + today window as the liquidity-ratio chart so
+       both can be read together. Single black line for CCC; hover
+       tooltip exposes the underlying DSO + DIO + DPO so the auditor
+       can see what's driving the cycle up or down at any point. --}}
+  <div class="ccc-card">
+    <div class="v5-card__h">
+      <div>
+        <div class="v5-card__t">Cash conversion cycle</div>
+        <div class="v5-card__sub">Working capital efficiency over time.</div>
+      </div>
+      <div class="v5-card__leg" style="font-size: 10px;">
+        <span style="font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--text-subtle);">Days · DSO + DIO − DPO</span>
+      </div>
+    </div>
+    <div class="v5-card__b" id="ec-ccc-trend" style="min-height: 220px;"></div>
+    <div class="v5-card__f">
+      DSO = AR ÷ (TTM revenue ÷ 365) · DIO = inventory ÷ (TTM COGS ÷ 365) · DPO = AP ÷ (TTM COGS ÷ 365). Service businesses (no inventory) drop DIO, so CCC simplifies to DSO − DPO.
     </div>
   </div>
 
@@ -379,6 +402,9 @@
     <dt>Liquidity ratios · 12 months</dt>
     <dd>Three-line trend chart with a 1.0× threshold reference. <strong>Current</strong> = current assets ÷ current liabilities. <strong>Quick</strong> = (current assets − inventory) ÷ current liabilities. <strong>Cash</strong> = Σ debit-positive balances on classes <code>52</code> + <code>57</code> ÷ current liabilities (strictest view — bank + caisse only). The 12 prior data points are computed from cumulative GL balances at month-end; the right-most point evolves day-to-day as new entries post in the current month. Single-pass query (groupby account + month) so trend length is free; mirrors the as-of-now ratios on <a href="{{ tenant_url('/working-capital') }}" style="color: var(--text); text-decoration: underline;">Working Capital</a>.</dd>
 
+    <dt>Cash conversion cycle · 12 months</dt>
+    <dd>Trailing-twelve-month working capital efficiency in days. <strong>CCC = DSO + DIO − DPO</strong>, where DSO = AR ÷ (TTM revenue ÷ 365), DIO = inventory ÷ (TTM COGS ÷ 365), DPO = AP ÷ (TTM COGS ÷ 365). For service businesses (no material inventory), DIO is dropped and CCC simplifies to DSO − DPO. Computed in the same single-pass query as the liquidity ratios — both charts share the underlying data shape so they render together with no extra round-trips.</dd>
+
     <dt>Liquidity snapshot</dt>
     <dd>Per-account list of every <code>52</code> + <code>57</code> account with a positive debit balance, sorted high → low. Zero-balance and overdrawn accounts are excluded — overdrafts surface under Short-term debt instead.</dd>
 
@@ -477,11 +503,100 @@
                 emphasis: { focus: 'series', scale: 1.5 },
             },
             {
+                // Cash ratio — recoloured 2026-05-08 from faint slate-400
+                // (#94a3b8) to teal-600 (#0d9488), line dashed instead of
+                // dotted, width 2 instead of 1.5. Now distinguishable at
+                // a glance from current (black) and quick (rose).
                 name: 'Cash ratio', type: 'line', data: cash, smooth: false, showSymbol: true,
-                symbol: 'circle', symbolSize: 4,
-                itemStyle: { color: '#94a3b8' },
-                lineStyle: { color: '#94a3b8', width: 1.5, type: 'dotted' },
+                symbol: 'circle', symbolSize: 5,
+                itemStyle: { color: '#0d9488' },
+                lineStyle: { color: '#0d9488', width: 2, type: 'dashed' },
                 emphasis: { focus: 'series', scale: 1.5 },
+            },
+        ],
+    });
+    window.addEventListener('resize', () => chart.resize());
+})();
+
+// ── Cash conversion cycle ────────────────────────────────────────────
+// Single-line trend over the same 12-month + today window as the
+// liquidity-ratio chart above. Reads dso/dio/dpo/ccc from the same
+// liquidity_trend payload (added in WorkingCapitalService::liquidityTrend
+// 2026-05-08). Hover exposes the three components so the auditor can
+// see what's driving the cycle up or down at any point.
+(function () {
+    const el = document.getElementById('ec-ccc-trend');
+    if (!el || typeof echarts === 'undefined') return;
+
+    const trend = @json($treasury['liquidity_trend'] ?? ['series' => []]);
+    const series = trend.series || [];
+    if (series.length === 0) {
+        el.innerHTML = '<div class="empty-state" style="height:200px; display:flex; align-items:center; justify-content:center; color: var(--text-faint); font: 500 11px var(--font);">No GL history available for cash conversion cycle.</div>';
+        return;
+    }
+
+    const fmtDays   = (v) => (v == null) ? '—' : Math.round(v) + 'd';
+    const labels    = series.map(p => p.label);
+    const cccPoints = series.map(p => p.ccc);
+
+    const chart = echarts.init(el);
+    chart.setOption({
+        grid: { left: 42, right: 12, top: 8, bottom: 36 },
+        tooltip: {
+            trigger: 'axis',
+            backgroundColor: '#1e3d44', borderWidth: 0, padding: [8, 12],
+            textStyle: { color: '#fff', fontSize: 11 },
+            formatter: (params) => {
+                if (!params || !params.length) return '';
+                const ix = params[0].dataIndex;
+                const point = series[ix];
+                // Show the full DSO + DIO − DPO breakdown so the auditor
+                // can read at a glance which lever moved.
+                const lines = [`<b>${point.label}</b>`];
+                lines.push(`DSO &nbsp;${fmtDays(point.dso)}`);
+                if (!point.is_service) lines.push(`DIO &nbsp;${fmtDays(point.dio)}`);
+                else                   lines.push(`DIO &nbsp;n/a (service)`);
+                lines.push(`DPO &nbsp;${fmtDays(point.dpo)}`);
+                lines.push('<span style="color:#cbd5e1">─────────</span>');
+                lines.push(`<b>CCC ${fmtDays(point.ccc)}</b>`);
+                return lines.join('<br>');
+            },
+            axisPointer: { type: 'cross', label: { show: false }, lineStyle: { color: '#94a3b8', type: 'dashed' } },
+        },
+        xAxis: {
+            type: 'category', data: labels, boundaryGap: false,
+            axisLabel: { color: '#8a8578', fontSize: 9, interval: 'auto' },
+            axisLine:  { lineStyle: { color: '#cbd5e1' } },
+            axisTick:  { show: false },
+        },
+        yAxis: {
+            type: 'value',
+            // Auto-scale matches the user's screenshot — bottom anchored
+            // a bit below the data minimum to give the line breathing
+            // room rather than forcing the y-axis to start at 0.
+            scale: true,
+            axisLabel: { formatter: (v) => Math.round(v) + 'd', color: '#8a8578', fontSize: 9 },
+            splitLine: { lineStyle: { color: '#f0ede7', type: 'solid' } },
+            axisLine:  { lineStyle: { color: '#cbd5e1' } },
+        },
+        series: [
+            {
+                name: 'Cash conversion cycle', type: 'line', data: cccPoints,
+                showSymbol: true, symbol: 'circle', symbolSize: 5,
+                itemStyle: { color: '#1e3d44' },
+                lineStyle: { color: '#1e3d44', width: 2 },
+                emphasis:  { focus: 'series', scale: 1.5 },
+                areaStyle: {
+                    // Subtle area fill to match the screenshot vibe
+                    // without dominating the line.
+                    color: {
+                        type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
+                        colorStops: [
+                            { offset: 0, color: 'rgba(30, 61, 68, 0.10)' },
+                            { offset: 1, color: 'rgba(30, 61, 68, 0.00)' },
+                        ],
+                    },
+                },
             },
         ],
     });

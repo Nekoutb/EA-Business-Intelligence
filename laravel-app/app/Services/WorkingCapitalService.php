@@ -544,24 +544,59 @@ final class WorkingCapitalService
         ];
 
         try {
-            // 1) Chart of accounts in classes 3, 4, 5
+            // 1) Chart of accounts — extended to classes 3, 4, 5, 6, 7 so
+            //    one query covers BOTH the balance-sheet ratios (3/4/5)
+            //    AND the CCC denominators (6/7 = COGS / revenue).
             $accounts = $this->odoo->searchRead('account.account', [
-                '|', '|',
+                '|', '|', '|', '|',
                 ['code', '=like', '3%'],
                 ['code', '=like', '4%'],
                 ['code', '=like', '5%'],
+                ['code', '=like', '6%'],
+                ['code', '=like', '7%'],
             ], ['id', 'code'], []);
             if (empty($accounts)) return $emptyResult;
 
-            $codeByAccount = [];
+            // Per-account class-bucket lookup. Same code can land in
+            // multiple buckets (e.g. service business: a class-6 account
+            // is both cogs_broad AND not narrow). We tag every account
+            // up front so the per-snapshot loops below are O(1).
+            $codeByAccount = [];      // aid → 'YYYYY' code string
+            $bucketsOf     = [];      // aid → ['bs','rev','cogs_n','cogs_b']
             foreach ($accounts as $a) {
                 $aid  = (int)    ($a['id']   ?? 0);
                 $code = (string) ($a['code'] ?? '');
-                if ($aid > 0 && $code !== '') $codeByAccount[$aid] = $code;
+                if ($aid <= 0 || $code === '') continue;
+                $codeByAccount[$aid] = $code;
+                $tags = [];
+
+                // Balance-sheet flag — anything in class 3/4/5 contributes
+                // to current assets / liabilities / inventory / cash via
+                // classifyBalances() further down.
+                if (str_starts_with($code, '3') || str_starts_with($code, '4') || str_starts_with($code, '5')) {
+                    $tags[] = 'bs';
+                }
+                // Revenue (Class 7 ex 79)
+                if ($this->codeStartsWithAny($code, self::REVENUE_PREFIXES)
+                 && !$this->codeStartsWithAny($code, self::REVENUE_EXCLUDE_PREFIXES)) {
+                    $tags[] = 'rev';
+                }
+                // Narrow COGS (Class 60 — goods purchases)
+                if ($this->codeStartsWithAny($code, self::COGS_GOODS_PREFIXES)) {
+                    $tags[] = 'cogs_n';
+                }
+                // Broad COGS (Class 6 ex 68/69 — service-business proxy)
+                if ($this->codeStartsWithAny($code, self::COGS_SERVICE_PREFIXES)
+                 && !$this->codeStartsWithAny($code, self::COGS_SERVICE_EXCLUDE_PREFIXES)) {
+                    $tags[] = 'cogs_b';
+                }
+                $bucketsOf[$aid] = $tags;
             }
             if (empty($codeByAccount)) return $emptyResult;
 
-            // 2) Monthly aggregates per account, all time up to today
+            // 2) Monthly aggregates per account across all classes, all
+            //    time up to today. Single read_group; PHP handles the
+            //    per-snapshot ratio + CCC math in the loop below.
             $rows = $this->odoo->callModel('account.move.line', 'read_group', [
                 'domain'  => [
                     ['parent_state', '=',  'posted'],
@@ -574,12 +609,18 @@ final class WorkingCapitalService
             ]);
             if (empty($rows)) return $emptyResult;
 
-            // 3) Build a time-indexed map: monthKey ('YYYY-MM') → [account_id => deltaBalance]
-            // The date:month groupby returns labels like "March 2026" or
-            // "Mar 2026" depending on Odoo locale, but also a __range
-            // field on each row with the from/to dates. Use __range when
-            // present, fall back to parsing the label.
-            $monthDeltas = [];
+            // 3) Build time-indexed maps. Two parallel structures:
+            //    • $bsDeltas[monthKey][aid]     — balance-sheet account deltas (cumulative)
+            //    • $revDeltas[monthKey]         — revenue scalar (sign-flipped: revenue is credit-normal)
+            //    • $cogsNDeltas[monthKey]       — narrow COGS scalar (class 60)
+            //    • $cogsBDeltas[monthKey]       — broad  COGS scalar (class 6 ex 68/69)
+            // Revenue/COGS are stored as monthly SCALARS (not per-account)
+            // because the TTM aggregation only needs totals, no
+            // per-account breakdown for those classes.
+            $bsDeltas    = [];
+            $revDeltas   = [];
+            $cogsNDeltas = [];
+            $cogsBDeltas = [];
             $monthKeys   = [];
 
             foreach ($rows as $r) {
@@ -590,10 +631,27 @@ final class WorkingCapitalService
                 if ($monthKey === null) continue;
 
                 $delta = (float) ($r['debit'] ?? 0) - (float) ($r['credit'] ?? 0);
-                $monthDeltas[$monthKey][$aid] = ($monthDeltas[$monthKey][$aid] ?? 0.0) + $delta;
                 $monthKeys[$monthKey] = true;
+                $tags = $bucketsOf[$aid] ?? [];
+
+                if (in_array('bs', $tags, true)) {
+                    $bsDeltas[$monthKey][$aid] = ($bsDeltas[$monthKey][$aid] ?? 0.0) + $delta;
+                }
+                // Revenue lines are credit-normal — flip sign so monthly
+                // revenue is positive. (debit − credit) is negative for
+                // a sale, so −delta = positive revenue.
+                if (in_array('rev', $tags, true)) {
+                    $revDeltas[$monthKey] = ($revDeltas[$monthKey] ?? 0.0) + (-$delta);
+                }
+                // COGS lines are debit-normal — delta is positive.
+                if (in_array('cogs_n', $tags, true)) {
+                    $cogsNDeltas[$monthKey] = ($cogsNDeltas[$monthKey] ?? 0.0) + $delta;
+                }
+                if (in_array('cogs_b', $tags, true)) {
+                    $cogsBDeltas[$monthKey] = ($cogsBDeltas[$monthKey] ?? 0.0) + $delta;
+                }
             }
-            if (empty($monthDeltas)) return $emptyResult;
+            if (empty($bsDeltas) && empty($revDeltas) && empty($cogsNDeltas)) return $emptyResult;
 
             // 4) Sort month keys chronologically. Build a continuous
             // sequence from earliest data through current month so we
@@ -621,31 +679,67 @@ final class WorkingCapitalService
             $targetMonthKeys[] = $today->format('Y-m');   // last point = today's month
             $targetSet = array_flip($targetMonthKeys);
 
-            $cumulative = [];                              // account_id => running balance
+            $cumulative = [];                              // account_id → running BS balance
             $series     = [];
 
             foreach ($continuous as $mk) {
-                if (isset($monthDeltas[$mk])) {
-                    foreach ($monthDeltas[$mk] as $aid => $delta) {
+                if (isset($bsDeltas[$mk])) {
+                    foreach ($bsDeltas[$mk] as $aid => $delta) {
                         $cumulative[$aid] = ($cumulative[$aid] ?? 0.0) + $delta;
                     }
                 }
                 if (!isset($targetSet[$mk])) continue;
 
-                // Snapshot at end of this month — classify into balance-
-                // sheet buckets per the same OHADA rules as fetchBalanceSheet.
+                // ── Balance-sheet snapshot → liquidity ratios ──────────
                 $snap = $this->classifyBalances($cumulative, $codeByAccount);
                 $cl   = $snap['current_liabilities'];
                 $ca   = $snap['current_assets'];
                 $inv  = $snap['inventory'];
                 $cash = $snap['cash_5257'];
+                $ar   = $snap['ar'];
+                $ap   = $snap['ap'];
 
                 $current = $cl > 0 ? $ca / $cl                   : null;
                 $quick   = $cl > 0 ? max(0.0, $ca - $inv) / $cl  : null;
                 $cashR   = $cl > 0 ? $cash / $cl                 : null;
 
+                // ── TTM revenue + COGS for CCC denominators ─────────────
+                // Sum the trailing 12 months of revenue/COGS deltas
+                // ending at $mk. Service-business detection mirrors
+                // the as-of-now logic in fetchBalanceSheet/fetchTtm:
+                // use narrow COGS (class 60) when inventory is non-trivial,
+                // broad COGS (class 6 ex 68/69) when it's effectively zero.
+                $ttmFromKey = (new \DateTimeImmutable($mk . '-01'))->modify('-11 months')->format('Y-m');
+                $ttmRev = 0.0; $ttmCogsN = 0.0; $ttmCogsB = 0.0;
+                $cur = new \DateTimeImmutable($ttmFromKey . '-01');
+                $stop = new \DateTimeImmutable($mk . '-01');
+                while ($cur <= $stop) {
+                    $k = $cur->format('Y-m');
+                    $ttmRev   += $revDeltas[$k]   ?? 0.0;
+                    $ttmCogsN += $cogsNDeltas[$k] ?? 0.0;
+                    $ttmCogsB += $cogsBDeltas[$k] ?? 0.0;
+                    $cur = $cur->modify('+1 month');
+                }
+                $isService    = $inv < self::INVENTORY_ZERO_THRESHOLD;
+                $ttmCogs      = $isService ? $ttmCogsB : $ttmCogsN;
+                $revPerDay    = $ttmRev  > 0 ? $ttmRev  / 365.0 : null;
+                $cogsPerDay   = $ttmCogs > 0 ? $ttmCogs / 365.0 : null;
+
+                $dso = $revPerDay  !== null && $ar  > 0 ? round($ar  / $revPerDay,  1) : null;
+                $dio = (!$isService && $cogsPerDay !== null && $inv > 0)
+                    ? round($inv / $cogsPerDay, 1) : ($isService ? null : null);
+                $dpo = $cogsPerDay !== null && $ap  > 0 ? round($ap  / $cogsPerDay, 1) : null;
+
+                // CCC = DSO + DIO − DPO. For service businesses (no
+                // inventory), DIO is null and CCC simplifies to DSO − DPO.
+                $cccVal = null;
+                if ($dso !== null && $dpo !== null) {
+                    $cccVal = $dso - $dpo + ($dio ?? 0.0);
+                    $cccVal = round($cccVal, 1);
+                }
+
                 // Label: "Mon YY" — matches the screenshot the user shared.
-                $dt    = new \DateTimeImmutable($mk . '-01');
+                $dt      = new \DateTimeImmutable($mk . '-01');
                 $isToday = ($mk === $today->format('Y-m'));
                 $date    = $isToday ? $today->format('Y-m-d') : $dt->modify('last day of this month')->format('Y-m-d');
                 $label   = $dt->format('M y');
@@ -656,6 +750,12 @@ final class WorkingCapitalService
                     'current' => $current === null ? null : round($current, 4),
                     'quick'   => $quick   === null ? null : round($quick,   4),
                     'cash'    => $cashR   === null ? null : round($cashR,   4),
+                    // CCC fields — added 2026-05-08 for the second chart
+                    'dso'     => $dso,
+                    'dio'     => $dio,
+                    'dpo'     => $dpo,
+                    'ccc'     => $cccVal,
+                    'is_service' => $isService,
                 ];
             }
 
@@ -704,11 +804,18 @@ final class WorkingCapitalService
      */
     private function classifyBalances(array $cumulative, array $codeByAccount): array
     {
+        // Adds `ar` and `ap` buckets (in addition to the four others)
+        // so the CCC computation in liquidityTrend() can divide by them
+        // without re-walking the cumulative map. The two existing
+        // buckets (current_assets / current_liabilities) keep their
+        // semantics unchanged.
         $r = [
             'current_assets'      => 0.0,
             'current_liabilities' => 0.0,
             'inventory'           => 0.0,
             'cash_5257'           => 0.0,
+            'ar'                  => 0.0,
+            'ap'                  => 0.0,
         ];
         foreach ($cumulative as $aid => $bal) {
             $code = $codeByAccount[$aid] ?? '';
@@ -724,16 +831,26 @@ final class WorkingCapitalService
                 }
                 continue;
             }
-            // Class 41 — AR
+            // Class 41 — AR (debit-normal). Track the asset value so
+            // the DSO calculation in liquidityTrend() has it directly.
             if ($this->codeStartsWithAny($code, self::AR_PREFIXES)) {
-                if ($bal >= 0) $r['current_assets']      += $bal;
-                else           $r['current_liabilities'] += -$bal;
+                if ($bal >= 0) {
+                    $r['ar']             += $bal;
+                    $r['current_assets'] += $bal;
+                } else {
+                    $r['current_liabilities'] += -$bal;
+                }
                 continue;
             }
-            // Class 40 — AP
+            // Class 40 — AP (credit-normal → balance is negative when
+            // money is owed to suppliers). Track the liability value.
             if ($this->codeStartsWithAny($code, self::AP_PREFIXES)) {
-                if ($bal <= 0) $r['current_liabilities'] += -$bal;
-                else           $r['current_assets']      += $bal;
+                if ($bal <= 0) {
+                    $r['ap']                  += -$bal;
+                    $r['current_liabilities'] += -$bal;
+                } else {
+                    $r['current_assets']      += $bal;
+                }
                 continue;
             }
             // Class 5 — Cash & banks (and cash_5257 strict bucket)
