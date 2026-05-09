@@ -535,7 +535,12 @@
         return;
     }
 
-    const fmtDays = (v) => (v == null) ? '—' : Math.round(v) + 'd';
+    // Tooltip uses 1 decimal place — user 2026-05-09 spotted that
+    // integer rounding hid sub-day CCC movements (14.2 / 14.7 / 15.1
+    // all rendered as "14d", chart looked flat). Y-axis labels stay
+    // integer (less clutter on gridlines); precision lives in tooltip
+    // where the auditor reads exact values.
+    const fmtDays = (v) => (v == null) ? '—' : v.toFixed(1) + 'd';
 
     // ── Filter pre-TTM-complete points ────────────────────────────
     // The service marks ccc/dso/dio/dpo as null for snapshots whose

@@ -765,7 +765,20 @@ final class WorkingCapitalService
                         $cur = $cur->modify('+1 month');
                     }
 
-                    if ($ttmMonthsWithData > 0) {
+                    // 2026-05-09 follow-up: require >=3 TTM months
+                    // before computing CCC. With only 1-2 months, the
+                    // annualization (x12 or x6) on a tiny base produces
+                    // extreme outliers when AR/AP carry opening balances
+                    // from before any P&L activity (Kissywears showed
+                    // 4929d for Nov-25 - that one point hijacked the
+                    // y-axis and made Dec-25 -> May-26 look flat at 14d).
+                    //
+                    // Trailing-quarter (3 months) is the standard
+                    // compromise between strict 12-month TTM and
+                    // partial-window noise. With >=3 months of data the
+                    // annualization factor caps at 4x, conservative
+                    // enough to keep ratios sensible.
+                    if ($ttmMonthsWithData >= 3) {
                         // Annualize the partial window — scale up the
                         // sum so the daily run-rate is comparable to a
                         // full-TTM snapshot.  6 months of data × 2 =
