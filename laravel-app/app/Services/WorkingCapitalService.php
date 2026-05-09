@@ -653,6 +653,23 @@ final class WorkingCapitalService
             }
             if (empty($bsDeltas) && empty($revDeltas) && empty($cogsNDeltas)) return $emptyResult;
 
+            // ── Earliest month with revenue / COGS activity ──────────
+            // Used below as a TTM-completeness gate. A snapshot whose
+            // trailing-12-month window starts BEFORE this month doesn't
+            // have a full year of P&L history to divide by — its DSO/
+            // DIO/DPO would be inflated by 12 ÷ (months populated). We
+            // mark CCC as null for those points so the chart skips them
+            // entirely instead of plotting phantom 60,000-day figures.
+            // Bug surfaced 2026-05-08 on Kissywears tenant where data
+            // begins Nov 24 → first valid CCC point is Nov 25.
+            $activityMonths = array_unique(array_merge(
+                array_keys($revDeltas),
+                array_keys($cogsNDeltas),
+                array_keys($cogsBDeltas)
+            ));
+            sort($activityMonths);
+            $earliestActivityMonth = $activityMonths === [] ? null : $activityMonths[0];
+
             // 4) Sort month keys chronologically. Build a continuous
             // sequence from earliest data through current month so we
             // don't skip months that had no activity (cumulative carries
@@ -710,32 +727,44 @@ final class WorkingCapitalService
                 // use narrow COGS (class 60) when inventory is non-trivial,
                 // broad COGS (class 6 ex 68/69) when it's effectively zero.
                 $ttmFromKey = (new \DateTimeImmutable($mk . '-01'))->modify('-11 months')->format('Y-m');
-                $ttmRev = 0.0; $ttmCogsN = 0.0; $ttmCogsB = 0.0;
-                $cur = new \DateTimeImmutable($ttmFromKey . '-01');
-                $stop = new \DateTimeImmutable($mk . '-01');
-                while ($cur <= $stop) {
-                    $k = $cur->format('Y-m');
-                    $ttmRev   += $revDeltas[$k]   ?? 0.0;
-                    $ttmCogsN += $cogsNDeltas[$k] ?? 0.0;
-                    $ttmCogsB += $cogsBDeltas[$k] ?? 0.0;
-                    $cur = $cur->modify('+1 month');
-                }
-                $isService    = $inv < self::INVENTORY_ZERO_THRESHOLD;
-                $ttmCogs      = $isService ? $ttmCogsB : $ttmCogsN;
-                $revPerDay    = $ttmRev  > 0 ? $ttmRev  / 365.0 : null;
-                $cogsPerDay   = $ttmCogs > 0 ? $ttmCogs / 365.0 : null;
 
-                $dso = $revPerDay  !== null && $ar  > 0 ? round($ar  / $revPerDay,  1) : null;
-                $dio = (!$isService && $cogsPerDay !== null && $inv > 0)
-                    ? round($inv / $cogsPerDay, 1) : ($isService ? null : null);
-                $dpo = $cogsPerDay !== null && $ap  > 0 ? round($ap  / $cogsPerDay, 1) : null;
+                // ── TTM-completeness gate ────────────────────────────────
+                // If the trailing-12-month window starts before the
+                // earliest month with any P&L activity, we don't have a
+                // full year of denominators — CCC is mathematically
+                // unreliable here. Mark all four cycle metrics null so
+                // the view filters this point out instead of plotting it.
+                $ttmComplete = ($earliestActivityMonth !== null)
+                            && ($ttmFromKey >= $earliestActivityMonth);
 
-                // CCC = DSO + DIO − DPO. For service businesses (no
-                // inventory), DIO is null and CCC simplifies to DSO − DPO.
-                $cccVal = null;
-                if ($dso !== null && $dpo !== null) {
-                    $cccVal = $dso - $dpo + ($dio ?? 0.0);
-                    $cccVal = round($cccVal, 1);
+                $dso = $dio = $dpo = $cccVal = null;
+                $isService = $inv < self::INVENTORY_ZERO_THRESHOLD;
+
+                if ($ttmComplete) {
+                    $ttmRev = 0.0; $ttmCogsN = 0.0; $ttmCogsB = 0.0;
+                    $cur = new \DateTimeImmutable($ttmFromKey . '-01');
+                    $stop = new \DateTimeImmutable($mk . '-01');
+                    while ($cur <= $stop) {
+                        $k = $cur->format('Y-m');
+                        $ttmRev   += $revDeltas[$k]   ?? 0.0;
+                        $ttmCogsN += $cogsNDeltas[$k] ?? 0.0;
+                        $ttmCogsB += $cogsBDeltas[$k] ?? 0.0;
+                        $cur = $cur->modify('+1 month');
+                    }
+                    $ttmCogs    = $isService ? $ttmCogsB : $ttmCogsN;
+                    $revPerDay  = $ttmRev  > 0 ? $ttmRev  / 365.0 : null;
+                    $cogsPerDay = $ttmCogs > 0 ? $ttmCogs / 365.0 : null;
+
+                    $dso = $revPerDay  !== null && $ar  > 0 ? round($ar  / $revPerDay,  1) : null;
+                    $dio = (!$isService && $cogsPerDay !== null && $inv > 0)
+                         ? round($inv / $cogsPerDay, 1) : null;
+                    $dpo = $cogsPerDay !== null && $ap  > 0 ? round($ap  / $cogsPerDay, 1) : null;
+
+                    // CCC = DSO + DIO − DPO. For service businesses (no
+                    // inventory), DIO is null and CCC simplifies to DSO − DPO.
+                    if ($dso !== null && $dpo !== null) {
+                        $cccVal = round($dso - $dpo + ($dio ?? 0.0), 1);
+                    }
                 }
 
                 // Label: "Mon YY" — matches the screenshot the user shared.
