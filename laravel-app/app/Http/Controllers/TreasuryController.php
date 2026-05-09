@@ -306,7 +306,7 @@ class TreasuryController extends Controller
             // current GL state (not a stale cache) is what's being shown.
             $treasury = $request->boolean('fresh')
                 ? $producer()
-                : ea_cached('treasury_asof_v7', $producer);
+                : ea_cached('treasury_asof_v8', $producer);
 
             // Log the disbursements payload on every render so any
             // future zero-result report is one log-line away from a

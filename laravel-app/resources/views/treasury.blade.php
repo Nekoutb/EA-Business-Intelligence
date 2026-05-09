@@ -535,9 +535,24 @@
         return;
     }
 
-    const fmtDays   = (v) => (v == null) ? '—' : Math.round(v) + 'd';
-    const labels    = series.map(p => p.label);
-    const cccPoints = series.map(p => p.ccc);
+    const fmtDays = (v) => (v == null) ? '—' : Math.round(v) + 'd';
+
+    // ── Filter pre-TTM-complete points ────────────────────────────
+    // The service marks ccc/dso/dio/dpo as null for snapshots whose
+    // trailing-12-month window predates the company's earliest P&L
+    // activity. Those points carry no meaningful CCC value — plotting
+    // them would distort the y-axis scale (early divisions by tiny
+    // partial-TTM denominators inflate days into the tens of thousands).
+    // Drop both the null values AND their x-axis labels so the chart
+    // starts at the first valid TTM-complete point. Bug from 2026-05-08
+    // Kissywears feedback: chart showed phantom 60,000d May-25 point.
+    const validPoints = series.filter(p => p.ccc != null);
+    if (validPoints.length === 0) {
+        el.innerHTML = '<div class="empty-state" style="height:200px; display:flex; align-items:center; justify-content:center; color: var(--text-faint); font: 500 11px var(--font); text-align:center; padding: 8px;">Cash conversion cycle requires 12 months of revenue history.<br>Available data covers ' + series.length + ' month(s) — first valid CCC point will appear once a full TTM window is reached.</div>';
+        return;
+    }
+    const labels    = validPoints.map(p => p.label);
+    const cccPoints = validPoints.map(p => p.ccc);
 
     const chart = echarts.init(el);
     chart.setOption({
@@ -549,7 +564,7 @@
             formatter: (params) => {
                 if (!params || !params.length) return '';
                 const ix = params[0].dataIndex;
-                const point = series[ix];
+                const point = validPoints[ix];
                 // Show the full DSO + DIO − DPO breakdown so the auditor
                 // can read at a glance which lever moved.
                 const lines = [`<b>${point.label}</b>`];
@@ -571,10 +586,13 @@
         },
         yAxis: {
             type: 'value',
-            // Auto-scale matches the user's screenshot — bottom anchored
-            // a bit below the data minimum to give the line breathing
-            // room rather than forcing the y-axis to start at 0.
-            scale: true,
+            // Tight auto-scaling around actual data so the trend is
+            // immediately readable. ECharts callbacks return the
+            // computed min/max from the rendered series — pad ±2 days
+            // for visual breathing room, ceil/floor to integers so the
+            // axis labels read cleanly.
+            min: (val) => Math.floor(val.min - 2),
+            max: (val) => Math.ceil(val.max + 2),
             axisLabel: { formatter: (v) => Math.round(v) + 'd', color: '#8a8578', fontSize: 9 },
             splitLine: { lineStyle: { color: '#f0ede7', type: 'solid' } },
             axisLine:  { lineStyle: { color: '#cbd5e1' } },
