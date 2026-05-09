@@ -728,42 +728,68 @@ final class WorkingCapitalService
                 // broad COGS (class 6 ex 68/69) when it's effectively zero.
                 $ttmFromKey = (new \DateTimeImmutable($mk . '-01'))->modify('-11 months')->format('Y-m');
 
-                // ── TTM-completeness gate ────────────────────────────────
-                // If the trailing-12-month window starts before the
-                // earliest month with any P&L activity, we don't have a
-                // full year of denominators — CCC is mathematically
-                // unreliable here. Mark all four cycle metrics null so
-                // the view filters this point out instead of plotting it.
-                $ttmComplete = ($earliestActivityMonth !== null)
-                            && ($ttmFromKey >= $earliestActivityMonth);
+                // ── Snapshot-data gate (relaxed 2026-05-09) ──────────────
+                // Original logic skipped any snapshot whose TTM window
+                // started before the earliest month of P&L activity.
+                // For tenants with < 12 months of history (which is most
+                // of them at first onboarding), this hid every single
+                // CCC point — the user saw an empty card.
+                //
+                // New rule: skip only snapshots BEFORE the first month
+                // with any data (no balance-sheet basis for the period
+                // either). For everything from the first-data month
+                // onwards, ANNUALIZE the partial TTM window so days
+                // values stay in a comparable unit. Per the user's
+                // 2026-05-09 instruction: "show information to the
+                // extent that it is available".
+                $snapshotHasData = ($earliestActivityMonth !== null)
+                                && ($mk >= $earliestActivityMonth);
 
                 $dso = $dio = $dpo = $cccVal = null;
                 $isService = $inv < self::INVENTORY_ZERO_THRESHOLD;
+                $ttmMonthsWithData = 0;
 
-                if ($ttmComplete) {
+                if ($snapshotHasData) {
                     $ttmRev = 0.0; $ttmCogsN = 0.0; $ttmCogsB = 0.0;
                     $cur = new \DateTimeImmutable($ttmFromKey . '-01');
                     $stop = new \DateTimeImmutable($mk . '-01');
                     while ($cur <= $stop) {
                         $k = $cur->format('Y-m');
+                        $hasMonthData = isset($revDeltas[$k])
+                                     || isset($cogsNDeltas[$k])
+                                     || isset($cogsBDeltas[$k]);
+                        if ($hasMonthData) $ttmMonthsWithData++;
                         $ttmRev   += $revDeltas[$k]   ?? 0.0;
                         $ttmCogsN += $cogsNDeltas[$k] ?? 0.0;
                         $ttmCogsB += $cogsBDeltas[$k] ?? 0.0;
                         $cur = $cur->modify('+1 month');
                     }
-                    $ttmCogs    = $isService ? $ttmCogsB : $ttmCogsN;
-                    $revPerDay  = $ttmRev  > 0 ? $ttmRev  / 365.0 : null;
-                    $cogsPerDay = $ttmCogs > 0 ? $ttmCogs / 365.0 : null;
 
-                    $dso = $revPerDay  !== null && $ar  > 0 ? round($ar  / $revPerDay,  1) : null;
-                    $dio = (!$isService && $cogsPerDay !== null && $inv > 0)
-                         ? round($inv / $cogsPerDay, 1) : null;
-                    $dpo = $cogsPerDay !== null && $ap  > 0 ? round($ap  / $cogsPerDay, 1) : null;
+                    if ($ttmMonthsWithData > 0) {
+                        // Annualize the partial window — scale up the
+                        // sum so the daily run-rate is comparable to a
+                        // full-TTM snapshot.  6 months of data × 2 =
+                        // 12-month equivalent.
+                        $annualFactor = 12.0 / $ttmMonthsWithData;
+                        $annualRev    = $ttmRev   * $annualFactor;
+                        $annualCogsN  = $ttmCogsN * $annualFactor;
+                        $annualCogsB  = $ttmCogsB * $annualFactor;
+                        $annualCogs   = $isService ? $annualCogsB : $annualCogsN;
 
-                    // CCC = DSO + DIO − DPO. For service businesses (no
-                    // inventory), DIO is null and CCC simplifies to DSO − DPO.
-                    if ($dso !== null && $dpo !== null) {
-                        $cccVal = round($dso - $dpo + ($dio ?? 0.0), 1);
+                        $revPerDay    = $annualRev  > 0 ? $annualRev  / 365.0 : null;
+                        $cogsPerDay   = $annualCogs > 0 ? $annualCogs / 365.0 : null;
+
+                        $dso = $revPerDay  !== null && $ar  > 0 ? round($ar  / $revPerDay,  1) : null;
+                        $dio = (!$isService && $cogsPerDay !== null && $inv > 0)
+                             ? round($inv / $cogsPerDay, 1) : null;
+                        $dpo = $cogsPerDay !== null && $ap  > 0 ? round($ap  / $cogsPerDay, 1) : null;
+
+                        // CCC = DSO + DIO − DPO. For service businesses
+                        // (no inventory), DIO is null and CCC simplifies
+                        // to DSO − DPO.
+                        if ($dso !== null && $dpo !== null) {
+                            $cccVal = round($dso - $dpo + ($dio ?? 0.0), 1);
+                        }
                     }
                 }
 
