@@ -21,8 +21,9 @@ use Illuminate\Http\Request;
  * Module gate: `module:product_revenue_tsd` (declared on the routes in
  * routes/web.php — same pattern as Revenue / Operations / Treasury).
  *
- * Cache key contains a version suffix (`prt_v1`) so we can bust it
- * cleanly once we add invoice-derived achieved-price feeds.
+ * Cache key contains a version suffix (`prt_v2`) so we can bust it
+ * cleanly. Bumped from v1 when ProductVolumeService switched from
+ * read_group to delegating to OperationsService::scanRevenueBreakdown.
  */
 final class ProductRevenueTsdController extends Controller
 {
@@ -38,7 +39,7 @@ final class ProductRevenueTsdController extends Controller
         try {
             $client  = OdooFactory::fromConfig();
             $svc     = new ProductRevenueService(new BudgetService(), new ProductVolumeService($client));
-            $cacheKey = 'prt_v1_' . $tenant->id . '_' . $year;
+            $cacheKey = 'prt_v2_' . $tenant->id . '_' . $year;
             $analysis = ea_cached($cacheKey, fn() => $svc->analyze($tenant, $year, $today));
         } catch (\Throwable $e) {
             $error = $e->getMessage();

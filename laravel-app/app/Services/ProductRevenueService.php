@@ -90,17 +90,27 @@ final class ProductRevenueService
             $budgetPrice = (float) $budgetRow['unit_price'];
             $budgetQty   = $this->vector($budgetRow['volumes']);
 
-            // Actuals: from Odoo volumes for non-pending products; for the
-            // demo / V1 we don't have a separate "actual_price" Odoo feed,
-            // so achieved price defaults to budget price (no price-effect
-            // until invoices are wired in). This keeps the variance math
-            // correct: with actual_price == budget_price, price_effect = 0.
+            // Operational tariff = the per-unit billing rate the cargo
+            // service actually applies on each scan (the "grille
+            // tarifaire" hard-coded in OperationsService). When this
+            // differs from the budgeted unit_price, the variance table
+            // surfaces a non-zero price_effect — the user sees at a glance
+            // whether achieved billing matched plan. For pending or
+            // unconfigured products the tariff falls back to the budget
+            // price (which keeps the price_effect at zero).
+            $operationalTariff = (float) ($product['operational_tariff'] ?? $budgetPrice);
+
+            // Actuals: from Odoo volumes for non-pending products. The
+            // achieved per-unit price equals the operational tariff by
+            // construction (revenue = qty × tariff, so price = tariff).
+            // This is the cleanest interpretation that matches what the
+            // operations team is actually billing.
             $actualQty   = $pending
                 ? array_fill(1, 12, null)
                 : $this->actualVector($volumes[$key] ?? [], $todayMonth);
             $actualPrice = $pending
                 ? array_fill(1, 12, null)
-                : $this->priceVector($budgetPrice, $todayMonth);
+                : $this->priceVector($operationalTariff, $todayMonth);
 
             // YTD figures (months 1..todayMonth inclusive).
             $ytdActQty = 0; $ytdActRev = 0.0;
