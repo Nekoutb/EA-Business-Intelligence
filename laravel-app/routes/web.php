@@ -20,6 +20,7 @@ use App\Http\Controllers\WorkingCapitalController;
 use App\Http\Controllers\FixedAssetsController;
 use App\Http\Controllers\InventoryController;
 use App\Http\Controllers\OperationsController;
+use App\Http\Controllers\ProductRevenueTsdController;
 use App\Http\Controllers\BillingController;
 use App\Http\Controllers\ProcurementController;
 use App\Http\Controllers\GLQualityController;
@@ -1381,6 +1382,11 @@ Route::prefix('t/{tenant}')
                 Route::post('/sync',             [DashboardController::class, 'sync']);
 
                 Route::get('/revenue',           [RevenueController::class, 'index'])->middleware('module:revenue');
+                // Product Revenue TSD — per-product trajectory + budget editor.
+                // Page is read-only; the POST endpoint accepts the inline
+                // budget editor submit (one form for all 12 products).
+                Route::get ('/product-revenue-tsd',         [ProductRevenueTsdController::class, 'index'])     ->middleware('module:product_revenue_tsd');
+                Route::post('/product-revenue-tsd/budget',  [ProductRevenueTsdController::class, 'saveBudget'])->middleware('module:product_revenue_tsd');
                 Route::get('/customer-insights', [CustomerInsightsController::class, 'index'])->middleware('module:customer_insights');
                 Route::get('/receivables',       [ReceivablesController::class, 'index'])->middleware('module:receivables');
                 Route::get('/treasury',          [TreasuryController::class, 'index'])->middleware('module:treasury');
