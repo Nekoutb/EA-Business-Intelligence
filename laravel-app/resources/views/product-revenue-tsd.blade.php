@@ -245,12 +245,17 @@
     <div class="prt-multi">
       @foreach ($products as $key => $p)
         @php
-          $marker = $key === 'container_empty' ? 'empty' : $cats[$p['category']] ? str_replace('_cargo','',explode('_', $p['category'])[0]) : 'cont';
-          if ($p['category'] === 'containers')   $marker = 'cont';
-          if ($p['category'] === 'vehicles')     $marker = 'veh';
-          if ($p['category'] === 'wood')         $marker = 'wood';
-          if ($p['category'] === 'other_cargo')  $marker = 'other';
-          if ($p['volume_only'])                 $marker = 'empty';
+          // Marker CSS modifier — picked from category, with Empty
+          // containers getting their own slate-grey marker so they
+          // visually read as "operational tracking" vs "revenue".
+          $marker = match ($p['category']) {
+              'containers'  => 'cont',
+              'vehicles'    => 'veh',
+              'wood'        => 'wood',
+              'other_cargo' => 'other',
+              default       => 'cont',
+          };
+          if ($p['volume_only']) $marker = 'empty';
         @endphp
         <div class="v5-card">
           <div class="v5-card__h"><div>
