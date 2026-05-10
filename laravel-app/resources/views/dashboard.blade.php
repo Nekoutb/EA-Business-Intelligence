@@ -394,7 +394,8 @@
 {{-- ── Grid ──────────────────────────────────────────────────────── --}}
 <div class="grid">
 
-    {{-- Row 1 · Cumulative Revenue (span 7) --}}
+    {{-- Row 1 · Cumulative Revenue (span 7) — gated on `revenue_ytd` --}}
+    @if ($kpiOn('revenue_ytd'))
     <div class="v5-card span-7">
         <div class="v5-card__h">
             <div>
@@ -447,8 +448,10 @@
             @endif
         </div>
     </div>
+    @endif {{-- /revenue_ytd --}}
 
-    {{-- Row 1 · Margin Waterfall (span 5) --}}
+    {{-- Row 1 · Margin Waterfall (span 5) — gated on any margin-layer KPI --}}
+    @if ($kpiOn('gross_profit') || $kpiOn('ebitda') || $kpiOn('net_profit') || $kpiOn('opex'))
     <div class="v5-card span-5">
         <div class="v5-card__h">
             <div>
@@ -475,8 +478,10 @@
             @endif
         </div>
     </div>
+    @endif {{-- /margin layers --}}
 
-    {{-- Row 2 · Cost Pressure (span 4) --}}
+    {{-- Row 2 · Cost Pressure (span 4) — gated on any of CPO / DPOT / DPC --}}
+    @if ($kpiOn('cpo') || $kpiOn('dpot') || $kpiOn('dpc'))
     <div class="v5-card span-4">
         <div class="v5-card__h">
             <div>
@@ -495,8 +500,10 @@
             Tighten cost-per-outfit first.
         </div>
     </div>
+    @endif {{-- /cost ratio --}}
 
-    {{-- Row 2 · Run-Rate Bullet (span 4) --}}
+    {{-- Row 2 · Run-Rate Bullet (span 4) — gated on `run_rate` --}}
+    @if ($kpiOn('run_rate'))
     <div class="v5-card span-4">
         <div class="v5-card__h">
             <div>
@@ -551,6 +558,7 @@
             @endif
         </div>
     </div>
+    @endif {{-- /run_rate --}}
 
     {{-- Row 2 · Sankey · Revenue Reconciliation (scan → cash) (span 4)
          Gated by the per-tenant `revenue_reconciliation` module flag.
@@ -633,38 +641,51 @@
 
 </div>
 
-{{-- ── KPI strip (6 cells) ──────────────────────────────────────── --}}
+{{-- ── KPI strip (6 cells — each gated individually so an admin can hide --}}
+{{--    any single headline metric per tenant from /admin/tenants/{id}). --}}
 <div class="strip">
+    @if ($kpiOn('revenue_ytd'))
     <div class="strip__c">
         <div class="strip__l">Revenue {{ $isMtd ? 'MTD' : 'YTD' }}</div>
         <div class="strip__v">{{ $shortNum($rev) }}<span class="u">{{ $shortUnit($rev, $ccy) }}</span></div>
         <div class="strip__m">tracking pace</div>
     </div>
+    @endif {{-- /revenue_ytd strip --}}
+    @if ($kpiOn('gross_profit'))
     <div class="strip__c">
         <div class="strip__l">Gross Profit</div>
         <div class="strip__v {{ $gp >= 0 ? 'is-pos' : 'is-neg' }}">{{ $shortNum($gp) }}<span class="u">{{ $shortUnit($gp, $ccy) }}</span></div>
         <div class="strip__m">{{ number_format($gpPct, 1) }}% margin</div>
     </div>
+    @endif {{-- /gross_profit strip --}}
+    @if ($kpiOn('ebitda'))
     <div class="strip__c">
         <div class="strip__l">EBITDA</div>
         <div class="strip__v {{ $ebitda >= 0 ? 'is-pos' : 'is-neg' }}">{{ $ebitda < 0 ? '−' : '' }}{{ $shortNum(abs($ebitda)) }}<span class="u">{{ $shortUnit($ebitda, $ccy) }}</span></div>
         <div class="strip__m">{{ number_format($ebPct, 1) }}% margin</div>
     </div>
+    @endif {{-- /ebitda strip --}}
+    @if ($kpiOn('net_profit'))
     <div class="strip__c">
         <div class="strip__l">Net Profit</div>
         <div class="strip__v {{ $net >= 0 ? 'is-pos' : 'is-neg' }}">{{ $net < 0 ? '−' : '' }}{{ $shortNum(abs($net)) }}<span class="u">{{ $shortUnit($net, $ccy) }}</span></div>
         <div class="strip__m">{{ number_format($netPct, 1) }}% margin</div>
     </div>
+    @endif {{-- /net_profit strip --}}
+    @if ($kpiOn('cash_collected'))
     <div class="strip__c">
         <div class="strip__l">Cash Collected</div>
         <div class="strip__v {{ $cashPct !== null && $cashPct >= 80 ? 'is-pos' : '' }}">{{ $shortNum($cash) }}<span class="u">{{ $shortUnit($cash, $ccy) }}</span></div>
         <div class="strip__m">{{ $cashPct !== null ? number_format($cashPct, 1) . '% of billed' : '—' }}</div>
     </div>
+    @endif {{-- /cash_collected strip --}}
+    @if ($kpiOn('ar_outstanding'))
     <div class="strip__c">
         <div class="strip__l">AR Outstanding</div>
         <div class="strip__v">{{ $shortNum($ar) }}<span class="u">{{ $shortUnit($ar, $ccy) }}</span></div>
         <div class="strip__m">{{ $dso > 0 ? 'DSO ' . round($dso) . 'd' : 'DSO —' }}</div>
     </div>
+    @endif {{-- /ar_outstanding strip --}}
 </div>
 
 @push('scripts')
