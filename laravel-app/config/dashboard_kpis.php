@@ -35,6 +35,10 @@ return [
             'label'       => 'Revenue · Tables',
             'description' => 'Optional product-level tables on the Revenue Analysis page. Hide for tenants where product breakdowns aren\'t relevant.',
         ],
+        'cash_position' => [
+            'label'       => 'Cash & AR',
+            'description' => 'Headline cash & receivables cells that appear in the dashboard strip. Toggle off for tenants where cash position isn\'t the primary lens.',
+        ],
     ],
 
     'kpis' => [
@@ -139,6 +143,22 @@ return [
             'label'       => 'Top 5 Profitable Products',
             'description' => 'Side-by-side tables showing the most and least profitable products by margin (sales price vs standard cost). Disable for tenants whose business model isn\'t product-driven (e.g. pure services).',
             'section'     => 'revenue_tables',
+            'default'     => true,
+        ],
+
+        // ── Cash & AR ─────────────────────────────────────────────────────
+        [
+            'key'         => 'cash_collected',
+            'label'       => 'Cash Collected',
+            'description' => 'Cash collected to date with % of billings collected. Lives in the dashboard headline strip alongside Revenue/Profit cells.',
+            'section'     => 'cash_position',
+            'default'     => true,
+        ],
+        [
+            'key'         => 'ar_outstanding',
+            'label'       => 'AR Outstanding',
+            'description' => 'Accounts receivable balance with current DSO. Lives in the dashboard headline strip.',
+            'section'     => 'cash_position',
             'default'     => true,
         ],
     ],
