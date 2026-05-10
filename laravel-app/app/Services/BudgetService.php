@@ -104,6 +104,105 @@ final class BudgetService
     }
 
     /**
+     * Load per-product budgets (Product Revenue TSD sub-page).
+     *
+     * Reads the `products` key inside tenant_budgets.data, normalising
+     * every product slot in config('budget_products.products') so the
+     * caller always sees a complete map keyed by product slug. Missing
+     * products fall back to defaults from config.
+     *
+     * Shape returned (always keyed by product slug):
+     *   [
+     *     'cars' => [
+     *       'unit_price' => 50000.0,
+     *       'volumes'    => [1 => 3500.0, 2 => 3500.0, ..., 12 => 3500.0],
+     *     ],
+     *     'trucks' => [...],
+     *     ...
+     *   ]
+     *
+     * @return array<string, array{unit_price: float, volumes: array<int, float>}>
+     */
+    public function loadProducts(int $tenantId, int $year): array
+    {
+        $row = TenantBudget::where('tenant_id', $tenantId)
+            ->where('year', $year)
+            ->first();
+
+        $raw = $row ? (array) ($row->data['products'] ?? []) : [];
+        $out = [];
+
+        foreach ((array) config('budget_products.products', []) as $product) {
+            $key = $product['key'];
+            $stored = (array) ($raw[$key] ?? []);
+            $volumes = [];
+            $src = (array) ($stored['volumes'] ?? []);
+            for ($m = 1; $m <= 12; $m++) {
+                $volumes[$m] = (float) ($src[$m] ?? $src[(string) $m] ?? 0);
+            }
+            $out[$key] = [
+                'unit_price' => isset($stored['unit_price'])
+                    ? (float) $stored['unit_price']
+                    : (float) ($product['default_price'] ?? 0),
+                'volumes'    => $volumes,
+            ];
+        }
+
+        return $out;
+    }
+
+    /**
+     * Persist per-product budgets without disturbing the existing P&L
+     * line keys (revenue / direct_costs / etc.). The two halves of the
+     * data JSON live independently — uploading a P&L budget never wipes
+     * the product budgets, and vice versa.
+     *
+     * @param array<string, array{unit_price?: numeric, volumes?: array<int|string, numeric>}> $products
+     */
+    public function saveProducts(Tenant $tenant, int $year, array $products, ?int $userId = null): TenantBudget
+    {
+        $row = TenantBudget::firstOrNew([
+            'tenant_id' => $tenant->id,
+            'year'      => $year,
+        ]);
+
+        $existing = (array) ($row->data ?? []);
+        $clean = [];
+
+        // Only accept keys that exist in the registry — defends against
+        // stale form submissions referencing a product that was deleted.
+        $registry = collect((array) config('budget_products.products', []))->keyBy('key');
+
+        foreach ($products as $key => $payload) {
+            if (!$registry->has($key)) continue;
+            $product = $registry[$key];
+
+            $price = (float) ($payload['unit_price'] ?? $product['default_price'] ?? 0);
+            $price = max(0.0, $price);
+
+            $volumes = [];
+            $src = (array) ($payload['volumes'] ?? []);
+            for ($m = 1; $m <= 12; $m++) {
+                $volumes[(string) $m] = max(0.0, (float) ($src[$m] ?? $src[(string) $m] ?? 0));
+            }
+
+            $clean[$key] = [
+                'label'      => (string) $product['label'],
+                'category'   => (string) $product['category'],
+                'unit_price' => $price,
+                'volumes'    => $volumes,
+            ];
+        }
+
+        $existing['products'] = $clean;
+        $row->data = $existing;
+        if ($userId) $row->uploaded_by = $userId;
+        $row->save();
+
+        return $row;
+    }
+
+    /**
      * Summary metadata for the upload page (year, source filename,
      * uploader, when, monthly totals per line).
      */

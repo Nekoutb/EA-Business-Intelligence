@@ -108,6 +108,25 @@ return [
             'status'  => 'live',
         ],
         [
+            // Product Revenue TSD — per-product revenue trajectory page
+            // (Containers · Vehicles · Wood · Other Cargo), comparing
+            // scanned actuals to a per-product unit-price × monthly-volume
+            // budget. Built for Transatlantic Douala (TSD); the registry
+            // in config/budget_products.php is generic so any tenant with
+            // a comparable product mix can enable it. default=false because
+            // it only makes sense for tenants whose Odoo carries the cargo
+            // models (aw_cargo.equipment, aw_vehicule.vehicule, aw_bois.bois).
+            'key'     => 'product_revenue_tsd',
+            'service' => 'business_intelligence',
+            'label'   => 'Product Revenue TSD',
+            'url'     => '/product-revenue-tsd',
+            'active'  => 'product_revenue_tsd',
+            'icon'    => 'M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z',
+            'default' => false,
+            'core'    => false,
+            'status'  => 'live',
+        ],
+        [
             'key'     => 'customer_insights',
             'service' => 'business_intelligence',
             'label'   => 'Customer Insights',
