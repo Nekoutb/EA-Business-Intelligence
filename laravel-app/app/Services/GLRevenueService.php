@@ -134,17 +134,24 @@ class GLRevenueService
 
     /**
      * Match each class 70 account to a product in the registry using the
-     * product's `revenue_match` patterns. Returns:
+     * product's `revenue_match` patterns, then apply any
+     * `revenue_redistribute` rules from config to split catch-all
+     * accounts across multiple products. Returns:
      *
-     *   - 'matched'   — [product_key => [month => revenue]]
-     *   - 'assigned'  — [account_id => product_key]  (for the diagnostic)
-     *   - 'unmatched' — [account_id => true]          (accounts that didn't
-     *                                                  land in any product)
+     *   - 'matched'       — [product_key => [month => revenue]] (after
+     *                       redistribution; product totals include
+     *                       direct matches PLUS redistributed shares)
+     *   - 'assigned'      — [account_id => product_key]  (1:1 direct
+     *                       matches only, for the diagnostic)
+     *   - 'redistributed' — [account_id => ['targets' => [...],
+     *                                       'description' => string]]
+     *                       (accounts that were split across multiple
+     *                       products via a redistribute rule)
+     *   - 'unmatched'     — [account_id => true] (accounts that didn't
+     *                       land in any product even after redistribution)
      *
-     * First-match-wins when a name could match multiple patterns. Empty-
-     * container patterns are tested last by virtue of the registry order
-     * — full-container excludes ['vide','empty'] keep them mutually
-     * exclusive in practice.
+     * First-match-wins for direct matching. Redistribution runs after,
+     * so it only picks up accounts that didn't match any product directly.
      */
     public function matchAccountsToProducts(array $class70): array
     {
@@ -157,10 +164,12 @@ class GLRevenueService
             fn ($p) => ($p['revenue_source'] ?? null) === 'gl_706_named'
         );
 
-        $matched   = [];   // product_key → [month => revenue]
-        $assigned  = [];   // account_id  → product_key
-        $unmatched = [];   // account_id  → true
+        $matched       = [];   // product_key → [month => revenue]
+        $assigned      = [];   // account_id  → product_key
+        $redistributed = [];   // account_id  → ['targets' => [...], 'description' => str]
+        $unmatched     = [];   // account_id  → true
 
+        // ── Pass 1: direct per-account → per-product matching
         foreach ($accounts as $accountId => $info) {
             $name = strtolower($info['name'] ?? '');
             $hit  = null;
@@ -182,11 +191,70 @@ class GLRevenueService
             }
         }
 
+        // ── Pass 2: apply redistribution rules to catch-all accounts
+        // that didn't match any product directly (e.g. 706100 → 75%
+        // imports / 25% exports). Each rule moves its source account
+        // from `unmatched` to `redistributed` and splits the monthly
+        // revenue across the named target products.
+        foreach ((array) config('budget_products.revenue_redistribute', []) as $rule) {
+            $sourceMatch = (array) ($rule['source_match'] ?? []);
+            $targets     = (array) ($rule['targets'] ?? []);
+            if (empty($targets)) continue;
+
+            foreach (array_keys($unmatched) as $accountId) {
+                $info = $accounts[$accountId] ?? null;
+                if (!$info) continue;
+                if (!$this->matchesSourceRule($info, $sourceMatch)) continue;
+
+                unset($unmatched[$accountId]);
+                $redistributed[$accountId] = [
+                    'description' => (string) ($rule['description'] ?? ''),
+                    'targets'     => $targets,
+                ];
+
+                $monthly = $byAccountMonth[$accountId] ?? array_fill(1, 12, 0.0);
+                foreach ($targets as $targetKey => $share) {
+                    $matched[(string) $targetKey] ??= array_fill(1, 12, 0.0);
+                    for ($m = 1; $m <= 12; $m++) {
+                        $matched[(string) $targetKey][$m] += (float) ($monthly[$m] ?? 0) * (float) $share;
+                    }
+                }
+            }
+        }
+
         return [
-            'matched'   => $matched,
-            'assigned'  => $assigned,
-            'unmatched' => $unmatched,
+            'matched'       => $matched,
+            'assigned'      => $assigned,
+            'redistributed' => $redistributed,
+            'unmatched'     => $unmatched,
         ];
+    }
+
+    /**
+     * Test whether an account matches a redistribution rule's
+     * `source_match` block. Supports two predicates:
+     *
+     *   - 'code_equals' (string)    — exact code match
+     *   - 'code_starts_with' (str)  — code prefix match
+     *   - 'name_includes' (string)  — case-insensitive substring on name
+     *
+     * Multiple predicates AND together (all must match).
+     */
+    private function matchesSourceRule(array $account, array $rule): bool
+    {
+        $code = (string) ($account['code'] ?? '');
+        $name = strtolower($account['name'] ?? '');
+
+        if (isset($rule['code_equals']) && $code !== (string) $rule['code_equals']) {
+            return false;
+        }
+        if (isset($rule['code_starts_with']) && !str_starts_with($code, (string) $rule['code_starts_with'])) {
+            return false;
+        }
+        if (isset($rule['name_includes']) && strpos($name, strtolower((string) $rule['name_includes'])) === false) {
+            return false;
+        }
+        return !empty($rule);  // empty rule never matches (safety)
     }
 
     /**

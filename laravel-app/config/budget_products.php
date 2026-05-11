@@ -127,8 +127,9 @@ return [
         [
             // Conteneurs vides — empty containers (any size, any direction).
             // Billed at 0 per the grille tarifaire (systematic free check).
-            // No 706 account observed in TSD's chart so revenue stays 0;
-            // volumes are still tracked from scans for operational visibility.
+            // Per direction (2026-05): keep the line in both budget and
+            // actuals even though there's no 706 account mapping (revenue
+            // stays 0 — vol-only operational tracking).
             'key'                => 'container_empty',
             'label'              => 'Conteneurs vides (Empty)',
             'category'           => 'containers',
@@ -141,6 +142,27 @@ return [
             'revenue_source'     => 'gl_706_named',
             'revenue_match'      => [
                 'includes_any' => ['vide', 'empty', 'mty'],
+            ],
+        ],
+        [
+            // Container OOG (Out-Of-Gauge) — oversized cargo that doesn't
+            // fit standard ISO container sizes. Revenue lives in
+            // 706130 "Scanning OOG"; no scan source in OperationsService
+            // (scanRevenueBreakdown doesn't yet expose an OOG category),
+            // so volume stays at zero until upstream tracking is added.
+            // The chart shows revenue only; unit price (rev ÷ qty) is
+            // suppressed when qty == 0 to avoid divide-by-zero noise.
+            'key'                => 'container_oog',
+            'label'              => 'Container · OOG (Out-of-Gauge)',
+            'category'           => 'containers',
+            'color'              => '#0891b2',
+            'default_price'      => 0,
+            'operational_tariff' => 0,
+            'actuals_source'     => 'odoo',
+            'ops_key'            => null,  // no scan source yet
+            'revenue_source'     => 'gl_706_named',
+            'revenue_match'      => [
+                'includes_any' => ['oog'],
             ],
         ],
 
@@ -238,4 +260,41 @@ return [
      * Doesn't affect any persisted value — budgets always live pre-VAT (HT).
      */
     'vat_rate' => 0.1925,
+
+    /**
+     * Redistribution rules — applied AFTER the per-product `revenue_match`
+     * pass in GLRevenueService::matchAccountsToProducts. Each rule names
+     * a source account (by code or name pattern) and divides its monthly
+     * revenue across multiple target products according to fixed shares.
+     *
+     * Use this for "catch-all" GL accounts whose revenue properly belongs
+     * to specific products but was booked at a regional/aggregate level
+     * — typical of older charts of accounts that didn't break out
+     * service revenue per direction × size.
+     *
+     * The targets[] map must sum to 1.0 across the row. Shares are
+     * applied at the same monthly granularity as the source account, so
+     * the per-month redistribution preserves the timing of the original
+     * postings.
+     */
+    'revenue_redistribute' => [
+        [
+            // 706100 "Services vendus dans la Région" — TSD's catch-all
+            // regional services account. Accounting direction (2026-05):
+            //   75% imports (split 50/50 between 40' and 20' = 37.5% each)
+            //   25% exports (split 50/50 between 40' and 20' = 12.5% each)
+            // Empty containers + OOG get no share (they have their own
+            // dedicated accounts).
+            'description'  => "706100 — Services vendus dans la Région (catch-all → containers)",
+            'source_match' => [
+                'code_equals' => '706100',
+            ],
+            'targets' => [
+                'container_import_40' => 0.375,
+                'container_import_20' => 0.375,
+                'container_export_40' => 0.125,
+                'container_export_20' => 0.125,
+            ],
+        ],
+    ],
 ];
