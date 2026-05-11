@@ -151,6 +151,8 @@
       $cats     = $analysis['categories'];
       $tot      = $analysis['totals']['tracked'];
       $pendingYtd = (float) ($analysis['totals']['pending_ytd_budget_revenue'] ?? 0);
+      $class70Ytd = (float) ($analysis['totals']['class70_ytd_revenue'] ?? 0);
+      $glDiag     = $analysis['gl_diagnostic'] ?? ['matched' => [], 'unmatched' => []];
       $todayMonth = (int) $analysis['today_month'];
 
       $byCat = collect($products)->groupBy('category');
@@ -173,12 +175,18 @@
       };
     @endphp
 
-    {{-- ── Headline strip (5 cells) — tracked-products comparison ── --}}
+    {{-- ── Headline strip (5 cells) — reconciliation + variance ──
+         "Revenue YTD (Total · HT)" is the class 70 sum: matches the
+         Dashboard's revenue cell (HT basis), so the two pages agree.
+         "Revenue YTD (Tracked)" is the sum of per-product actuals; the
+         difference between the two is the unallocated revenue (OOG +
+         generic 706 + class 70 lines outside containers/vehicles/wood)
+         called out in the diagnostic panel below the variance table. --}}
     <div class="prt-strip">
       <div class="prt-strip__c">
-        <div class="prt-strip__l">Revenue YTD (Actual)</div>
-        <div class="prt-strip__v">{{ $fmtMShort($tot['ytd_actual_revenue']) }}<span class="u">XAF</span></div>
-        <div class="prt-strip__m">{{ $todayMonth }} mo · tracked products</div>
+        <div class="prt-strip__l">Revenue YTD (Total · HT)</div>
+        <div class="prt-strip__v">{{ $fmtMShort($class70Ytd) }}<span class="u">XAF</span></div>
+        <div class="prt-strip__m">{{ $todayMonth }} mo · all class 70 (= Dashboard)</div>
       </div>
       <div class="prt-strip__c">
         <div class="prt-strip__l">Revenue YTD (Budget)</div>
@@ -187,13 +195,14 @@
       </div>
       <div class="prt-strip__c">
         <div class="prt-strip__l">Net Revenue Gap</div>
-        <div class="prt-strip__v {{ $tot['net_variance_xaf'] < 0 ? 'is-neg' : 'is-pos' }}">
-          {{ $fmtSigned($tot['net_variance_xaf']) }}<span class="u">XAF</span>
+        @php
+          $netGap = $class70Ytd - (float) $tot['ytd_budget_revenue'];
+          $netPct = $tot['ytd_budget_revenue'] > 0 ? 100 * $netGap / $tot['ytd_budget_revenue'] : 0;
+        @endphp
+        <div class="prt-strip__v {{ $netGap < 0 ? 'is-neg' : 'is-pos' }}">
+          {{ $fmtSigned($netGap) }}<span class="u">XAF</span>
         </div>
-        <div class="prt-strip__m">
-          @php $pct = $tot['ytd_budget_revenue'] > 0 ? 100 * $tot['net_variance_xaf'] / $tot['ytd_budget_revenue'] : 0; @endphp
-          {{ $pctSigned($pct) }} vs plan
-        </div>
+        <div class="prt-strip__m">{{ $pctSigned($netPct) }} vs plan</div>
       </div>
       <div class="prt-strip__c">
         <div class="prt-strip__l">Volume Effect</div>
@@ -261,7 +270,11 @@
           <div class="v5-card__h"><div>
             <div class="v5-card__t">
               <span class="prt-cm prt-cm--{{ $marker }}"></span>{{ $p['label'] }}
-              @if ($p['pending'])<span class="prt-pending-pill">budget-only</span>@endif
+              @if ($p['pending'])
+                <span class="prt-pending-pill">budget-only</span>
+              @elseif (!($p['has_budget'] ?? true))
+                <span class="prt-pending-pill" style="background:#e0e7ff;color:#3730a3;">no budget set</span>
+              @endif
             </div>
             <div class="v5-card__sub">
               @if ($p['pending'])
@@ -335,6 +348,7 @@
                 <tr class="cat-row"><td colspan="13"><span class="prt-cm prt-cm--{{ $catKey === 'other_cargo' ? 'other' : ($catKey === 'containers' ? 'cont' : ($catKey === 'vehicles' ? 'veh' : 'wood')) }}"></span>{{ strtoupper($catCfg['label']) }}</td></tr>
                 @foreach ($catProducts as $p)
                   @if ($p['pending'])
+                    {{-- Budget-only product (Other Cargo, pending Odoo) --}}
                     <tr>
                       <td class="label">{{ $p['label'] }}</td>
                       <td>{{ number_format($p['ytd_budget_qty']) }}</td>
@@ -343,6 +357,33 @@
                       <td colspan="2" style="color:#6b7280;font-style:italic;text-align:center;">—</td>
                       <td>{{ number_format($p['ytd_budget_revenue'] / 1e6, 1) }}</td>
                       <td colspan="5" style="color:#6b7280;font-style:italic;text-align:center;">budget-only · excluded from variance until Odoo source is configured</td>
+                    </tr>
+                  @elseif (!($p['has_budget'] ?? true))
+                    {{-- Tracked but no budget — typical for containers
+                         (user didn't enter container volumes/prices).
+                         Show actuals so revenue is visible; mark variance
+                         columns as "no budget" rather than fake zeros. --}}
+                    @php
+                      $priceAct = $p['ytd_actual_qty'] > 0
+                          ? $p['ytd_actual_revenue'] / $p['ytd_actual_qty']
+                          : 0;
+                      $isVolOnly = (bool) ($p['volume_only'] ?? false);
+                    @endphp
+                    <tr>
+                      <td class="label">
+                        {{ $p['label'] }}
+                        <span class="prt-pending-pill" style="background:#e0e7ff;color:#3730a3;">no budget</span>
+                        @if ($isVolOnly)<span style="color:#6b7280;font-weight:500;font-size:10px;"> · vol-only</span>@endif
+                      </td>
+                      <td style="color:#6b7280;">—</td>
+                      <td>{{ number_format($p['ytd_actual_qty']) }}</td>
+                      <td style="color:#6b7280;">—</td>
+                      <td style="color:#6b7280;">—</td>
+                      <td>{{ $isVolOnly ? '0' : number_format($priceAct / 1000, 1) . 'K' }}</td>
+                      <td style="color:#6b7280;">—</td>
+                      <td style="color:#6b7280;">—</td>
+                      <td>{{ number_format($p['ytd_actual_revenue'] / 1e6, 1) }}</td>
+                      <td colspan="4" style="color:#6b7280;font-style:italic;text-align:center;">no budget — revenue tracked, variance N/A</td>
                     </tr>
                   @else
                     @php
@@ -403,6 +444,81 @@
         Price effect <span class="{{ $tot['price_effect_xaf'] < 0 ? 'prt-neg' : 'prt-pos' }}">{{ $fmtSigned($tot['price_effect_xaf']) }}</span>.
       </div>
     </div>
+
+    {{-- ── GL Diagnostic · class 706 account → product mapping ──
+         Shows which 706 accounts contributed revenue to which product,
+         and which accounts were left unmatched (e.g. OOG, generic
+         regional services). If a 706 account name changes upstream or
+         a new category is added, this is where the operator notices. --}}
+    @php
+      $matched   = (array) ($glDiag['matched']   ?? []);
+      $unmatched = (array) ($glDiag['unmatched'] ?? []);
+      $unmatched706 = array_values(array_filter($unmatched, fn ($r) => $r['in_706'] ?? false));
+    @endphp
+    @if (!empty($matched) || !empty($unmatched706))
+      <h2 class="prt-section">Diagnostic · Class 706 account mapping</h2>
+      <div class="v5-card">
+        <div class="v5-card__h">
+          <div>
+            <div class="v5-card__t">Container revenue · sourced from class 706 sub-accounts</div>
+            <div class="v5-card__sub">
+              Per-account YTD revenue and which product it was assigned to.
+              Unmatched 706 accounts show what's not currently attributed to any container product — adjust <code style="font-size:11px;background:#f3f4f6;padding:1px 4px;border-radius:3px">revenue_match</code> patterns in <code style="font-size:11px;background:#f3f4f6;padding:1px 4px;border-radius:3px">config/budget_products.php</code> to capture them.
+            </div>
+          </div>
+        </div>
+        <div class="v5-card__b" style="overflow-x:auto;">
+          <table class="prt-vt">
+            <thead>
+              <tr>
+                <th style="text-align:left">Code</th>
+                <th style="text-align:left">Account name</th>
+                <th style="text-align:left">Mapped to</th>
+                <th>YTD revenue (M XAF)</th>
+              </tr>
+            </thead>
+            <tbody>
+              @if (!empty($matched))
+                <tr class="cat-row"><td colspan="4">✓ MATCHED ({{ count($matched) }} {{ count($matched) === 1 ? 'account' : 'accounts' }})</td></tr>
+                @foreach ($matched as $row)
+                  <tr>
+                    <td style="text-align:left;font-family:monospace;">{{ $row['code'] }}</td>
+                    <td style="text-align:left;">{{ $row['name'] }}</td>
+                    <td style="text-align:left;color:#047857;">→ {{ $row['product_label'] }}</td>
+                    <td>{{ number_format($row['ytd_revenue'] / 1e6, 1) }}</td>
+                  </tr>
+                @endforeach
+              @endif
+
+              @if (!empty($unmatched706))
+                <tr class="cat-row"><td colspan="4">⚠ UNMATCHED 706 ({{ count($unmatched706) }} {{ count($unmatched706) === 1 ? 'account' : 'accounts' }}) — not assigned to any container product</td></tr>
+                @foreach ($unmatched706 as $row)
+                  <tr>
+                    <td style="text-align:left;font-family:monospace;">{{ $row['code'] }}</td>
+                    <td style="text-align:left;">{{ $row['name'] }}</td>
+                    <td style="text-align:left;color:#92400e;font-style:italic;">unmatched</td>
+                    <td>{{ number_format($row['ytd_revenue'] / 1e6, 1) }}</td>
+                  </tr>
+                @endforeach
+              @endif
+            </tbody>
+          </table>
+        </div>
+        <div class="v5-card__f">
+          <b>Reading:</b>
+          Total revenue YTD ({{ $fmtMShort($class70Ytd) }} XAF) is the sum of every class 70 account
+          movement — it reconciles to the Dashboard's headline figure on an HT basis.
+          @if (!empty($unmatched706))
+            The {{ count($unmatched706) }} unmatched 706 accounts above ({{ $fmtMShort(array_sum(array_column($unmatched706, 'ytd_revenue'))) }} XAF YTD)
+            are container-related revenue that the current
+            <code style="font-size:11px;background:#f3f4f6;padding:1px 4px;border-radius:3px">revenue_match</code>
+            patterns don't claim — typically OOG (Out-Of-Gauge) cargo or generic regional services not
+            yet broken out as a product. Tell me which product they should land in and I'll widen the
+            pattern in a follow-up.
+          @endif
+        </div>
+      </div>
+    @endif
 
     {{-- ── Section C · Budget editor ── --}}
     <h2 class="prt-section">C · Budget editor · {{ count($products) }} products × unit price + 12 monthly volumes · auto-revenue</h2>
@@ -525,8 +641,14 @@
                py: d.budget_qty.map(_ => null),
                fmt: v => v == null ? '—' : (v / 1000).toFixed(1) + 'K' };
     }
+    // Revenue mode: prefer the server-computed `actual_revenue` series
+    // (canonical when revenue comes from GL — e.g. containers from
+    // class 706). Fall back to qty × price for products on the
+    // scan_tariff method where the server emits the same product.
     return {
-      actual: d.actual_qty.map((q, i) => q == null ? null : q * d.actual_price[i]),
+      actual: d.actual_revenue
+          ? d.actual_revenue
+          : d.actual_qty.map((q, i) => q == null ? null : q * d.actual_price[i]),
       budget: d.budget_qty.map(q => q * d.budget_price),
       py:     d.budget_qty.map(_ => null),
       fmt:    v => v == null ? '—' : fmtMoney(v),
@@ -615,18 +737,22 @@
   const totalEl = document.getElementById('prt-chart-total');
   const total = totalEl ? echarts.init(totalEl) : null;
 
+  // Class 70 monthly totals from the server. These reconcile to the
+  // Dashboard's revenue figure and become the actual line on the
+  // total chart — much cleaner than re-summing per-product actuals
+  // (which would miss unmatched 706 accounts + non-cargo revenue).
+  const CLASS70 = @json($analysis['totals']['class70_monthly']);
+  const TODAY_M_FOR_TOTAL = {{ (int) $analysis['today_month'] }};
+
   function renderTotal() {
     if (!total) return;
     const trackedKeys = productKeys.filter(k => !D[k].pending);
 
-    const sumActual = months.map((_, m) => {
-      let sum = 0, hasAny = false;
-      trackedKeys.forEach(key => {
-        const d = D[key];
-        const q = d.actual_qty[m];
-        if (q != null) { sum += q * d.actual_price[m]; hasAny = true; }
-      });
-      return hasAny ? sum : null;
+    // Total actual = class 70 monthly (= Dashboard HT)
+    const sumActual = months.map((_, idx) => {
+      const m = idx + 1;
+      if (m > TODAY_M_FOR_TOTAL) return null;
+      return CLASS70[m] ?? CLASS70[String(m)] ?? 0;
     });
     const sumBudget = months.map((_, m) => {
       let sum = 0;
