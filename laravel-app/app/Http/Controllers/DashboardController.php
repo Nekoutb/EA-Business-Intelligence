@@ -46,7 +46,12 @@ class DashboardController extends Controller
 
         try {
             $client = OdooFactory::fromConfig();
-            $data   = ea_cached("revenue_{$cacheTag}",
+            // Cache key was bumped to `revenue_ht_v1_` on 2026-05-11 when
+            // RevenueService switched from amount_total_signed (TTC) to
+            // amount_untaxed_signed (HT). Old cached entries are stale and
+            // would otherwise serve TTC figures for up to 5 minutes after
+            // deploy. The new prefix bypasses them cleanly.
+            $data   = ea_cached("revenue_ht_v1_{$cacheTag}",
                 fn () => (new RevenueService($client, $source))->analyze(null, $period));
             try {
                 $pl = ea_cached("pl_{$cacheTag}",

@@ -180,8 +180,13 @@ final class RevenueService
         $partnerOrders  = [];   // partnerId => order count
         $partnerMonths  = [];   // partnerId => ['YYYY-MM' => true]
         foreach ($records as $r) {
-            // amount_total_signed (invoices) is already signed in company currency,
-            // so refunds come through as negative automatically.
+            // Invoice source uses amount_untaxed_signed (HT, pre-VAT, signed
+            // in company currency) so revenue here matches the OHADA P&L
+            // definition and reconciles with class 70 GL movements. Refunds
+            // come through as negative automatically.
+            // History note: was amount_total_signed (TTC) until 2026-05-11
+            // — moved to HT so the Dashboard headline figure agrees with
+            // budgets (always entered HT) and with /product-revenue-tsd.
             $amt = (float) ($r[$amountField] ?? 0);
             $total += $amt;
             $day = substr((string) ($r[$dateField] ?? ''), 0, 10);
@@ -386,6 +391,8 @@ final class RevenueService
                 //  - 'done' state was removed in Odoo 17 (replaced by the `locked`
                 //    boolean) but keeping it in the filter is harmless on newer
                 //    versions and still matches locked orders on older ones.
+                //  - amount_untaxed is HT (pre-VAT), stable across Odoo 13-18,
+                //    matches the basis used by P&L / budget / class 70 GL.
                 return [
                     'sale.order',
                     [
@@ -394,13 +401,19 @@ final class RevenueService
                         ['date_order', '<=', $toS],
                     ],
                     'date_order',
-                    'amount_total',
+                    'amount_untaxed',
                     'sale.order.line',
                     'order_id',
                 ];
             case 'pos':
                 // pos.order: states 'paid' / 'done' / 'invoiced' still exist in
                 // Odoo 18. `date_order` is the canonical sale timestamp.
+                // NOTE: amount_total here is TTC — `amount_untaxed` is not
+                // a stable field on pos.order across Odoo versions, so we
+                // leave the POS source on TTC until a POS-driven tenant
+                // arrives and we can pick the right HT derivation per
+                // their schema (subtract amount_tax in fetchWindow, or
+                // sum price_subtotal on pos.order.line).
                 return [
                     'pos.order',
                     [
@@ -417,8 +430,12 @@ final class RevenueService
             default:
                 // account.move: verified against Odoo 13 -> 18.
                 //  - `move_type` (renamed from `type` back in v13) is stable.
-                //  - `amount_total_signed` is company-currency, signed (refunds
-                //    come through negative automatically).
+                //  - `amount_untaxed_signed` is company-currency HT, signed
+                //    (refunds come through negative automatically). HT is the
+                //    OHADA P&L / IFRS basis — matches budgets and class 70 GL.
+                //    Changed from amount_total_signed (TTC) on 2026-05-11 so
+                //    the Dashboard revenue cell reconciles with /product-
+                //    revenue-tsd and with the trial-balance class 70 sum.
                 //  - `invoice_date` is the customer-facing document date, which
                 //    is the correct basis for revenue recognition by calendar day
                 //    (as opposed to `date`, which is the accounting/period date).
@@ -431,7 +448,7 @@ final class RevenueService
                         ['invoice_date', '<=', $to->format('Y-m-d')],
                     ],
                     'invoice_date',
-                    'amount_total_signed',
+                    'amount_untaxed_signed',
                     'account.move.line',
                     'move_id',
                 ];

@@ -186,7 +186,7 @@
       <div class="prt-strip__c">
         <div class="prt-strip__l">Revenue YTD (Total · HT)</div>
         <div class="prt-strip__v">{{ $fmtMShort($class70Ytd) }}<span class="u">XAF</span></div>
-        <div class="prt-strip__m">{{ $todayMonth }} mo · all class 70 (= Dashboard)</div>
+        <div class="prt-strip__m">{{ $todayMonth }} mo · Σ class 70 · matches Dashboard (HT)</div>
       </div>
       <div class="prt-strip__c">
         <div class="prt-strip__l">Revenue YTD (Budget)</div>
