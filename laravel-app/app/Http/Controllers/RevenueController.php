@@ -18,7 +18,10 @@ class RevenueController extends Controller
         ];
         [$from, $to, $label] = ea_resolve_period($today, $period);
 
-        $cacheKey = 'revenue_' . md5(json_encode($period));
+        // Cache key prefix bumped to revenue_ht_v1_ on 2026-05-11 when
+        // RevenueService switched amount_total_signed (TTC) → amount_untaxed_signed
+        // (HT). Bypasses stale TTC-era cache entries on deploy.
+        $cacheKey = 'revenue_ht_v1_' . md5(json_encode($period));
         $data  = null; $error = null; $profitability = null;
         try {
             $client = OdooFactory::fromConfig();
