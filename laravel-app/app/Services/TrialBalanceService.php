@@ -29,15 +29,20 @@ use App\Odoo\OdooClient;
  *     Closing Cr  = max(-closing_balance, 0)
  *
  * Period semantics — driven by `periodType`:
- *   'month' → opening = start of selected month
- *             movement = lines within the selected month only
- *             closing = end of selected month
- *   'ytd'   → opening = start of selected year
- *             movement = Jan-1 to end of selected month
- *             closing = end of selected month
- *   'year'  → opening = start of selected year
- *             movement = full selected year (Jan-1 to Dec-31)
- *             closing = Dec-31 of selected year
+ *   'month' → opening   = balance as of end of PREVIOUS month
+ *             movement  = lines within the selected month only
+ *             closing   = opening + period movements
+ *   'ytd'   → opening   = balance as of Dec-31 of prior year
+ *             movement  = Jan-1 to end of selected month
+ *             closing   = opening + period movements
+ *   'year'  → opening   = balance as of Dec-31 of prior year
+ *             movement  = full selected year (Jan-1 to Dec-31)
+ *             closing   = opening + period movements
+ *
+ * The opening balance is always "closing balance immediately before
+ * the start of the selected period" — i.e. the most recent prior
+ * snapshot. Every view applies the same rule so the figures roll
+ * forward consistently across month/YTD/year selections.
  *
  * Two Odoo round trips: one read_group for opening balances, one for
  * the period movements. Closing is derived in PHP.
@@ -110,17 +115,15 @@ final class TrialBalanceService
         }
 
         // 2) Opening balances — sum of (debit, credit) for all posted
-        //    lines BEFORE period_start. read_group server-side.
-        //    Skipped when filtering a single month: per spec, only the
-        //    in-period movements are shown. Saves one Odoo round trip.
-        if ($periodType === 'month') {
-            $openingByAccount = [];
-        } else {
-            $openingByAccount = $this->fetchAccountSums([
-                ['parent_state', '=', 'posted'],
-                ['date', '<',  $periodStart->format('Y-m-d')],
-            ]);
-        }
+        //    lines BEFORE period_start. read_group server-side. Computed
+        //    for every period type, including 'month': the opening for
+        //    April 2026 is the cumulative GL position at end-of-March,
+        //    so the figures roll forward consistently regardless of the
+        //    filter the user picked.
+        $openingByAccount = $this->fetchAccountSums([
+            ['parent_state', '=', 'posted'],
+            ['date', '<',  $periodStart->format('Y-m-d')],
+        ]);
 
         // 3) Movement totals — sum of (debit, credit) for posted lines
         //    WITHIN [period_start, period_end].

@@ -39,15 +39,18 @@ class TrialBalanceController extends Controller
 
         // Trial Balance has its own vocabulary — translate from master:
         //   ytd   → ytd    cumulative YTD through the selected month (default)
-        //   mtd   → month  current month only — partial-MTD has no different
-        //                  meaning for a balance, so we render the month view
+        //   mtd   → month  current month — partial-MTD has no different
+        //                  meaning for a balance, render the month view
         //   month → month  specific month
-        //   yoy   → year   full year movements — YoY is a comparison concept
-        //                  that doesn't apply to a point-in-time TB
+        //   yoy   → ytd    YoY is a comparison concept that doesn't apply
+        //                  to a point-in-time TB; the YoY button is also
+        //                  frozen on this page in trial-balance.blade.php
+        //                  (@section('mfilter-frozen', 'yoy')) so the user
+        //                  can't actively pick it — this default is the
+        //                  safety net for any legacy session value.
         $periodType = match ($masterPeriod) {
             'mtd'   => 'month',
             'month' => 'month',
-            'yoy'   => 'year',
             default => 'ytd',
         };
 
@@ -56,7 +59,11 @@ class TrialBalanceController extends Controller
 
         try {
             $client = OdooFactory::fromConfig();
-            $cacheKey = "trial_balance_{$periodType}_{$year}_{$month}";
+            // Cache prefix bumped to v2 on 2026-05-11: the service now
+            // computes opening balances for the month view (it used to
+            // return zero opening for 'month'). v1 entries would still
+            // serve the broken figures for up to 5 minutes after deploy.
+            $cacheKey = "trial_balance_v2_{$periodType}_{$year}_{$month}";
             $data = ea_cached(
                 $cacheKey,
                 fn () => (new TrialBalanceService($client))->analyze($year, $periodType, $month)
