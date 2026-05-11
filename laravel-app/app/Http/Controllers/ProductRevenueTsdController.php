@@ -6,6 +6,7 @@ namespace App\Http\Controllers;
 use App\Models\Tenant;
 use App\Odoo\OdooFactory;
 use App\Services\BudgetService;
+use App\Services\GLRevenueService;
 use App\Services\ProductRevenueService;
 use App\Services\ProductVolumeService;
 use Illuminate\Http\RedirectResponse;
@@ -21,9 +22,12 @@ use Illuminate\Http\Request;
  * Module gate: `module:product_revenue_tsd` (declared on the routes in
  * routes/web.php — same pattern as Revenue / Operations / Treasury).
  *
- * Cache key contains a version suffix (`prt_v2`) so we can bust it
- * cleanly. Bumped from v1 when ProductVolumeService switched from
- * read_group to delegating to OperationsService::scanRevenueBreakdown.
+ * Cache key carries a version suffix so we can bust it cleanly across
+ * structural changes:
+ *   - v1 → v2: ProductVolumeService switched from read_group to
+ *     delegating to OperationsService::scanRevenueBreakdown
+ *   - v2 → v3: container revenue now sourced from class 706 GL accounts
+ *     (GLRevenueService) instead of scan_count × tariff (which was 0)
  */
 final class ProductRevenueTsdController extends Controller
 {
@@ -38,8 +42,12 @@ final class ProductRevenueTsdController extends Controller
 
         try {
             $client  = OdooFactory::fromConfig();
-            $svc     = new ProductRevenueService(new BudgetService(), new ProductVolumeService($client));
-            $cacheKey = 'prt_v2_' . $tenant->id . '_' . $year;
+            $svc      = new ProductRevenueService(
+                new BudgetService(),
+                new ProductVolumeService($client),
+                new GLRevenueService($client),
+            );
+            $cacheKey = 'prt_v3_' . $tenant->id . '_' . $year;
             $analysis = ea_cached($cacheKey, fn() => $svc->analyze($tenant, $year, $today));
         } catch (\Throwable $e) {
             $error = $e->getMessage();

@@ -53,20 +53,31 @@ return [
     ],
 
     'products' => [
-        // ── Containers — aw_cargo.equipment (full + empty, by direction × size)
+        // ── Containers — actual VOLUMES from aw_cargo.equipment (scanned),
+        //   actual REVENUES from class 706 sub-accounts matched by name.
         //
-        // Tariffs were zeroed in OperationsService::scanRevenueBreakdown per
-        // client direction (May 2026). Operational throughput is still
-        // tracked so the user can budget volumes separately from revenue.
+        // TSD's chart of accounts splits container scanning revenue by
+        // direction + size, e.g. 706110 "Scanning 40\" import domestique"
+        // for full Import 40' / 45' boxes. We map each container product
+        // to the matching account by string-matching the account's name
+        // (the `revenue_match` block below). The diagnostic panel on the
+        // page surfaces every 706 account and which product it landed in
+        // (or "unmatched" if none of the patterns claim it) so the
+        // operator can spot a mis-mapping at a glance.
         [
             'key'                => 'container_import_40',
             'label'              => "Container · Import 40' / 45'",
             'category'           => 'containers',
             'color'              => '#1e3a8a',
             'default_price'      => 0,
-            'operational_tariff' => 0,        // OperationsService::PRICE_HT_IMPORT_FULL_40
+            'operational_tariff' => 0,        // scan tariff zeroed since May 2026
             'actuals_source'     => 'odoo',
             'ops_key'            => 'import_full_40',
+            'revenue_source'     => 'gl_706_named',
+            'revenue_match'      => [
+                'includes_all' => ['import', '40'],
+                'excludes'     => ['20', 'export', 'oog', 'vide', 'empty'],
+            ],
         ],
         [
             'key'                => 'container_import_20',
@@ -77,6 +88,11 @@ return [
             'operational_tariff' => 0,
             'actuals_source'     => 'odoo',
             'ops_key'            => 'import_full_20',
+            'revenue_source'     => 'gl_706_named',
+            'revenue_match'      => [
+                'includes_all' => ['import', '20'],
+                'excludes'     => ['40', '45', 'export', 'oog', 'vide', 'empty'],
+            ],
         ],
         [
             'key'                => 'container_export_40',
@@ -87,6 +103,11 @@ return [
             'operational_tariff' => 0,
             'actuals_source'     => 'odoo',
             'ops_key'            => 'export_full_40',
+            'revenue_source'     => 'gl_706_named',
+            'revenue_match'      => [
+                'includes_all' => ['export', '40'],
+                'excludes'     => ['20', 'import', 'oog', 'vide', 'empty'],
+            ],
         ],
         [
             'key'                => 'container_export_20',
@@ -97,12 +118,17 @@ return [
             'operational_tariff' => 0,
             'actuals_source'     => 'odoo',
             'ops_key'            => 'export_full_20',
+            'revenue_source'     => 'gl_706_named',
+            'revenue_match'      => [
+                'includes_all' => ['export', '20'],
+                'excludes'     => ['40', '45', 'import', 'oog', 'vide', 'empty'],
+            ],
         ],
         [
             // Conteneurs vides — empty containers (any size, any direction).
-            // Billed at 0 per the grille tarifaire (systematic free check),
-            // but volumes are tracked so the operation can monitor handling
-            // throughput separately from revenue.
+            // Billed at 0 per the grille tarifaire (systematic free check).
+            // No 706 account observed in TSD's chart so revenue stays 0;
+            // volumes are still tracked from scans for operational visibility.
             'key'                => 'container_empty',
             'label'              => 'Conteneurs vides (Empty)',
             'category'           => 'containers',
@@ -112,6 +138,10 @@ return [
             'volume_only'        => true,
             'actuals_source'     => 'odoo',
             'ops_key'            => 'empty',
+            'revenue_source'     => 'gl_706_named',
+            'revenue_match'      => [
+                'includes_any' => ['vide', 'empty', 'mty'],
+            ],
         ],
 
         // ── Vehicles — aw_vehicule.vehicule, split by cylinder count.
@@ -121,6 +151,11 @@ return [
         // Same Odoo model + filter pattern (scanned=true, scanned_date),
         // so OperationsService::scanRevenueBreakdown returns these as the
         // 'voiture', 'camion', 'bulldoze' categories we map from below.
+        // Vehicles + Wood: revenue stays on the scan_count × operational_tariff
+        // method (unchanged per direction). Class 70 GL revenue for these
+        // products will appear as "unmatched" in the diagnostic panel —
+        // expected, since the scan-tariff and GL ledger don't reconcile
+        // exactly (timing + tax-vs-fee differences).
         [
             'key'                => 'cars',
             'label'              => 'Cars (4-6 cyl)',
@@ -130,6 +165,7 @@ return [
             'operational_tariff' => 50_000,
             'actuals_source'     => 'odoo',
             'ops_key'            => 'voiture',
+            'revenue_source'     => 'scan_tariff',
         ],
         [
             'key'                => 'trucks',
@@ -140,6 +176,7 @@ return [
             'operational_tariff' => 95_000,
             'actuals_source'     => 'odoo',
             'ops_key'            => 'camion',
+            'revenue_source'     => 'scan_tariff',
         ],
         [
             'key'                => 'heavy_machinery',
@@ -150,6 +187,7 @@ return [
             'operational_tariff' => 105_000,
             'actuals_source'     => 'odoo',
             'ops_key'            => 'bulldoze',
+            'revenue_source'     => 'scan_tariff',
         ],
 
         // ── Wood — aw_bois.bois (distinct cargo count per period).
@@ -163,6 +201,7 @@ return [
             'operational_tariff' => 35_000,
             'actuals_source'     => 'odoo',
             'ops_key'            => 'wood_per_truckload',
+            'revenue_source'     => 'scan_tariff',
         ],
 
         // ── Other Cargo — services not yet tracked in Odoo (Year 1 budget-only)

@@ -8,41 +8,41 @@ use App\Models\Tenant;
 /**
  * Composition service for the Product Revenue TSD page.
  *
- * Joins three inputs into the shape the Blade view consumes:
+ * Joins four inputs into the shape the Blade view consumes:
  *   - Per-product budgets from BudgetService::loadProducts(tenant, year)
  *   - Monthly scanned volumes from ProductVolumeService::monthlyVolumes(year)
- *   - The product registry from config('budget_products')
+ *   - Class 70 GL revenue from GLRevenueService::fetchClass70Yearly(year)
+ *     (per-account monthly amounts + matched-to-product mapping)
+ *   - Product registry from config('budget_products')
+ *
+ * Revenue source per product is governed by `revenue_source` in the
+ * registry:
+ *   - 'gl_706_named'  → actual revenue from class 706 sub-accounts that
+ *                       name-match the product's `revenue_match` block;
+ *                       unit price is derived as revenue ÷ qty (which is
+ *                       the user-facing "real" rate, not the planned one).
+ *   - 'scan_tariff'   → actual revenue from scan_count × operational_tariff
+ *                       (the original method — unchanged for vehicles + wood).
+ *   - 'pending'       → budget-only product; actuals stay null until Odoo
+ *                       integration is configured upstream.
  *
  * Output structure (consumed by resources/views/product-revenue-tsd.blade.php):
  *
  *   [
  *     'year'        => 2026,
- *     'today_month' => 5,   // months 1..today_month carry actuals; rest = null
+ *     'today_month' => 5,
  *     'vat_rate'    => 0.1925,
- *     'categories'  => [...config('budget_products.categories')...],
- *     'products'    => [
- *       'cars' => [
- *         'key', 'label', 'category', 'color', 'pending',
- *         'volume_only',     // bool — Empty containers etc. (price 0, vol tracked)
- *         'budget_price',
- *         'budget_qty'   => [1..12 monthly],
- *         'actual_qty'   => [1..12 monthly, null past today_month],
- *         'actual_price' => [1..12 monthly, null past today_month],
- *         // Convenience derived figures (precomputed server-side so the
- *         // Blade view doesn't have to recompute them):
- *         'ytd_actual_qty', 'ytd_budget_qty',
- *         'ytd_actual_revenue', 'ytd_budget_revenue',
- *         'volume_effect_xaf', 'price_effect_xaf', 'net_variance_xaf',
- *         'pct_of_plan',
- *       ],
- *       ...
+ *     'categories'  => [...],
+ *     'products'    => [ 'cars' => [...], 'container_import_40' => [...], ... ],
+ *     'totals'      => [
+ *       'tracked'                    => [...],
+ *       'pending_ytd_budget_revenue' => float,
+ *       'class70_ytd_revenue'        => float,   // grand total (= Dashboard HT)
+ *       'class70_monthly'            => [1..12 => float],
  *     ],
- *     'totals' => [
- *       'tracked' => [
- *         'ytd_actual_revenue', 'ytd_budget_revenue',
- *         'volume_effect_xaf', 'price_effect_xaf', 'net_variance_xaf',
- *       ],
- *       'pending_ytd_budget_revenue' => 12_345_678.0,
+ *     'gl_diagnostic' => [
+ *       'matched'   => [ ['code', 'name', 'product_key', 'ytd_revenue'], ... ],
+ *       'unmatched' => [ ['code', 'name', 'ytd_revenue'], ... ],
  *     ],
  *   ]
  */
@@ -50,28 +50,35 @@ final class ProductRevenueService
 {
     private BudgetService $budgets;
     private ProductVolumeService $volumes;
+    private GLRevenueService $gl;
 
-    public function __construct(BudgetService $budgets, ProductVolumeService $volumes)
+    public function __construct(BudgetService $budgets, ProductVolumeService $volumes, GLRevenueService $gl)
     {
         $this->budgets = $budgets;
         $this->volumes = $volumes;
+        $this->gl      = $gl;
     }
 
-    /**
-     * Build the full analysis payload for a tenant + year. `$today` is
-     * injectable for testing — defaults to "today".
-     */
     public function analyze(Tenant $tenant, int $year, ?\DateTimeImmutable $today = null): array
     {
         $today      = $today ?? new \DateTimeImmutable('today');
         $todayMonth = $this->todayMonthForYear($year, $today);
 
-        $registry  = (array) config('budget_products.products', []);
+        $registry      = (array) config('budget_products.products', []);
         $categoriesCfg = (array) config('budget_products.categories', []);
-        $vatRate   = (float) config('budget_products.vat_rate', 0.0);
+        $vatRate       = (float) config('budget_products.vat_rate', 0.0);
 
         $budgets = $this->budgets->loadProducts($tenant->id, $year);
         $volumes = $this->volumes->monthlyVolumes($year);
+        $class70 = $this->gl->fetchClass70Yearly($year);
+        $glMatch = $this->gl->matchAccountsToProducts($class70);
+
+        $glRevenuePerProduct = (array) $glMatch['matched'];   // [key => [month => xaf]]
+        $glAccounts          = (array) $class70['accounts'];
+        $glByAccountMonth    = (array) $class70['by_account_month'];
+        $glMonthlyTotal      = (array) $class70['monthly_totals'];
+        $assigned            = (array) $glMatch['assigned'];   // [account_id => product_key]
+        $unmatchedIds        = array_keys((array) $glMatch['unmatched']);
 
         $products = [];
         $tot = [
@@ -83,80 +90,97 @@ final class ProductRevenueService
         $pendingYtdBudgetRev = 0.0;
 
         foreach ($registry as $product) {
-            $key       = (string) $product['key'];
-            $pending   = (($product['actuals_source'] ?? 'pending') !== 'odoo');
-            $budgetRow = $budgets[$key] ?? ['unit_price' => 0.0, 'volumes' => array_fill(1, 12, 0.0)];
+            $key           = (string) $product['key'];
+            $revenueSource = (string) ($product['revenue_source'] ?? 'scan_tariff');
+            $pending       = $revenueSource === 'pending'
+                          || (($product['actuals_source'] ?? 'pending') !== 'odoo');
 
+            $budgetRow   = $budgets[$key] ?? ['unit_price' => 0.0, 'volumes' => array_fill(1, 12, 0.0)];
             $budgetPrice = (float) $budgetRow['unit_price'];
             $budgetQty   = $this->vector($budgetRow['volumes']);
 
-            // Operational tariff = the per-unit billing rate the cargo
-            // service actually applies on each scan (the "grille
-            // tarifaire" hard-coded in OperationsService). When this
-            // differs from the budgeted unit_price, the variance table
-            // surfaces a non-zero price_effect — the user sees at a glance
-            // whether achieved billing matched plan. For pending or
-            // unconfigured products the tariff falls back to the budget
-            // price (which keeps the price_effect at zero).
             $operationalTariff = (float) ($product['operational_tariff'] ?? $budgetPrice);
 
-            // Actuals: from Odoo volumes for non-pending products. The
-            // achieved per-unit price equals the operational tariff by
-            // construction (revenue = qty × tariff, so price = tariff).
-            // This is the cleanest interpretation that matches what the
-            // operations team is actually billing.
-            $actualQty   = $pending
-                ? array_fill(1, 12, null)
-                : $this->actualVector($volumes[$key] ?? [], $todayMonth);
-            $actualPrice = $pending
-                ? array_fill(1, 12, null)
-                : $this->priceVector($operationalTariff, $todayMonth);
+            // ── Compute actual qty + actual revenue per month, branching
+            //    on the configured revenue source.
+            if ($pending) {
+                $actualQty     = array_fill(1, 12, null);
+                $actualRevenue = array_fill(1, 12, null);
+                $actualPrice   = array_fill(1, 12, null);
+            } else {
+                // qty: scanned volume from ops (same for both sources)
+                $actualQty = $this->actualVector($volumes[$key] ?? [], $todayMonth);
+
+                if ($revenueSource === 'gl_706_named') {
+                    // Revenue from matched 706 accounts. Price = rev / qty
+                    // per month (the user's explicit ask: actual unit price
+                    // = revenue ÷ quantities). For months where qty == 0
+                    // but revenue exists (rare — invoicing precedes scan),
+                    // we surface revenue with a null price to avoid
+                    // dividing by zero.
+                    $glMonthly = (array) ($glRevenuePerProduct[$key] ?? array_fill(1, 12, 0.0));
+                    [$actualRevenue, $actualPrice] = $this->revenuePriceFromGL($glMonthly, $actualQty, $todayMonth);
+                } else {
+                    // scan_tariff: rev = qty × operational_tariff, price = tariff.
+                    [$actualRevenue, $actualPrice] = $this->revenuePriceFromTariff($actualQty, $operationalTariff, $todayMonth);
+                }
+            }
 
             // YTD figures (months 1..todayMonth inclusive).
             $ytdActQty = 0; $ytdActRev = 0.0;
             $ytdBudQty = 0; $ytdBudRev = 0.0;
             for ($m = 1; $m <= $todayMonth; $m++) {
                 $aq = $actualQty[$m] ?? null;
-                $ap = $actualPrice[$m] ?? null;
-                if ($aq !== null && $ap !== null) {
+                $ar = $actualRevenue[$m] ?? null;
+                if ($aq !== null) {
                     $ytdActQty += (int) $aq;
-                    $ytdActRev += (float) $aq * (float) $ap;
+                }
+                if ($ar !== null) {
+                    $ytdActRev += (float) $ar;
                 }
                 $ytdBudQty += (int) $budgetQty[$m];
                 $ytdBudRev += (float) $budgetQty[$m] * $budgetPrice;
             }
 
-            // Price-volume-mix variance, scoped to YTD.
-            // Volume effect = (act_qty − bud_qty) × bud_price
-            // Price effect  = (act_price − bud_price) × act_qty
-            // (Decomposes the total revenue variance cleanly.)
-            if (!$pending) {
+            // Variance — only meaningful when both budget and actuals exist.
+            $hasBudget = $ytdBudQty > 0;
+            if (!$pending && $hasBudget) {
                 $volEffect   = ((float) $ytdActQty - (float) $ytdBudQty) * $budgetPrice;
                 $achievedAvg = $ytdActQty > 0 ? $ytdActRev / $ytdActQty : 0.0;
                 $priceEffect = ($achievedAvg - $budgetPrice) * (float) $ytdActQty;
                 $netVar      = $ytdActRev - $ytdBudRev;
-                $pct         = $ytdBudQty > 0 ? 100.0 * $ytdActQty / max(1, $ytdBudQty) : null;
+                $pct         = 100.0 * $ytdActQty / $ytdBudQty;
 
-                $tot['ytd_actual_revenue']  += $ytdActRev;
                 $tot['ytd_budget_revenue']  += $ytdBudRev;
+                $tot['ytd_actual_revenue']  += $ytdActRev;
                 $tot['volume_effect_xaf']   += $volEffect;
                 $tot['price_effect_xaf']    += $priceEffect;
+            } elseif (!$pending && !$hasBudget) {
+                // Containers (typically): actuals exist but no budget was
+                // entered. Revenue still rolls into the tracked total
+                // (we don't want to lose it), but variance is N/A.
+                $volEffect = 0.0; $priceEffect = 0.0; $netVar = null; $pct = null;
+                $tot['ytd_actual_revenue'] += $ytdActRev;
             } else {
+                // Pending — budget without actuals.
                 $volEffect = 0.0; $priceEffect = 0.0; $netVar = null; $pct = null;
                 $pendingYtdBudgetRev += $ytdBudRev;
             }
 
             $products[$key] = [
-                'key'              => $key,
-                'label'            => (string) $product['label'],
-                'category'         => (string) $product['category'],
-                'color'            => (string) ($product['color'] ?? '#0d6e6e'),
-                'pending'          => $pending,
-                'volume_only'      => (bool) ($product['volume_only'] ?? false),
-                'budget_price'     => $budgetPrice,
-                'budget_qty'       => array_values($budgetQty),     // 0-indexed for ECharts
-                'actual_qty'       => array_values($actualQty),
-                'actual_price'     => array_values($actualPrice),
+                'key'                 => $key,
+                'label'               => (string) $product['label'],
+                'category'            => (string) $product['category'],
+                'color'               => (string) ($product['color'] ?? '#0d6e6e'),
+                'pending'             => $pending,
+                'volume_only'         => (bool) ($product['volume_only'] ?? false),
+                'revenue_source'      => $revenueSource,
+                'has_budget'          => $hasBudget,
+                'budget_price'        => $budgetPrice,
+                'budget_qty'          => array_values($budgetQty),
+                'actual_qty'          => array_values($actualQty),
+                'actual_price'        => array_values($actualPrice),
+                'actual_revenue'      => array_values($actualRevenue),
                 'ytd_actual_qty'      => $ytdActQty,
                 'ytd_budget_qty'      => $ytdBudQty,
                 'ytd_actual_revenue'  => $ytdActRev,
@@ -170,6 +194,17 @@ final class ProductRevenueService
 
         $tot['net_variance_xaf'] = $tot['ytd_actual_revenue'] - $tot['ytd_budget_revenue'];
 
+        // ── Class 70 YTD total (Dashboard-comparable HT revenue figure)
+        $class70YtdTotal = 0.0;
+        for ($m = 1; $m <= $todayMonth; $m++) {
+            $class70YtdTotal += (float) ($glMonthlyTotal[$m] ?? 0);
+        }
+
+        // ── Diagnostic: every 706 account + which product it landed in
+        $diagnostic = $this->buildDiagnostic(
+            $glAccounts, $glByAccountMonth, $assigned, $unmatchedIds, $registry, $todayMonth
+        );
+
         return [
             'year'        => $year,
             'today_month' => $todayMonth,
@@ -179,16 +214,119 @@ final class ProductRevenueService
             'totals'      => [
                 'tracked'                    => $tot,
                 'pending_ytd_budget_revenue' => $pendingYtdBudgetRev,
+                'class70_ytd_revenue'        => $class70YtdTotal,
+                'class70_monthly'            => $glMonthlyTotal,
             ],
+            'gl_diagnostic' => $diagnostic,
         ];
     }
 
     /**
-     * Resolve "today" to a month number 1..12 for the requested year.
-     * For a future year the slider points to month 0 (no actuals yet);
-     * for a past year the slider points to 12 (full year of actuals).
-     * For the current year, today_month = today's month.
+     * Compose monthly revenue + monthly per-unit price for products
+     * whose actual revenue comes from the GL (class 706 named accounts).
+     *
+     * @return array{0: array<int, ?float>, 1: array<int, ?float>} [revenue, price]
      */
+    private function revenuePriceFromGL(array $glMonthly, array $actualQty, int $todayMonth): array
+    {
+        $rev = []; $price = [];
+        for ($m = 1; $m <= 12; $m++) {
+            if ($m > $todayMonth) {
+                $rev[$m]   = null;
+                $price[$m] = null;
+                continue;
+            }
+            $monthlyRev = (float) ($glMonthly[$m] ?? 0);
+            $rev[$m] = $monthlyRev;
+            $qty = $actualQty[$m] ?? null;
+            $price[$m] = ($qty !== null && $qty > 0)
+                ? $monthlyRev / (float) $qty
+                : null;
+        }
+        return [$rev, $price];
+    }
+
+    /**
+     * Compose monthly revenue + monthly per-unit price for products on
+     * the scan_count × operational_tariff method (vehicles + wood,
+     * unchanged behaviour).
+     *
+     * @return array{0: array<int, ?float>, 1: array<int, ?float>} [revenue, price]
+     */
+    private function revenuePriceFromTariff(array $actualQty, float $tariff, int $todayMonth): array
+    {
+        $rev = []; $price = [];
+        for ($m = 1; $m <= 12; $m++) {
+            if ($m > $todayMonth) {
+                $rev[$m]   = null;
+                $price[$m] = null;
+                continue;
+            }
+            $qty = $actualQty[$m] ?? null;
+            $rev[$m]   = $qty === null ? null : (float) $qty * $tariff;
+            $price[$m] = $tariff;
+        }
+        return [$rev, $price];
+    }
+
+    /**
+     * Build the matched/unmatched 706-account diagnostic the view shows
+     * under the variance table. Includes YTD revenue per account so the
+     * user can see at a glance which lines aren't being captured.
+     */
+    private function buildDiagnostic(
+        array $accounts,
+        array $byAccountMonth,
+        array $assigned,
+        array $unmatchedIds,
+        array $registry,
+        int $todayMonth
+    ): array {
+        $productLabel = [];
+        foreach ($registry as $p) $productLabel[(string) $p['key']] = (string) $p['label'];
+
+        $sumYtd = function (array $monthly) use ($todayMonth) {
+            $sum = 0.0;
+            for ($m = 1; $m <= $todayMonth; $m++) {
+                $sum += (float) ($monthly[$m] ?? 0);
+            }
+            return $sum;
+        };
+
+        $matched = [];
+        foreach ($assigned as $accountId => $productKey) {
+            $info = $accounts[$accountId] ?? null;
+            if (!$info) continue;
+            $matched[] = [
+                'code'        => (string) $info['code'],
+                'name'        => (string) $info['name'],
+                'product_key' => $productKey,
+                'product_label' => $productLabel[$productKey] ?? $productKey,
+                'ytd_revenue' => $sumYtd((array) ($byAccountMonth[$accountId] ?? [])),
+            ];
+        }
+        // Sort matched alphabetically by code so the diagnostic reads top-down.
+        usort($matched, fn($a, $b) => strcmp($a['code'], $b['code']));
+
+        $unmatched = [];
+        foreach ($unmatchedIds as $accountId) {
+            $info = $accounts[$accountId] ?? null;
+            if (!$info) continue;
+            // Only show class 706 accounts in the "container" diagnostic
+            // (other class 70 accounts are vehicle / wood / misc revenue
+            // expected to be unmatched here).
+            $unmatched[] = [
+                'code'        => (string) $info['code'],
+                'name'        => (string) $info['name'],
+                'ytd_revenue' => $sumYtd((array) ($byAccountMonth[$accountId] ?? [])),
+                'in_706'      => str_starts_with((string) $info['code'], '706'),
+            ];
+        }
+        usort($unmatched, fn($a, $b) => strcmp($a['code'], $b['code']));
+
+        return ['matched' => $matched, 'unmatched' => $unmatched];
+    }
+
     private function todayMonthForYear(int $year, \DateTimeImmutable $today): int
     {
         $currentYear = (int) $today->format('Y');
@@ -197,7 +335,6 @@ final class ProductRevenueService
         return (int) $today->format('n');
     }
 
-    /** Coerce stored monthly volumes into a 1..12-indexed float vector. */
     private function vector(array $src): array
     {
         $out = [];
@@ -219,23 +356,8 @@ final class ProductRevenueService
             if ($m > $todayMonth) {
                 $out[$m] = null;
             } else {
-                // Source uses 1..12 indices.
                 $out[$m] = $src[$m] ?? null;
             }
-        }
-        return $out;
-    }
-
-    /**
-     * Achieved unit price vector. V1: defaults to budget price for months
-     * with actuals (no separate price feed yet). When a future iteration
-     * adds invoice-derived price tracking, swap this method to read it.
-     */
-    private function priceVector(float $budgetPrice, int $todayMonth): array
-    {
-        $out = [];
-        for ($m = 1; $m <= 12; $m++) {
-            $out[$m] = $m > $todayMonth ? null : $budgetPrice;
         }
         return $out;
     }
