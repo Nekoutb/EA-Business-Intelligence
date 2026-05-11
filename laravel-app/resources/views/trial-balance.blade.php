@@ -2,6 +2,14 @@
 @section('title', 'Trial Balance')
 
 @section('page-title', 'Trial Balance · Balance Générale')
+
+{{-- Freeze the YoY button on the master period filter — YoY is a
+     comparison concept and a Trial Balance is a point-in-time snapshot,
+     so YoY has no meaningful rendering here. layouts/app.blade.php
+     reads this section and disables the button (sage / "is-frozen"
+     style). YTD / MTD / Month stay active. --}}
+@section('mfilter-frozen', 'yoy')
+
 @section('content')
     @if ($error)
         <div class="bg-coral-50 border border-coral-200 text-coral-800 rounded-xl p-4 text-sm mb-6">
@@ -67,74 +75,60 @@
               <div class="text-[10.5px] flex items-center gap-3 flex-wrap">
                   <span class="inline-flex items-center gap-1.5">
                       Balance check:
-                      @if ($periodType !== 'month')
-                          <span class="font-semibold {{ $balanceCheck['opening'] ? 'text-sage-700' : 'text-coral-700' }}">
-                              Opening {{ $balanceCheck['opening'] ? '✓' : '✗' }}
-                          </span>
-                      @endif
+                      <span class="font-semibold {{ $balanceCheck['opening'] ? 'text-sage-700' : 'text-coral-700' }}">
+                          Opening {{ $balanceCheck['opening'] ? '✓' : '✗' }}
+                      </span>
                       <span class="font-semibold {{ $balanceCheck['movement'] ? 'text-sage-700' : 'text-coral-700' }}">
                           Movement {{ $balanceCheck['movement'] ? '✓' : '✗' }}
                       </span>
-                      @if ($periodType !== 'month')
-                          <span class="font-semibold {{ $balanceCheck['closing'] ? 'text-sage-700' : 'text-coral-700' }}">
-                              Closing {{ $balanceCheck['closing'] ? '✓' : '✗' }}
-                          </span>
-                      @endif
+                      <span class="font-semibold {{ $balanceCheck['closing'] ? 'text-sage-700' : 'text-coral-700' }}">
+                          Closing {{ $balanceCheck['closing'] ? '✓' : '✗' }}
+                      </span>
                   </span>
               </div>
           </div>
 
-          @php $monthOnly = ($periodType === 'month'); @endphp
+          {{-- All six columns (Opening / Movements / Closing × Dr/Cr) render in
+               every view since 2026-05-11: TrialBalanceService now computes
+               an opening balance for the month view too (= closing balance
+               of the previous month), so opening + movements + closing roll
+               forward consistently regardless of which filter is picked. --}}
           <div class="overflow-x-auto">
-              <table class="w-full text-[11.5px]" style="min-width: {{ $monthOnly ? '700px' : '1200px' }};">
+              <table class="w-full text-[11.5px]" style="min-width:1200px;">
                   <thead class="bg-white">
                       {{-- Group header row --}}
                       <tr class="border-b border-[#cbc7be] bg-[#fcfbf8]">
                           <th class="text-left py-2 pl-4 pr-2 sticky left-0 bg-[#fcfbf8] z-10" colspan="2">
                               <span class="text-[10px] uppercase tracking-wider text-[#5a6a70] font-semibold">Account</span>
                           </th>
-                          @if (!$monthOnly)
-                              <th class="py-2 px-2 text-center text-[10px] uppercase tracking-wider text-[#5a6a70] font-semibold border-l border-[#e8e4de]" colspan="2">Opening Balance · Solde de début</th>
-                          @endif
+                          <th class="py-2 px-2 text-center text-[10px] uppercase tracking-wider text-[#5a6a70] font-semibold border-l border-[#e8e4de]" colspan="2">Opening Balance · Solde de début</th>
                           <th class="py-2 px-2 text-center text-[10px] uppercase tracking-wider text-[#5a6a70] font-semibold border-l border-[#e8e4de]" colspan="2">Movements · Mouvements</th>
-                          @if (!$monthOnly)
-                              <th class="py-2 px-2 text-center text-[10px] uppercase tracking-wider text-[#5a6a70] font-semibold border-l border-[#e8e4de]" colspan="2">Closing Balance · Solde de fin</th>
-                          @endif
+                          <th class="py-2 px-2 text-center text-[10px] uppercase tracking-wider text-[#5a6a70] font-semibold border-l border-[#e8e4de]" colspan="2">Closing Balance · Solde de fin</th>
                       </tr>
                       {{-- Sub-header row --}}
                       <tr class="border-b border-[#cbc7be] bg-[#fcfbf8]">
                           <th class="text-left py-1.5 pl-4 pr-2 sticky left-0 bg-[#fcfbf8] z-10 text-[10px] font-semibold text-[#5a6a70]" style="width:6rem;">N° Compte</th>
                           <th class="text-left py-1.5 px-2 sticky left-[6rem] bg-[#fcfbf8] z-10 text-[10px] font-semibold text-[#5a6a70]" style="width:18rem;">Intitulé</th>
-                          @if (!$monthOnly)
-                              <th class="py-1.5 px-2 text-right text-[10px] font-bold text-[#5a6a70] border-l border-[#e8e4de]" style="width:8rem;">Débiteur</th>
-                              <th class="py-1.5 px-2 text-right text-[10px] font-bold text-[#5a6a70]" style="width:8rem;">Créditeur</th>
-                          @endif
+                          <th class="py-1.5 px-2 text-right text-[10px] font-bold text-[#5a6a70] border-l border-[#e8e4de]" style="width:8rem;">Débiteur</th>
+                          <th class="py-1.5 px-2 text-right text-[10px] font-bold text-[#5a6a70]" style="width:8rem;">Créditeur</th>
                           <th class="py-1.5 px-2 text-right text-[10px] font-bold text-[#5a6a70] border-l border-[#e8e4de]" style="width:8rem;">Débit</th>
                           <th class="py-1.5 px-2 text-right text-[10px] font-bold text-[#5a6a70]" style="width:8rem;">Crédit</th>
-                          @if (!$monthOnly)
-                              <th class="py-1.5 px-2 text-right text-[10px] font-bold text-[#5a6a70] border-l border-[#e8e4de]" style="width:8rem;">Débiteur</th>
-                              <th class="py-1.5 px-2 text-right text-[10px] font-bold text-[#5a6a70]" style="width:8rem;">Créditeur</th>
-                          @endif
+                          <th class="py-1.5 px-2 text-right text-[10px] font-bold text-[#5a6a70] border-l border-[#e8e4de]" style="width:8rem;">Débiteur</th>
+                          <th class="py-1.5 px-2 text-right text-[10px] font-bold text-[#5a6a70]" style="width:8rem;">Créditeur</th>
                       </tr>
                   </thead>
 
                   <tbody class="divide-y divide-[#f1ede5]">
                       @foreach ($rows as $row)
-                          {{-- In month-only mode, suppress dormant accounts whose movements are both zero --}}
-                          @if ($monthOnly && $row['movement_dr'] <= 0.01 && $row['movement_cr'] <= 0.01) @continue @endif
                           <tr class="hover:bg-[#faf8f5] transition-colors">
                               <td class="text-left pl-4 pr-2 py-1 sticky left-0 bg-white z-10 font-mono text-[11px] text-[#1e3d44]" style="width:6rem;">{{ $row['code'] }}</td>
                               <td class="text-left px-2 py-1 sticky bg-white z-10 text-[11px] text-[#2d3748] truncate" style="width:18rem;left:6rem;" title="{{ $row['name'] }}">{{ $row['name'] }}</td>
-                              @if (!$monthOnly)
-                                  <td class="text-right tabular-nums px-2 py-1 border-l border-[#e8e4de] {{ $row['opening_dr'] > 0 ? 'text-[#2d3748]' : 'text-[#a09d95]' }}">{{ $fmt($row['opening_dr']) }}</td>
-                                  <td class="text-right tabular-nums px-2 py-1 {{ $row['opening_cr'] > 0 ? 'text-[#2d3748]' : 'text-[#a09d95]' }}">{{ $fmt($row['opening_cr']) }}</td>
-                              @endif
+                              <td class="text-right tabular-nums px-2 py-1 border-l border-[#e8e4de] {{ $row['opening_dr'] > 0 ? 'text-[#2d3748]' : 'text-[#a09d95]' }}">{{ $fmt($row['opening_dr']) }}</td>
+                              <td class="text-right tabular-nums px-2 py-1 {{ $row['opening_cr'] > 0 ? 'text-[#2d3748]' : 'text-[#a09d95]' }}">{{ $fmt($row['opening_cr']) }}</td>
                               <td class="text-right tabular-nums px-2 py-1 border-l border-[#e8e4de] {{ $row['movement_dr'] > 0 ? 'text-[#2d3748]' : 'text-[#a09d95]' }}">{{ $fmt($row['movement_dr']) }}</td>
                               <td class="text-right tabular-nums px-2 py-1 {{ $row['movement_cr'] > 0 ? 'text-[#2d3748]' : 'text-[#a09d95]' }}">{{ $fmt($row['movement_cr']) }}</td>
-                              @if (!$monthOnly)
-                                  <td class="text-right tabular-nums px-2 py-1 border-l border-[#e8e4de] {{ $row['closing_dr'] > 0 ? 'text-[#2d3748] font-semibold' : 'text-[#a09d95]' }}">{{ $fmt($row['closing_dr']) }}</td>
-                                  <td class="text-right tabular-nums px-2 py-1 {{ $row['closing_cr'] > 0 ? 'text-[#2d3748] font-semibold' : 'text-[#a09d95]' }}">{{ $fmt($row['closing_cr']) }}</td>
-                              @endif
+                              <td class="text-right tabular-nums px-2 py-1 border-l border-[#e8e4de] {{ $row['closing_dr'] > 0 ? 'text-[#2d3748] font-semibold' : 'text-[#a09d95]' }}">{{ $fmt($row['closing_dr']) }}</td>
+                              <td class="text-right tabular-nums px-2 py-1 {{ $row['closing_cr'] > 0 ? 'text-[#2d3748] font-semibold' : 'text-[#a09d95]' }}">{{ $fmt($row['closing_cr']) }}</td>
                           </tr>
                       @endforeach
                   </tbody>
@@ -142,16 +136,12 @@
                   <tfoot>
                       <tr class="bg-[#1e3d44] text-white border-t-2 border-[#1e3d44]">
                           <td class="py-2 pl-4 pr-2 sticky left-0 bg-[#1e3d44] z-10 font-bold text-[11px]" colspan="2">TOTAL · {{ count($rows) }} accounts</td>
-                          @if (!$monthOnly)
-                              <td class="text-right tabular-nums px-2 py-2 border-l border-[#3d5e64] font-bold">{{ $fmt($totals['opening_dr']) }}</td>
-                              <td class="text-right tabular-nums px-2 py-2 font-bold">{{ $fmt($totals['opening_cr']) }}</td>
-                          @endif
+                          <td class="text-right tabular-nums px-2 py-2 border-l border-[#3d5e64] font-bold">{{ $fmt($totals['opening_dr']) }}</td>
+                          <td class="text-right tabular-nums px-2 py-2 font-bold">{{ $fmt($totals['opening_cr']) }}</td>
                           <td class="text-right tabular-nums px-2 py-2 border-l border-[#3d5e64] font-bold">{{ $fmt($totals['movement_dr']) }}</td>
                           <td class="text-right tabular-nums px-2 py-2 font-bold">{{ $fmt($totals['movement_cr']) }}</td>
-                          @if (!$monthOnly)
-                              <td class="text-right tabular-nums px-2 py-2 border-l border-[#3d5e64] font-bold">{{ $fmt($totals['closing_dr']) }}</td>
-                              <td class="text-right tabular-nums px-2 py-2 font-bold">{{ $fmt($totals['closing_cr']) }}</td>
-                          @endif
+                          <td class="text-right tabular-nums px-2 py-2 border-l border-[#3d5e64] font-bold">{{ $fmt($totals['closing_dr']) }}</td>
+                          <td class="text-right tabular-nums px-2 py-2 font-bold">{{ $fmt($totals['closing_cr']) }}</td>
                       </tr>
                   </tfoot>
               </table>
