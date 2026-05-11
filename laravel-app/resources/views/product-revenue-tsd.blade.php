@@ -451,11 +451,12 @@
          regional services). If a 706 account name changes upstream or
          a new category is added, this is where the operator notices. --}}
     @php
-      $matched   = (array) ($glDiag['matched']   ?? []);
-      $unmatched = (array) ($glDiag['unmatched'] ?? []);
-      $unmatched706 = array_values(array_filter($unmatched, fn ($r) => $r['in_706'] ?? false));
+      $matched       = (array) ($glDiag['matched']       ?? []);
+      $redistributed = (array) ($glDiag['redistributed'] ?? []);
+      $unmatched     = (array) ($glDiag['unmatched']     ?? []);
+      $unmatched706  = array_values(array_filter($unmatched, fn ($r) => $r['in_706'] ?? false));
     @endphp
-    @if (!empty($matched) || !empty($unmatched706))
+    @if (!empty($matched) || !empty($redistributed) || !empty($unmatched706))
       <h2 class="prt-section">Diagnostic · Class 706 account mapping</h2>
       <div class="v5-card">
         <div class="v5-card__h">
@@ -490,6 +491,22 @@
                 @endforeach
               @endif
 
+              @if (!empty($redistributed))
+                <tr class="cat-row"><td colspan="4">↩ REDISTRIBUTED ({{ count($redistributed) }} {{ count($redistributed) === 1 ? 'account' : 'accounts' }}) — split across multiple products per config rule</td></tr>
+                @foreach ($redistributed as $row)
+                  <tr>
+                    <td style="text-align:left;font-family:monospace;">{{ $row['code'] }}</td>
+                    <td style="text-align:left;">{{ $row['name'] }}</td>
+                    <td style="text-align:left;color:#6d28d9;">
+                      @foreach ($row['targets'] as $i => $t)
+                        {{ number_format($t['share_pct'], 1) }}% → {{ $t['product_label'] }}@if (!$loop->last) · @endif
+                      @endforeach
+                    </td>
+                    <td>{{ number_format($row['ytd_revenue'] / 1e6, 1) }}</td>
+                  </tr>
+                @endforeach
+              @endif
+
               @if (!empty($unmatched706))
                 <tr class="cat-row"><td colspan="4">⚠ UNMATCHED 706 ({{ count($unmatched706) }} {{ count($unmatched706) === 1 ? 'account' : 'accounts' }}) — not assigned to any container product</td></tr>
                 @foreach ($unmatched706 as $row)
@@ -507,14 +524,18 @@
         <div class="v5-card__f">
           <b>Reading:</b>
           Total revenue YTD ({{ $fmtMShort($class70Ytd) }} XAF) is the sum of every class 70 account
-          movement — it reconciles to the Dashboard's headline figure on an HT basis.
+          movement — reconciles to the Dashboard's headline figure on an HT basis.
+          @if (!empty($redistributed))
+            The {{ count($redistributed) }} redistributed {{ count($redistributed) === 1 ? 'account' : 'accounts' }}
+            ({{ $fmtMShort(array_sum(array_column($redistributed, 'ytd_revenue'))) }} XAF YTD)
+            are catch-all GL buckets split across multiple products per the
+            <code style="font-size:11px;background:#f3f4f6;padding:1px 4px;border-radius:3px">revenue_redistribute</code>
+            rules in <code style="font-size:11px;background:#f3f4f6;padding:1px 4px;border-radius:3px">config/budget_products.php</code>.
+          @endif
           @if (!empty($unmatched706))
-            The {{ count($unmatched706) }} unmatched 706 accounts above ({{ $fmtMShort(array_sum(array_column($unmatched706, 'ytd_revenue'))) }} XAF YTD)
-            are container-related revenue that the current
-            <code style="font-size:11px;background:#f3f4f6;padding:1px 4px;border-radius:3px">revenue_match</code>
-            patterns don't claim — typically OOG (Out-Of-Gauge) cargo or generic regional services not
-            yet broken out as a product. Tell me which product they should land in and I'll widen the
-            pattern in a follow-up.
+            <b>{{ count($unmatched706) }} {{ count($unmatched706) === 1 ? 'account is' : 'accounts are' }} still unmatched in 706</b>
+            ({{ $fmtMShort(array_sum(array_column($unmatched706, 'ytd_revenue'))) }} XAF YTD)
+            — tell me which product they should land in and I'll widen the patterns.
           @endif
         </div>
       </div>

@@ -78,6 +78,7 @@ final class ProductRevenueService
         $glByAccountMonth    = (array) $class70['by_account_month'];
         $glMonthlyTotal      = (array) $class70['monthly_totals'];
         $assigned            = (array) $glMatch['assigned'];   // [account_id => product_key]
+        $redistributed       = (array) ($glMatch['redistributed'] ?? []);
         $unmatchedIds        = array_keys((array) $glMatch['unmatched']);
 
         $products = [];
@@ -202,7 +203,7 @@ final class ProductRevenueService
 
         // ── Diagnostic: every 706 account + which product it landed in
         $diagnostic = $this->buildDiagnostic(
-            $glAccounts, $glByAccountMonth, $assigned, $unmatchedIds, $registry, $todayMonth
+            $glAccounts, $glByAccountMonth, $assigned, $redistributed, $unmatchedIds, $registry, $todayMonth
         );
 
         return [
@@ -270,14 +271,24 @@ final class ProductRevenueService
     }
 
     /**
-     * Build the matched/unmatched 706-account diagnostic the view shows
-     * under the variance table. Includes YTD revenue per account so the
-     * user can see at a glance which lines aren't being captured.
+     * Build the matched/redistributed/unmatched diagnostic the view
+     * shows under the variance table. Three buckets:
+     *
+     *   matched       — accounts directly assigned to ONE product
+     *   redistributed — accounts split across multiple products via a
+     *                   config('budget_products.revenue_redistribute') rule
+     *   unmatched     — accounts not claimed by either path; flagged in_706
+     *                   so the view can highlight the ones inside the
+     *                   container revenue class as "needs attention"
+     *
+     * YTD revenue is included on every row so the operator sees at a
+     * glance what's contributing where.
      */
     private function buildDiagnostic(
         array $accounts,
         array $byAccountMonth,
         array $assigned,
+        array $redistributed,
         array $unmatchedIds,
         array $registry,
         int $todayMonth
@@ -298,23 +309,41 @@ final class ProductRevenueService
             $info = $accounts[$accountId] ?? null;
             if (!$info) continue;
             $matched[] = [
-                'code'        => (string) $info['code'],
-                'name'        => (string) $info['name'],
-                'product_key' => $productKey,
+                'code'          => (string) $info['code'],
+                'name'          => (string) $info['name'],
+                'product_key'   => $productKey,
                 'product_label' => $productLabel[$productKey] ?? $productKey,
+                'ytd_revenue'   => $sumYtd((array) ($byAccountMonth[$accountId] ?? [])),
+            ];
+        }
+        usort($matched, fn($a, $b) => strcmp($a['code'], $b['code']));
+
+        $redistributedOut = [];
+        foreach ($redistributed as $accountId => $info) {
+            $acct = $accounts[$accountId] ?? null;
+            if (!$acct) continue;
+            $targetsForDisplay = [];
+            foreach ((array) ($info['targets'] ?? []) as $targetKey => $share) {
+                $targetsForDisplay[] = [
+                    'product_key'   => (string) $targetKey,
+                    'product_label' => $productLabel[(string) $targetKey] ?? (string) $targetKey,
+                    'share_pct'     => 100.0 * (float) $share,
+                ];
+            }
+            $redistributedOut[] = [
+                'code'        => (string) $acct['code'],
+                'name'        => (string) $acct['name'],
+                'description' => (string) ($info['description'] ?? ''),
+                'targets'     => $targetsForDisplay,
                 'ytd_revenue' => $sumYtd((array) ($byAccountMonth[$accountId] ?? [])),
             ];
         }
-        // Sort matched alphabetically by code so the diagnostic reads top-down.
-        usort($matched, fn($a, $b) => strcmp($a['code'], $b['code']));
+        usort($redistributedOut, fn($a, $b) => strcmp($a['code'], $b['code']));
 
         $unmatched = [];
         foreach ($unmatchedIds as $accountId) {
             $info = $accounts[$accountId] ?? null;
             if (!$info) continue;
-            // Only show class 706 accounts in the "container" diagnostic
-            // (other class 70 accounts are vehicle / wood / misc revenue
-            // expected to be unmatched here).
             $unmatched[] = [
                 'code'        => (string) $info['code'],
                 'name'        => (string) $info['name'],
@@ -324,7 +353,11 @@ final class ProductRevenueService
         }
         usort($unmatched, fn($a, $b) => strcmp($a['code'], $b['code']));
 
-        return ['matched' => $matched, 'unmatched' => $unmatched];
+        return [
+            'matched'       => $matched,
+            'redistributed' => $redistributedOut,
+            'unmatched'     => $unmatched,
+        ];
     }
 
     private function todayMonthForYear(int $year, \DateTimeImmutable $today): int

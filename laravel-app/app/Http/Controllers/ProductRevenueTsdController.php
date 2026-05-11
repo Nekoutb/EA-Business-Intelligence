@@ -47,7 +47,7 @@ final class ProductRevenueTsdController extends Controller
                 new ProductVolumeService($client),
                 new GLRevenueService($client),
             );
-            $cacheKey = 'prt_v3_' . $tenant->id . '_' . $year;
+            $cacheKey = 'prt_v4_' . $tenant->id . '_' . $year;
             $analysis = ea_cached($cacheKey, fn() => $svc->analyze($tenant, $year, $today));
         } catch (\Throwable $e) {
             $error = $e->getMessage();
