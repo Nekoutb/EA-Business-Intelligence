@@ -474,6 +474,209 @@
         }
         .recognition-cell p { font-size: var(--fs-caption); color: var(--fg-secondary); margin: 0; line-height: 1.5; }
 
+        /* ----------- DEMO (click-to-reveal capability cards) -----------
+           Six demo tiles arranged 3×2. Each tile shows the headline,
+           one-line summary, and a mono-font stat strip. Click expands
+           the tile's detail panel inline (full preview, no modal). Only
+           one tile open at a time — opening another collapses the
+           previous. Layout snaps to 2 cols at 960px, 1 col at 600px.
+        ---------------------------------------------------------------- */
+        .demo-grid {
+            display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px;
+            background: var(--ink-200); border: 1px solid var(--ink-200);
+            border-radius: var(--radius-md);
+            overflow: hidden; margin-top: 32px;
+        }
+        @media (max-width: 960px) { .demo-grid { grid-template-columns: repeat(2, 1fr); } }
+        @media (max-width: 600px) { .demo-grid { grid-template-columns: 1fr; } }
+        .demo-tile {
+            background: var(--bg-page);
+            padding: 24px;
+            display: flex; flex-direction: column; gap: 14px;
+            min-height: 220px;
+            cursor: pointer;
+            text-align: left; width: 100%;
+            font-family: inherit;
+            border: 0;
+            transition: background var(--dur-quick);
+            position: relative;
+        }
+        .demo-tile:hover { background: var(--parchment-100); }
+        .demo-tile.is-active { background: var(--accent-soft); }
+        .demo-tile .feature-eyebrow {
+            font-family: var(--font-mono); font-size: var(--fs-micro);
+            letter-spacing: 0.10em; text-transform: uppercase;
+            color: var(--bronze-500);
+        }
+        .demo-tile h3 {
+            font-family: var(--font-serif);
+            font-size: 22px; font-weight: var(--fw-regular);
+            line-height: 1.25; margin: 0;
+            color: var(--fg-primary);
+            letter-spacing: var(--tracking-tight);
+        }
+        .demo-tile h3 em { font-style: italic; color: var(--bronze-500); }
+        .demo-tile p {
+            font-size: var(--fs-caption);
+            color: var(--fg-secondary);
+            line-height: 1.55; margin: 0;
+            flex: 1 1 auto;
+        }
+        .demo-tile .stat-line {
+            display: flex; flex-wrap: wrap; gap: 4px 14px;
+            font-family: var(--font-mono); font-size: var(--fs-micro);
+            color: var(--fg-tertiary);
+            border-top: 1px solid var(--ink-200);
+            padding-top: 12px;
+        }
+        .demo-tile .stat-line strong {
+            color: var(--fg-primary); font-weight: var(--fw-medium);
+        }
+        .demo-tile .open-hint {
+            font-family: var(--font-sans); font-size: var(--fs-micro);
+            letter-spacing: var(--tracking-eyebrow); text-transform: uppercase;
+            font-weight: var(--fw-medium); color: var(--fg-primary);
+            display: inline-flex; align-items: center; gap: 6px;
+        }
+        .demo-tile .open-hint::after {
+            content: '→'; transition: transform var(--dur-quick);
+        }
+        .demo-tile.is-active .open-hint::after { transform: rotate(90deg); }
+
+        /* Detail panels — rendered after the grid, only the active one shows */
+        .demo-panel {
+            display: none;
+            background: var(--bg-page);
+            border: 1px solid var(--ink-200);
+            border-top: 0;
+            border-radius: 0 0 var(--radius-md) var(--radius-md);
+            padding: 32px 36px 28px;
+            animation: rise 0.5s var(--ease-emphasis) both;
+        }
+        .demo-panel.is-active { display: block; }
+        .demo-panel__head {
+            display: flex; justify-content: space-between; align-items: baseline;
+            gap: 24px; flex-wrap: wrap;
+            margin-bottom: 18px;
+        }
+        .demo-panel__title {
+            font-family: var(--font-serif); font-size: 26px;
+            font-weight: var(--fw-regular); line-height: 1.2;
+            color: var(--fg-primary); margin: 0;
+            letter-spacing: var(--tracking-tight);
+        }
+        .demo-panel__title em { font-style: italic; color: var(--bronze-500); }
+        .demo-panel__close {
+            font-family: var(--font-sans); font-size: var(--fs-micro);
+            letter-spacing: var(--tracking-eyebrow); text-transform: uppercase;
+            font-weight: var(--fw-medium); color: var(--fg-tertiary);
+            background: transparent; border: 0; cursor: pointer;
+            padding: 4px 8px;
+            transition: color var(--dur-quick);
+        }
+        .demo-panel__close:hover { color: var(--fg-primary); }
+        .demo-panel__lede {
+            font-size: var(--fs-body); color: var(--fg-secondary);
+            line-height: 1.6; max-width: 640px; margin: 0 0 22px;
+        }
+        .demo-kpis {
+            display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px;
+            background: var(--ink-200); border: 1px solid var(--ink-200);
+            margin-bottom: 24px;
+        }
+        @media (max-width: 700px) { .demo-kpis { grid-template-columns: repeat(2, 1fr); } }
+        .demo-kpi {
+            background: var(--bg-page); padding: 18px 20px;
+            display: flex; flex-direction: column; gap: 4px;
+        }
+        .demo-kpi .l {
+            font-family: var(--font-sans); font-size: var(--fs-micro);
+            letter-spacing: var(--tracking-eyebrow); text-transform: uppercase;
+            color: var(--fg-tertiary); font-weight: var(--fw-medium);
+        }
+        .demo-kpi .v {
+            font-family: var(--font-mono); font-size: 22px;
+            font-weight: var(--fw-medium); color: var(--fg-primary);
+            line-height: 1.1;
+        }
+        .demo-kpi .v .u {
+            font-size: 12px; color: var(--fg-tertiary); margin-left: 4px;
+            font-weight: var(--fw-regular);
+        }
+        .demo-kpi .v.is-warn { color: var(--bronze-500); }
+        .demo-kpi .v.is-pos  { color: #2D6A4F; }
+        .demo-kpi .v.is-neg  { color: #C0392B; }
+        .demo-kpi .m {
+            font-family: var(--font-sans); font-size: var(--fs-caption);
+            color: var(--fg-tertiary);
+        }
+        .demo-table {
+            width: 100%; border-collapse: collapse;
+            font-size: var(--fs-caption);
+            margin-bottom: 18px;
+        }
+        .demo-table thead th {
+            font-family: var(--font-sans); font-size: var(--fs-micro);
+            letter-spacing: var(--tracking-eyebrow); text-transform: uppercase;
+            color: var(--fg-tertiary); font-weight: var(--fw-medium);
+            padding: 10px 12px; text-align: left;
+            border-bottom: 1px solid var(--ink-200);
+        }
+        .demo-table thead th:not(:first-child) { text-align: right; }
+        .demo-table tbody td {
+            padding: 10px 12px;
+            border-bottom: 1px solid var(--ink-100);
+            font-family: var(--font-sans);
+            color: var(--fg-primary);
+        }
+        .demo-table tbody td:not(:first-child) {
+            text-align: right; font-family: var(--font-mono);
+            font-variant-numeric: tabular-nums;
+            color: var(--fg-secondary);
+        }
+        .demo-table tbody tr.is-total td {
+            font-weight: var(--fw-semi); color: var(--fg-primary);
+            border-top: 1px solid var(--ink-300);
+            border-bottom: 1px solid var(--ink-300);
+        }
+        .demo-panel__footer {
+            display: flex; justify-content: space-between; align-items: center;
+            gap: 18px; flex-wrap: wrap;
+            margin-top: 20px; padding-top: 18px;
+            border-top: 1px solid var(--ink-200);
+        }
+        .demo-panel__note {
+            font-size: var(--fs-caption); color: var(--fg-tertiary);
+            font-style: italic; max-width: 460px;
+        }
+        .demo-panel__cta {
+            display: inline-flex; align-items: center; gap: 8px;
+            font-family: var(--font-sans); font-size: var(--fs-body-s);
+            letter-spacing: var(--tracking-tight); font-weight: var(--fw-medium);
+            color: var(--fg-primary);
+            padding: 12px 22px;
+            background: var(--accent-soft);
+            border: 1px solid var(--accent);
+            border-radius: var(--radius-md);
+            transition: background var(--dur-quick), color var(--dur-quick);
+        }
+        .demo-panel__cta:hover {
+            background: var(--accent); color: var(--accent-fg);
+        }
+
+        /* Bottom CTA for the whole demo section */
+        .demo-cta-row {
+            margin-top: 36px;
+            display: flex; justify-content: space-between; align-items: center;
+            gap: 18px; flex-wrap: wrap;
+            padding-top: 28px;
+            border-top: 1px solid var(--ink-200);
+        }
+        .demo-cta-row p {
+            font-size: var(--fs-body); color: var(--fg-secondary);
+            margin: 0; max-width: 540px; line-height: 1.55;
+        }
+
         /* ----------- FOOTER ----------- */
         .site-footer {
             background: var(--ink-900); color: var(--parchment-50);
@@ -578,6 +781,7 @@
             <a href="#integrations">Integrations</a>
             <a href="#security">Security</a>
             <a href="#newsroom">Newsroom</a>
+            <a href="#demo">Demo</a>
         </nav>
         <div class="header-cta">
             <a href="https://www.eliteadvisors.cm-ea.com" target="_blank" rel="noopener" class="btn btn-ghost">eliteadvisors.cm-ea.com ↗</a>
@@ -913,6 +1117,296 @@
 </section>
 
 {{-- ═══════════════════════════════════════════════════════════════════════════
+   DEMO — six capability previews, each clickable to reveal full detail.
+   Same six demonstrations the marketing site (/demos/bms-marketing.html#demo)
+   offers, replayed here in the Elite Advisors design language so visitors
+   can preview the suite without leaving the front door.
+
+   Every figure is fictional and illustrative — round numbers representing
+   a typical OHADA engagement (cross-checked with the same numbers used on
+   the marketing demo, so the two stay in sync).
+═══════════════════════════════════════════════════════════════════════════ --}}
+<section id="demo" class="section">
+    <div class="container wide">
+        <p class="eyebrow scroll-reveal">Demo</p>
+        <h2 class="scroll-reveal">Six capabilities — <em>one click each.</em></h2>
+        <p class="section-lede scroll-reveal">
+            Each tile is a complete walk-through of one BMS capability,
+            rendered with figures from a typical OHADA engagement. Click
+            any tile to expand the full preview — the second click collapses it.
+        </p>
+
+        <div class="demo-grid scroll-reveal" data-demo-grid>
+
+            {{-- 01 · Revenue vs Budget --}}
+            <button class="demo-tile" type="button" data-demo-tile="revenue" aria-expanded="false">
+                <div class="feature-eyebrow">01 · REVENUE INTELLIGENCE</div>
+                <h3>Variance, <em>decomposed.</em></h3>
+                <p>Volume effect and price effect separated automatically. No more "we missed budget by X" without knowing why.</p>
+                <div class="stat-line">
+                    <span>YTD <strong>1,200M</strong></span>
+                    <span>Plan <strong>1,250M</strong></span>
+                    <span>Gap <strong>−50M</strong></span>
+                </div>
+                <span class="open-hint">Open preview</span>
+            </button>
+
+            {{-- 02 · Treasury & Ratios --}}
+            <button class="demo-tile" type="button" data-demo-tile="treasury" aria-expanded="false">
+                <div class="feature-eyebrow">02 · LIQUIDITY POSTURE</div>
+                <h3>Three ratios, <em>one screen.</em></h3>
+                <p>Current · Quick · Cash, plus a Cash Conversion Cycle that reads the working-capital direction at a glance.</p>
+                <div class="stat-line">
+                    <span>Current <strong>1.40x</strong></span>
+                    <span>Quick <strong>0.95x</strong></span>
+                    <span>CCC <strong>30d</strong></span>
+                </div>
+                <span class="open-hint">Open preview</span>
+            </button>
+
+            {{-- 03 · Receivables --}}
+            <button class="demo-tile" type="button" data-demo-tile="ar" aria-expanded="false">
+                <div class="feature-eyebrow">03 · RECEIVABLES DISCIPLINE</div>
+                <h3>The customers <em>behind your DSO.</em></h3>
+                <p>Aging reconciles to the ledger. Top offenders surfaced before the next escalation cycle — by name, by bucket, by days.</p>
+                <div class="stat-line">
+                    <span>AR <strong>280M</strong></span>
+                    <span>DSO <strong>45d</strong></span>
+                    <span>90+ <strong>50M</strong></span>
+                </div>
+                <span class="open-hint">Open preview</span>
+            </button>
+
+            {{-- 04 · GL Quality --}}
+            <button class="demo-tile" type="button" data-demo-tile="gl" aria-expanded="false">
+                <div class="feature-eyebrow">04 · LEDGER HYGIENE</div>
+                <h3>Findings <em>before the audit.</em></h3>
+                <p>Ninety-plus automated checks running each period close — empty descriptions, manual entries, round-number postings, imbalanced moves.</p>
+                <div class="stat-line">
+                    <span>Empty <strong>150</strong></span>
+                    <span>Manual <strong>90</strong></span>
+                    <span>After close <strong>15</strong></span>
+                </div>
+                <span class="open-hint">Open preview</span>
+            </button>
+
+            {{-- 05 · Income Tax --}}
+            <button class="demo-tile" type="button" data-demo-tile="tax" aria-expanded="false">
+                <div class="feature-eyebrow">05 · CGI COMPLIANCE</div>
+                <h3>Add-backs <em>at posting.</em></h3>
+                <p>CGI Article 7 non-deductibles, donation thresholds, withholding reconciliation — encoded as live checks against the ledger.</p>
+                <div class="stat-line">
+                    <span>Flagged <strong>40 lines</strong></span>
+                    <span>Add-back <strong>10.5M</strong></span>
+                    <span>@ 33% <strong>3.5M</strong></span>
+                </div>
+                <span class="open-hint">Open preview</span>
+            </button>
+
+            {{-- 06 · Monthly Declaration --}}
+            <button class="demo-tile" type="button" data-demo-tile="decl" aria-expanded="false">
+                <div class="feature-eyebrow">06 · DGI FILINGS</div>
+                <h3>The déclaration <em>writes itself.</em></h3>
+                <p>CA HT → TVA collectée → TVA déductible → reverser. IS acompte. Retenues à la source. Ready for portal upload.</p>
+                <div class="stat-line">
+                    <span>CA HT <strong>240M</strong></span>
+                    <span>Reverser <strong>26.2M</strong></span>
+                    <span>Total <strong>35.85M</strong></span>
+                </div>
+                <span class="open-hint">Open preview</span>
+            </button>
+
+        </div>
+
+        {{-- Detail panels — one per tile, only the active one is shown ----- --}}
+
+        <div class="demo-panel" data-demo-panel="revenue">
+            <div class="demo-panel__head">
+                <h3 class="demo-panel__title">Revenue vs Budget · <em>variance decomposed.</em></h3>
+                <button class="demo-panel__close" type="button" data-demo-close>Close ×</button>
+            </div>
+            <p class="demo-panel__lede">
+                YTD revenue ran at 240M XAF / month for five months. Budget
+                pace is 250M / month. The gap reads as −50M (−4.0%), with
+                volume effect and price effect split cleanly on the variance
+                table so the narrative writes itself.
+            </p>
+            <div class="demo-kpis">
+                <div class="demo-kpi"><div class="l">Revenue YTD</div><div class="v">1,200<span class="u">M XAF</span></div><div class="m">HT basis · 5 mo</div></div>
+                <div class="demo-kpi"><div class="l">Budget YTD</div><div class="v">1,250<span class="u">M XAF</span></div><div class="m">linear pace</div></div>
+                <div class="demo-kpi"><div class="l">Net gap</div><div class="v is-neg">−50<span class="u">M XAF</span></div><div class="m">−4.0% vs plan</div></div>
+                <div class="demo-kpi"><div class="l">vs Prior year</div><div class="v is-pos">+10.0<span class="u">%</span></div><div class="m">trending up</div></div>
+            </div>
+            <table class="demo-table">
+                <thead><tr><th>Top 5 product lines</th><th>Budget</th><th>Actual</th><th>Δ</th></tr></thead>
+                <tbody>
+                    <tr><td>Product A</td><td>280M</td><td>300M</td><td>+20M</td></tr>
+                    <tr><td>Product B</td><td>220M</td><td>230M</td><td>+10M</td></tr>
+                    <tr><td>Product C</td><td>150M</td><td>160M</td><td>+10M</td></tr>
+                    <tr><td>Product D</td><td>120M</td><td>110M</td><td>−10M</td></tr>
+                    <tr><td>Product E</td><td>80M</td><td>75M</td><td>−5M</td></tr>
+                </tbody>
+            </table>
+            <div class="demo-panel__footer">
+                <p class="demo-panel__note">Volume effect <code>(act_qty − bud_qty) × bud_price</code> · Price effect <code>(act_price − bud_price) × act_qty</code>. Reconciles to the GL class 70 movement for the period.</p>
+                <a href="/demos/bms-marketing.html#demo" class="demo-panel__cta">Open full interactive demo →</a>
+            </div>
+        </div>
+
+        <div class="demo-panel" data-demo-panel="treasury">
+            <div class="demo-panel__head">
+                <h3 class="demo-panel__title">Treasury &amp; Ratios · <em>liquidity, trended.</em></h3>
+                <button class="demo-panel__close" type="button" data-demo-close>Close ×</button>
+            </div>
+            <p class="demo-panel__lede">
+                Current, Quick and Cash ratios on a 13-month trailing strip,
+                with the 1.0× threshold marked. The Cash Conversion Cycle
+                walks alongside — DSO 45 + DIO 25 − |DPO| 40 = 30 days reconciles.
+            </p>
+            <div class="demo-kpis">
+                <div class="demo-kpi"><div class="l">Current ratio</div><div class="v is-pos">1.40<span class="u">x</span></div><div class="m">healthy · ≥1.2 target</div></div>
+                <div class="demo-kpi"><div class="l">Quick ratio</div><div class="v is-pos">0.95<span class="u">x</span></div><div class="m">near 1.0 · acceptable</div></div>
+                <div class="demo-kpi"><div class="l">Cash ratio</div><div class="v is-warn">0.55<span class="u">x</span></div><div class="m">improving trend</div></div>
+                <div class="demo-kpi"><div class="l">CCC</div><div class="v is-pos">30<span class="u">d</span></div><div class="m">↓ from 45d · 6 mo ago</div></div>
+            </div>
+            <table class="demo-table">
+                <thead><tr><th>Cash conversion cycle</th><th>Q1 2026</th><th>Q2 2026</th><th>Δ</th></tr></thead>
+                <tbody>
+                    <tr><td>DSO · days sales outstanding</td><td>50d</td><td>45d</td><td>−5d</td></tr>
+                    <tr><td>DIO · days inventory outstanding</td><td>30d</td><td>25d</td><td>−5d</td></tr>
+                    <tr><td>DPO · days payable outstanding</td><td>−35d</td><td>−40d</td><td>−5d</td></tr>
+                    <tr class="is-total"><td>CCC</td><td>45d</td><td>30d</td><td>−15d</td></tr>
+                </tbody>
+            </table>
+            <div class="demo-panel__footer">
+                <p class="demo-panel__note">All three components are computed on a trailing-twelve-month basis with partial-period annualisation for new tenants.</p>
+                <a href="/demos/bms-marketing.html#demo" class="demo-panel__cta">Open full interactive demo →</a>
+            </div>
+        </div>
+
+        <div class="demo-panel" data-demo-panel="ar">
+            <div class="demo-panel__head">
+                <h3 class="demo-panel__title">Receivables · <em>by customer, by bucket.</em></h3>
+                <button class="demo-panel__close" type="button" data-demo-close>Close ×</button>
+            </div>
+            <p class="demo-panel__lede">
+                Aging buckets sum to 280M total AR, fully reconciled to the
+                class 41 GL balance. The 50M over-90 figure is concentrated
+                in five customers — provisioning decisions can be made on
+                names, not totals.
+            </p>
+            <div class="demo-kpis">
+                <div class="demo-kpi"><div class="l">Total AR</div><div class="v">280<span class="u">M XAF</span></div><div class="m">40 active accounts</div></div>
+                <div class="demo-kpi"><div class="l">DSO</div><div class="v is-warn">45<span class="u">d</span></div><div class="m">target ≤30d</div></div>
+                <div class="demo-kpi"><div class="l">Over 60 days</div><div class="v is-warn">70<span class="u">M XAF</span></div><div class="m">25.0% of total</div></div>
+                <div class="demo-kpi"><div class="l">Over 90 days</div><div class="v is-neg">50<span class="u">M XAF</span></div><div class="m">17.9% · provisioning?</div></div>
+            </div>
+            <table class="demo-table">
+                <thead><tr><th>Top 5 offenders · over 90 days</th><th>Days</th><th>Outstanding</th></tr></thead>
+                <tbody>
+                    <tr><td>Customer A</td><td>145d</td><td>15.0M</td></tr>
+                    <tr><td>Customer B</td><td>130d</td><td>12.0M</td></tr>
+                    <tr><td>Customer C</td><td>115d</td><td>10.0M</td></tr>
+                    <tr><td>Customer D</td><td>100d</td><td>8.0M</td></tr>
+                    <tr><td>Customer E</td><td>95d</td><td>5.0M</td></tr>
+                    <tr class="is-total"><td>Sum · matches bucket total</td><td>—</td><td>50.0M</td></tr>
+                </tbody>
+            </table>
+            <div class="demo-panel__footer">
+                <p class="demo-panel__note">Buckets: Current 130M · 1–30d 55M · 31–60d 25M · 61–90d 20M · 90+ 50M. Top offenders 61–90 sum to the bucket total too — F 6M, G 5M, H 4M, I 3M, J 2M.</p>
+                <a href="/demos/bms-marketing.html#demo" class="demo-panel__cta">Open full interactive demo →</a>
+            </div>
+        </div>
+
+        <div class="demo-panel" data-demo-panel="gl">
+            <div class="demo-panel__head">
+                <h3 class="demo-panel__title">GL Quality · <em>findings before the audit.</em></h3>
+                <button class="demo-panel__close" type="button" data-demo-close>Close ×</button>
+            </div>
+            <p class="demo-panel__lede">
+                Five of the 90+ automated checks shown here — empty
+                descriptions, manual entries, round-number postings, lines
+                posted after period close, and imbalanced moves (zero today).
+                Findings link directly to the underlying journal lines.
+            </p>
+            <table class="demo-table">
+                <thead><tr><th>Check</th><th>Count</th><th>Status</th></tr></thead>
+                <tbody>
+                    <tr><td>Lines with empty / short descriptions</td><td>150 lines</td><td>Undefined audit risk</td></tr>
+                    <tr><td>Manual journal entries</td><td>90 entries</td><td>Within tolerance &lt;100</td></tr>
+                    <tr><td>Round-number postings (multiples of 100K / 1M)</td><td>25 entries</td><td>Review required</td></tr>
+                    <tr><td>Lines posted after period close</td><td>15 entries</td><td>Period needs re-closing</td></tr>
+                    <tr><td>Imbalanced moves (Σ Dr ≠ Σ Cr)</td><td>0 moves</td><td>All balanced ✓</td></tr>
+                </tbody>
+            </table>
+            <div class="demo-panel__footer">
+                <p class="demo-panel__note">Each check is parametrised against the ledger and re-runs every period. New checks land via release notes — no client code to update.</p>
+                <a href="/demos/bms-marketing.html#demo" class="demo-panel__cta">Open full interactive demo →</a>
+            </div>
+        </div>
+
+        <div class="demo-panel" data-demo-panel="tax">
+            <div class="demo-panel__head">
+                <h3 class="demo-panel__title">Income Tax · <em>CGI compliance, surfaced.</em></h3>
+                <button class="demo-panel__close" type="button" data-demo-close>Close ×</button>
+            </div>
+            <p class="demo-panel__lede">
+                Forty lines flagged under CGI Article 7 (entertainment without
+                business purpose, statutory fines, personal-benefit expenditure).
+                Donations exceed the 1%-of-revenue ceiling by 3.0M. Combined,
+                10.5M of add-backs, 3.5M of tax exposure at the 33% rate.
+            </p>
+            <div class="demo-kpis">
+                <div class="demo-kpi"><div class="l">Non-deductible base</div><div class="v">7.5<span class="u">M XAF</span></div><div class="m">40 lines · CGI Art. 7</div></div>
+                <div class="demo-kpi"><div class="l">Donation excess</div><div class="v">3.0<span class="u">M XAF</span></div><div class="m">declared 15M · cap 12M</div></div>
+                <div class="demo-kpi"><div class="l">Add-back total</div><div class="v is-warn">10.5<span class="u">M XAF</span></div><div class="m">to taxable profit</div></div>
+                <div class="demo-kpi"><div class="l">Tax impact @ 33%</div><div class="v is-neg">3.5<span class="u">M XAF</span></div><div class="m">corporate IS rate</div></div>
+            </div>
+            <div class="demo-panel__footer">
+                <p class="demo-panel__note">Each flagged line is drillable to the underlying account.move.line, with a per-line category override for accountant judgment.</p>
+                <a href="/demos/bms-marketing.html#demo" class="demo-panel__cta">Open full interactive demo →</a>
+            </div>
+        </div>
+
+        <div class="demo-panel" data-demo-panel="decl">
+            <div class="demo-panel__head">
+                <h3 class="demo-panel__title">Monthly Declaration · <em>Avril 2026.</em></h3>
+                <button class="demo-panel__close" type="button" data-demo-close>Close ×</button>
+            </div>
+            <p class="demo-panel__lede">
+                Auto-generated <em>Déclaration mensuelle</em> ready for DGI
+                submission. Every line derived directly from the GL — period
+                boundaries respected, VAT cross-checked against class 4431.
+            </p>
+            <table class="demo-table">
+                <thead><tr><th>Ligne</th><th>Base</th><th>Montant XAF</th></tr></thead>
+                <tbody>
+                    <tr><td>Chiffre d'affaires HT</td><td>—</td><td>240,000,000</td></tr>
+                    <tr><td>TVA collectée</td><td>19.25%</td><td>46,200,000</td></tr>
+                    <tr><td>TVA déductible · achats</td><td>—</td><td>(20,000,000)</td></tr>
+                    <tr class="is-total"><td>TVA à reverser</td><td>—</td><td>26,200,000</td></tr>
+                    <tr><td>IS · acompte mensuel</td><td>1.1% CA TTC</td><td>3,150,000</td></tr>
+                    <tr><td>RAS sur prestations</td><td>5.5%</td><td>4,500,000</td></tr>
+                    <tr><td>RAS sur loyers</td><td>10%</td><td>2,000,000</td></tr>
+                    <tr class="is-total"><td>Total à payer · échéance 15 mai 2026</td><td>—</td><td>35,850,000</td></tr>
+                </tbody>
+            </table>
+            <div class="demo-panel__footer">
+                <p class="demo-panel__note">Exports to PDF (print-ready) and Excel (DGI portal template). Variance flag triggers when declared VAT doesn't reconcile to class 4431 movement.</p>
+                <a href="/demos/bms-marketing.html#demo" class="demo-panel__cta">Open full interactive demo →</a>
+            </div>
+        </div>
+
+        <div class="demo-cta-row">
+            <p>
+                Every figure above is <strong>fictional and illustrative</strong> — round demonstration numbers representative of a typical OHADA engagement. The interactive version on the marketing site runs the same data through the production charting engine.
+            </p>
+            <a href="/demos/bms-marketing.html#demo" class="demo-panel__cta">Open interactive demo ↗</a>
+        </div>
+    </div>
+</section>
+
+{{-- ═══════════════════════════════════════════════════════════════════════════
    FOOTER — kit's site-footer pattern
 ═══════════════════════════════════════════════════════════════════════════ --}}
 <footer class="site-footer">
@@ -948,6 +1442,7 @@
                 <a href="#integrations">Integrations</a>
                 <a href="#security">Security</a>
                 <a href="#newsroom">Newsroom</a>
+                <a href="#demo">Demo</a>
                 <a href="#signin">Sign in</a>
             </div>
             <div class="footer-col">
@@ -1018,6 +1513,70 @@
             });
         }, { threshold: 0.12, rootMargin: '0px 0px -40px 0px' });
         items.forEach(el => obs.observe(el));
+    })();
+
+    // Demo · click-to-reveal capability panels
+    // Each tile toggles its matching panel; clicking the active tile or
+    // its Close button collapses the panel. Opening another tile closes
+    // the previous (single-open behaviour to keep the layout calm). A
+    // hashchange listener auto-opens a panel when the URL ends with
+    // #demo-<key> so a footer/nav link can deep-link to a specific demo.
+    (function () {
+        const tiles  = document.querySelectorAll('[data-demo-tile]');
+        const panels = document.querySelectorAll('[data-demo-panel]');
+        const closes = document.querySelectorAll('[data-demo-close]');
+        if (!tiles.length) return;
+
+        function closeAll() {
+            tiles.forEach(t => {
+                t.classList.remove('is-active');
+                t.setAttribute('aria-expanded', 'false');
+                const hint = t.querySelector('.open-hint');
+                if (hint) hint.textContent = 'Open preview';
+            });
+            panels.forEach(p => p.classList.remove('is-active'));
+        }
+
+        function openTile(key) {
+            closeAll();
+            const tile  = document.querySelector(`[data-demo-tile="${key}"]`);
+            const panel = document.querySelector(`[data-demo-panel="${key}"]`);
+            if (!tile || !panel) return;
+            tile.classList.add('is-active');
+            tile.setAttribute('aria-expanded', 'true');
+            const hint = tile.querySelector('.open-hint');
+            if (hint) hint.textContent = 'Close preview';
+            panel.classList.add('is-active');
+
+            // Scroll the panel into view so the user sees the new content.
+            // Wait one tick so the panel has its final height.
+            setTimeout(() => {
+                panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }, 80);
+        }
+
+        tiles.forEach(t => {
+            t.addEventListener('click', () => {
+                const key = t.dataset.demoTile;
+                if (t.classList.contains('is-active')) closeAll();
+                else openTile(key);
+            });
+        });
+
+        closes.forEach(btn => btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            closeAll();
+        }));
+
+        // Deep-link support: /login#demo-revenue opens that tile.
+        function openFromHash() {
+            const hash = window.location.hash;
+            if (!hash.startsWith('#demo-')) return;
+            const key = hash.replace('#demo-', '');
+            if (document.querySelector(`[data-demo-tile="${key}"]`)) openTile(key);
+        }
+        window.addEventListener('hashchange', openFromHash);
+        openFromHash();
     })();
 
     // TweaksPanel — palette switcher
