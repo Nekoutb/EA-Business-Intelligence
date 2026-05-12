@@ -59,11 +59,15 @@ class TrialBalanceController extends Controller
 
         try {
             $client = OdooFactory::fromConfig();
-            // Cache prefix bumped to v2 on 2026-05-11: the service now
-            // computes opening balances for the month view (it used to
-            // return zero opening for 'month'). v1 entries would still
-            // serve the broken figures for up to 5 minutes after deploy.
-            $cacheKey = "trial_balance_v2_{$periodType}_{$year}_{$month}";
+            // Cache prefix bumped per structural change to the service:
+            //   v1 → v2 (2026-05-11): month view now computes opening
+            //     balances (was zero-skipped). Old v1 entries returned
+            //     wrong figures for 'month'.
+            //   v2 → v3 (2026-05-12): P&L accounts (classes 6, 7, 8) now
+            //     get a forced-zero opening per OHADA/IFRS — they're
+            //     nominal accounts that reset at year-end. v2 entries
+            //     would still carry an opening balance for these.
+            $cacheKey = "trial_balance_v3_{$periodType}_{$year}_{$month}";
             $data = ea_cached(
                 $cacheKey,
                 fn () => (new TrialBalanceService($client))->analyze($year, $periodType, $month)

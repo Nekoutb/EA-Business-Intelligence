@@ -39,10 +39,18 @@ use App\Odoo\OdooClient;
  *             movement  = full selected year (Jan-1 to Dec-31)
  *             closing   = opening + period movements
  *
- * The opening balance is always "closing balance immediately before
- * the start of the selected period" — i.e. the most recent prior
- * snapshot. Every view applies the same rule so the figures roll
- * forward consistently across month/YTD/year selections.
+ * The opening balance for **balance sheet accounts (classes 1-5)** is
+ * always "closing balance immediately before the start of the selected
+ * period" — i.e. the most recent prior snapshot. Stocks at a point in
+ * time, rolling forward across views.
+ *
+ * **P&L accounts (classes 6, 7, 8) get a zero opening, always.** Per
+ * OHADA SYSCOHADA + IFRS, these are nominal accounts — they reset to
+ * zero at every fiscal year-end via the close-out journals to class
+ * 13X (résultat). A trial balance shows their movements during the
+ * selected window and a closing equal to those movements alone. To
+ * see YTD revenue / expense, switch the master filter to YTD; the
+ * month view shows just that month's posting.
  *
  * Two Odoo round trips: one read_group for opening balances, one for
  * the period movements. Closing is derived in PHP.
@@ -147,10 +155,22 @@ final class TrialBalanceService
         ));
         foreach ($allIds as $aid) {
             $info  = $accountById[$aid] ?? ['code' => '?', 'name' => '?'];
-            $oDr   = (float) ($openingByAccount[$aid]['debit']  ?? 0);
-            $oCr   = (float) ($openingByAccount[$aid]['credit'] ?? 0);
-            $mDr   = (float) ($movementByAccount[$aid]['debit']  ?? 0);
-            $mCr   = (float) ($movementByAccount[$aid]['credit'] ?? 0);
+            $code  = (string) $info['code'];
+            $class = $code !== '' ? (int) substr($code, 0, 1) : 0;
+
+            // P&L accounts (classes 6, 7, 8) are nominal — they reset to
+            // zero at every fiscal year-end (OHADA SYSCOHADA + IFRS). On a
+            // trial balance they have no opening balance regardless of the
+            // selected window; only in-period movements + the resulting
+            // closing carry information. Balance sheet accounts (classes
+            // 1-5, and 9 if used analytically) keep their prior-period
+            // closing as the opening so figures roll forward.
+            $isPL = in_array($class, [6, 7, 8], true);
+
+            $oDr = $isPL ? 0.0 : (float) ($openingByAccount[$aid]['debit']  ?? 0);
+            $oCr = $isPL ? 0.0 : (float) ($openingByAccount[$aid]['credit'] ?? 0);
+            $mDr = (float) ($movementByAccount[$aid]['debit']  ?? 0);
+            $mCr = (float) ($movementByAccount[$aid]['credit'] ?? 0);
 
             $openingBal = $oDr - $oCr;
             $closingBal = $openingBal + $mDr - $mCr;
@@ -169,7 +189,7 @@ final class TrialBalanceService
                 'account_id' => $aid,
                 'code'       => $info['code'],
                 'name'       => $info['name'],
-                'class'      => $info['code'] !== '' ? (int) substr($info['code'], 0, 1) : 0,
+                'class'      => $class,
                 'opening_dr' => $openingDr,
                 'opening_cr' => $openingCr,
                 'movement_dr'=> $mDr,
