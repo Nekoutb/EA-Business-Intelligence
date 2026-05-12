@@ -494,6 +494,187 @@ button { font: inherit; cursor: pointer; }
 .demo-card__sub { font-size: 11px; color: var(--slate-500); }
 .demo-card .chart { height: 280px; }
 .demo-card .chart-mini { height: 160px; }
+.demo-card .chart-tall { height: 360px; }
+
+/* KPI strip inside a demo pane (above the charts) */
+.demo-kpi-strip {
+  display: grid; gap: 1px;
+  grid-template-columns: repeat(2, 1fr);
+  background: rgba(15,23,42,.06);
+  border: 1px solid rgba(15,23,42,.06);
+  border-radius: var(--r-md);
+  overflow: hidden;
+  margin-bottom: 14px;
+}
+@media (min-width: 640px) { .demo-kpi-strip { grid-template-columns: repeat(4, 1fr); } }
+.demo-kpi { background: white; padding: 14px 16px; }
+.demo-kpi__l {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--slate-500); font-weight: 600;
+}
+.demo-kpi__v {
+  font-size: 20px; font-weight: 800; color: var(--slate-900);
+  letter-spacing: -0.015em; font-variant-numeric: tabular-nums; margin-top: 2px;
+}
+.demo-kpi__v .u { font-size: 12px; color: var(--slate-500); margin-left: 4px; font-weight: 500; }
+.demo-kpi__v.is-pos { color: var(--pos); }
+.demo-kpi__v.is-neg { color: var(--neg); }
+.demo-kpi__v.is-warn { color: var(--warn); }
+.demo-kpi__m { font-size: 11px; color: var(--slate-500); margin-top: 2px; }
+
+/* AR offenders table */
+.offenders {
+  width: 100%; border-collapse: collapse; font-size: 12px;
+}
+.offenders th, .offenders td {
+  padding: 8px 10px; border-bottom: 1px solid var(--grid);
+}
+.offenders th {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em;
+  font-weight: 700; color: var(--slate-500); text-align: left;
+}
+.offenders th:last-child, .offenders td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+.offenders tr:last-child td { border-bottom: 0; }
+.offenders .cust {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-weight: 600; color: var(--slate-900);
+}
+.offenders .cust-mark {
+  width: 24px; height: 24px; border-radius: 6px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--slate-100); color: var(--slate-700);
+  font-size: 11px; font-weight: 700; font-family: var(--font-mono);
+}
+.offenders .days { font-size: 11px; color: var(--slate-500); }
+.offenders .days.is-warn { color: var(--warn); font-weight: 600; }
+.offenders .days.is-neg  { color: var(--neg);  font-weight: 600; }
+
+/* GL Quality + Tax check cards */
+.check-grid {
+  display: grid; gap: 12px;
+  grid-template-columns: 1fr;
+}
+@media (min-width: 720px) { .check-grid { grid-template-columns: repeat(2, 1fr); } }
+.check {
+  padding: 16px 18px;
+  background: white;
+  border: 1px solid rgba(15,23,42,.06);
+  border-radius: var(--r-md);
+  display: flex; gap: 14px;
+  align-items: flex-start;
+}
+.check__sev {
+  flex-shrink: 0;
+  width: 36px; height: 36px;
+  border-radius: var(--r-sm);
+  display: flex; align-items: center; justify-content: center;
+}
+.check__sev svg { width: 18px; height: 18px; }
+.check__sev.is-info  { background: rgba(13,110,110,.10); color: var(--pri); }
+.check__sev.is-warn  { background: var(--warn-light); color: #92400e; }
+.check__sev.is-neg   { background: rgba(185,28,28,.10); color: var(--neg); }
+.check__sev.is-ok    { background: var(--pos-light); color: var(--pos); }
+.check__body { flex: 1; min-width: 0; }
+.check__title {
+  font-size: 13.5px; font-weight: 700; color: var(--slate-900);
+  margin: 0 0 4px; letter-spacing: -0.005em;
+}
+.check__finding {
+  font-size: 12px; color: var(--slate-500); line-height: 1.5; margin: 0 0 8px;
+}
+.check__metric {
+  display: flex; gap: 16px; flex-wrap: wrap; align-items: baseline;
+}
+.check__count {
+  font-size: 18px; font-weight: 800; color: var(--slate-900);
+  font-variant-numeric: tabular-nums; letter-spacing: -0.01em;
+}
+.check__count .u { font-size: 11px; color: var(--slate-500); margin-left: 4px; font-weight: 500; }
+.check__exposure {
+  font-size: 13px; color: var(--neg); font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.check__exposure.is-pos { color: var(--pos); }
+.check-banner {
+  background: var(--pri-light); color: var(--pri-dark);
+  padding: 10px 14px; border-radius: var(--r-md);
+  font-size: 12px; line-height: 1.5;
+  margin-bottom: 14px;
+  border: 1px solid rgba(13,110,110,.18);
+}
+.check-banner b { color: var(--pri-dark); }
+
+/* Monthly declaration extract — receipt style */
+.decl {
+  background: white;
+  border: 1px solid rgba(15,23,42,.10);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-md);
+  max-width: 560px;
+  margin: 0 auto;
+  overflow: hidden;
+}
+.decl__h {
+  padding: 18px 22px;
+  background: linear-gradient(135deg, var(--pri) 0%, var(--pri-dark) 100%);
+  color: white;
+}
+.decl__t { font-size: 13px; text-transform: uppercase; letter-spacing: 0.1em; font-weight: 700; opacity: 0.85; margin-bottom: 4px; }
+.decl__sub { font-size: 18px; font-weight: 700; letter-spacing: -0.015em; }
+.decl__body { padding: 18px 22px; }
+.decl__row {
+  display: flex; justify-content: space-between; align-items: baseline;
+  padding: 8px 0;
+  border-bottom: 1px dashed var(--grid);
+  font-size: 13px;
+}
+.decl__row:last-of-type { border-bottom: 0; }
+.decl__row.is-total {
+  font-weight: 700; font-size: 15px;
+  border-top: 2px solid var(--slate-900);
+  border-bottom: 0;
+  padding-top: 14px; margin-top: 6px;
+  color: var(--slate-900);
+}
+.decl__row.is-section {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--slate-500); font-weight: 700;
+  border-bottom: 0; padding: 14px 0 4px;
+}
+.decl__row .v { font-family: var(--font-mono); font-variant-numeric: tabular-nums; color: var(--slate-900); font-weight: 600; }
+.decl__row.is-total .v { color: var(--pri); font-size: 17px; }
+.decl__footer {
+  padding: 14px 22px;
+  background: var(--slate-50);
+  font-size: 11px; color: var(--slate-500);
+  border-top: 1px solid var(--grid);
+  display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px;
+}
+.decl__footer b { color: var(--slate-900); }
+.decl__stamp {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 8px; border-radius: 999px;
+  background: var(--pos-light); color: var(--pos);
+  font-size: 10px; font-weight: 700; letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin-top: 8px;
+}
+.decl__stamp::before {
+  content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--pos);
+}
+
+/* Anonymisation badge */
+.anon-note {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 10px;
+  background: var(--warn-light); color: #92400e;
+  font-size: 11px; font-weight: 600;
+  border-radius: 999px;
+  margin-bottom: 12px;
+}
+.anon-note::before {
+  content: '🔒'; font-size: 11px;
+}
 
 .demo-tab-content { display: none; }
 .demo-tab-content.is-active { display: block; }
@@ -741,7 +922,7 @@ button { font: inherit; cursor: pointer; }
     <div class="nav__menu">
       <a href="#pillars">Why BMS</a>
       <a href="#modules">Modules</a>
-      <a href="#demo">Live demo</a>
+      <a href="#demonstration">Demonstration</a>
       <a href="#expertise">Expertise</a>
       <a href="#industries">Industries</a>
     </div>
@@ -782,7 +963,7 @@ button { font: inherit; cursor: pointer; }
           <path d="M5 12h14M12 5l7 7-7 7"/>
         </svg>
       </a>
-      <a href="#demo" class="btn btn--ghost">
+      <a href="#demonstration" class="btn btn--ghost">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
           <polygon points="5 3 19 12 5 21 5 3" fill="currentColor"/>
         </svg>
@@ -1032,33 +1213,63 @@ button { font: inherit; cursor: pointer; }
 <!-- ─────────────────────────────────────────────────────────────────
      LIVE DASHBOARD DEMO (interactive)
      ───────────────────────────────────────────────────────────────── -->
-<section class="section dashboard-demo" id="demo">
+<section class="section dashboard-demo" id="demonstration">
   <div class="container">
 
-    <div class="section-eyebrow">See the suite in action</div>
-    <h2 class="section-title">Interactive demo — toggle the views.</h2>
+    <div class="section-eyebrow">Demonstration · live capabilities</div>
+    <h2 class="section-title">Six capabilities, six tabs — running live below.</h2>
     <p class="section-sub">
-      Every chart below renders with realistic OHADA-region data using the
-      same ECharts engine and the same colour palette as the live product.
-      Tap a tab on your phone or click on desktop — totally responsive.
+      Each tab shows real BMS output rendered with the same ECharts engine
+      and palette as the production suite. Every figure is <b>fully anonymised</b> —
+      generic customer codes, illustrative sample data, no tenant or client
+      identifying information.
     </p>
+
+    <div class="anon-note">Anonymised sample data · not linked to any client</div>
 
     <div class="demo__shell">
       <div class="demo__tabs">
-        <button class="demo__tab is-active" data-demo-tab="revenue">Revenue Analysis</button>
-        <button class="demo__tab" data-demo-tab="pl">Profit &amp; Loss</button>
-        <button class="demo__tab" data-demo-tab="cash">Treasury</button>
-        <button class="demo__tab" data-demo-tab="product">Product Revenue</button>
+        <button class="demo__tab is-active" data-demo-tab="revenue">1 · Revenue vs Budget</button>
+        <button class="demo__tab" data-demo-tab="treasury">2 · Treasury &amp; Ratios</button>
+        <button class="demo__tab" data-demo-tab="ar">3 · Receivables</button>
+        <button class="demo__tab" data-demo-tab="gl">4 · GL Quality</button>
+        <button class="demo__tab" data-demo-tab="tax">5 · Income Tax</button>
+        <button class="demo__tab" data-demo-tab="decl">6 · Monthly Declaration</button>
       </div>
       <div class="demo__body">
 
+        <!-- ── 1 · Revenue vs Budget ────────────────────────────── -->
         <div class="demo-tab-content is-active" data-demo-pane="revenue">
+
+          <div class="demo-kpi-strip">
+            <div class="demo-kpi">
+              <div class="demo-kpi__l">Revenue YTD</div>
+              <div class="demo-kpi__v">1,360<span class="u">M XAF</span></div>
+              <div class="demo-kpi__m">HT basis · 5 mo</div>
+            </div>
+            <div class="demo-kpi">
+              <div class="demo-kpi__l">Budget YTD</div>
+              <div class="demo-kpi__v">1,440<span class="u">M XAF</span></div>
+              <div class="demo-kpi__m">linear pace</div>
+            </div>
+            <div class="demo-kpi">
+              <div class="demo-kpi__l">Net Gap</div>
+              <div class="demo-kpi__v is-neg">−80<span class="u">M XAF</span></div>
+              <div class="demo-kpi__m">−5.5% vs plan</div>
+            </div>
+            <div class="demo-kpi">
+              <div class="demo-kpi__l">vs Prior Year</div>
+              <div class="demo-kpi__v is-pos">+12.8<span class="u">%</span></div>
+              <div class="demo-kpi__m">trending up</div>
+            </div>
+          </div>
+
           <div class="demo-grid">
             <div class="demo-card">
               <div class="demo-card__h">
                 <div>
-                  <div class="demo-card__t">Cumulative revenue · YTD vs Budget vs Linear pace</div>
-                  <div class="demo-card__sub">HT basis · sourced from class 70 GL movements · Jan-May</div>
+                  <div class="demo-card__t">Cumulative revenue · YTD vs Budget</div>
+                  <div class="demo-card__sub">HT · class 70 GL movements · monthly</div>
                 </div>
               </div>
               <div class="chart" id="demo-rev-traj"></div>
@@ -1066,45 +1277,47 @@ button { font: inherit; cursor: pointer; }
             <div class="demo-card">
               <div class="demo-card__h">
                 <div>
-                  <div class="demo-card__t">Top 5 customers · YTD</div>
-                  <div class="demo-card__sub">By revenue · partner_id grouping</div>
+                  <div class="demo-card__t">Top 5 product lines · Actual vs Budget</div>
+                  <div class="demo-card__sub">By revenue · sample data</div>
                 </div>
               </div>
-              <div class="chart-mini" id="demo-top-customers"></div>
+              <div class="chart" id="demo-rev-products"></div>
             </div>
           </div>
         </div>
 
-        <div class="demo-tab-content" data-demo-pane="pl">
-          <div class="demo-grid">
-            <div class="demo-card">
-              <div class="demo-card__h">
-                <div>
-                  <div class="demo-card__t">Margin waterfall</div>
-                  <div class="demo-card__sub">Revenue → COGS → GP → OpEx → EBITDA → D&amp;A+T → NP</div>
-                </div>
-              </div>
-              <div class="chart" id="demo-waterfall"></div>
+        <!-- ── 2 · Treasury & Quick Ratios ──────────────────────── -->
+        <div class="demo-tab-content" data-demo-pane="treasury">
+
+          <div class="demo-kpi-strip">
+            <div class="demo-kpi">
+              <div class="demo-kpi__l">Current Ratio</div>
+              <div class="demo-kpi__v is-pos">1.45<span class="u">x</span></div>
+              <div class="demo-kpi__m">healthy · ≥1.2 target</div>
             </div>
-            <div class="demo-card">
-              <div class="demo-card__h">
-                <div>
-                  <div class="demo-card__t">Cost ratios · CpO &amp; discounts</div>
-                  <div class="demo-card__sub">Vs targets · ≤35% benchmark</div>
-                </div>
-              </div>
-              <div class="chart-mini" id="demo-cost"></div>
+            <div class="demo-kpi">
+              <div class="demo-kpi__l">Quick Ratio</div>
+              <div class="demo-kpi__v is-pos">0.98<span class="u">x</span></div>
+              <div class="demo-kpi__m">near 1.0 · acceptable</div>
+            </div>
+            <div class="demo-kpi">
+              <div class="demo-kpi__l">Cash Ratio</div>
+              <div class="demo-kpi__v is-warn">0.56<span class="u">x</span></div>
+              <div class="demo-kpi__m">improving trend</div>
+            </div>
+            <div class="demo-kpi">
+              <div class="demo-kpi__l">CCC</div>
+              <div class="demo-kpi__v is-pos">28<span class="u">d</span></div>
+              <div class="demo-kpi__m">↓ from 44d (5 mo ago)</div>
             </div>
           </div>
-        </div>
 
-        <div class="demo-tab-content" data-demo-pane="cash">
           <div class="demo-grid">
             <div class="demo-card">
               <div class="demo-card__h">
                 <div>
                   <div class="demo-card__t">Liquidity ratios · 13-month TTM</div>
-                  <div class="demo-card__sub">Current ratio · quick ratio · cash ratio</div>
+                  <div class="demo-card__sub">Current · Quick · Cash · against 1.0× threshold</div>
                 </div>
               </div>
               <div class="chart" id="demo-liquidity"></div>
@@ -1112,8 +1325,8 @@ button { font: inherit; cursor: pointer; }
             <div class="demo-card">
               <div class="demo-card__h">
                 <div>
-                  <div class="demo-card__t">Cash Conversion Cycle · DSO / DIO / DPO</div>
-                  <div class="demo-card__sub">TTM-anchored · partial-period annualised</div>
+                  <div class="demo-card__t">Cash Conversion Cycle</div>
+                  <div class="demo-card__sub">DSO + DIO − DPO · 7-month TTM</div>
                 </div>
               </div>
               <div class="chart-mini" id="demo-ccc"></div>
@@ -1121,27 +1334,293 @@ button { font: inherit; cursor: pointer; }
           </div>
         </div>
 
-        <div class="demo-tab-content" data-demo-pane="product">
+        <!-- ── 3 · Accounts Receivable ─────────────────────────── -->
+        <div class="demo-tab-content" data-demo-pane="ar">
+
+          <div class="demo-kpi-strip">
+            <div class="demo-kpi">
+              <div class="demo-kpi__l">Total AR</div>
+              <div class="demo-kpi__v">285<span class="u">M XAF</span></div>
+              <div class="demo-kpi__m">42 active accounts</div>
+            </div>
+            <div class="demo-kpi">
+              <div class="demo-kpi__l">DSO</div>
+              <div class="demo-kpi__v is-warn">42<span class="u">d</span></div>
+              <div class="demo-kpi__m">target ≤30d</div>
+            </div>
+            <div class="demo-kpi">
+              <div class="demo-kpi__l">Over 60 days</div>
+              <div class="demo-kpi__v is-warn">68<span class="u">M XAF</span></div>
+              <div class="demo-kpi__m">23.9% of total</div>
+            </div>
+            <div class="demo-kpi">
+              <div class="demo-kpi__l">Over 90 days</div>
+              <div class="demo-kpi__v is-neg">51<span class="u">M XAF</span></div>
+              <div class="demo-kpi__m">17.9% · provisioning?</div>
+            </div>
+          </div>
+
           <div class="demo-grid">
             <div class="demo-card">
               <div class="demo-card__h">
                 <div>
-                  <div class="demo-card__t">Product revenue · actual vs budget · YTD</div>
-                  <div class="demo-card__sub">12 products · GL class 706 sub-account mapping</div>
+                  <div class="demo-card__t">AR aging · by bucket</div>
+                  <div class="demo-card__sub">Current · 1-30d · 31-60d · 61-90d · 90+d</div>
                 </div>
               </div>
-              <div class="chart" id="demo-products"></div>
+              <div class="chart" id="demo-ar-aging"></div>
             </div>
             <div class="demo-card">
               <div class="demo-card__h">
                 <div>
-                  <div class="demo-card__t">Variance decomposition</div>
-                  <div class="demo-card__sub">Volume effect · Price effect · Net</div>
+                  <div class="demo-card__t">Top offenders · over 90 days</div>
+                  <div class="demo-card__sub">5 customers · anonymised codes</div>
                 </div>
               </div>
-              <div class="chart-mini" id="demo-variance"></div>
+              <table class="offenders">
+                <thead>
+                  <tr><th>Customer</th><th>Days</th><th>Outstanding</th></tr>
+                </thead>
+                <tbody>
+                  <tr><td><span class="cust"><span class="cust-mark">A</span>Customer A</span></td><td><span class="days is-neg">142d</span></td><td>14.8M</td></tr>
+                  <tr><td><span class="cust"><span class="cust-mark">B</span>Customer B</span></td><td><span class="days is-neg">128d</span></td><td>12.3M</td></tr>
+                  <tr><td><span class="cust"><span class="cust-mark">C</span>Customer C</span></td><td><span class="days is-neg">115d</span></td><td>9.4M</td></tr>
+                  <tr><td><span class="cust"><span class="cust-mark">D</span>Customer D</span></td><td><span class="days is-neg">98d</span></td><td>7.8M</td></tr>
+                  <tr><td><span class="cust"><span class="cust-mark">E</span>Customer E</span></td><td><span class="days is-neg">94d</span></td><td>6.5M</td></tr>
+                </tbody>
+              </table>
             </div>
           </div>
+
+          <div class="demo-card" style="margin-top:14px;">
+            <div class="demo-card__h">
+              <div>
+                <div class="demo-card__t">Top offenders · 61–90 days (next to escalate)</div>
+                <div class="demo-card__sub">5 customers · anonymised codes</div>
+              </div>
+            </div>
+            <table class="offenders">
+              <thead>
+                <tr><th>Customer</th><th>Days</th><th>Outstanding</th></tr>
+              </thead>
+              <tbody>
+                <tr><td><span class="cust"><span class="cust-mark">F</span>Customer F</span></td><td><span class="days is-warn">88d</span></td><td>11.2M</td></tr>
+                <tr><td><span class="cust"><span class="cust-mark">G</span>Customer G</span></td><td><span class="days is-warn">82d</span></td><td>9.5M</td></tr>
+                <tr><td><span class="cust"><span class="cust-mark">H</span>Customer H</span></td><td><span class="days is-warn">75d</span></td><td>8.1M</td></tr>
+                <tr><td><span class="cust"><span class="cust-mark">I</span>Customer I</span></td><td><span class="days is-warn">68d</span></td><td>6.9M</td></tr>
+                <tr><td><span class="cust"><span class="cust-mark">J</span>Customer J</span></td><td><span class="days is-warn">63d</span></td><td>5.4M</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- ── 4 · GL Quality ───────────────────────────────────── -->
+        <div class="demo-tab-content" data-demo-pane="gl">
+
+          <div class="check-banner">
+            <b>5 of 90+ planned checks</b> shown below — automatic, parametrised against
+            the ledger every period. Findings link directly to the underlying journal
+            lines for one-click drill-down.
+          </div>
+
+          <div class="check-grid">
+            <div class="check">
+              <div class="check__sev is-warn">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01"/><circle cx="12" cy="12" r="10"/></svg>
+              </div>
+              <div class="check__body">
+                <div class="check__title">Lines with empty / short descriptions</div>
+                <div class="check__finding">Account.move.line entries where <code style="font-family:var(--font-mono);font-size:11px;background:var(--slate-100);padding:1px 4px;border-radius:3px;">name</code> is empty or under 5 characters — fails audit traceability.</div>
+                <div class="check__metric">
+                  <div class="check__count">142<span class="u">lines</span></div>
+                  <div class="check__exposure">Exposure: undefined audit risk</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="check">
+              <div class="check__sev is-info">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4h-7v16h16v-7M14 4l6 6M14 4v6h6"/></svg>
+              </div>
+              <div class="check__body">
+                <div class="check__title">Manual journal entries</div>
+                <div class="check__finding">Non-system-generated entries posted directly via the manual journal — flagged for senior-review approval before period close.</div>
+                <div class="check__metric">
+                  <div class="check__count">89<span class="u">entries</span></div>
+                  <div class="check__exposure is-pos">Within tolerance (under 100)</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="check">
+              <div class="check__sev is-warn">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09a1.65 1.65 0 00-1-1.51 1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09a1.65 1.65 0 001.51-1 1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+              </div>
+              <div class="check__body">
+                <div class="check__title">Round-number postings</div>
+                <div class="check__finding">Entries that are perfect multiples of 100,000 or 1,000,000 — suspicious for fabricated round-number adjustments. Flagged for narrative justification.</div>
+                <div class="check__metric">
+                  <div class="check__count">23<span class="u">entries</span></div>
+                  <div class="check__exposure">Review required</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="check">
+              <div class="check__sev is-neg">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+              </div>
+              <div class="check__body">
+                <div class="check__title">Posted after period close</div>
+                <div class="check__finding">Lines posted with a date in a closed period — requires reopening or reclassification. Often indicates late expense recognition or invoice timing slippage.</div>
+                <div class="check__metric">
+                  <div class="check__count">12<span class="u">entries</span></div>
+                  <div class="check__exposure">Period needs re-closing</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="check">
+              <div class="check__sev is-ok">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+              </div>
+              <div class="check__body">
+                <div class="check__title">Imbalanced moves</div>
+                <div class="check__finding">Journal entries where Σ debit ≠ Σ credit at the move level — would fail OHADA double-entry. Last scan: zero findings.</div>
+                <div class="check__metric">
+                  <div class="check__count">0<span class="u">moves</span></div>
+                  <div class="check__exposure is-pos">All moves balanced ✓</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── 5 · Income Tax Compliance ────────────────────────── -->
+        <div class="demo-tab-content" data-demo-pane="tax">
+
+          <div class="check-banner">
+            Two automated CGI checks shown below. Findings include the underlying
+            account.move.line references for one-click drill-down. The full Income
+            Tax Compliance module surfaces 12+ deductibility tests, plus per-partner
+            withholding reconciliation.
+          </div>
+
+          <div class="check-grid">
+            <div class="check">
+              <div class="check__sev is-neg">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3h18v18H3z"/><path d="M9 9h6v6H9z"/></svg>
+              </div>
+              <div class="check__body">
+                <div class="check__title">Non-deductible expenses identified</div>
+                <div class="check__finding">
+                  Lines posted to classes 626x / 628x with descriptions matching CGI Art. 7 non-deductible patterns
+                  — restaurant/entertainment without business purpose, traffic fines, donations to non-approved
+                  organisations, owner-related personal expenses.
+                </div>
+                <div class="check__metric">
+                  <div class="check__count">38<span class="u">lines</span></div>
+                  <div class="check__exposure">Tax exposure: <b>7.1M XAF</b></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="check">
+              <div class="check__sev is-warn">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 00-3-3.87M4 21v-2a4 4 0 013-3.87M12 11a4 4 0 100-8 4 4 0 000 8z"/></svg>
+              </div>
+              <div class="check__body">
+                <div class="check__title">Donations exceeding CGI 1% revenue threshold</div>
+                <div class="check__finding">
+                  Per CGI Art. 7, donations to approved bodies are deductible up to 1% of pre-tax revenue.
+                  Booked donations exceed this ceiling — the excess must be added back to taxable profit.
+                </div>
+                <div class="check__metric">
+                  <div class="check__count">15.0M<span class="u">declared</span></div>
+                  <div class="check__exposure">Excess: <b>2.5M XAF</b> (deductible cap 12.5M)</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="demo-card" style="margin-top:14px;">
+            <div class="demo-card__h">
+              <div>
+                <div class="demo-card__t">Combined corporate-tax exposure</div>
+                <div class="demo-card__sub">Both findings at the 33% IS rate</div>
+              </div>
+            </div>
+            <div class="demo-kpi-strip" style="margin: 0;">
+              <div class="demo-kpi">
+                <div class="demo-kpi__l">Non-deductible base</div>
+                <div class="demo-kpi__v">7.1<span class="u">M XAF</span></div>
+              </div>
+              <div class="demo-kpi">
+                <div class="demo-kpi__l">Donation excess</div>
+                <div class="demo-kpi__v">2.5<span class="u">M XAF</span></div>
+              </div>
+              <div class="demo-kpi">
+                <div class="demo-kpi__l">Add-back total</div>
+                <div class="demo-kpi__v is-warn">9.6<span class="u">M XAF</span></div>
+              </div>
+              <div class="demo-kpi">
+                <div class="demo-kpi__l">Tax impact @ 33%</div>
+                <div class="demo-kpi__v is-neg">3.17<span class="u">M XAF</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── 6 · Monthly Declaration extract ──────────────────── -->
+        <div class="demo-tab-content" data-demo-pane="decl">
+
+          <p style="text-align:center; color:var(--slate-500); font-size:13px; margin-bottom:24px;">
+            Sample extract of the auto-generated <b>Déclaration mensuelle</b> ready for DGI submission.<br>
+            All figures derived directly from the GL · period boundaries respected · VAT cross-checked against class 4431.
+          </p>
+
+          <div class="decl">
+            <div class="decl__h">
+              <div class="decl__t">Déclaration mensuelle · Sample</div>
+              <div class="decl__sub">Période · Avril 2026</div>
+            </div>
+            <div class="decl__body">
+
+              <div class="decl__row is-section">TVA — Taxe sur la Valeur Ajoutée</div>
+              <div class="decl__row"><span>Chiffre d'affaires HT</span><span class="v">285,000,000</span></div>
+              <div class="decl__row"><span>TVA collectée (19.25%)</span><span class="v">54,862,500</span></div>
+              <div class="decl__row"><span>TVA déductible · achats</span><span class="v">(22,310,000)</span></div>
+              <div class="decl__row"><span>TVA déductible · investissements</span><span class="v">(0)</span></div>
+              <div class="decl__row is-total"><span>TVA à reverser</span><span class="v">32,552,500</span></div>
+
+              <div class="decl__row is-section">IS — Impôt sur les Sociétés</div>
+              <div class="decl__row"><span>Acompte mensuel (1.1% du CA TTC)</span><span class="v">3,137,500</span></div>
+              <div class="decl__row"><span>Acomptes versés YTD</span><span class="v">(12,550,000)</span></div>
+
+              <div class="decl__row is-section">Retenues à la source</div>
+              <div class="decl__row"><span>RAS sur prestations (5.5%)</span><span class="v">4,510,000</span></div>
+              <div class="decl__row"><span>RAS sur loyers (10%)</span><span class="v">2,250,000</span></div>
+
+              <div class="decl__row is-total" style="margin-top:14px;"><span>Total à payer · échéance 15 mai 2026</span><span class="v">42,449,000</span></div>
+            </div>
+            <div class="decl__footer">
+              <div>
+                Generated <b>2 May 2026</b> · BMS Monthly Tax Return module
+                <div class="decl__stamp">All cross-checks passed · ready for DGI</div>
+              </div>
+              <div style="text-align:right;">
+                <div>Period closed ✓</div>
+                <div>GL reconciled ✓</div>
+                <div>VAT class 4431 ✓</div>
+              </div>
+            </div>
+          </div>
+
+          <p style="text-align:center; color:var(--slate-500); font-size:12px; margin-top:20px; max-width:560px; margin-left:auto; margin-right:auto;">
+            The live module exports this as a print-ready PDF and an Excel template
+            for upload to the DGI portal. Variance flags trigger if the declared
+            VAT doesn't reconcile to the GL class 4431 movement for the same period.
+          </p>
         </div>
 
       </div>
@@ -1468,7 +1947,7 @@ button { font: inherit; cursor: pointer; }
       <div class="footer__col">
         <h4>Suite</h4>
         <a href="#modules">All modules</a>
-        <a href="#demo">Live demo</a>
+        <a href="#demonstration">Demonstration</a>
         <a href="#industries">Industries</a>
         <a href="#expertise">Expertise</a>
       </div>
@@ -1576,15 +2055,25 @@ button { font: inherit; cursor: pointer; }
     }],
   });
 
-  /* ── Demo · revenue trajectory (similar to hero but standalone) ── */
+  /* ── Demonstration · 5 charts across 3 tabs ─────────────────────
+     Tabs 4 / 5 / 6 are static cards (GL Quality, Income Tax, Monthly
+     Declaration) — no charts to render there. */
   const demoCharts = {};
+
+  function safeInit(elId) {
+    const el = document.getElementById(elId);
+    if (!el) return null;
+    return echarts.init(el);
+  }
 
   function initDemo() {
     if (demoCharts.revTraj) return;
 
-    // Revenue trajectory
-    demoCharts.revTraj = echarts.init(document.getElementById('demo-rev-traj'));
-    demoCharts.revTraj.setOption({
+    /* ── Tab 1 · Revenue vs Budget ── */
+
+    // (a) Cumulative revenue trajectory
+    demoCharts.revTraj = safeInit('demo-rev-traj');
+    if (demoCharts.revTraj) demoCharts.revTraj.setOption({
       textStyle: { fontFamily: FF, color: '#374151' },
       grid: { left: 64, right: 16, top: 30, bottom: 26 },
       legend: { right: 8, top: 0, icon: 'roundRect', itemWidth: 14, itemHeight: 4,
@@ -1597,7 +2086,7 @@ button { font: inherit; cursor: pointer; }
                splitLine: { lineStyle: { color: t.grid } },
                axisLabel: { color: t.textM, fontSize: 10, formatter: v => fmtM(v) } },
       series: [
-        { name: 'Actual', type: 'line', data: actual,
+        { name: 'Actual (cum)', type: 'line', data: actual,
           lineStyle: { color: t.pri, width: 2.4 }, itemStyle: { color: t.pri },
           areaStyle: { color: t.area }, symbol: 'circle', symbolSize: 6, connectNulls: false },
         { name: 'Budget', type: 'line', data: budget, smooth: true,
@@ -1607,110 +2096,35 @@ button { font: inherit; cursor: pointer; }
       ],
     });
 
-    // Top customers
-    demoCharts.topCust = echarts.init(document.getElementById('demo-top-customers'));
-    demoCharts.topCust.setOption({
+    // (b) Top 5 product lines · Actual vs Budget
+    demoCharts.revProducts = safeInit('demo-rev-products');
+    if (demoCharts.revProducts) demoCharts.revProducts.setOption({
       textStyle: { fontFamily: FF, color: '#374151' },
-      grid: { left: 110, right: 36, top: 4, bottom: 18 },
+      grid: { left: 110, right: 50, top: 30, bottom: 18 },
+      legend: { right: 8, top: 0, icon: 'roundRect', itemWidth: 14, itemHeight: 4,
+                textStyle: { fontSize: 11, color: t.textM, fontFamily: FF } },
       tooltip: { ...tip, valueFormatter: v => fmtM(v) + ' XAF' },
-      yAxis: { type: 'category', data: ['Maersk Cam.', 'CMA CGM', 'MSC Logistics', 'BIA Group', 'SGS Cam.'].reverse(),
+      yAxis: { type: 'category', data: ['Product E', 'Product D', 'Product C', 'Product B', 'Product A'],
                axisLine: { lineStyle: { color: t.base } }, axisTick: { show: false },
                axisLabel: { color: t.textM, fontSize: 10 } },
       xAxis: { type: 'value', axisLine: { show: false },
                splitLine: { lineStyle: { color: t.grid } },
                axisLabel: { color: t.textM, fontSize: 9, formatter: v => fmtM(v) } },
-      series: [{
-        type: 'bar', data: [285, 218, 175, 142, 95].reverse().map(v => v * 1e6),
-        itemStyle: { color: t.pri, borderRadius: [0, 4, 4, 0] },
-        barWidth: 16,
-        label: { show: true, position: 'right', color: t.textM, fontSize: 10, formatter: p => fmtM(p.value) },
-      }],
-    });
-
-    // Waterfall (P&L)
-    demoCharts.waterfall = echarts.init(document.getElementById('demo-waterfall'));
-    const wfStages = [
-      { name: 'Revenue', value: 1360,  type: 'total' },
-      { name: 'COGS',    value: -640,  type: 'out'   },
-      { name: 'GP',      value: 720,   type: 'sub'   },
-      { name: 'OpEx',    value: -395,  type: 'out'   },
-      { name: 'EBITDA',  value: 325,   type: 'sub'   },
-      { name: 'D&A+T',   value: -125,  type: 'out'   },
-      { name: 'NP',      value: 200,   type: 'tot'   },
-    ];
-    let running = 0;
-    const placeholders = [];
-    const positives = [];
-    const negatives = [];
-    const totals = [];
-    wfStages.forEach(s => {
-      if (s.type === 'total' || s.type === 'sub' || s.type === 'tot') {
-        placeholders.push(0); positives.push(0); negatives.push(0); totals.push(s.value);
-        running = s.value;
-      } else if (s.value < 0) {
-        placeholders.push(running + s.value); negatives.push(-s.value); positives.push(0); totals.push(0);
-        running += s.value;
-      } else {
-        placeholders.push(running); positives.push(s.value); negatives.push(0); totals.push(0);
-        running += s.value;
-      }
-    });
-    demoCharts.waterfall.setOption({
-      textStyle: { fontFamily: FF, color: '#374151' },
-      grid: { left: 50, right: 16, top: 24, bottom: 26 },
-      tooltip: { ...tip, valueFormatter: v => fmtM(v * 1e6) + ' XAF' },
-      xAxis: { type: 'category', data: wfStages.map(s => s.name),
-               axisLine: { lineStyle: { color: t.base } }, axisTick: { show: false },
-               axisLabel: { color: t.textM, fontSize: 11 } },
-      yAxis: { type: 'value', axisLine: { show: false }, axisTick: { show: false },
-               splitLine: { lineStyle: { color: t.grid } },
-               axisLabel: { color: t.textM, fontSize: 10, formatter: v => fmtM(v * 1e6) } },
       series: [
-        { name: 'placeholder', type: 'bar', stack: 'wf', data: placeholders,
-          itemStyle: { color: 'transparent' }, barWidth: 32 },
-        { name: '+', type: 'bar', stack: 'wf', data: positives,
-          itemStyle: { color: t.pri }, barWidth: 32,
-          label: { show: true, position: 'top', color: t.textM, fontSize: 10, formatter: p => p.value > 0 ? '+' + p.value : '' } },
-        { name: '−', type: 'bar', stack: 'wf', data: negatives,
-          itemStyle: { color: t.neg }, barWidth: 32,
-          label: { show: true, position: 'top', color: t.textM, fontSize: 10, formatter: p => p.value > 0 ? '−' + p.value : '' } },
-        { name: 'total', type: 'bar', stack: 'wf', data: totals,
-          itemStyle: { color: '#475569' }, barWidth: 32,
-          label: { show: true, position: 'top', color: '#0f172a', fontSize: 10, fontWeight: 700, formatter: p => p.value > 0 ? p.value : '' } },
+        { name: 'Budget', type: 'bar', data: [82, 115, 145, 220, 280].map(v => v * 1e6),
+          itemStyle: { color: '#94a3b8', borderRadius: [0, 3, 3, 0] }, barWidth: 10 },
+        { name: 'Actual', type: 'bar', data: [78, 109, 158, 235, 295].map(v => v * 1e6),
+          itemStyle: { color: t.pri, borderRadius: [0, 3, 3, 0] }, barWidth: 10 },
       ],
     });
 
-    // Cost ratios
-    demoCharts.cost = echarts.init(document.getElementById('demo-cost'));
-    demoCharts.cost.setOption({
-      textStyle: { fontFamily: FF, color: '#374151' },
-      grid: { left: 56, right: 50, top: 8, bottom: 20 },
-      tooltip: { ...tip, valueFormatter: v => v.toFixed(0) + '%' },
-      yAxis: { type: 'category', data: ['DpC/RpC', 'DpOT/RpO', 'CpO/RpO'],
-               axisLine: { lineStyle: { color: t.base } }, axisTick: { show: false },
-               axisLabel: { color: t.textM, fontSize: 11, fontWeight: 600 } },
-      xAxis: { type: 'value', max: 60, axisLine: { show: false },
-               splitLine: { lineStyle: { color: t.grid } },
-               axisLabel: { color: t.textM, fontSize: 9, formatter: '{value}%' } },
-      series: [{
-        type: 'bar', data: [
-          { value: 12, itemStyle: { color: t.pri } },
-          { value: 22, itemStyle: { color: t.pri } },
-          { value: 47, itemStyle: { color: t.warn } },
-        ],
-        barWidth: 14,
-        label: { show: true, position: 'right', color: t.textM, fontSize: 10, formatter: p => p.value + '%' },
-        markLine: { silent: true, symbol: 'none',
-          lineStyle: { color: t.textF, type: 'dashed', width: 1 },
-          label: { position: 'end', formatter: '≤35%', color: t.textM, fontSize: 9, distance: 4 },
-          data: [{ xAxis: 35 }] }
-      }],
-    });
+    /* ── Tab 2 · Treasury & Quick Ratios ── */
 
-    // Liquidity
-    demoCharts.liq = echarts.init(document.getElementById('demo-liquidity'));
     const liqMonths = ['May 25','Jun','Jul','Aug','Sep','Oct','Nov','Dec','Jan 26','Feb','Mar','Apr','May'];
-    demoCharts.liq.setOption({
+
+    // (a) Liquidity ratios — 13-month TTM (3 lines + 1.0× threshold marker)
+    demoCharts.liquidity = safeInit('demo-liquidity');
+    if (demoCharts.liquidity) demoCharts.liquidity.setOption({
       textStyle: { fontFamily: FF, color: '#374151' },
       grid: { left: 38, right: 14, top: 30, bottom: 24 },
       legend: { right: 8, top: 0, icon: 'roundRect', itemWidth: 14, itemHeight: 4,
@@ -1724,17 +2138,21 @@ button { font: inherit; cursor: pointer; }
                axisLabel: { color: t.textM, fontSize: 9, formatter: v => v.toFixed(1) + 'x' } },
       series: [
         { name: 'Current', type: 'line', data: [1.1, 1.15, 1.2, 1.18, 1.22, 1.28, 1.3, 1.32, 1.35, 1.38, 1.4, 1.42, 1.45],
-          lineStyle: { color: t.pri, width: 2.2 }, itemStyle: { color: t.pri }, symbol: 'circle', symbolSize: 5 },
+          lineStyle: { color: t.pri, width: 2.4 }, itemStyle: { color: t.pri }, symbol: 'circle', symbolSize: 5,
+          markLine: { silent: true, symbol: 'none', lineStyle: { color: t.textF, type: 'dashed', width: 1 },
+            label: { position: 'end', formatter: '1.0× threshold', color: t.textM, fontSize: 9 },
+            data: [{ yAxis: 1.0 }] }
+        },
         { name: 'Quick', type: 'line', data: [0.7, 0.72, 0.75, 0.74, 0.78, 0.82, 0.85, 0.87, 0.9, 0.92, 0.94, 0.96, 0.98],
-          lineStyle: { color: t.pos, width: 1.8 }, itemStyle: { color: t.pos }, symbol: 'circle', symbolSize: 4 },
+          lineStyle: { color: t.pos, width: 2 }, itemStyle: { color: t.pos }, symbol: 'circle', symbolSize: 4 },
         { name: 'Cash', type: 'line', data: [0.35, 0.38, 0.40, 0.41, 0.43, 0.45, 0.46, 0.48, 0.50, 0.52, 0.53, 0.54, 0.56],
-          lineStyle: { color: t.warn, width: 1.5, type: 'dashed' }, itemStyle: { color: t.warn }, symbol: 'circle', symbolSize: 4 },
+          lineStyle: { color: t.warn, width: 1.6, type: 'dashed' }, itemStyle: { color: t.warn }, symbol: 'circle', symbolSize: 4 },
       ],
     });
 
-    // CCC
-    demoCharts.ccc = echarts.init(document.getElementById('demo-ccc'));
-    demoCharts.ccc.setOption({
+    // (b) CCC + DSO/DIO/DPO mini
+    demoCharts.ccc = safeInit('demo-ccc');
+    if (demoCharts.ccc) demoCharts.ccc.setOption({
       textStyle: { fontFamily: FF, color: '#374151' },
       grid: { left: 40, right: 14, top: 24, bottom: 20 },
       legend: { right: 8, top: 0, icon: 'roundRect', itemWidth: 14, itemHeight: 4,
@@ -1758,50 +2176,32 @@ button { font: inherit; cursor: pointer; }
       ],
     });
 
-    // Product revenue (vertical bars · 12 products · actual vs budget)
-    demoCharts.products = echarts.init(document.getElementById('demo-products'));
-    const prodLabels = ["Imp 40'", "Imp 20'", "Exp 40'", "Exp 20'", 'Empty', 'OOG', 'Cars', 'Trucks', 'Heavy', 'Wood', 'Gen C.', 'Pacs+MAFI'];
-    demoCharts.products.setOption({
-      textStyle: { fontFamily: FF, color: '#374151' },
-      grid: { left: 50, right: 14, top: 30, bottom: 38 },
-      legend: { right: 8, top: 0, icon: 'roundRect', itemWidth: 14, itemHeight: 4,
-                textStyle: { fontSize: 11, color: t.textM, fontFamily: FF } },
-      tooltip: { ...tip, valueFormatter: v => fmtM(v * 1e6) + ' XAF' },
-      xAxis: { type: 'category', data: prodLabels,
-               axisLine: { lineStyle: { color: t.base } }, axisTick: { show: false },
-               axisLabel: { color: t.textM, fontSize: 10, rotate: 35 } },
-      yAxis: { type: 'value', axisLine: { show: false }, axisTick: { show: false },
-               splitLine: { lineStyle: { color: t.grid } },
-               axisLabel: { color: t.textM, fontSize: 10, formatter: v => v + 'M' } },
-      series: [
-        { name: 'Budget', type: 'bar', data: [580, 420, 145, 132, 0, 0, 850, 113, 41, 230, 770, 3],
-          itemStyle: { color: '#94a3b8', borderRadius: [3, 3, 0, 0] }, barWidth: '32%' },
-        { name: 'Actual', type: 'bar', data: [612, 439, 161, 147, 0, 5, 862, 116, 42, 231, 0, 0],
-          itemStyle: { color: t.pri, borderRadius: [3, 3, 0, 0] }, barWidth: '32%' },
-      ],
-    });
+    /* ── Tab 3 · AR Aging ── */
 
-    // Variance breakdown
-    demoCharts.variance = echarts.init(document.getElementById('demo-variance'));
-    demoCharts.variance.setOption({
+    demoCharts.arAging = safeInit('demo-ar-aging');
+    if (demoCharts.arAging) demoCharts.arAging.setOption({
       textStyle: { fontFamily: FF, color: '#374151' },
-      grid: { left: 70, right: 18, top: 8, bottom: 18 },
-      tooltip: { ...tip, valueFormatter: v => fmtM(v * 1e6) + ' XAF' },
-      yAxis: { type: 'category', data: ['Net variance', 'Price effect', 'Volume effect'],
+      grid: { left: 60, right: 40, top: 20, bottom: 30 },
+      tooltip: { ...tip, valueFormatter: v => fmtM(v) + ' XAF' },
+      xAxis: { type: 'category', data: ['Current', '1–30 d', '31–60 d', '61–90 d', '90+ d'],
                axisLine: { lineStyle: { color: t.base } }, axisTick: { show: false },
                axisLabel: { color: t.textM, fontSize: 11, fontWeight: 600 } },
-      xAxis: { type: 'value', axisLine: { show: false },
+      yAxis: { type: 'value', axisLine: { show: false }, axisTick: { show: false },
                splitLine: { lineStyle: { color: t.grid } },
-               axisLabel: { color: t.textM, fontSize: 9, formatter: v => v + 'M' } },
+               axisLabel: { color: t.textM, fontSize: 10, formatter: v => fmtM(v) } },
       series: [{
         type: 'bar',
         data: [
-          { value: 28, itemStyle: { color: t.pos } },
-          { value:  4, itemStyle: { color: t.pos } },
-          { value: 24, itemStyle: { color: t.pos } },
+          { value: 120 * 1e6, itemStyle: { color: t.pos } },
+          { value:  60 * 1e6, itemStyle: { color: t.pri } },
+          { value:  37 * 1e6, itemStyle: { color: '#fbbf24' } },
+          { value:  17 * 1e6, itemStyle: { color: t.warn } },
+          { value:  51 * 1e6, itemStyle: { color: t.neg } },
         ],
-        barWidth: 16,
-        label: { show: true, position: 'right', color: t.textM, fontSize: 10, formatter: p => '+' + p.value + 'M' },
+        barWidth: '50%',
+        itemStyle: { borderRadius: [4, 4, 0, 0] },
+        label: { show: true, position: 'top', color: t.textM, fontSize: 11, fontWeight: 600,
+          formatter: p => fmtM(p.value) },
       }],
     });
   }
