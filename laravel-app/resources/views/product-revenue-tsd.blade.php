@@ -2,6 +2,12 @@
 @section('title', 'Product Revenue TSD')
 @section('page-title', 'Product Revenue TSD · Transatlantic Douala')
 
+{{-- Freeze the YoY master-filter button — variance-vs-prior-year is a
+     P&L concept that doesn't have a natural rendering for a per-product
+     P&V breakdown. The layout reads this section and renders the button
+     in a sage / "is-frozen" style. YTD / MTD / Month stay active. --}}
+@section('mfilter-frozen', 'yoy')
+
 {{--
     Data shape (ProductRevenueTsdController::index):
       $analysis = [
@@ -155,6 +161,24 @@
       $glDiag     = $analysis['gl_diagnostic'] ?? ['matched' => [], 'unmatched' => []];
       $todayMonth = (int) $analysis['today_month'];
 
+      // Period-awareness — populated by the controller from the master
+      // filter. Used to:
+      //   - label the headline strip cells correctly (MTD vs YTD copy)
+      //   - render "Period · <range>" subhead so the user always sees
+      //     which slice the figures cover
+      //   - drive the budget proration commentary (annual ÷ 12 × N)
+      $periodType    = (string) ($analysis['period_type'] ?? 'ytd');
+      $startMonth    = (int)    ($analysis['start_month'] ?? 1);
+      $endMonth      = (int)    ($analysis['end_month']   ?? $todayMonth);
+      $monthsInRange = max(1, (int) ($analysis['months_in_range'] ?? ($endMonth - $startMonth + 1)));
+      $isMtd         = $periodType === 'mtd' || $periodType === 'month';
+      $rangeLabel    = $isMtd
+          ? (new \DateTimeImmutable(sprintf('%04d-%02d-01', $year, $endMonth)))->format('F Y')
+          : 'YTD · ' . $monthsInRange . ' mo';
+      $rangeShort    = $isMtd
+          ? (new \DateTimeImmutable(sprintf('%04d-%02d-01', $year, $endMonth)))->format('M Y')
+          : ($monthsInRange . ' mo YTD');
+
       $byCat = collect($products)->groupBy('category');
 
       $fmtMShort = function (?float $v): string {
@@ -175,23 +199,34 @@
       };
     @endphp
 
+    {{-- ── Period subhead — always visible so the user sees exactly
+         which slice the figures cover after flipping MTD ↔ YTD. --}}
+    <div style="font-size:11px;color:#6b7280;letter-spacing:0.04em;text-transform:uppercase;margin-bottom:6px;">
+      Period · <strong style="color:#374151;">{{ $rangeLabel }}</strong>
+      @if ($isMtd)
+        <span style="color:#9ca3af;">· budget shown is annual ÷ 12 × 1 month</span>
+      @else
+        <span style="color:#9ca3af;">· budget shown is annual ÷ 12 × {{ $monthsInRange }} months</span>
+      @endif
+    </div>
+
     {{-- ── Headline strip (5 cells) — reconciliation + variance ──
-         "Revenue YTD (Total · HT)" is the class 70 sum: matches the
-         Dashboard's revenue cell (HT basis), so the two pages agree.
-         "Revenue YTD (Tracked)" is the sum of per-product actuals; the
-         difference between the two is the unallocated revenue (OOG +
-         generic 706 + class 70 lines outside containers/vehicles/wood)
-         called out in the diagnostic panel below the variance table. --}}
+         "Revenue (Total · HT)" is the class 70 sum: matches the Dashboard's
+         revenue cell (HT basis) for the same period, so the two pages agree.
+         "Revenue (Budget)" is the plan × plan-price slice for the active
+         range; the difference between the two is the Net Revenue Gap. All
+         three respond to the master filter — flip to MTD and the numbers
+         collapse to a single month. --}}
     <div class="prt-strip">
       <div class="prt-strip__c">
-        <div class="prt-strip__l">Revenue YTD (Total · HT)</div>
+        <div class="prt-strip__l">Revenue ({{ $isMtd ? 'MTD' : 'YTD' }} · HT)</div>
         <div class="prt-strip__v">{{ $fmtMShort($class70Ytd) }}<span class="u">XAF</span></div>
-        <div class="prt-strip__m">{{ $todayMonth }} mo · Σ class 70 · matches Dashboard (HT)</div>
+        <div class="prt-strip__m">{{ $rangeShort }} · Σ class 70 · matches Dashboard (HT)</div>
       </div>
       <div class="prt-strip__c">
-        <div class="prt-strip__l">Revenue YTD (Budget)</div>
+        <div class="prt-strip__l">Revenue ({{ $isMtd ? 'MTD' : 'YTD' }} · Budget)</div>
         <div class="prt-strip__v">{{ $fmtMShort($tot['ytd_budget_revenue']) }}<span class="u">XAF</span></div>
-        <div class="prt-strip__m">plan × plan price</div>
+        <div class="prt-strip__m">plan × plan price · {{ $rangeShort }}</div>
       </div>
       <div class="prt-strip__c">
         <div class="prt-strip__l">Net Revenue Gap</div>
@@ -282,7 +317,7 @@
               @elseif ($p['volume_only'])
                 0 XAF · volume tracked only
               @else
-                {{ number_format($p['budget_price'] / 1000, 0) }}K HT · {{ number_format($p['ytd_budget_qty'] / max(1, $todayMonth)) }}/mo · {{ number_format(array_sum($p['budget_qty'])) }}/yr
+                {{ number_format($p['budget_price'] / 1000, 0) }}K HT · {{ number_format($p['ytd_budget_qty'] / max(1, $monthsInRange)) }}/mo · {{ number_format(array_sum($p['budget_qty'])) }}/yr
               @endif
             </div>
             <div class="prt-leg" style="color:{{ $p['color'] }}">
@@ -315,7 +350,7 @@
     </div>
 
     {{-- ── Section B' · Variance summary ── --}}
-    <h2 class="prt-section">B' · Revenue variance · price–volume–mix breakdown · YTD</h2>
+    <h2 class="prt-section">B' · Revenue variance · price–volume–mix breakdown · {{ $rangeLabel }}</h2>
 
     <div class="v5-card">
       <div class="v5-card__h">
@@ -329,9 +364,9 @@
           <thead>
             <tr>
               <th rowspan="2" style="text-align:left">Product</th>
-              <th colspan="3">Volume (units, YTD)</th>
+              <th colspan="3">Volume (units, {{ $rangeShort }})</th>
               <th colspan="3">Avg Unit Price (XAF)</th>
-              <th colspan="3">Revenue (M XAF, YTD)</th>
+              <th colspan="3">Revenue (M XAF, {{ $rangeShort }})</th>
               <th colspan="3">Variance breakdown (M XAF)</th>
             </tr>
             <tr>
@@ -419,8 +454,22 @@
                 @endforeach
               @endif
             @endforeach
+            @php
+              // Pre-compute the period label once — reused for both
+              // total rows below so MTD/YTD switching stays consistent.
+              $totalLabel = $isMtd
+                ? strtoupper((new \DateTimeImmutable(sprintf('%04d-%02d-01', $year, $endMonth)))->format('M Y'))
+                : 'YTD · ' . $monthsInRange . ' MO';
+              // All-products budget (tracked + pending). The variance
+              // columns stay on the tracked row only — pending products
+              // have no actuals, so their variance is undefined.
+              $allBudgetRev = (float) ($analysis['totals']['all_period_budget_revenue'] ?? $tot['ytd_budget_revenue']);
+            @endphp
+
+            {{-- TRACKED total — variance-meaningful (both BUD and ACT
+                 cover the same set of products). --}}
             <tr class="total-row">
-              <td>TOTAL · YTD</td>
+              <td>TOTAL TRACKED · {{ $totalLabel }}</td>
               <td colspan="6"></td>
               <td>{{ number_format($tot['ytd_budget_revenue'] / 1e6, 1) }}</td>
               <td>{{ number_format($tot['ytd_actual_revenue'] / 1e6, 1) }}</td>
@@ -429,6 +478,21 @@
               <td class="{{ $tot['price_effect_xaf'] < 0 ? 'vn' : 'vp' }}"><b>{{ $fmtSigned($tot['price_effect_xaf']) }}</b></td>
               <td class="{{ $tot['net_variance_xaf'] < 0 ? 'vn' : 'vp' }}"><b>{{ $fmtSigned($tot['net_variance_xaf']) }}</b></td>
             </tr>
+
+            {{-- ALL-BUDGETED total — full budget proration (annual ÷ 12
+                 × N) including Other Cargo whose actuals are pending.
+                 ACT cell shows tracked only with a footnote; variance
+                 columns stay blank because they aren't comparable here. --}}
+            @if ($pendingYtd > 0)
+              <tr class="total-row" style="background:#fef7ed;">
+                <td style="font-style:italic;">TOTAL ALL BUDGETED · {{ $totalLabel }} <span style="font-weight:400;font-size:10px;color:#92400e;">(incl. pending)</span></td>
+                <td colspan="6"></td>
+                <td><b>{{ number_format($allBudgetRev / 1e6, 1) }}</b></td>
+                <td colspan="5" style="font-style:italic;color:#6b7280;font-size:10px;text-align:left;padding-left:12px;">
+                  Tracked ACT {{ number_format($tot['ytd_actual_revenue'] / 1e6, 1) }} M · Other Cargo actuals pending Odoo · variance not comparable
+                </td>
+              </tr>
+            @endif
           </tbody>
         </table>
       </div>
@@ -437,11 +501,17 @@
           $dom = abs($tot['volume_effect_xaf']) > abs($tot['price_effect_xaf']) ? 'volume-driven' : 'price-driven';
         @endphp
         <b>Reading (tracked products only):</b>
-        Net YTD revenue gap is
+        Net {{ $isMtd ? 'monthly' : $monthsInRange . '-mo' }} revenue gap is
         <span class="{{ $tot['net_variance_xaf'] < 0 ? 'prt-neg' : 'prt-pos' }}">{{ $fmtSigned($tot['net_variance_xaf']) }} XAF</span>.
         The gap is <b>{{ $dom }}</b> —
         Volume effect <span class="{{ $tot['volume_effect_xaf'] < 0 ? 'prt-neg' : 'prt-pos' }}">{{ $fmtSigned($tot['volume_effect_xaf']) }}</span>,
         Price effect <span class="{{ $tot['price_effect_xaf'] < 0 ? 'prt-neg' : 'prt-pos' }}">{{ $fmtSigned($tot['price_effect_xaf']) }}</span>.
+        @if ($pendingYtd > 0)
+          <br><span style="color:#6b7280;font-size:11px;">
+            Full budget total including Other Cargo: <b>{{ $fmtMShort($allBudgetRev) }} XAF</b> ({{ $rangeShort }})
+            — equals your annual ÷ 12 × {{ $monthsInRange }} {{ $monthsInRange === 1 ? 'month' : 'months' }}.
+          </span>
+        @endif
       </div>
     </div>
 
@@ -536,6 +606,188 @@
             <b>{{ count($unmatched706) }} {{ count($unmatched706) === 1 ? 'account is' : 'accounts are' }} still unmatched in 706</b>
             ({{ $fmtMShort(array_sum(array_column($unmatched706, 'ytd_revenue'))) }} XAF YTD)
             — tell me which product they should land in and I'll widen the patterns.
+          @endif
+        </div>
+      </div>
+    @endif
+
+    {{-- ── Reconciliation diagnostic · class 70 lines NOT linked to
+         a customer invoice/refund. These are the postings that explain
+         why TSD's class-70 grand total can exceed the Dashboard's
+         invoice-based revenue figure. Renders only if any such lines
+         exist for the period. --}}
+    @php
+      $ni        = (array) ($analysis['class70_non_invoice'] ?? []);
+      $niCount   = (int)   ($ni['total_count']  ?? 0);
+      $niAmount  = (float) ($ni['total_amount'] ?? 0);
+      $niByJrn   = (array) ($ni['by_journal']   ?? []);
+      $niByAcct  = (array) ($ni['by_account']   ?? []);
+      $niByType  = (array) ($ni['by_move_type'] ?? []);
+      $niLines   = (array) ($ni['lines']        ?? []);
+
+      $fmtAmt = function ($v) {
+          $v = (float) $v;
+          if (abs($v) >= 1e6) return number_format($v / 1e6, 1) . ' M';
+          if (abs($v) >= 1e3) return number_format($v / 1e3, 0) . ' K';
+          return number_format($v, 0);
+      };
+    @endphp
+    @if ($niCount > 0)
+      <h2 class="prt-section">Reconciliation · Class 70 movements <em style="font-weight:400;color:#6b7280;">not</em> linked to customer invoices</h2>
+      <div class="v5-card" style="border-left:4px solid #d97706;">
+        <div class="v5-card__h">
+          <div>
+            <div class="v5-card__t">
+              The reconciliation gap · {{ number_format($niCount) }} {{ $niCount === 1 ? 'line' : 'lines' }} totalling <strong>{{ $fmtAmt($niAmount) }} XAF</strong>
+            </div>
+            <div class="v5-card__sub">
+              These are posted GL lines on class 70 (revenue) accounts whose parent journal entry is <strong>not</strong> an
+              <code style="font-size:11px;background:#f3f4f6;padding:1px 4px;border-radius:3px">out_invoice</code> or
+              <code style="font-size:11px;background:#f3f4f6;padding:1px 4px;border-radius:3px">out_refund</code> —
+              typically manual journal entries, OD reclassifications, or direct postings that bypassed the customer-billing workflow.
+              They lift the TSD "Class 70 YTD" figure but are <strong>invisible to the Dashboard</strong> (which only sums customer-invoice lines).
+              Period: {{ $year }}-01-01 → end of month {{ $todayMonth }}.
+            </div>
+          </div>
+        </div>
+
+        {{-- ── By journal · which journal is posting the non-invoice lines? --}}
+        @if (!empty($niByJrn))
+          <div class="v5-card__b" style="overflow-x:auto;">
+            <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;color:#92400e;margin-bottom:10px;">By journal</div>
+            <table class="prt-vt">
+              <thead>
+                <tr>
+                  <th style="text-align:left">Journal</th>
+                  <th>Lines</th>
+                  <th>Amount (M XAF)</th>
+                </tr>
+              </thead>
+              <tbody>
+                @foreach ($niByJrn as $row)
+                  <tr>
+                    <td style="text-align:left;">{{ $row['name'] ?: '(unnamed)' }}</td>
+                    <td>{{ number_format((int) $row['count']) }}</td>
+                    <td><strong>{{ number_format($row['amount'] / 1e6, 1) }}</strong></td>
+                  </tr>
+                @endforeach
+                <tr class="cat-row">
+                  <td style="text-align:left">All journals</td>
+                  <td>{{ number_format($niCount) }}</td>
+                  <td>{{ number_format($niAmount / 1e6, 1) }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        @endif
+
+        {{-- ── By account · which 70x account took the postings? --}}
+        @if (!empty($niByAcct))
+          <div class="v5-card__b" style="overflow-x:auto;border-top:1px solid #e5e7eb;">
+            <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;color:#92400e;margin-bottom:10px;">By account</div>
+            <table class="prt-vt">
+              <thead>
+                <tr>
+                  <th style="text-align:left">Code</th>
+                  <th style="text-align:left">Account name</th>
+                  <th>Lines</th>
+                  <th>Amount (M XAF)</th>
+                </tr>
+              </thead>
+              <tbody>
+                @foreach ($niByAcct as $row)
+                  <tr>
+                    <td style="text-align:left;font-family:monospace;">{{ $row['code'] }}</td>
+                    <td style="text-align:left;">{{ $row['name'] }}</td>
+                    <td>{{ number_format((int) $row['count']) }}</td>
+                    <td><strong>{{ number_format($row['amount'] / 1e6, 1) }}</strong></td>
+                  </tr>
+                @endforeach
+              </tbody>
+            </table>
+          </div>
+        @endif
+
+        {{-- ── By move-type --}}
+        @if (!empty($niByType))
+          <div class="v5-card__b" style="overflow-x:auto;border-top:1px solid #e5e7eb;">
+            <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;color:#92400e;margin-bottom:10px;">By move type</div>
+            <table class="prt-vt">
+              <thead>
+                <tr>
+                  <th style="text-align:left">Type</th>
+                  <th>Lines</th>
+                  <th>Amount (M XAF)</th>
+                </tr>
+              </thead>
+              <tbody>
+                @foreach ($niByType as $row)
+                  <tr>
+                    <td style="text-align:left;">{{ $row['label'] }}</td>
+                    <td>{{ number_format((int) $row['count']) }}</td>
+                    <td><strong>{{ number_format($row['amount'] / 1e6, 1) }}</strong></td>
+                  </tr>
+                @endforeach
+              </tbody>
+            </table>
+          </div>
+        @endif
+
+        {{-- ── Top individual lines (most material first, capped at 200) --}}
+        @if (!empty($niLines))
+          <div class="v5-card__b" style="overflow-x:auto;border-top:1px solid #e5e7eb;">
+            <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;color:#92400e;margin-bottom:10px;">
+              Top {{ count($niLines) }} {{ count($niLines) === 1 ? 'line' : 'lines' }} · by absolute amount
+            </div>
+            <table class="prt-vt" style="font-size:11px;">
+              <thead>
+                <tr>
+                  <th style="text-align:left">Date</th>
+                  <th style="text-align:left">Journal</th>
+                  <th style="text-align:left">Account</th>
+                  <th style="text-align:left">Partner</th>
+                  <th style="text-align:left">Move · label</th>
+                  <th>Amount (XAF)</th>
+                </tr>
+              </thead>
+              <tbody>
+                @foreach ($niLines as $line)
+                  <tr>
+                    <td style="text-align:left;font-family:monospace;white-space:nowrap;">{{ $line['date'] }}</td>
+                    <td style="text-align:left;">{{ $line['journal_name'] ?: '—' }}</td>
+                    <td style="text-align:left;font-family:monospace;">
+                      {{ $line['account_code'] }}
+                      <span style="color:#6b7280;">{{ $line['account_name'] }}</span>
+                    </td>
+                    <td style="text-align:left;color:#6b7280;">{{ $line['partner_name'] ?: '—' }}</td>
+                    <td style="text-align:left;">
+                      <div style="font-family:monospace;color:#374151;">{{ $line['move_name'] ?: '—' }}</div>
+                      <div style="color:#6b7280;font-size:10px;">{{ $line['label'] ?: '(no label)' }}</div>
+                    </td>
+                    <td style="text-align:right;font-family:monospace;{{ $line['amount'] < 0 ? 'color:#b91c1c;' : '' }}">
+                      {{ number_format($line['amount'], 0) }}
+                    </td>
+                  </tr>
+                @endforeach
+              </tbody>
+            </table>
+          </div>
+        @endif
+
+        <div class="v5-card__f">
+          <b>Reading:</b>
+          The Dashboard's "Revenue YTD" sums <em>customer-invoice</em> lines only, so any class-70 movement listed here
+          is invisible to the Dashboard but contributes to the TSD class-70 total.
+          The {{ $fmtAmt($niAmount) }} XAF YTD above is the difference between the two views.
+          @if (!empty($niByType))
+            @php
+              $entryRow = collect($niByType)->firstWhere('label', 'Manual journal entry');
+              $entryAmt = $entryRow ? (float) $entryRow['amount'] : 0.0;
+            @endphp
+            @if ($entryAmt !== 0.0)
+              Of that, <strong>{{ $fmtAmt($entryAmt) }} XAF</strong> comes from manual journal entries — review whether these are
+              year-end close-out moves to class 13, reclassifications, or actual revenue that should have been invoiced.
+            @endif
           @endif
         </div>
       </div>

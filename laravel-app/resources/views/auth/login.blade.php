@@ -578,6 +578,7 @@
             <a href="#integrations">Integrations</a>
             <a href="#security">Security</a>
             <a href="#newsroom">Newsroom</a>
+            <a href="/demo">Demo</a>
         </nav>
         <div class="header-cta">
             <a href="https://www.eliteadvisors.cm-ea.com" target="_blank" rel="noopener" class="btn btn-ghost">eliteadvisors.cm-ea.com ↗</a>
@@ -913,6 +914,13 @@
 </section>
 
 {{-- ═══════════════════════════════════════════════════════════════════════════
+   DEMO — moved to its own page at /demo (resources/views/demo.blade.php).
+   The top-nav and footer "Demo" links route there directly. Keeps the
+   login page focused on conversion (sign in); the demonstration content
+   is now a first-class page rather than an inline accordion here.
+═══════════════════════════════════════════════════════════════════════════ --}}
+
+{{-- ═══════════════════════════════════════════════════════════════════════════
    FOOTER — kit's site-footer pattern
 ═══════════════════════════════════════════════════════════════════════════ --}}
 <footer class="site-footer">
@@ -948,6 +956,7 @@
                 <a href="#integrations">Integrations</a>
                 <a href="#security">Security</a>
                 <a href="#newsroom">Newsroom</a>
+                <a href="/demo">Demo</a>
                 <a href="#signin">Sign in</a>
             </div>
             <div class="footer-col">
@@ -1019,6 +1028,9 @@
         }, { threshold: 0.12, rootMargin: '0px 0px -40px 0px' });
         items.forEach(el => obs.observe(el));
     })();
+
+    // Demo click-to-reveal JS removed — the Demo now lives at its own
+    // page (/demo, resources/views/demo.blade.php).
 
     // TweaksPanel — palette switcher
     (function () {
