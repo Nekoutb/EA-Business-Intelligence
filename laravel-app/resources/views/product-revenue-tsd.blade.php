@@ -161,6 +161,14 @@
       $glDiag     = $analysis['gl_diagnostic'] ?? ['matched' => [], 'unmatched' => []];
       $todayMonth = (int) $analysis['today_month'];
 
+      // FULL budget total for the period — tracked (vehicles + wood)
+      // PLUS pending Other Cargo. This is the figure the user expects
+      // to see as the headline budget: annual ÷ 12 × N months. The
+      // tracked-only subset stays available as $tot['ytd_budget_revenue']
+      // for the variance breakdown table (which only covers products
+      // that have actuals).
+      $allBudgetRev = (float) ($analysis['totals']['all_period_budget_revenue'] ?? $tot['ytd_budget_revenue']);
+
       // Period-awareness — populated by the controller from the master
       // filter. Used to:
       //   - label the headline strip cells correctly (MTD vs YTD copy)
@@ -225,19 +233,24 @@
       </div>
       <div class="prt-strip__c">
         <div class="prt-strip__l">Revenue ({{ $isMtd ? 'MTD' : 'YTD' }} · Budget)</div>
-        <div class="prt-strip__v">{{ $fmtMShort($tot['ytd_budget_revenue']) }}<span class="u">XAF</span></div>
-        <div class="prt-strip__m">plan × plan price · {{ $rangeShort }}</div>
+        <div class="prt-strip__v">{{ $fmtMShort($allBudgetRev) }}<span class="u">XAF</span></div>
+        <div class="prt-strip__m">annual ÷ 12 × {{ $monthsInRange }} {{ $monthsInRange === 1 ? 'mo' : 'mo' }} · all budgeted products</div>
       </div>
       <div class="prt-strip__c">
         <div class="prt-strip__l">Net Revenue Gap</div>
         @php
-          $netGap = $class70Ytd - (float) $tot['ytd_budget_revenue'];
-          $netPct = $tot['ytd_budget_revenue'] > 0 ? 100 * $netGap / $tot['ytd_budget_revenue'] : 0;
+          // Gap measured against the FULL budget (not just the tracked
+          // subset) — matches the user's mental model of "did we earn
+          // what we planned?". Negative means behind plan; positive
+          // means ahead. ACT here is class 70 GL total, which includes
+          // any invoiced revenue regardless of product attribution.
+          $netGap = $class70Ytd - $allBudgetRev;
+          $netPct = $allBudgetRev > 0 ? 100 * $netGap / $allBudgetRev : 0;
         @endphp
         <div class="prt-strip__v {{ $netGap < 0 ? 'is-neg' : 'is-pos' }}">
           {{ $fmtSigned($netGap) }}<span class="u">XAF</span>
         </div>
-        <div class="prt-strip__m">{{ $pctSigned($netPct) }} vs plan</div>
+        <div class="prt-strip__m">{{ $pctSigned($netPct) }} vs full plan</div>
       </div>
       <div class="prt-strip__c">
         <div class="prt-strip__l">Volume Effect</div>
@@ -455,44 +468,49 @@
               @endif
             @endforeach
             @php
-              // Pre-compute the period label once — reused for both
-              // total rows below so MTD/YTD switching stays consistent.
               $totalLabel = $isMtd
                 ? strtoupper((new \DateTimeImmutable(sprintf('%04d-%02d-01', $year, $endMonth)))->format('M Y'))
                 : 'YTD · ' . $monthsInRange . ' MO';
-              // All-products budget (tracked + pending). The variance
-              // columns stay on the tracked row only — pending products
-              // have no actuals, so their variance is undefined.
-              $allBudgetRev = (float) ($analysis['totals']['all_period_budget_revenue'] ?? $tot['ytd_budget_revenue']);
+              // Headline BUD = full budget (tracked + pending Other Cargo).
+              // Headline ACT = the class-70 GL total — same number the
+              // Dashboard shows. ACT here is invoice-based revenue across
+              // every class-70 account, so it covers Other Cargo too
+              // (whenever those invoices get raised — currently sparse
+              // because the operational source isn't wired yet).
+              $headlineBud = $allBudgetRev;
+              $headlineAct = $class70Ytd;
+              $headlineGap = $headlineAct - $headlineBud;
             @endphp
 
-            {{-- TRACKED total — variance-meaningful (both BUD and ACT
-                 cover the same set of products). --}}
+            {{-- HEADLINE total — full budget vs class-70 actuals.
+                 This is the row that answers "did we earn what we planned?"
+                 for the whole engagement, not just the variance-meaningful
+                 subset. --}}
             <tr class="total-row">
-              <td>TOTAL TRACKED · {{ $totalLabel }}</td>
+              <td>TOTAL · {{ $totalLabel }}</td>
+              <td colspan="6"></td>
+              <td><b>{{ number_format($headlineBud / 1e6, 1) }}</b></td>
+              <td><b>{{ number_format($headlineAct / 1e6, 1) }}</b></td>
+              <td class="{{ $headlineGap < 0 ? 'vn' : 'vp' }}"><b>{{ $fmtSigned($headlineGap) }}</b></td>
+              <td colspan="3" style="font-style:italic;color:#6b7280;font-size:10px;text-align:left;padding-left:12px;">
+                Variance breakdown below — tracked products only
+              </td>
+            </tr>
+
+            {{-- TRACKED-ONLY breakdown — Volume / Price / Net effects can
+                 only be decomposed for products that have both a budget
+                 AND actuals. Containers (no budget) and Other Cargo
+                 (no actuals) are excluded from this row by construction. --}}
+            <tr class="total-row" style="background:#f9fafb;">
+              <td style="font-style:italic;font-size:11px;color:#374151;">↳ Tracked subset · {{ $totalLabel }} <span style="font-weight:400;color:#6b7280;">(vehicles + wood)</span></td>
               <td colspan="6"></td>
               <td>{{ number_format($tot['ytd_budget_revenue'] / 1e6, 1) }}</td>
               <td>{{ number_format($tot['ytd_actual_revenue'] / 1e6, 1) }}</td>
               <td class="{{ $tot['net_variance_xaf'] < 0 ? 'vn' : 'vp' }}">{{ $fmtSigned($tot['net_variance_xaf']) }}</td>
-              <td class="{{ $tot['volume_effect_xaf'] < 0 ? 'vn' : 'vp' }}"><b>{{ $fmtSigned($tot['volume_effect_xaf']) }}</b></td>
-              <td class="{{ $tot['price_effect_xaf'] < 0 ? 'vn' : 'vp' }}"><b>{{ $fmtSigned($tot['price_effect_xaf']) }}</b></td>
-              <td class="{{ $tot['net_variance_xaf'] < 0 ? 'vn' : 'vp' }}"><b>{{ $fmtSigned($tot['net_variance_xaf']) }}</b></td>
+              <td class="{{ $tot['volume_effect_xaf'] < 0 ? 'vn' : 'vp' }}">{{ $fmtSigned($tot['volume_effect_xaf']) }}</td>
+              <td class="{{ $tot['price_effect_xaf'] < 0 ? 'vn' : 'vp' }}">{{ $fmtSigned($tot['price_effect_xaf']) }}</td>
+              <td class="{{ $tot['net_variance_xaf'] < 0 ? 'vn' : 'vp' }}">{{ $fmtSigned($tot['net_variance_xaf']) }}</td>
             </tr>
-
-            {{-- ALL-BUDGETED total — full budget proration (annual ÷ 12
-                 × N) including Other Cargo whose actuals are pending.
-                 ACT cell shows tracked only with a footnote; variance
-                 columns stay blank because they aren't comparable here. --}}
-            @if ($pendingYtd > 0)
-              <tr class="total-row" style="background:#fef7ed;">
-                <td style="font-style:italic;">TOTAL ALL BUDGETED · {{ $totalLabel }} <span style="font-weight:400;font-size:10px;color:#92400e;">(incl. pending)</span></td>
-                <td colspan="6"></td>
-                <td><b>{{ number_format($allBudgetRev / 1e6, 1) }}</b></td>
-                <td colspan="5" style="font-style:italic;color:#6b7280;font-size:10px;text-align:left;padding-left:12px;">
-                  Tracked ACT {{ number_format($tot['ytd_actual_revenue'] / 1e6, 1) }} M · Other Cargo actuals pending Odoo · variance not comparable
-                </td>
-              </tr>
-            @endif
           </tbody>
         </table>
       </div>
@@ -500,18 +518,16 @@
         @php
           $dom = abs($tot['volume_effect_xaf']) > abs($tot['price_effect_xaf']) ? 'volume-driven' : 'price-driven';
         @endphp
-        <b>Reading (tracked products only):</b>
-        Net {{ $isMtd ? 'monthly' : $monthsInRange . '-mo' }} revenue gap is
-        <span class="{{ $tot['net_variance_xaf'] < 0 ? 'prt-neg' : 'prt-pos' }}">{{ $fmtSigned($tot['net_variance_xaf']) }} XAF</span>.
-        The gap is <b>{{ $dom }}</b> —
-        Volume effect <span class="{{ $tot['volume_effect_xaf'] < 0 ? 'prt-neg' : 'prt-pos' }}">{{ $fmtSigned($tot['volume_effect_xaf']) }}</span>,
-        Price effect <span class="{{ $tot['price_effect_xaf'] < 0 ? 'prt-neg' : 'prt-pos' }}">{{ $fmtSigned($tot['price_effect_xaf']) }}</span>.
-        @if ($pendingYtd > 0)
-          <br><span style="color:#6b7280;font-size:11px;">
-            Full budget total including Other Cargo: <b>{{ $fmtMShort($allBudgetRev) }} XAF</b> ({{ $rangeShort }})
-            — equals your annual ÷ 12 × {{ $monthsInRange }} {{ $monthsInRange === 1 ? 'month' : 'months' }}.
-          </span>
-        @endif
+        <b>Reading:</b>
+        Headline {{ $isMtd ? 'monthly' : $monthsInRange . '-mo' }} revenue gap (full plan vs class-70 actuals):
+        <span class="{{ $headlineGap < 0 ? 'prt-neg' : 'prt-pos' }}">{{ $fmtSigned($headlineGap) }} XAF</span>.
+        Full budget of <b>{{ $fmtMShort($headlineBud) }} XAF</b> = annual ÷ 12 × {{ $monthsInRange }} {{ $monthsInRange === 1 ? 'month' : 'months' }}.
+        <br><span style="color:#6b7280;font-size:11px;">
+          Tracked-subset variance is <b>{{ $dom }}</b> —
+          Volume effect <span class="{{ $tot['volume_effect_xaf'] < 0 ? 'prt-neg' : 'prt-pos' }}">{{ $fmtSigned($tot['volume_effect_xaf']) }}</span>,
+          Price effect <span class="{{ $tot['price_effect_xaf'] < 0 ? 'prt-neg' : 'prt-pos' }}">{{ $fmtSigned($tot['price_effect_xaf']) }}</span>.
+          The breakdown excludes containers (no budget) and Other Cargo (actuals pending Odoo) — that's why it doesn't reconcile to the headline.
+        </span>
       </div>
     </div>
 
@@ -1032,6 +1048,11 @@
   // total chart — much cleaner than re-summing per-product actuals
   // (which would miss unmatched 706 accounts + non-cargo revenue).
   const CLASS70 = @json($analysis['totals']['class70_monthly']);
+  // Full-budget total for the active period (tracked + pending). Used
+  // for the headline reading so the chart matches the headline strip
+  // and the footer total row, all showing the same "did we earn what
+  // we planned?" framing instead of the tracked-subset-only view.
+  const ALL_BUDGET_REV = {{ (float) ($analysis['totals']['all_period_budget_revenue'] ?? $tot['ytd_budget_revenue']) }};
   // Future-month nulling for the actual line: chart still shows the
   // full year x-axis, but actuals stop at the current calendar month
   // regardless of the active period filter (TODAY_M is the canonical
@@ -1080,15 +1101,18 @@
       series,
     }, true);
 
-    // Slice to active period (same window as the variance table above).
+    // Headline reading uses the FULL budget (tracked + pending) and
+    // the class-70 GL grand total — same numbers the headline strip
+    // and the footer total row show. The chart line itself still
+    // visualises the per-month tracked budget (sumBudget) since pending
+    // products have null per-month buckets in the per-product series.
     const periodAct = sumActual.slice(START_M - 1, END_M).reduce((a,v) => a + (v||0), 0);
-    const periodBud = sumBudget.slice(START_M - 1, END_M).reduce((a,v) => a + v, 0);
-    const gap = periodAct - periodBud;
-    const pct = periodBud > 0 ? 100 * gap / periodBud : 0;
+    const gap = periodAct - ALL_BUDGET_REV;
+    const pct = ALL_BUDGET_REV > 0 ? 100 * gap / ALL_BUDGET_REV : 0;
     document.getElementById('prt-total-reading').innerHTML = `
-      <b>${PERIOD_LBL} totals (${RANGE_LBL}, tracked products):</b>
+      <b>${PERIOD_LBL} totals (${RANGE_LBL}):</b>
       Actual <b>${fmtMoney(periodAct)} XAF</b> ·
-      Budget <b>${fmtMoney(periodBud)} XAF</b> ·
+      Budget <b>${fmtMoney(ALL_BUDGET_REV)} XAF</b> ·
       Gap <span class="${gap < 0 ? 'prt-neg' : 'prt-pos'}">${fmtSigned(gap)}M (${pctSigned(pct)})</span>.
       Per-product breakdown in Section A above; variance decomposition in Section B'.`;
   }
