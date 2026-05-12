@@ -206,6 +206,14 @@ final class ProductRevenueService
             $glAccounts, $glByAccountMonth, $assigned, $redistributed, $unmatchedIds, $registry, $todayMonth
         );
 
+        // ── Reconciliation diagnostic: class 70 postings whose parent
+        //    move is NOT a customer invoice/refund. These are the lines
+        //    that make TSD's class-70 grand total exceed the Dashboard's
+        //    invoice-based revenue figure. Surfaced as a separate panel
+        //    in the view so operators can pinpoint where the gap lives
+        //    (which journal, which account, which specific entries).
+        $nonInvoice = $this->gl->fetchNonInvoiceClass70Lines($year, $todayMonth);
+
         return [
             'year'        => $year,
             'today_month' => $todayMonth,
@@ -218,7 +226,8 @@ final class ProductRevenueService
                 'class70_ytd_revenue'        => $class70YtdTotal,
                 'class70_monthly'            => $glMonthlyTotal,
             ],
-            'gl_diagnostic' => $diagnostic,
+            'gl_diagnostic'        => $diagnostic,
+            'class70_non_invoice'  => $nonInvoice,
         ];
     }
 

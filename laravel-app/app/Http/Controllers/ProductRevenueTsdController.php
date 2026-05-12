@@ -28,6 +28,9 @@ use Illuminate\Http\Request;
  *     delegating to OperationsService::scanRevenueBreakdown
  *   - v2 → v3: container revenue now sourced from class 706 GL accounts
  *     (GLRevenueService) instead of scan_count × tariff (which was 0)
+ *   - v4 → v5: analyze() now also returns class70_non_invoice (lines
+ *     posted to class 70 outside customer invoices/refunds), so the
+ *     view can render the reconciliation-gap diagnostic
  */
 final class ProductRevenueTsdController extends Controller
 {
@@ -47,7 +50,7 @@ final class ProductRevenueTsdController extends Controller
                 new ProductVolumeService($client),
                 new GLRevenueService($client),
             );
-            $cacheKey = 'prt_v4_' . $tenant->id . '_' . $year;
+            $cacheKey = 'prt_v5_' . $tenant->id . '_' . $year;
             $analysis = ea_cached($cacheKey, fn() => $svc->analyze($tenant, $year, $today));
         } catch (\Throwable $e) {
             $error = $e->getMessage();

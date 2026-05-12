@@ -541,6 +541,188 @@
       </div>
     @endif
 
+    {{-- ── Reconciliation diagnostic · class 70 lines NOT linked to
+         a customer invoice/refund. These are the postings that explain
+         why TSD's class-70 grand total can exceed the Dashboard's
+         invoice-based revenue figure. Renders only if any such lines
+         exist for the period. --}}
+    @php
+      $ni        = (array) ($analysis['class70_non_invoice'] ?? []);
+      $niCount   = (int)   ($ni['total_count']  ?? 0);
+      $niAmount  = (float) ($ni['total_amount'] ?? 0);
+      $niByJrn   = (array) ($ni['by_journal']   ?? []);
+      $niByAcct  = (array) ($ni['by_account']   ?? []);
+      $niByType  = (array) ($ni['by_move_type'] ?? []);
+      $niLines   = (array) ($ni['lines']        ?? []);
+
+      $fmtAmt = function ($v) {
+          $v = (float) $v;
+          if (abs($v) >= 1e6) return number_format($v / 1e6, 1) . ' M';
+          if (abs($v) >= 1e3) return number_format($v / 1e3, 0) . ' K';
+          return number_format($v, 0);
+      };
+    @endphp
+    @if ($niCount > 0)
+      <h2 class="prt-section">Reconciliation · Class 70 movements <em style="font-weight:400;color:#6b7280;">not</em> linked to customer invoices</h2>
+      <div class="v5-card" style="border-left:4px solid #d97706;">
+        <div class="v5-card__h">
+          <div>
+            <div class="v5-card__t">
+              The reconciliation gap · {{ number_format($niCount) }} {{ $niCount === 1 ? 'line' : 'lines' }} totalling <strong>{{ $fmtAmt($niAmount) }} XAF</strong>
+            </div>
+            <div class="v5-card__sub">
+              These are posted GL lines on class 70 (revenue) accounts whose parent journal entry is <strong>not</strong> an
+              <code style="font-size:11px;background:#f3f4f6;padding:1px 4px;border-radius:3px">out_invoice</code> or
+              <code style="font-size:11px;background:#f3f4f6;padding:1px 4px;border-radius:3px">out_refund</code> —
+              typically manual journal entries, OD reclassifications, or direct postings that bypassed the customer-billing workflow.
+              They lift the TSD "Class 70 YTD" figure but are <strong>invisible to the Dashboard</strong> (which only sums customer-invoice lines).
+              Period: {{ $year }}-01-01 → end of month {{ $todayMonth }}.
+            </div>
+          </div>
+        </div>
+
+        {{-- ── By journal · which journal is posting the non-invoice lines? --}}
+        @if (!empty($niByJrn))
+          <div class="v5-card__b" style="overflow-x:auto;">
+            <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;color:#92400e;margin-bottom:10px;">By journal</div>
+            <table class="prt-vt">
+              <thead>
+                <tr>
+                  <th style="text-align:left">Journal</th>
+                  <th>Lines</th>
+                  <th>Amount (M XAF)</th>
+                </tr>
+              </thead>
+              <tbody>
+                @foreach ($niByJrn as $row)
+                  <tr>
+                    <td style="text-align:left;">{{ $row['name'] ?: '(unnamed)' }}</td>
+                    <td>{{ number_format((int) $row['count']) }}</td>
+                    <td><strong>{{ number_format($row['amount'] / 1e6, 1) }}</strong></td>
+                  </tr>
+                @endforeach
+                <tr class="cat-row">
+                  <td style="text-align:left">All journals</td>
+                  <td>{{ number_format($niCount) }}</td>
+                  <td>{{ number_format($niAmount / 1e6, 1) }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        @endif
+
+        {{-- ── By account · which 70x account took the postings? --}}
+        @if (!empty($niByAcct))
+          <div class="v5-card__b" style="overflow-x:auto;border-top:1px solid #e5e7eb;">
+            <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;color:#92400e;margin-bottom:10px;">By account</div>
+            <table class="prt-vt">
+              <thead>
+                <tr>
+                  <th style="text-align:left">Code</th>
+                  <th style="text-align:left">Account name</th>
+                  <th>Lines</th>
+                  <th>Amount (M XAF)</th>
+                </tr>
+              </thead>
+              <tbody>
+                @foreach ($niByAcct as $row)
+                  <tr>
+                    <td style="text-align:left;font-family:monospace;">{{ $row['code'] }}</td>
+                    <td style="text-align:left;">{{ $row['name'] }}</td>
+                    <td>{{ number_format((int) $row['count']) }}</td>
+                    <td><strong>{{ number_format($row['amount'] / 1e6, 1) }}</strong></td>
+                  </tr>
+                @endforeach
+              </tbody>
+            </table>
+          </div>
+        @endif
+
+        {{-- ── By move-type --}}
+        @if (!empty($niByType))
+          <div class="v5-card__b" style="overflow-x:auto;border-top:1px solid #e5e7eb;">
+            <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;color:#92400e;margin-bottom:10px;">By move type</div>
+            <table class="prt-vt">
+              <thead>
+                <tr>
+                  <th style="text-align:left">Type</th>
+                  <th>Lines</th>
+                  <th>Amount (M XAF)</th>
+                </tr>
+              </thead>
+              <tbody>
+                @foreach ($niByType as $row)
+                  <tr>
+                    <td style="text-align:left;">{{ $row['label'] }}</td>
+                    <td>{{ number_format((int) $row['count']) }}</td>
+                    <td><strong>{{ number_format($row['amount'] / 1e6, 1) }}</strong></td>
+                  </tr>
+                @endforeach
+              </tbody>
+            </table>
+          </div>
+        @endif
+
+        {{-- ── Top individual lines (most material first, capped at 200) --}}
+        @if (!empty($niLines))
+          <div class="v5-card__b" style="overflow-x:auto;border-top:1px solid #e5e7eb;">
+            <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;color:#92400e;margin-bottom:10px;">
+              Top {{ count($niLines) }} {{ count($niLines) === 1 ? 'line' : 'lines' }} · by absolute amount
+            </div>
+            <table class="prt-vt" style="font-size:11px;">
+              <thead>
+                <tr>
+                  <th style="text-align:left">Date</th>
+                  <th style="text-align:left">Journal</th>
+                  <th style="text-align:left">Account</th>
+                  <th style="text-align:left">Partner</th>
+                  <th style="text-align:left">Move · label</th>
+                  <th>Amount (XAF)</th>
+                </tr>
+              </thead>
+              <tbody>
+                @foreach ($niLines as $line)
+                  <tr>
+                    <td style="text-align:left;font-family:monospace;white-space:nowrap;">{{ $line['date'] }}</td>
+                    <td style="text-align:left;">{{ $line['journal_name'] ?: '—' }}</td>
+                    <td style="text-align:left;font-family:monospace;">
+                      {{ $line['account_code'] }}
+                      <span style="color:#6b7280;">{{ $line['account_name'] }}</span>
+                    </td>
+                    <td style="text-align:left;color:#6b7280;">{{ $line['partner_name'] ?: '—' }}</td>
+                    <td style="text-align:left;">
+                      <div style="font-family:monospace;color:#374151;">{{ $line['move_name'] ?: '—' }}</div>
+                      <div style="color:#6b7280;font-size:10px;">{{ $line['label'] ?: '(no label)' }}</div>
+                    </td>
+                    <td style="text-align:right;font-family:monospace;{{ $line['amount'] < 0 ? 'color:#b91c1c;' : '' }}">
+                      {{ number_format($line['amount'], 0) }}
+                    </td>
+                  </tr>
+                @endforeach
+              </tbody>
+            </table>
+          </div>
+        @endif
+
+        <div class="v5-card__f">
+          <b>Reading:</b>
+          The Dashboard's "Revenue YTD" sums <em>customer-invoice</em> lines only, so any class-70 movement listed here
+          is invisible to the Dashboard but contributes to the TSD class-70 total.
+          The {{ $fmtAmt($niAmount) }} XAF YTD above is the difference between the two views.
+          @if (!empty($niByType))
+            @php
+              $entryRow = collect($niByType)->firstWhere('label', 'Manual journal entry');
+              $entryAmt = $entryRow ? (float) $entryRow['amount'] : 0.0;
+            @endphp
+            @if ($entryAmt !== 0.0)
+              Of that, <strong>{{ $fmtAmt($entryAmt) }} XAF</strong> comes from manual journal entries — review whether these are
+              year-end close-out moves to class 13, reclassifications, or actual revenue that should have been invoiced.
+            @endif
+          @endif
+        </div>
+      </div>
+    @endif
+
     {{-- ── Section C · Budget editor ── --}}
     <h2 class="prt-section">C · Budget editor · {{ count($products) }} products × unit price + 12 monthly volumes · auto-revenue</h2>
 
