@@ -455,7 +455,7 @@
               @endif
             @endforeach
             <tr class="total-row">
-              <td>TOTAL · YTD</td>
+              <td>TOTAL · {{ $isMtd ? strtoupper((new \DateTimeImmutable(sprintf('%04d-%02d-01', $year, $endMonth)))->format('M Y')) : 'YTD · ' . $monthsInRange . ' MO' }}</td>
               <td colspan="6"></td>
               <td>{{ number_format($tot['ytd_budget_revenue'] / 1e6, 1) }}</td>
               <td>{{ number_format($tot['ytd_actual_revenue'] / 1e6, 1) }}</td>
