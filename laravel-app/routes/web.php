@@ -61,6 +61,15 @@ Route::get('/login', function () {
     return $slug ? redirect("/t/{$slug}/login") : abort(404);
 });
 
+/* ── Public Demo page ──────────────────────────────────────────────────
+   The marketing demo lives on the hosted site as a proper page, not as
+   a section embedded in the login or a standalone HTML file. Public —
+   no auth, no tenant scope. Linked from the sign-in page's top nav and
+   footer ("Demo"). All figures are fictional and illustrative; the
+   same six-capability set we surface from the marketing CTAs.
+   ────────────────────────────────────────────────────────────────────── */
+Route::view('/demo', 'demo')->name('demo');
+
 /* ── Super Admin backend ─────────────────────────────────────────────── */
 Route::prefix('admin')->group(function () {
     Route::get('/login',  [AdminAuthController::class, 'showLogin']);
