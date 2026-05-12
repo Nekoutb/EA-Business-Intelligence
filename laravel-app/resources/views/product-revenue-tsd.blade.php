@@ -253,18 +253,18 @@
         <div class="prt-strip__m">{{ $pctSigned($netPct) }} vs full plan</div>
       </div>
       <div class="prt-strip__c">
-        <div class="prt-strip__l">Volume Effect</div>
+        <div class="prt-strip__l">Volume Effect <span style="font-size:9px;color:#9ca3af;font-weight:500;">(tracked)</span></div>
         <div class="prt-strip__v {{ $tot['volume_effect_xaf'] < 0 ? 'is-neg' : 'is-pos' }}">
           {{ $fmtSigned($tot['volume_effect_xaf']) }}<span class="u">XAF</span>
         </div>
-        <div class="prt-strip__m">at planned prices</div>
+        <div class="prt-strip__m">vehicles + wood · {{ $rangeShort }}</div>
       </div>
       <div class="prt-strip__c">
-        <div class="prt-strip__l">Price Effect</div>
+        <div class="prt-strip__l">Price Effect <span style="font-size:9px;color:#9ca3af;font-weight:500;">(tracked)</span></div>
         <div class="prt-strip__v {{ $tot['price_effect_xaf'] < 0 ? 'is-neg' : 'is-pos' }}">
           {{ $fmtSigned($tot['price_effect_xaf']) }}<span class="u">XAF</span>
         </div>
-        <div class="prt-strip__m">at actual volumes</div>
+        <div class="prt-strip__m">vehicles + wood · {{ $rangeShort }}</div>
       </div>
     </div>
 
