@@ -785,6 +785,115 @@ button { font: inherit; cursor: pointer; }
 }
 .industry-kpi__v .u { font-size: 12px; color: var(--slate-500); margin-left: 4px; font-weight: 600; }
 
+/* ──────── Newsroom (article cards grid) ──────── */
+.news-grid {
+  display: grid; gap: 18px;
+  grid-template-columns: 1fr;
+}
+@media (min-width: 640px) { .news-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (min-width: 1024px) { .news-grid { grid-template-columns: repeat(4, 1fr); } }
+.news-card {
+  background: white;
+  border: 1px solid var(--slate-100);
+  border-radius: var(--r-lg);
+  padding: 22px 22px 20px;
+  display: flex; flex-direction: column;
+  gap: 12px;
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+  position: relative;
+  overflow: hidden;
+}
+.news-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+  border-color: var(--pri-light);
+}
+.news-card__tag {
+  display: inline-flex; align-self: flex-start;
+  padding: 3px 9px;
+  font-size: 10px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--pri); background: var(--pri-light);
+  border-radius: 999px;
+}
+.news-card__tag.is-regulation { color: #be185d; background: #fce7f3; }
+.news-card__tag.is-product    { color: var(--pri); background: var(--pri-light); }
+.news-card__tag.is-event      { color: #4338ca; background: #e0e7ff; }
+.news-card__tag.is-insight    { color: var(--pos); background: var(--pos-light); }
+.news-card__date {
+  font-size: 11px; color: var(--slate-500); font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.news-card__t {
+  font-size: 15px; font-weight: 700;
+  color: var(--slate-900); letter-spacing: -0.01em;
+  line-height: 1.35;
+}
+.news-card__d {
+  font-size: 13px; color: var(--slate-500);
+  line-height: 1.55; flex: 1 1 auto;
+}
+.news-card__link {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12px; font-weight: 600; color: var(--pri);
+  margin-top: auto; padding-top: 4px;
+}
+.news-card__link svg { width: 13px; height: 13px; transition: transform 0.15s; }
+.news-card:hover .news-card__link svg { transform: translateX(3px); }
+
+/* ──────── Demo · click-to-reveal trigger ──────── */
+.demo-trigger {
+  display: flex; align-items: center; gap: 18px;
+  width: 100%;
+  background: white;
+  border: 1.5px solid var(--pri-light);
+  border-radius: var(--r-lg);
+  padding: 22px 24px;
+  text-align: left;
+  cursor: pointer;
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+  font-family: inherit;
+}
+.demo-trigger:hover {
+  border-color: var(--pri);
+  box-shadow: var(--shadow-glow);
+  transform: translateY(-1px);
+}
+.demo-trigger__icon {
+  flex-shrink: 0;
+  width: 52px; height: 52px;
+  border-radius: 50%;
+  background: var(--pri);
+  color: white;
+  display: flex; align-items: center; justify-content: center;
+  transition: transform 0.22s ease, background 0.18s;
+}
+.demo-trigger[aria-expanded="true"] .demo-trigger__icon { transform: rotate(90deg); background: var(--pri-dark); }
+.demo-trigger__icon svg { width: 22px; height: 22px; }
+.demo-trigger__copy { flex: 1 1 auto; }
+.demo-trigger__t {
+  font-size: 16px; font-weight: 700;
+  color: var(--slate-900); letter-spacing: -0.01em;
+  margin: 0 0 4px;
+}
+.demo-trigger__d {
+  font-size: 13px; color: var(--slate-500);
+  line-height: 1.45; margin: 0;
+}
+.demo-trigger__hint {
+  flex-shrink: 0; font-size: 12px; font-weight: 600;
+  color: var(--pri); padding: 6px 12px;
+  background: var(--pri-light); border-radius: 999px;
+  display: none;
+}
+@media (min-width: 768px) { .demo-trigger__hint { display: inline-flex; } }
+.demo-reveal { display: none; margin-top: 22px; }
+.demo-reveal.is-open { display: block; animation: demo-reveal-in 0.32s ease both; }
+@keyframes demo-reveal-in {
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
 /* ──────── Stats / numbers ──────── */
 .stats-strip {
   display: grid; gap: 0;
@@ -922,9 +1031,10 @@ button { font: inherit; cursor: pointer; }
     <div class="nav__menu">
       <a href="#pillars">Why BMS</a>
       <a href="#modules">Modules</a>
-      <a href="#demonstration">Demonstration</a>
       <a href="#expertise">Expertise</a>
       <a href="#industries">Industries</a>
+      <a href="#newsroom">Newsroom</a>
+      <a href="#demo">Demo</a>
     </div>
     <a href="#cta" class="nav__cta">Book a demo
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -963,7 +1073,7 @@ button { font: inherit; cursor: pointer; }
           <path d="M5 12h14M12 5l7 7-7 7"/>
         </svg>
       </a>
-      <a href="#demonstration" class="btn btn--ghost">
+      <a href="#demo" class="btn btn--ghost">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
           <polygon points="5 3 19 12 5 21 5 3" fill="currentColor"/>
         </svg>
@@ -1211,22 +1321,127 @@ button { font: inherit; cursor: pointer; }
 </section>
 
 <!-- ─────────────────────────────────────────────────────────────────
-     LIVE DASHBOARD DEMO (interactive)
+     NEWSROOM — OHADA / CGI regulation updates, BMS releases, events.
+     Placed immediately before Demo so the Demo trigger feels like the
+     natural next step after browsing the news cards.
      ───────────────────────────────────────────────────────────────── -->
-<section class="section dashboard-demo" id="demonstration">
+<section class="section" id="newsroom">
   <div class="container">
 
-    <div class="section-eyebrow">Demonstration · live capabilities</div>
-    <h2 class="section-title">Six capabilities, six tabs — running live below.</h2>
+    <div class="section-eyebrow">Newsroom · updates &amp; insights</div>
+    <h2 class="section-title">What's new in the suite — and across OHADA.</h2>
     <p class="section-sub">
-      Each tab shows real BMS output rendered with the same ECharts engine
-      and palette as the production suite. Every figure is <b>fictional and
-      illustrative</b> — round demonstration numbers representative of a
-      typical OHADA engagement. No tenant or client data is shown.
+      Regulation watch, product releases, and field notes from accountants
+      operating across the OHADA zone. Curated quarterly · written by the
+      team building BMS.
+    </p>
+
+    <div class="news-grid">
+
+      <article class="news-card">
+        <span class="news-card__tag is-regulation">Regulation</span>
+        <div class="news-card__date">29 April 2026</div>
+        <h3 class="news-card__t">DGI clarifies VAT treatment on cross-border digital services</h3>
+        <p class="news-card__d">
+          New circular from the Directorate General of Taxes confirms that
+          digital services rendered from outside Cameroon to local consumers
+          remain subject to 19.25% VAT. BMS already enforces the rule via
+          class 4431 cross-checks on every invoice.
+        </p>
+        <a href="#demo" class="news-card__link">
+          See compliance in the demo
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+        </a>
+      </article>
+
+      <article class="news-card">
+        <span class="news-card__tag is-product">Product</span>
+        <div class="news-card__date">12 May 2026</div>
+        <h3 class="news-card__t">Trial Balance now zeros P&amp;L opening balances per OHADA</h3>
+        <p class="news-card__d">
+          Classes 6, 7 and 8 are nominal accounts that reset every fiscal
+          year via close-out journals to class 13X. The updated Balance
+          Générale enforces a forced-zero opening for these classes, no
+          matter how the closing entries were posted.
+        </p>
+        <a href="#demo" class="news-card__link">
+          Explore the GL Quality demo
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+        </a>
+      </article>
+
+      <article class="news-card">
+        <span class="news-card__tag is-insight">Insight</span>
+        <div class="news-card__date">3 April 2026</div>
+        <h3 class="news-card__t">HT vs TTC: the one rule that keeps your dashboard honest</h3>
+        <p class="news-card__d">
+          The single biggest reason a P&amp;L disagrees with the dashboard
+          is mixing TTC (what the customer pays) with HT (what the business
+          earns). BMS sources revenue strictly from <code>amount_untaxed_signed</code>
+          so class 70 always reconciles to the dashboard.
+        </p>
+        <a href="#demo" class="news-card__link">
+          Read the revenue demo
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+        </a>
+      </article>
+
+      <article class="news-card">
+        <span class="news-card__tag is-event">Event</span>
+        <div class="news-card__date">18 June 2026</div>
+        <h3 class="news-card__t">Webinar · Closing the books in 5 days with BMS</h3>
+        <p class="news-card__d">
+          A 45-minute walk-through with two CFOs already running BMS in
+          production. We cover the close calendar, reconciliation chain,
+          and the Trial Balance flips that used to cost a working week.
+          Register from your inbox.
+        </p>
+        <a href="mailto:hello@cm-ea.com?subject=BMS%20webinar%20June%202026" class="news-card__link">
+          Register interest
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+        </a>
+      </article>
+
+    </div>
+
+  </div>
+</section>
+
+<!-- ─────────────────────────────────────────────────────────────────
+     DEMO — click-to-reveal showcase. The same six tabs that used to be
+     the always-visible "Demonstration" section, now wrapped in a single
+     trigger button. Visitors who don't care about the technical demo
+     skip past it; those who click see everything inline (no modal, no
+     route change). The reveal animation runs once per click.
+     ───────────────────────────────────────────────────────────────── -->
+<section class="section dashboard-demo" id="demo">
+  <div class="container">
+
+    <div class="section-eyebrow">Demo · live capabilities</div>
+    <h2 class="section-title">Six demonstrations, one click away.</h2>
+    <p class="section-sub">
+      Click the panel below to expand the full demo. Every figure is
+      <b>fictional and illustrative</b> — round demonstration numbers
+      representative of a typical OHADA engagement, rendered with the
+      same ECharts engine and palette as the production suite.
     </p>
 
     <div class="anon-note">Fictional illustrative figures · representative of a typical engagement · no client data</div>
 
+    <button class="demo-trigger" type="button" data-demo-trigger aria-expanded="false" aria-controls="demo-reveal-panel">
+      <span class="demo-trigger__icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <polygon points="7 4 19 12 7 20 7 4" fill="currentColor"/>
+        </svg>
+      </span>
+      <span class="demo-trigger__copy">
+        <span class="demo-trigger__t">Show all 6 demonstrations</span>
+        <span class="demo-trigger__d">Revenue vs Budget · Treasury &amp; Ratios · Receivables · GL Quality · Income Tax · Monthly Declaration</span>
+      </span>
+      <span class="demo-trigger__hint" data-demo-trigger-label>Click to expand</span>
+    </button>
+
+    <div class="demo-reveal" id="demo-reveal-panel" data-demo-reveal>
     <div class="demo__shell">
       <div class="demo__tabs">
         <button class="demo__tab is-active" data-demo-tab="revenue">1 · Revenue vs Budget</button>
@@ -1625,6 +1840,7 @@ button { font: inherit; cursor: pointer; }
 
       </div>
     </div>
+    </div><!-- /.demo-reveal -->
 
   </div>
 </section>
@@ -1947,7 +2163,8 @@ button { font: inherit; cursor: pointer; }
       <div class="footer__col">
         <h4>Suite</h4>
         <a href="#modules">All modules</a>
-        <a href="#demonstration">Demonstration</a>
+        <a href="#newsroom">Newsroom</a>
+        <a href="#demo">Demo</a>
         <a href="#industries">Industries</a>
         <a href="#expertise">Expertise</a>
       </div>
@@ -2222,6 +2439,59 @@ button { font: inherit; cursor: pointer; }
   // Init demo charts now (the section is visible at full height; ECharts
   // handles offscreen rendering fine).
   initDemo();
+
+  /* ── Demo click-to-reveal ──────────────────────────────────────────
+     The whole demo body (six tabs) is hidden behind a single trigger
+     button. Visitors who don't care about the technical deep-dive skip
+     past it; clicking the trigger animates the panel open and surfaces
+     all six demonstrations inline.
+
+     Two subtleties:
+
+       1. Charts were initialised with initDemo() while their container
+          was display:none, so they have zero width. After the panel
+          opens we resize() each chart once the CSS reveal animation
+          has had a chance to settle.
+
+       2. Deep links — if the user lands on /demos/bms-marketing.html#demo
+          (e.g. from a Newsroom article's "see in demo" link) we
+          auto-open the panel so they don't land on a blank trigger.
+     ────────────────────────────────────────────────────────────────── */
+  const demoTrigger = document.querySelector('[data-demo-trigger]');
+  const demoReveal  = document.querySelector('[data-demo-reveal]');
+  const demoHint    = document.querySelector('[data-demo-trigger-label]');
+
+  function openDemoReveal() {
+    if (!demoReveal || demoReveal.classList.contains('is-open')) return;
+    demoReveal.classList.add('is-open');
+    demoTrigger.setAttribute('aria-expanded', 'true');
+    if (demoHint) demoHint.textContent = 'Click to hide';
+    // Resize after the reveal animation has had time to set non-zero
+    // dimensions on every chart container.
+    setTimeout(() => {
+      Object.values(demoCharts).forEach(c => c && c.resize());
+    }, 360);
+  }
+
+  function closeDemoReveal() {
+    if (!demoReveal || !demoReveal.classList.contains('is-open')) return;
+    demoReveal.classList.remove('is-open');
+    demoTrigger.setAttribute('aria-expanded', 'false');
+    if (demoHint) demoHint.textContent = 'Click to expand';
+  }
+
+  if (demoTrigger && demoReveal) {
+    demoTrigger.addEventListener('click', () => {
+      if (demoReveal.classList.contains('is-open')) closeDemoReveal();
+      else openDemoReveal();
+    });
+
+    // Any link or in-page anchor pointing at #demo should also open
+    // the panel (Newsroom cards rely on this).
+    const openOnHash = () => { if (window.location.hash === '#demo') openDemoReveal(); };
+    window.addEventListener('hashchange', openOnHash);
+    openOnHash();
+  }
 
   /* ── Tab switching ── */
   document.querySelectorAll('.demo__tab').forEach(btn => {
