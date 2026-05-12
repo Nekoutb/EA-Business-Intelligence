@@ -59,10 +59,46 @@ final class ProductRevenueService
         $this->gl      = $gl;
     }
 
-    public function analyze(Tenant $tenant, int $year, ?\DateTimeImmutable $today = null): array
-    {
+    /**
+     * Compute the per-product P&V analysis for the page.
+     *
+     * The `$periodType` and `$monthFilter` arguments determine the slice
+     * of the year that ACT and BUD figures cover:
+     *
+     *   'ytd'   → months 1..todayMonth   (cumulative, default)
+     *   'mtd'   → todayMonth only        (current month only)
+     *   'month' → $monthFilter only      (specific past month)
+     *
+     * The budget proration formula the user expects is annual/12 × N
+     * where N is the number of months in the active range, e.g.:
+     *   - MTD has N=1   → annual ÷ 12         per product
+     *   - YTD at May has N=5  → annual × 5/12 per product
+     *
+     * That math is implicit in the per-month accumulation loop below
+     * (the YTD bucket sums each month's stored qty × price, so even
+     * monthly distribution of an annual figure rolls forward correctly).
+     */
+    public function analyze(
+        Tenant $tenant,
+        int $year,
+        ?\DateTimeImmutable $today = null,
+        string $periodType = 'ytd',
+        ?int $monthFilter = null
+    ): array {
         $today      = $today ?? new \DateTimeImmutable('today');
         $todayMonth = $this->todayMonthForYear($year, $today);
+
+        // Resolve the active month range. End is clamped to todayMonth
+        // for current-year requests so we never "leak" data from months
+        // that haven't happened yet (past years honour 1..12).
+        [$startMonth, $endMonth] = $this->resolveMonthRange(
+            $periodType,
+            $todayMonth,
+            $monthFilter ?? $todayMonth,
+            $year,
+            (int) $today->format('Y')
+        );
+        $monthsInRange = max(0, $endMonth - $startMonth + 1);
 
         $registry      = (array) config('budget_products.products', []);
         $categoriesCfg = (array) config('budget_products.categories', []);
@@ -127,10 +163,13 @@ final class ProductRevenueService
                 }
             }
 
-            // YTD figures (months 1..todayMonth inclusive).
+            // Period figures (sum each month from startMonth..endMonth).
+            // For YTD this is 1..todayMonth (cumulative). For MTD it's
+            // todayMonth..todayMonth (single bucket). For a picked
+            // month, the same single-bucket pattern.
             $ytdActQty = 0; $ytdActRev = 0.0;
             $ytdBudQty = 0; $ytdBudRev = 0.0;
-            for ($m = 1; $m <= $todayMonth; $m++) {
+            for ($m = $startMonth; $m <= $endMonth; $m++) {
                 $aq = $actualQty[$m] ?? null;
                 $ar = $actualRevenue[$m] ?? null;
                 if ($aq !== null) {
@@ -195,28 +234,38 @@ final class ProductRevenueService
 
         $tot['net_variance_xaf'] = $tot['ytd_actual_revenue'] - $tot['ytd_budget_revenue'];
 
-        // ── Class 70 YTD total (Dashboard-comparable HT revenue figure)
+        // ── Class 70 period total (Dashboard-comparable HT revenue figure
+        //    for the active range). Same start/end window as everything
+        //    else, so flipping MTD ↔ YTD updates the headline strip too.
         $class70YtdTotal = 0.0;
-        for ($m = 1; $m <= $todayMonth; $m++) {
+        for ($m = $startMonth; $m <= $endMonth; $m++) {
             $class70YtdTotal += (float) ($glMonthlyTotal[$m] ?? 0);
         }
 
-        // ── Diagnostic: every 706 account + which product it landed in
+        // ── Diagnostic: every 706 account + which product it landed in.
+        //    We pass endMonth (not todayMonth) so the per-account YTD
+        //    figures the diagnostic shows reflect the same window as
+        //    the rest of the page.
         $diagnostic = $this->buildDiagnostic(
-            $glAccounts, $glByAccountMonth, $assigned, $redistributed, $unmatchedIds, $registry, $todayMonth
+            $glAccounts, $glByAccountMonth, $assigned, $redistributed, $unmatchedIds, $registry, $endMonth
         );
 
         // ── Reconciliation diagnostic: class 70 postings whose parent
         //    move is NOT a customer invoice/refund. These are the lines
         //    that make TSD's class-70 grand total exceed the Dashboard's
         //    invoice-based revenue figure. Surfaced as a separate panel
-        //    in the view so operators can pinpoint where the gap lives
-        //    (which journal, which account, which specific entries).
-        $nonInvoice = $this->gl->fetchNonInvoiceClass70Lines($year, $todayMonth);
+        //    in the view so operators can pinpoint where the gap lives.
+        //    Window covers months 1..endMonth so YTD context is preserved
+        //    even on MTD view (the gap is cumulative by nature).
+        $nonInvoice = $this->gl->fetchNonInvoiceClass70Lines($year, $endMonth);
 
         return [
             'year'        => $year,
             'today_month' => $todayMonth,
+            'period_type' => $periodType,
+            'start_month' => $startMonth,
+            'end_month'   => $endMonth,
+            'months_in_range' => $monthsInRange,
             'vat_rate'    => $vatRate,
             'categories'  => $categoriesCfg,
             'products'    => $products,
@@ -229,6 +278,42 @@ final class ProductRevenueService
             'gl_diagnostic'        => $diagnostic,
             'class70_non_invoice'  => $nonInvoice,
         ];
+    }
+
+    /**
+     * Translate a master-filter period type into a [startMonth, endMonth]
+     * window in month-of-year terms (1..12).
+     *
+     *   'mtd'   → [todayMonth, todayMonth]  current month only
+     *   'month' → [monthFilter, monthFilter] user-picked month only
+     *   'ytd'   → [1, todayMonth]           cumulative (default)
+     *
+     * For a past year, "todayMonth" becomes 12 (todayMonthForYear()
+     * already enforces this) so YTD covers the full year and MTD lands
+     * on December — which is the sensible default for historical browsing.
+     *
+     * @return array{0:int,1:int}
+     */
+    private function resolveMonthRange(string $periodType, int $todayMonth, int $monthFilter, int $year, int $yearOfToday): array
+    {
+        $monthFilter = max(1, min(12, $monthFilter));
+        $todayMonth  = max(1, min(12, $todayMonth));
+
+        switch ($periodType) {
+            case 'mtd':
+                // Current month only — past years clamp to Dec via todayMonth.
+                return [$todayMonth, $todayMonth];
+
+            case 'month':
+                // User-picked month. For the current year, never look
+                // past today (a future month would always read zeros).
+                $end = $year === $yearOfToday ? min($monthFilter, $todayMonth) : $monthFilter;
+                return [$end, $end];
+
+            case 'ytd':
+            default:
+                return [1, $todayMonth];
+        }
     }
 
     /**

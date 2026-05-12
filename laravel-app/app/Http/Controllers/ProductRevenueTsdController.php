@@ -31,6 +31,10 @@ use Illuminate\Http\Request;
  *   - v4 → v5: analyze() now also returns class70_non_invoice (lines
  *     posted to class 70 outside customer invoices/refunds), so the
  *     view can render the reconciliation-gap diagnostic
+ *   - v5 → v6: analyze() now respects the master period filter
+ *     (mtd / ytd / month) — budget and actuals slice to the chosen
+ *     period instead of always YTD-through-today. Cache key carries
+ *     the period suffix so MTD and YTD don't share a bucket.
  */
 final class ProductRevenueTsdController extends Controller
 {
@@ -38,6 +42,22 @@ final class ProductRevenueTsdController extends Controller
     {
         $today = new \DateTimeImmutable();
         $year  = (int) $request->query('year', $today->format('Y'));
+
+        // Master period filter — same vocabulary as Dashboard / Revenue.
+        //   ytd   → cumulative through today's month (default)
+        //   mtd   → current month only
+        //   month → user-picked month only
+        //   yoy   → frozen (variance-vs-prior-year doesn't apply to a
+        //           per-product P&V breakdown; the button is disabled
+        //           via @section('mfilter-frozen', 'yoy') in the view).
+        //           If a legacy session still sends it, fall back to YTD.
+        $masterPeriod = strtolower((string) $request->query('period', 'ytd'));
+        $periodType   = match ($masterPeriod) {
+            'mtd'   => 'mtd',
+            'month' => 'month',
+            default => 'ytd',
+        };
+        $monthFilter = max(1, min(12, (int) $request->query('month', (int) $today->format('n'))));
 
         $tenant = $this->resolveTenant();
         $error  = null;
@@ -50,8 +70,11 @@ final class ProductRevenueTsdController extends Controller
                 new ProductVolumeService($client),
                 new GLRevenueService($client),
             );
-            $cacheKey = 'prt_v5_' . $tenant->id . '_' . $year;
-            $analysis = ea_cached($cacheKey, fn() => $svc->analyze($tenant, $year, $today));
+            $cacheKey = 'prt_v6_' . $tenant->id . '_' . $year . '_' . $periodType . '_' . $monthFilter;
+            $analysis = ea_cached(
+                $cacheKey,
+                fn() => $svc->analyze($tenant, $year, $today, $periodType, $monthFilter)
+            );
         } catch (\Throwable $e) {
             $error = $e->getMessage();
         }
@@ -59,11 +82,34 @@ final class ProductRevenueTsdController extends Controller
         return view('product-revenue-tsd', [
             'analysis'    => $analysis,
             'year'        => $year,
+            'periodType'  => $periodType,
+            'monthFilter' => $monthFilter,
             'error'       => $error,
             'active'      => 'product_revenue_tsd',
             'aiPage'      => 'product_revenue_tsd',
-            'periodLabel' => 'Year ' . $year,
+            'periodLabel' => $this->periodLabel($periodType, $year, $monthFilter, $today),
         ]);
+    }
+
+    /**
+     * Human-readable label for the active period — surfaced in the page
+     * subtitle so the user always sees what slice the figures cover.
+     */
+    private function periodLabel(string $periodType, int $year, int $monthFilter, \DateTimeImmutable $today): string
+    {
+        $monthName = static function (int $m): string {
+            return (new \DateTimeImmutable(sprintf('%04d-%02d-01', 2000, max(1, min(12, $m)))))->format('F');
+        };
+
+        $todayYear = (int) $today->format('Y');
+
+        return match ($periodType) {
+            'mtd'   => 'Month-to-date · ' . $monthName((int) $today->format('n')) . ' ' . $year,
+            'month' => $monthName($monthFilter) . ' ' . $year,
+            default => $year >= $todayYear
+                ? 'Year-to-date ' . $year . ' · through ' . $monthName((int) $today->format('n'))
+                : 'Year ' . $year,
+        };
     }
 
     /**

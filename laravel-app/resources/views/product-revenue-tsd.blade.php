@@ -2,6 +2,12 @@
 @section('title', 'Product Revenue TSD')
 @section('page-title', 'Product Revenue TSD · Transatlantic Douala')
 
+{{-- Freeze the YoY master-filter button — variance-vs-prior-year is a
+     P&L concept that doesn't have a natural rendering for a per-product
+     P&V breakdown. The layout reads this section and renders the button
+     in a sage / "is-frozen" style. YTD / MTD / Month stay active. --}}
+@section('mfilter-frozen', 'yoy')
+
 {{--
     Data shape (ProductRevenueTsdController::index):
       $analysis = [
@@ -155,6 +161,24 @@
       $glDiag     = $analysis['gl_diagnostic'] ?? ['matched' => [], 'unmatched' => []];
       $todayMonth = (int) $analysis['today_month'];
 
+      // Period-awareness — populated by the controller from the master
+      // filter. Used to:
+      //   - label the headline strip cells correctly (MTD vs YTD copy)
+      //   - render "Period · <range>" subhead so the user always sees
+      //     which slice the figures cover
+      //   - drive the budget proration commentary (annual ÷ 12 × N)
+      $periodType    = (string) ($analysis['period_type'] ?? 'ytd');
+      $startMonth    = (int)    ($analysis['start_month'] ?? 1);
+      $endMonth      = (int)    ($analysis['end_month']   ?? $todayMonth);
+      $monthsInRange = max(1, (int) ($analysis['months_in_range'] ?? ($endMonth - $startMonth + 1)));
+      $isMtd         = $periodType === 'mtd' || $periodType === 'month';
+      $rangeLabel    = $isMtd
+          ? (new \DateTimeImmutable(sprintf('%04d-%02d-01', $year, $endMonth)))->format('F Y')
+          : 'YTD · ' . $monthsInRange . ' mo';
+      $rangeShort    = $isMtd
+          ? (new \DateTimeImmutable(sprintf('%04d-%02d-01', $year, $endMonth)))->format('M Y')
+          : ($monthsInRange . ' mo YTD');
+
       $byCat = collect($products)->groupBy('category');
 
       $fmtMShort = function (?float $v): string {
@@ -175,23 +199,34 @@
       };
     @endphp
 
+    {{-- ── Period subhead — always visible so the user sees exactly
+         which slice the figures cover after flipping MTD ↔ YTD. --}}
+    <div style="font-size:11px;color:#6b7280;letter-spacing:0.04em;text-transform:uppercase;margin-bottom:6px;">
+      Period · <strong style="color:#374151;">{{ $rangeLabel }}</strong>
+      @if ($isMtd)
+        <span style="color:#9ca3af;">· budget shown is annual ÷ 12 × 1 month</span>
+      @else
+        <span style="color:#9ca3af;">· budget shown is annual ÷ 12 × {{ $monthsInRange }} months</span>
+      @endif
+    </div>
+
     {{-- ── Headline strip (5 cells) — reconciliation + variance ──
-         "Revenue YTD (Total · HT)" is the class 70 sum: matches the
-         Dashboard's revenue cell (HT basis), so the two pages agree.
-         "Revenue YTD (Tracked)" is the sum of per-product actuals; the
-         difference between the two is the unallocated revenue (OOG +
-         generic 706 + class 70 lines outside containers/vehicles/wood)
-         called out in the diagnostic panel below the variance table. --}}
+         "Revenue (Total · HT)" is the class 70 sum: matches the Dashboard's
+         revenue cell (HT basis) for the same period, so the two pages agree.
+         "Revenue (Budget)" is the plan × plan-price slice for the active
+         range; the difference between the two is the Net Revenue Gap. All
+         three respond to the master filter — flip to MTD and the numbers
+         collapse to a single month. --}}
     <div class="prt-strip">
       <div class="prt-strip__c">
-        <div class="prt-strip__l">Revenue YTD (Total · HT)</div>
+        <div class="prt-strip__l">Revenue ({{ $isMtd ? 'MTD' : 'YTD' }} · HT)</div>
         <div class="prt-strip__v">{{ $fmtMShort($class70Ytd) }}<span class="u">XAF</span></div>
-        <div class="prt-strip__m">{{ $todayMonth }} mo · Σ class 70 · matches Dashboard (HT)</div>
+        <div class="prt-strip__m">{{ $rangeShort }} · Σ class 70 · matches Dashboard (HT)</div>
       </div>
       <div class="prt-strip__c">
-        <div class="prt-strip__l">Revenue YTD (Budget)</div>
+        <div class="prt-strip__l">Revenue ({{ $isMtd ? 'MTD' : 'YTD' }} · Budget)</div>
         <div class="prt-strip__v">{{ $fmtMShort($tot['ytd_budget_revenue']) }}<span class="u">XAF</span></div>
-        <div class="prt-strip__m">plan × plan price</div>
+        <div class="prt-strip__m">plan × plan price · {{ $rangeShort }}</div>
       </div>
       <div class="prt-strip__c">
         <div class="prt-strip__l">Net Revenue Gap</div>
@@ -282,7 +317,7 @@
               @elseif ($p['volume_only'])
                 0 XAF · volume tracked only
               @else
-                {{ number_format($p['budget_price'] / 1000, 0) }}K HT · {{ number_format($p['ytd_budget_qty'] / max(1, $todayMonth)) }}/mo · {{ number_format(array_sum($p['budget_qty'])) }}/yr
+                {{ number_format($p['budget_price'] / 1000, 0) }}K HT · {{ number_format($p['ytd_budget_qty'] / max(1, $monthsInRange)) }}/mo · {{ number_format(array_sum($p['budget_qty'])) }}/yr
               @endif
             </div>
             <div class="prt-leg" style="color:{{ $p['color'] }}">
