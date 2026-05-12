@@ -257,7 +257,7 @@
 
     @if ($pendingYtd > 0)
       <div class="v5-card" style="background:#fffbeb;border-color:#fde68a;color:#92400e;padding:10px 14px;font-size:12px;line-height:1.5;">
-        <b>Pending Odoo integration:</b> {{ $fmtMShort($pendingYtd) }} XAF of YTD budget across Other Cargo products
+        <b>Pending Odoo integration:</b> {{ $fmtMShort($pendingYtd) }} XAF of {{ $rangeShort }} budget across Other Cargo products
         (General Cargo · Dry Bulk · Packs+MAFI) is excluded from the variance above. Their budget is captured in
         Section&nbsp;C — actuals light up automatically when the Odoo source is configured.
       </div>
@@ -645,8 +645,8 @@
               <code style="font-size:11px;background:#f3f4f6;padding:1px 4px;border-radius:3px">out_invoice</code> or
               <code style="font-size:11px;background:#f3f4f6;padding:1px 4px;border-radius:3px">out_refund</code> —
               typically manual journal entries, OD reclassifications, or direct postings that bypassed the customer-billing workflow.
-              They lift the TSD "Class 70 YTD" figure but are <strong>invisible to the Dashboard</strong> (which only sums customer-invoice lines).
-              Period: {{ $year }}-01-01 → end of month {{ $todayMonth }}.
+              They lift the TSD class-70 total but are <strong>invisible to the Dashboard</strong> (which only sums customer-invoice lines).
+              Period covered: {{ $year }}-01-01 → end of month {{ $endMonth }} (cumulative — the gap is by nature a year-to-date number, even when the page is set to MTD).
             </div>
           </div>
         </div>
@@ -871,7 +871,17 @@
 <script>
 (function () {
   const D = @json($analysis['products']);
-  const TODAY_M = {{ (int) $analysis['today_month'] }};
+  // Period plumbing — passed from PHP so the chart readings agree with
+  // the rest of the page (same window the variance table and KPI strip
+  // already use). START_M / END_M are 1-indexed month numbers (inclusive
+  // on both ends); slice() arguments below use 0-indexed offsets.
+  const TODAY_M    = {{ (int) $analysis['today_month'] }};
+  const START_M    = {{ (int) ($analysis['start_month'] ?? 1) }};
+  const END_M      = {{ (int) ($analysis['end_month']   ?? ($analysis['today_month'] ?? 12)) }};
+  const N_MONTHS   = Math.max(1, END_M - START_M + 1);
+  const IS_MTD     = @json(($analysis['period_type'] ?? 'ytd') !== 'ytd');
+  const RANGE_LBL  = IS_MTD ? '{{ $rangeShort }}' : '{{ $monthsInRange }} mo';
+  const PERIOD_LBL = IS_MTD ? 'Month' : 'YTD';
   const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
   const t = {
@@ -974,17 +984,24 @@
 
     const reading = document.querySelector(`[data-reading="${key}"]`);
     if (reading) {
+      // Slice both series to the active period window — START_M and
+      // END_M are 1-indexed inclusive month numbers, so we map them
+      // to 0-indexed slice() args: [START_M-1, END_M].
+      const slice = arr => arr.slice(START_M - 1, END_M);
+      const sumSafe = arr => arr.reduce((a,v) => a + (v||0), 0);
+      const avgSafe = arr => arr.length ? sumSafe(arr) / Math.max(1, N_MONTHS) : 0;
+
       if (d.pending) {
-        const ytdBud = s.budget.slice(0, TODAY_M).reduce((a,v) => a + (v||0), 0);
-        reading.innerHTML = `<b>YTD bud:</b> <span class="prt-warn">${metric === 'price' ? s.fmt(ytdBud / Math.max(1, TODAY_M)) : s.fmt(ytdBud)}</span> · actuals pending Odoo`;
+        const periodBud = sumSafe(slice(s.budget));
+        reading.innerHTML = `<b>${PERIOD_LBL} bud:</b> <span class="prt-warn">${metric === 'price' ? s.fmt(avgSafe(slice(s.budget))) : s.fmt(periodBud)}</span> · actuals pending Odoo`;
       } else {
-        const ytdAct = s.actual.slice(0, TODAY_M).reduce((a,v) => a + (v||0), 0);
-        const ytdBud = s.budget.slice(0, TODAY_M).reduce((a,v) => a + (v||0), 0);
-        const pct = ytdBud > 0 ? (100 * ytdAct / ytdBud) : null;
+        const periodAct = sumSafe(slice(s.actual));
+        const periodBud = sumSafe(slice(s.budget));
+        const pct = periodBud > 0 ? (100 * periodAct / periodBud) : null;
         const cls = pct == null ? 'prt-warn' : (pct >= 100 ? 'prt-pos' : pct >= 90 ? 'prt-warn' : 'prt-neg');
-        reading.innerHTML = `<b>YTD:</b> <span class="${cls}">${pct == null ? '—' : pct.toFixed(0)}%</span> of plan
-           · ${metric === 'price' ? 'avg ' + s.fmt(ytdAct / Math.max(1, TODAY_M)) : s.fmt(ytdAct)} actual
-           vs ${metric === 'price' ? s.fmt(ytdBud / Math.max(1, TODAY_M)) : s.fmt(ytdBud)} budget`;
+        reading.innerHTML = `<b>${PERIOD_LBL}:</b> <span class="${cls}">${pct == null ? '—' : pct.toFixed(0)}%</span> of plan
+           · ${metric === 'price' ? 'avg ' + s.fmt(avgSafe(slice(s.actual))) : s.fmt(periodAct)} actual
+           vs ${metric === 'price' ? s.fmt(avgSafe(slice(s.budget))) : s.fmt(periodBud)} budget`;
       }
     }
   }
@@ -1015,7 +1032,10 @@
   // total chart — much cleaner than re-summing per-product actuals
   // (which would miss unmatched 706 accounts + non-cargo revenue).
   const CLASS70 = @json($analysis['totals']['class70_monthly']);
-  const TODAY_M_FOR_TOTAL = {{ (int) $analysis['today_month'] }};
+  // Future-month nulling for the actual line: chart still shows the
+  // full year x-axis, but actuals stop at the current calendar month
+  // regardless of the active period filter (TODAY_M is the canonical
+  // ceiling for real data).
 
   function renderTotal() {
     if (!total) return;
@@ -1024,7 +1044,7 @@
     // Total actual = class 70 monthly (= Dashboard HT)
     const sumActual = months.map((_, idx) => {
       const m = idx + 1;
-      if (m > TODAY_M_FOR_TOTAL) return null;
+      if (m > TODAY_M) return null;
       return CLASS70[m] ?? CLASS70[String(m)] ?? 0;
     });
     const sumBudget = months.map((_, m) => {
@@ -1060,14 +1080,15 @@
       series,
     }, true);
 
-    const ytdAct = sumActual.slice(0, TODAY_M).reduce((a,v) => a + (v||0), 0);
-    const ytdBud = sumBudget.slice(0, TODAY_M).reduce((a,v) => a + v, 0);
-    const gap = ytdAct - ytdBud;
-    const pct = ytdBud > 0 ? 100 * gap / ytdBud : 0;
+    // Slice to active period (same window as the variance table above).
+    const periodAct = sumActual.slice(START_M - 1, END_M).reduce((a,v) => a + (v||0), 0);
+    const periodBud = sumBudget.slice(START_M - 1, END_M).reduce((a,v) => a + v, 0);
+    const gap = periodAct - periodBud;
+    const pct = periodBud > 0 ? 100 * gap / periodBud : 0;
     document.getElementById('prt-total-reading').innerHTML = `
-      <b>YTD totals (${TODAY_M} mo, tracked products):</b>
-      Actual <b>${fmtMoney(ytdAct)} XAF</b> ·
-      Budget <b>${fmtMoney(ytdBud)} XAF</b> ·
+      <b>${PERIOD_LBL} totals (${RANGE_LBL}, tracked products):</b>
+      Actual <b>${fmtMoney(periodAct)} XAF</b> ·
+      Budget <b>${fmtMoney(periodBud)} XAF</b> ·
       Gap <span class="${gap < 0 ? 'prt-neg' : 'prt-pos'}">${fmtSigned(gap)}M (${pctSigned(pct)})</span>.
       Per-product breakdown in Section A above; variance decomposition in Section B'.`;
   }
