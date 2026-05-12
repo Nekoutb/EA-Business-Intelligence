@@ -350,7 +350,7 @@
     </div>
 
     {{-- ── Section B' · Variance summary ── --}}
-    <h2 class="prt-section">B' · Revenue variance · price–volume–mix breakdown · YTD</h2>
+    <h2 class="prt-section">B' · Revenue variance · price–volume–mix breakdown · {{ $rangeLabel }}</h2>
 
     <div class="v5-card">
       <div class="v5-card__h">
@@ -364,9 +364,9 @@
           <thead>
             <tr>
               <th rowspan="2" style="text-align:left">Product</th>
-              <th colspan="3">Volume (units, YTD)</th>
+              <th colspan="3">Volume (units, {{ $rangeShort }})</th>
               <th colspan="3">Avg Unit Price (XAF)</th>
-              <th colspan="3">Revenue (M XAF, YTD)</th>
+              <th colspan="3">Revenue (M XAF, {{ $rangeShort }})</th>
               <th colspan="3">Variance breakdown (M XAF)</th>
             </tr>
             <tr>
@@ -454,8 +454,22 @@
                 @endforeach
               @endif
             @endforeach
+            @php
+              // Pre-compute the period label once — reused for both
+              // total rows below so MTD/YTD switching stays consistent.
+              $totalLabel = $isMtd
+                ? strtoupper((new \DateTimeImmutable(sprintf('%04d-%02d-01', $year, $endMonth)))->format('M Y'))
+                : 'YTD · ' . $monthsInRange . ' MO';
+              // All-products budget (tracked + pending). The variance
+              // columns stay on the tracked row only — pending products
+              // have no actuals, so their variance is undefined.
+              $allBudgetRev = (float) ($analysis['totals']['all_period_budget_revenue'] ?? $tot['ytd_budget_revenue']);
+            @endphp
+
+            {{-- TRACKED total — variance-meaningful (both BUD and ACT
+                 cover the same set of products). --}}
             <tr class="total-row">
-              <td>TOTAL · {{ $isMtd ? strtoupper((new \DateTimeImmutable(sprintf('%04d-%02d-01', $year, $endMonth)))->format('M Y')) : 'YTD · ' . $monthsInRange . ' MO' }}</td>
+              <td>TOTAL TRACKED · {{ $totalLabel }}</td>
               <td colspan="6"></td>
               <td>{{ number_format($tot['ytd_budget_revenue'] / 1e6, 1) }}</td>
               <td>{{ number_format($tot['ytd_actual_revenue'] / 1e6, 1) }}</td>
@@ -464,6 +478,21 @@
               <td class="{{ $tot['price_effect_xaf'] < 0 ? 'vn' : 'vp' }}"><b>{{ $fmtSigned($tot['price_effect_xaf']) }}</b></td>
               <td class="{{ $tot['net_variance_xaf'] < 0 ? 'vn' : 'vp' }}"><b>{{ $fmtSigned($tot['net_variance_xaf']) }}</b></td>
             </tr>
+
+            {{-- ALL-BUDGETED total — full budget proration (annual ÷ 12
+                 × N) including Other Cargo whose actuals are pending.
+                 ACT cell shows tracked only with a footnote; variance
+                 columns stay blank because they aren't comparable here. --}}
+            @if ($pendingYtd > 0)
+              <tr class="total-row" style="background:#fef7ed;">
+                <td style="font-style:italic;">TOTAL ALL BUDGETED · {{ $totalLabel }} <span style="font-weight:400;font-size:10px;color:#92400e;">(incl. pending)</span></td>
+                <td colspan="6"></td>
+                <td><b>{{ number_format($allBudgetRev / 1e6, 1) }}</b></td>
+                <td colspan="5" style="font-style:italic;color:#6b7280;font-size:10px;text-align:left;padding-left:12px;">
+                  Tracked ACT {{ number_format($tot['ytd_actual_revenue'] / 1e6, 1) }} M · Other Cargo actuals pending Odoo · variance not comparable
+                </td>
+              </tr>
+            @endif
           </tbody>
         </table>
       </div>
@@ -472,11 +501,17 @@
           $dom = abs($tot['volume_effect_xaf']) > abs($tot['price_effect_xaf']) ? 'volume-driven' : 'price-driven';
         @endphp
         <b>Reading (tracked products only):</b>
-        Net YTD revenue gap is
+        Net {{ $isMtd ? 'monthly' : $monthsInRange . '-mo' }} revenue gap is
         <span class="{{ $tot['net_variance_xaf'] < 0 ? 'prt-neg' : 'prt-pos' }}">{{ $fmtSigned($tot['net_variance_xaf']) }} XAF</span>.
         The gap is <b>{{ $dom }}</b> —
         Volume effect <span class="{{ $tot['volume_effect_xaf'] < 0 ? 'prt-neg' : 'prt-pos' }}">{{ $fmtSigned($tot['volume_effect_xaf']) }}</span>,
         Price effect <span class="{{ $tot['price_effect_xaf'] < 0 ? 'prt-neg' : 'prt-pos' }}">{{ $fmtSigned($tot['price_effect_xaf']) }}</span>.
+        @if ($pendingYtd > 0)
+          <br><span style="color:#6b7280;font-size:11px;">
+            Full budget total including Other Cargo: <b>{{ $fmtMShort($allBudgetRev) }} XAF</b> ({{ $rangeShort }})
+            — equals your annual ÷ 12 × {{ $monthsInRange }} {{ $monthsInRange === 1 ? 'month' : 'months' }}.
+          </span>
+        @endif
       </div>
     </div>
 

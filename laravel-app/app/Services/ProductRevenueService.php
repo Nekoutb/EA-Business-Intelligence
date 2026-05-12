@@ -272,6 +272,13 @@ final class ProductRevenueService
             'totals'      => [
                 'tracked'                    => $tot,
                 'pending_ytd_budget_revenue' => $pendingYtdBudgetRev,
+                // Full budget across every product that has a budget set
+                // — tracked (vehicles + wood) PLUS pending (Other Cargo).
+                // This is the figure the user expects to see prorated as
+                // annual ÷ 12 × N, since their planning document covers
+                // all budgeted lines, not just the tracked-with-actuals
+                // subset. Containers stay at 0 (no budget by design).
+                'all_period_budget_revenue'  => (float) $tot['ytd_budget_revenue'] + $pendingYtdBudgetRev,
                 'class70_ytd_revenue'        => $class70YtdTotal,
                 'class70_monthly'            => $glMonthlyTotal,
             ],
