@@ -1,0 +1,1865 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0d6e6e">
+<meta name="description" content="Elite Advisors BMS — real-time financial intelligence wired to Odoo. OHADA-native, IFRS-aware, audit-ready. Built by accountants who run audits.">
+
+<title>Elite Advisors BMS — Live financial intelligence for OHADA businesses</title>
+
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+
+<style>
+/* ─────────────────────────────────────────────────────────────────
+   Design tokens — palette mirrors the live BMS dashboard so the
+   marketing site visually previews the actual product.
+   ───────────────────────────────────────────────────────────────── */
+:root {
+  --pri:        #0d6e6e;
+  --pri-dark:   #0a5757;
+  --pri-light:  #d6efef;
+  --pos:        #047857;
+  --pos-light:  #d1fae5;
+  --neg:        #b91c1c;
+  --warn:       #d97706;
+  --warn-light: #fef3c7;
+  --indigo:     #4338ca;
+  --rose:       #be185d;
+  --slate-900:  #0f172a;
+  --slate-700:  #334155;
+  --slate-500:  #64748b;
+  --slate-300:  #cbd5e1;
+  --slate-100:  #f1f5f9;
+  --slate-50:   #f8fafc;
+  --paper:      #fefefe;
+  --grid:       #f3f4f6;
+  --base:       #d1d5db;
+
+  --shadow-sm: 0 1px 2px rgba(15,23,42,.04), 0 1px 3px rgba(15,23,42,.06);
+  --shadow-md: 0 4px 6px -1px rgba(15,23,42,.07), 0 2px 4px -2px rgba(15,23,42,.05);
+  --shadow-lg: 0 10px 25px -5px rgba(15,23,42,.10), 0 8px 10px -6px rgba(15,23,42,.04);
+  --shadow-glow: 0 0 0 1px rgba(13,110,110,.10), 0 20px 40px -10px rgba(13,110,110,.25);
+
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 14px;
+  --r-xl: 20px;
+
+  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, system-ui, sans-serif;
+  --font-mono: 'SF Mono', Menlo, Monaco, Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; padding: 0;
+  font-family: var(--font);
+  font-size: 16px; line-height: 1.55;
+  color: var(--slate-700);
+  background: var(--paper);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+img, svg { display: block; max-width: 100%; }
+a { color: inherit; text-decoration: none; }
+button { font: inherit; cursor: pointer; }
+
+/* ──────── Layout primitives ──────── */
+.container {
+  width: 100%;
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 0 20px;
+}
+@media (min-width: 768px) { .container { padding: 0 32px; } }
+
+.section { padding: 64px 0; }
+@media (min-width: 768px) { .section { padding: 96px 0; } }
+
+.section-eyebrow {
+  font-size: 12px; font-weight: 700; letter-spacing: 0.12em;
+  text-transform: uppercase; color: var(--pri);
+  margin: 0 0 12px;
+}
+.section-title {
+  font-size: clamp(28px, 4.5vw, 44px);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--slate-900);
+  margin: 0 0 16px;
+  line-height: 1.15;
+}
+.section-sub {
+  font-size: clamp(15px, 1.6vw, 17px);
+  color: var(--slate-500);
+  max-width: 680px;
+  margin: 0 0 48px;
+  line-height: 1.6;
+}
+
+/* ──────── Top nav (sticky, glass) ──────── */
+.nav {
+  position: sticky; top: 0; z-index: 100;
+  background: rgba(254, 254, 254, 0.85);
+  backdrop-filter: saturate(180%) blur(12px);
+  -webkit-backdrop-filter: saturate(180%) blur(12px);
+  border-bottom: 1px solid rgba(15, 23, 42, 0.06);
+}
+.nav__row {
+  display: flex; align-items: center; justify-content: space-between;
+  height: 64px;
+}
+.nav__brand {
+  display: flex; align-items: center; gap: 10px;
+  font-weight: 700; font-size: 17px;
+  color: var(--slate-900); letter-spacing: -0.01em;
+}
+.nav__brand-mark {
+  width: 32px; height: 32px;
+  background: linear-gradient(135deg, var(--pri) 0%, var(--pri-dark) 100%);
+  border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  color: #fff; font-weight: 800; font-size: 14px;
+  box-shadow: var(--shadow-md);
+}
+.nav__brand small { color: var(--slate-500); font-weight: 500; font-size: 12px; margin-left: 4px; }
+.nav__menu { display: none; gap: 28px; }
+.nav__menu a {
+  font-size: 14px; font-weight: 500; color: var(--slate-700);
+  transition: color 0.15s;
+}
+.nav__menu a:hover { color: var(--pri); }
+.nav__cta {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 8px 16px;
+  background: var(--pri); color: #fff;
+  border-radius: var(--r-md);
+  font-size: 13px; font-weight: 600;
+  border: none;
+  box-shadow: var(--shadow-sm);
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+.nav__cta:hover { transform: translateY(-1px); box-shadow: var(--shadow-md); }
+@media (min-width: 900px) { .nav__menu { display: flex; } }
+
+/* ──────── Hero ──────── */
+.hero {
+  position: relative;
+  padding: 64px 0 48px;
+  background:
+    radial-gradient(ellipse 80% 60% at 50% 0%, rgba(13,110,110,0.06) 0%, transparent 70%),
+    linear-gradient(180deg, var(--paper) 0%, var(--slate-50) 100%);
+  overflow: hidden;
+}
+@media (min-width: 768px) { .hero { padding: 96px 0 80px; } }
+.hero::before {
+  content: ''; position: absolute; inset: 0;
+  background-image:
+    linear-gradient(rgba(15,23,42,.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(15,23,42,.025) 1px, transparent 1px);
+  background-size: 32px 32px;
+  mask-image: radial-gradient(ellipse 60% 50% at 50% 30%, black 30%, transparent 80%);
+  -webkit-mask-image: radial-gradient(ellipse 60% 50% at 50% 30%, black 30%, transparent 80%);
+  pointer-events: none;
+}
+.hero__inner { position: relative; }
+.hero__eyebrow {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 6px 14px;
+  background: var(--pri-light); color: var(--pri-dark);
+  border-radius: 999px;
+  font-size: 12px; font-weight: 600; letter-spacing: 0.04em;
+  margin-bottom: 24px;
+}
+.hero__eyebrow::before {
+  content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--pos);
+  box-shadow: 0 0 0 3px rgba(4,120,87,.18);
+  animation: pulse 2s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%, 100% { box-shadow: 0 0 0 3px rgba(4,120,87,.18); }
+  50% { box-shadow: 0 0 0 6px rgba(4,120,87,.04); }
+}
+.hero__title {
+  font-size: clamp(34px, 6vw, 64px);
+  font-weight: 800;
+  letter-spacing: -0.025em;
+  line-height: 1.05;
+  color: var(--slate-900);
+  margin: 0 0 24px;
+  max-width: 920px;
+}
+.hero__title em {
+  font-style: normal;
+  background: linear-gradient(135deg, var(--pri) 0%, var(--indigo) 100%);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.hero__sub {
+  font-size: clamp(16px, 1.8vw, 19px);
+  color: var(--slate-500);
+  max-width: 720px;
+  line-height: 1.6;
+  margin: 0 0 32px;
+}
+.hero__ctas {
+  display: flex; flex-wrap: wrap; gap: 12px;
+  margin-bottom: 48px;
+}
+.btn {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 14px 24px;
+  border-radius: var(--r-md);
+  font-size: 15px; font-weight: 600;
+  border: none;
+  transition: transform 0.15s, box-shadow 0.15s, background 0.15s;
+  cursor: pointer;
+}
+.btn--primary {
+  background: var(--pri); color: #fff;
+  box-shadow: var(--shadow-md), inset 0 -2px 0 rgba(0,0,0,.12);
+}
+.btn--primary:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); background: var(--pri-dark); }
+.btn--ghost {
+  background: rgba(15,23,42,.04); color: var(--slate-900);
+  border: 1px solid rgba(15,23,42,.08);
+}
+.btn--ghost:hover { background: rgba(15,23,42,.08); }
+.btn svg { width: 16px; height: 16px; }
+
+/* Hero stats strip */
+.hero__stats {
+  display: grid; grid-template-columns: repeat(2, 1fr); gap: 0;
+  background: white; border: 1px solid rgba(15,23,42,.06);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+  max-width: 720px;
+}
+@media (min-width: 640px) { .hero__stats { grid-template-columns: repeat(4, 1fr); } }
+.hero__stat {
+  padding: 18px 20px;
+  border-right: 1px solid rgba(15,23,42,.06);
+  border-bottom: 1px solid rgba(15,23,42,.06);
+}
+@media (min-width: 640px) {
+  .hero__stat { border-bottom: 0; }
+  .hero__stat:last-child { border-right: 0; }
+}
+.hero__stat-v {
+  font-size: clamp(22px, 3vw, 28px);
+  font-weight: 800; color: var(--pri);
+  letter-spacing: -0.015em;
+  font-variant-numeric: tabular-nums;
+}
+.hero__stat-v .u {
+  font-size: 0.55em; color: var(--slate-500); margin-left: 4px; font-weight: 600;
+}
+.hero__stat-l {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--slate-500); font-weight: 600;
+  margin-top: 4px;
+}
+
+/* ──────── Hero dashboard preview ──────── */
+.hero__preview {
+  margin-top: 56px;
+  border-radius: var(--r-xl);
+  background: white;
+  border: 1px solid rgba(15,23,42,.08);
+  box-shadow: var(--shadow-glow);
+  overflow: hidden;
+  position: relative;
+}
+.preview__topbar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 16px;
+  background: var(--slate-50);
+  border-bottom: 1px solid rgba(15,23,42,.06);
+}
+.preview__dot { width: 10px; height: 10px; border-radius: 50%; }
+.preview__url {
+  font-family: var(--font-mono); font-size: 11px;
+  color: var(--slate-500);
+  background: white;
+  padding: 4px 10px; border-radius: 6px;
+  border: 1px solid rgba(15,23,42,.06);
+  margin-left: auto;
+}
+.preview__body {
+  padding: 24px;
+  background: var(--slate-50);
+}
+@media (min-width: 768px) { .preview__body { padding: 32px; } }
+.preview__strip {
+  display: grid; gap: 1px;
+  grid-template-columns: repeat(2, 1fr);
+  background: rgba(15,23,42,.06);
+  border-radius: var(--r-md);
+  overflow: hidden;
+  margin-bottom: 20px;
+}
+@media (min-width: 640px) { .preview__strip { grid-template-columns: repeat(4, 1fr); } }
+.preview__cell {
+  background: white; padding: 14px 16px;
+}
+.preview__cell-l {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--slate-500); font-weight: 600;
+}
+.preview__cell-v {
+  font-size: 20px; font-weight: 800; color: var(--slate-900);
+  letter-spacing: -0.015em; font-variant-numeric: tabular-nums;
+  margin-top: 2px;
+}
+.preview__cell-v .u { font-size: 12px; color: var(--slate-500); margin-left: 4px; font-weight: 500; }
+.preview__cell-m {
+  font-size: 11px; color: var(--slate-500); margin-top: 4px;
+}
+.preview__cell-m .delta-pos { color: var(--pos); font-weight: 600; }
+.preview__cell-m .delta-neg { color: var(--neg); font-weight: 600; }
+
+.preview__grid {
+  display: grid; gap: 12px;
+  grid-template-columns: 1fr;
+}
+@media (min-width: 768px) { .preview__grid { grid-template-columns: 2fr 1fr; } }
+.preview__card {
+  background: white;
+  border: 1px solid rgba(15,23,42,.06);
+  border-radius: var(--r-md);
+  padding: 16px 18px;
+}
+.preview__card-h {
+  display: flex; justify-content: space-between; align-items: baseline;
+  margin-bottom: 4px;
+}
+.preview__card-t {
+  font-size: 13px; font-weight: 700; color: var(--slate-900);
+}
+.preview__card-s {
+  font-size: 11px; color: var(--slate-500);
+}
+.preview__chart { height: 200px; }
+
+/* ──────── Pillars ──────── */
+.pillars {
+  display: grid; gap: 16px;
+  grid-template-columns: 1fr;
+}
+@media (min-width: 640px) { .pillars { grid-template-columns: repeat(2, 1fr); } }
+@media (min-width: 1000px) { .pillars { grid-template-columns: repeat(4, 1fr); } }
+.pillar {
+  padding: 28px 24px;
+  background: white;
+  border: 1px solid rgba(15,23,42,.06);
+  border-radius: var(--r-lg);
+  transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s;
+}
+.pillar:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); border-color: rgba(13,110,110,.2); }
+.pillar__icon {
+  width: 44px; height: 44px;
+  background: var(--pri-light); color: var(--pri-dark);
+  border-radius: var(--r-md);
+  display: flex; align-items: center; justify-content: center;
+  margin-bottom: 16px;
+}
+.pillar__icon svg { width: 22px; height: 22px; }
+.pillar__t {
+  font-size: 17px; font-weight: 700; color: var(--slate-900);
+  margin: 0 0 8px;
+  letter-spacing: -0.01em;
+}
+.pillar__d {
+  font-size: 14px; line-height: 1.55; color: var(--slate-500);
+  margin: 0;
+}
+
+/* ──────── Modules grid ──────── */
+.modules {
+  display: grid; gap: 16px;
+  grid-template-columns: 1fr;
+}
+@media (min-width: 640px) { .modules { grid-template-columns: repeat(2, 1fr); } }
+@media (min-width: 900px) { .modules { grid-template-columns: repeat(3, 1fr); } }
+
+.module-group { }
+.module-group__h {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em;
+  color: var(--slate-500); font-weight: 700;
+  margin: 32px 0 12px;
+}
+.module-group:first-child .module-group__h { margin-top: 0; }
+.module-row {
+  display: grid; gap: 8px;
+  grid-template-columns: 1fr;
+}
+@media (min-width: 640px) { .module-row { grid-template-columns: repeat(2, 1fr); } }
+@media (min-width: 900px) { .module-row { grid-template-columns: repeat(3, 1fr); } }
+.module {
+  display: flex; gap: 12px; align-items: flex-start;
+  padding: 14px 16px;
+  background: white;
+  border: 1px solid rgba(15,23,42,.06);
+  border-radius: var(--r-md);
+  transition: border-color 0.15s, transform 0.15s;
+}
+.module:hover { border-color: rgba(13,110,110,.25); transform: translateY(-1px); }
+.module__icon {
+  flex-shrink: 0;
+  width: 36px; height: 36px;
+  border-radius: var(--r-sm);
+  display: flex; align-items: center; justify-content: center;
+  background: var(--slate-100);
+}
+.module__icon svg { width: 18px; height: 18px; color: var(--slate-700); }
+.module__icon.is-bi    { background: rgba(13,110,110,.10); }
+.module__icon.is-bi    svg { color: var(--pri); }
+.module__icon.is-fr    { background: rgba(67,56,202,.10); }
+.module__icon.is-fr    svg { color: var(--indigo); }
+.module__icon.is-fp    { background: rgba(217,119,6,.10); }
+.module__icon.is-fp    svg { color: var(--warn); }
+.module__icon.is-tax   { background: rgba(190,24,93,.10); }
+.module__icon.is-tax   svg { color: var(--rose); }
+.module__icon.is-hr    { background: rgba(4,120,87,.10); }
+.module__icon.is-hr    svg { color: var(--pos); }
+.module__t {
+  font-size: 14px; font-weight: 600; color: var(--slate-900);
+  margin: 0 0 2px;
+}
+.module__d {
+  font-size: 12px; color: var(--slate-500); line-height: 1.45;
+  margin: 0;
+}
+.module__soon {
+  display: inline-block;
+  font-size: 9px; text-transform: uppercase; letter-spacing: 0.06em;
+  background: var(--warn-light); color: #92400e;
+  padding: 1px 6px; border-radius: 4px;
+  margin-left: 4px; font-weight: 700;
+  vertical-align: 2px;
+}
+
+/* ──────── Live dashboard interactive ──────── */
+.dashboard-demo {
+  background: linear-gradient(180deg, var(--slate-50) 0%, var(--paper) 100%);
+}
+.demo__shell {
+  background: white;
+  border: 1px solid rgba(15,23,42,.08);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-glow);
+  overflow: hidden;
+}
+.demo__tabs {
+  display: flex; gap: 0; overflow-x: auto;
+  border-bottom: 1px solid rgba(15,23,42,.06);
+  background: var(--slate-50);
+  -webkit-overflow-scrolling: touch;
+}
+.demo__tab {
+  padding: 14px 20px;
+  font-size: 13px; font-weight: 600; color: var(--slate-500);
+  background: transparent; border: none;
+  border-bottom: 2px solid transparent;
+  white-space: nowrap;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.demo__tab:hover { color: var(--slate-900); }
+.demo__tab.is-active {
+  color: var(--pri); border-bottom-color: var(--pri);
+  background: white;
+}
+.demo__body { padding: 24px; }
+@media (min-width: 768px) { .demo__body { padding: 32px; } }
+
+.demo-grid {
+  display: grid; gap: 14px;
+  grid-template-columns: 1fr;
+}
+@media (min-width: 768px) { .demo-grid { grid-template-columns: 1.4fr 1fr; } }
+.demo-card {
+  background: white;
+  border: 1px solid rgba(15,23,42,.06);
+  border-radius: var(--r-md);
+  padding: 18px;
+}
+.demo-card__h {
+  display: flex; justify-content: space-between; align-items: baseline;
+  margin-bottom: 10px;
+}
+.demo-card__t { font-size: 13px; font-weight: 700; color: var(--slate-900); }
+.demo-card__sub { font-size: 11px; color: var(--slate-500); }
+.demo-card .chart { height: 280px; }
+.demo-card .chart-mini { height: 160px; }
+
+.demo-tab-content { display: none; }
+.demo-tab-content.is-active { display: block; }
+
+/* ──────── Expertise callouts ──────── */
+.expertise {
+  background: var(--slate-900); color: white;
+  position: relative; overflow: hidden;
+}
+.expertise::before {
+  content: ''; position: absolute; inset: 0;
+  background:
+    radial-gradient(ellipse 50% 50% at 20% 30%, rgba(13,110,110,.35) 0%, transparent 50%),
+    radial-gradient(ellipse 40% 40% at 80% 70%, rgba(67,56,202,.30) 0%, transparent 50%);
+  pointer-events: none;
+}
+.expertise .section-eyebrow { color: #5eead4; }
+.expertise .section-title   { color: white; }
+.expertise .section-sub     { color: #cbd5e1; }
+.expertise__grid {
+  display: grid; gap: 12px;
+  grid-template-columns: 1fr;
+  position: relative;
+}
+@media (min-width: 640px) { .expertise__grid { grid-template-columns: repeat(2, 1fr); } }
+@media (min-width: 900px) { .expertise__grid { grid-template-columns: repeat(3, 1fr); } }
+.expertise__card {
+  padding: 22px;
+  background: rgba(255,255,255,.05);
+  border: 1px solid rgba(255,255,255,.10);
+  border-radius: var(--r-md);
+  backdrop-filter: blur(8px);
+  transition: background 0.2s;
+}
+.expertise__card:hover { background: rgba(255,255,255,.08); }
+.expertise__tag {
+  display: inline-block;
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
+  font-weight: 700;
+  color: #5eead4;
+  margin-bottom: 10px;
+  font-family: var(--font-mono);
+}
+.expertise__t {
+  font-size: 16px; font-weight: 700;
+  color: white;
+  margin: 0 0 8px;
+  letter-spacing: -0.005em;
+}
+.expertise__d {
+  font-size: 13.5px; line-height: 1.55; color: #94a3b8;
+  margin: 0;
+}
+.expertise__d code {
+  font-family: var(--font-mono); font-size: 12px;
+  background: rgba(255,255,255,.08);
+  padding: 1px 6px; border-radius: 4px;
+  color: #5eead4;
+}
+
+/* ──────── Industry switcher ──────── */
+.industry-switch {
+  display: flex; flex-wrap: wrap; gap: 8px;
+  margin-bottom: 32px;
+}
+.industry-switch button {
+  padding: 8px 16px;
+  background: white; color: var(--slate-700);
+  border: 1px solid rgba(15,23,42,.10);
+  border-radius: 999px;
+  font-size: 13px; font-weight: 600;
+  transition: all 0.15s;
+}
+.industry-switch button:hover { border-color: var(--pri); color: var(--pri); }
+.industry-switch button.is-active {
+  background: var(--pri); color: white; border-color: var(--pri);
+}
+.industry-pane { display: none; }
+.industry-pane.is-active { display: block; }
+.industry-pane h3 {
+  font-size: 22px; font-weight: 700; margin: 0 0 8px; color: var(--slate-900);
+  letter-spacing: -0.015em;
+}
+.industry-pane p {
+  font-size: 15px; color: var(--slate-500); margin: 0 0 20px;
+  max-width: 640px; line-height: 1.6;
+}
+.industry-kpis {
+  display: grid; gap: 12px;
+  grid-template-columns: repeat(2, 1fr);
+}
+@media (min-width: 640px) { .industry-kpis { grid-template-columns: repeat(3, 1fr); } }
+@media (min-width: 900px) { .industry-kpis { grid-template-columns: repeat(4, 1fr); } }
+.industry-kpi {
+  padding: 14px 16px;
+  background: var(--slate-50);
+  border-radius: var(--r-md);
+  border: 1px solid rgba(15,23,42,.05);
+}
+.industry-kpi__l {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--slate-500); font-weight: 600;
+  margin: 0 0 4px;
+}
+.industry-kpi__v {
+  font-size: 20px; font-weight: 800; color: var(--pri);
+  letter-spacing: -0.015em; font-variant-numeric: tabular-nums;
+}
+.industry-kpi__v .u { font-size: 12px; color: var(--slate-500); margin-left: 4px; font-weight: 600; }
+
+/* ──────── Stats / numbers ──────── */
+.stats-strip {
+  display: grid; gap: 0;
+  grid-template-columns: repeat(2, 1fr);
+  background: var(--slate-100);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+}
+@media (min-width: 768px) { .stats-strip { grid-template-columns: repeat(4, 1fr); } }
+.stats-strip__c {
+  padding: 28px 24px;
+  background: white;
+  border-right: 1px solid var(--slate-100);
+  border-bottom: 1px solid var(--slate-100);
+  text-align: center;
+}
+@media (min-width: 768px) {
+  .stats-strip__c:nth-child(4n) { border-right: 0; }
+  .stats-strip__c { border-bottom: 0; }
+}
+.stats-strip__v {
+  font-size: clamp(28px, 4.5vw, 40px);
+  font-weight: 800; color: var(--pri);
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.stats-strip__v .u { font-size: 0.55em; color: var(--slate-500); font-weight: 600; margin-left: 4px; }
+.stats-strip__l {
+  font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--slate-500); font-weight: 700;
+  margin-top: 8px;
+}
+
+/* ──────── Quote ──────── */
+.quote {
+  background: linear-gradient(135deg, var(--pri) 0%, var(--pri-dark) 100%);
+  color: white; position: relative; overflow: hidden;
+  text-align: center;
+}
+.quote::before {
+  content: '"'; position: absolute;
+  top: 24px; left: 50%; transform: translateX(-50%);
+  font-size: 200px; line-height: 1;
+  font-family: Georgia, serif;
+  color: rgba(255,255,255,.07);
+  pointer-events: none;
+}
+.quote__text {
+  position: relative;
+  font-size: clamp(20px, 2.8vw, 28px);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  line-height: 1.4;
+  max-width: 760px; margin: 0 auto 24px;
+}
+.quote__cite { position: relative; font-size: 13px; opacity: 0.85; }
+.quote__cite-name { font-weight: 700; }
+
+/* ──────── Final CTA ──────── */
+.cta-final {
+  text-align: center;
+  background:
+    radial-gradient(ellipse 60% 60% at 50% 50%, rgba(13,110,110,.08) 0%, transparent 80%);
+}
+.cta-final h2 {
+  font-size: clamp(28px, 4.5vw, 44px);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--slate-900);
+  margin: 0 0 16px;
+}
+.cta-final p {
+  font-size: 17px; color: var(--slate-500);
+  max-width: 540px; margin: 0 auto 28px;
+}
+.cta-final .btn { padding: 16px 32px; font-size: 16px; }
+
+/* ──────── Footer ──────── */
+.footer {
+  background: var(--slate-900); color: #94a3b8;
+  padding: 48px 0 32px;
+  font-size: 13px;
+}
+.footer__grid {
+  display: grid; gap: 24px;
+  grid-template-columns: 1fr;
+  margin-bottom: 32px;
+}
+@media (min-width: 768px) { .footer__grid { grid-template-columns: 2fr 1fr 1fr 1fr; } }
+.footer__brand-mark { color: white; font-weight: 700; font-size: 17px; margin-bottom: 8px; }
+.footer p { margin: 0 0 12px; line-height: 1.5; }
+.footer__col h4 {
+  color: white; font-size: 13px; text-transform: uppercase;
+  letter-spacing: 0.08em; margin: 0 0 12px;
+}
+.footer__col a { color: #94a3b8; display: block; padding: 4px 0; transition: color 0.15s; }
+.footer__col a:hover { color: white; }
+.footer__bottom {
+  border-top: 1px solid rgba(255,255,255,.10);
+  padding-top: 24px;
+  display: flex; justify-content: space-between;
+  flex-wrap: wrap; gap: 12px;
+  font-size: 12px;
+}
+.footer__bottom a { color: #64748b; }
+
+/* ──────── Mobile-first niceties ──────── */
+@media (max-width: 639px) {
+  .hero { padding: 48px 0 32px; }
+  .section { padding: 48px 0; }
+}
+
+/* Touch-friendly tap targets */
+@media (hover: none) {
+  .module, .pillar, .expertise__card { transition: none; }
+}
+
+/* Subtle reveal */
+.reveal { opacity: 0; transform: translateY(20px); transition: opacity 0.7s, transform 0.7s; }
+.reveal.is-visible { opacity: 1; transform: translateY(0); }
+</style>
+</head>
+<body>
+
+<!-- ─────────────────────────────────────────────────────────────────
+     NAV
+     ───────────────────────────────────────────────────────────────── -->
+<nav class="nav">
+  <div class="container nav__row">
+    <a href="#" class="nav__brand">
+      <span class="nav__brand-mark">EA</span>
+      Elite Advisors <small>· BMS</small>
+    </a>
+    <div class="nav__menu">
+      <a href="#pillars">Why BMS</a>
+      <a href="#modules">Modules</a>
+      <a href="#demo">Live demo</a>
+      <a href="#expertise">Expertise</a>
+      <a href="#industries">Industries</a>
+    </div>
+    <a href="#cta" class="nav__cta">Book a demo
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M5 12h14M12 5l7 7-7 7"/>
+      </svg>
+    </a>
+  </div>
+</nav>
+
+<!-- ─────────────────────────────────────────────────────────────────
+     HERO
+     ───────────────────────────────────────────────────────────────── -->
+<header class="hero">
+  <div class="container hero__inner">
+
+    <div class="hero__eyebrow">
+      Wired live to Odoo · OHADA-native · IFRS-aware
+    </div>
+
+    <h1 class="hero__title">
+      Run your business on numbers — <em>live, audit-ready, OHADA-native.</em>
+    </h1>
+
+    <p class="hero__sub">
+      Real-time financial intelligence wired directly to your Odoo. Built by
+      chartered accountants who run audits. Engineered for the messy reality
+      of operating across OHADA — VAT 19.25%, Class 70 revenue HT, Class 41
+      receivables, end-of-year close-out journals to Class 13.
+      Every formula peer-reviewed against the standards.
+    </p>
+
+    <div class="hero__ctas">
+      <a href="#cta" class="btn btn--primary">
+        Book a 30-min demo
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M5 12h14M12 5l7 7-7 7"/>
+        </svg>
+      </a>
+      <a href="#demo" class="btn btn--ghost">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <polygon points="5 3 19 12 5 21 5 3" fill="currentColor"/>
+        </svg>
+        See it in action
+      </a>
+    </div>
+
+    <div class="hero__stats">
+      <div class="hero__stat">
+        <div class="hero__stat-v" data-count="30">30<span class="u">+</span></div>
+        <div class="hero__stat-l">Modules live</div>
+      </div>
+      <div class="hero__stat">
+        <div class="hero__stat-v" data-count="120">120<span class="u">+</span></div>
+        <div class="hero__stat-l">KPIs encoded</div>
+      </div>
+      <div class="hero__stat">
+        <div class="hero__stat-v" data-count="9">9</div>
+        <div class="hero__stat-l">OHADA classes</div>
+      </div>
+      <div class="hero__stat">
+        <div class="hero__stat-v">Live</div>
+        <div class="hero__stat-l">Odoo sync</div>
+      </div>
+    </div>
+
+    <!-- Live dashboard preview -->
+    <div class="hero__preview">
+      <div class="preview__topbar">
+        <span class="preview__dot" style="background:#ef4444"></span>
+        <span class="preview__dot" style="background:#f59e0b"></span>
+        <span class="preview__dot" style="background:#10b981"></span>
+        <span class="preview__url">bms.cm-ea.com/t/your-business/dashboard</span>
+      </div>
+      <div class="preview__body">
+        <div class="preview__strip">
+          <div class="preview__cell">
+            <div class="preview__cell-l">Revenue YTD</div>
+            <div class="preview__cell-v">1.36<span class="u">B XAF</span></div>
+            <div class="preview__cell-m"><span class="delta-pos">▲ 12.8%</span> vs prior year</div>
+          </div>
+          <div class="preview__cell">
+            <div class="preview__cell-l">Gross Profit</div>
+            <div class="preview__cell-v">524<span class="u">M XAF</span></div>
+            <div class="preview__cell-m">38.5% margin · <span class="delta-pos">+2.1pp</span></div>
+          </div>
+          <div class="preview__cell">
+            <div class="preview__cell-l">Cash Position</div>
+            <div class="preview__cell-v">186<span class="u">M XAF</span></div>
+            <div class="preview__cell-m">DSO 42d · current ratio 1.4x</div>
+          </div>
+          <div class="preview__cell">
+            <div class="preview__cell-l">EBITDA</div>
+            <div class="preview__cell-v">298<span class="u">M XAF</span></div>
+            <div class="preview__cell-m">21.9% margin · <span class="delta-pos">+0.8pp</span></div>
+          </div>
+        </div>
+
+        <div class="preview__grid">
+          <div class="preview__card">
+            <div class="preview__card-h">
+              <div>
+                <div class="preview__card-t">Revenue trajectory — YTD vs Budget</div>
+                <div class="preview__card-s">Cumulative actual vs plan · HT basis · monthly granularity</div>
+              </div>
+            </div>
+            <div class="preview__chart" id="hero-trajectory"></div>
+          </div>
+          <div class="preview__card">
+            <div class="preview__card-h">
+              <div>
+                <div class="preview__card-t">Revenue by product</div>
+                <div class="preview__card-s">From class 706 GL · 5 mo</div>
+              </div>
+            </div>
+            <div class="preview__chart" id="hero-mix"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</header>
+
+<!-- ─────────────────────────────────────────────────────────────────
+     PILLARS
+     ───────────────────────────────────────────────────────────────── -->
+<section class="section" id="pillars">
+  <div class="container">
+
+    <div class="section-eyebrow">Why teams choose BMS</div>
+    <h2 class="section-title">Built for the way OHADA businesses actually run.</h2>
+    <p class="section-sub">
+      Most BI tools were designed for US/EU companies and bolted on to whatever
+      ledger they could reach. BMS started the other way around — with the
+      SYSCOHADA chart of accounts, the CGI tax code, and a French/English bilingual
+      reality. The technology serves the accounting, not the other way around.
+    </p>
+
+    <div class="pillars">
+      <div class="pillar">
+        <div class="pillar__icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="9"/>
+            <path d="M12 7v5l3 2"/>
+          </svg>
+        </div>
+        <h3 class="pillar__t">Live data, not exports</h3>
+        <p class="pillar__d">
+          Wired directly to your Odoo. No spreadsheet round-trips, no stale
+          numbers, no nightly batch jobs to wait for. Every figure refreshes
+          against your ledger in real time, period filter respected across
+          every module via session sync.
+        </p>
+      </div>
+
+      <div class="pillar">
+        <div class="pillar__icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 12l2 2 4-4"/>
+            <path d="M5 4h14a2 2 0 012 2v14l-4-2-3 2-3-2-4 2V6a2 2 0 012-2z"/>
+          </svg>
+        </div>
+        <h3 class="pillar__t">OHADA + IFRS, native</h3>
+        <p class="pillar__d">
+          Built against SYSCOHADA from day one. Class 70 revenue (HT). Class 41x
+          receivables. Class 6/7/8 P&amp;L accounts reset at year-end per OHADA
+          / IFRS — automatically. Balance Générale in audit format, Solde au
+          début · Mouvements · Solde de fin. Your auditor recognises every column.
+        </p>
+      </div>
+
+      <div class="pillar">
+        <div class="pillar__icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="7" height="7"/>
+            <rect x="14" y="3" width="7" height="7"/>
+            <rect x="3" y="14" width="7" height="7"/>
+            <rect x="14" y="14" width="7" height="7"/>
+          </svg>
+        </div>
+        <h3 class="pillar__t">30+ modules, one suite</h3>
+        <p class="pillar__d">
+          Revenue analysis, P&amp;L, cash-flow forecast, working capital,
+          tax compliance, payroll, fixed assets, inventory, procurement,
+          scenario modelling — all on one ledger, one period filter, one
+          source of truth. No data reconciliation between siloed tools.
+        </p>
+      </div>
+
+      <div class="pillar">
+        <div class="pillar__icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2L9.5 8.5 3 11l6.5 2.5L12 20l2.5-6.5L21 11l-6.5-2.5z"/>
+          </svg>
+        </div>
+        <h3 class="pillar__t">Expertise, encoded</h3>
+        <p class="pillar__d">
+          Every formula peer-reviewed by senior accountants. Price-volume-mix
+          variance. DSO/DIO/DPO cash conversion cycle. CGI tax compliance
+          checks. IAS 19 retirement benefit actuarials. The knowledge built
+          in, ready to deploy — no consultants required.
+        </p>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ─────────────────────────────────────────────────────────────────
+     MODULES
+     ───────────────────────────────────────────────────────────────── -->
+<section class="section" id="modules" style="background:var(--slate-50);">
+  <div class="container">
+
+    <div class="section-eyebrow">The whole finance function</div>
+    <h2 class="section-title">From scan to strategy — every module on one ledger.</h2>
+    <p class="section-sub">
+      Every service below shares the same period filter, the same currency,
+      the same Odoo connection, and the same audit trail. Toggle any module
+      on or off per tenant from the super admin console.
+    </p>
+
+    <div class="module-group">
+      <div class="module-group__h">Business Intelligence — live operational view</div>
+      <div class="module-row">
+        <div class="module"><div class="module__icon is-bi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12l9-9 9 9M5 10v10h14V10"/></svg></div><div><div class="module__t">Dashboard</div><div class="module__d">Revenue · GP · EBITDA · cash · AR — live</div></div></div>
+        <div class="module"><div class="module__icon is-bi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18M7 14l4-4 3 3 5-5"/></svg></div><div><div class="module__t">Revenue Analysis</div><div class="module__d">RpD · RpO · top SKUs · discount rates</div></div></div>
+        <div class="module"><div class="module__icon is-bi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z"/></svg></div><div><div class="module__t">Product Revenue TSD</div><div class="module__d">Per-product budget vs actual · class 706 GL</div></div></div>
+        <div class="module"><div class="module__icon is-bi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h10M14 18l6-6-6-6"/></svg></div><div><div class="module__t">Customer Insights</div><div class="module__d">Top customers · concentration · churn signals</div></div></div>
+        <div class="module"><div class="module__icon is-bi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M5 9h14M5 15h14"/></svg></div><div><div class="module__t">Receivables</div><div class="module__d">AR aging · DSO · collection trajectory</div></div></div>
+        <div class="module"><div class="module__icon is-bi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1v22M2 12h20M4 5h4M4 19h4M16 5h4M16 19h4"/></svg></div><div><div class="module__t">Treasury</div><div class="module__d">Liquidity ratios · debt · CCC trend</div></div></div>
+        <div class="module"><div class="module__icon is-bi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4v16h16M8 14l3-4 3 3 4-6"/></svg></div><div><div class="module__t">Profit &amp; Loss</div><div class="module__d">Revenue → GP → EBITDA → NP waterfall</div></div></div>
+        <div class="module"><div class="module__icon is-bi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg></div><div><div class="module__t">Payables</div><div class="module__d">AP balance · DPO · vendor concentration</div></div></div>
+        <div class="module"><div class="module__icon is-bi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18M5 21V7l7-4 7 4v14M9 21v-6h6v6"/></svg></div><div><div class="module__t">Fixed Assets</div><div class="module__d">Net book value · depreciation schedule</div></div></div>
+        <div class="module"><div class="module__icon is-bi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18V3H3m3 2h12v2H6V5m0 6h12v2H6v-2m0 6h12v2H6v-2"/></svg></div><div><div class="module__t">Inventory</div><div class="module__d">Stock turnover · sell-through · obsolescence</div></div></div>
+        <div class="module"><div class="module__icon is-bi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7v10a2 2 0 002 2h12a2 2 0 002-2V7M4 7l8-4 8 4M4 7h16M9 11h6M9 15h6"/></svg></div><div><div class="module__t">Operations</div><div class="module__d">Container/vehicle/cargo throughput · scans</div></div></div>
+        <div class="module"><div class="module__icon is-bi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2M9 12h6m-6 4h4"/></svg></div><div><div class="module__t">Billing</div><div class="module__d">Scan→bill→cash reconciliation · time-to-invoice</div></div></div>
+      </div>
+    </div>
+
+    <div class="module-group">
+      <div class="module-group__h">Financial Reporting — audit-ready statements</div>
+      <div class="module-row">
+        <div class="module"><div class="module__icon is-fr"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg></div><div><div class="module__t">Trial Balance</div><div class="module__d">OHADA Balance Générale · 6 columns audit format</div></div></div>
+        <div class="module"><div class="module__icon is-fr"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3h18v18H3zM3 12h18M12 3v18"/></svg></div><div><div class="module__t">Balance Sheet Review</div><div class="module__d">SYSCOHADA totals · ratio cross-checks</div></div></div>
+        <div class="module"><div class="module__icon is-fr"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4v16h16M8 14l3-4 3 3 4-6"/></svg></div><div><div class="module__t">OHADA Statements</div><div class="module__d">Compte de Résultat · TA/TB/TC/TD rollup</div></div></div>
+        <div class="module"><div class="module__icon is-fr"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg></div><div><div class="module__t">GL Quality</div><div class="module__d">Description checks · manual entries · timing</div></div></div>
+        <div class="module"><div class="module__icon is-fr"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18M3 10l9-7 9 7M5 10v11M19 10v11M9 14h6M9 18h6"/></svg></div><div><div class="module__t">Bank Reconciliation <span class="module__soon">Soon</span></div><div class="module__d">Auto-match statement vs GL</div></div></div>
+        <div class="module"><div class="module__icon is-fr"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 14l9-5-9-5-9 5 9 5zM12 14v7M5 13.18v3.82a8 8 0 0014 0v-3.82"/></svg></div><div><div class="module__t">Post-Retirement Benefits <span class="module__soon">Soon</span></div><div class="module__d">IAS 19 actuarial valuation</div></div></div>
+      </div>
+    </div>
+
+    <div class="module-group">
+      <div class="module-group__h">Tax Compliance — CGI-aware</div>
+      <div class="module-row">
+        <div class="module"><div class="module__icon is-tax"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 3v18h18M7 14l4-4 3 3 5-5"/></svg></div><div><div class="module__t">Tax Dashboard</div><div class="module__d">Liability snapshot · upcoming due dates</div></div></div>
+        <div class="module"><div class="module__icon is-tax"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8c-1.66 0-3 .9-3 2s1.34 2 3 2 3 .9 3 2-1.34 2-3 2m0-8v8m0 0v1"/></svg></div><div><div class="module__t">Income Tax Compliance</div><div class="module__d">Donations · deductibility tests · CGI</div></div></div>
+        <div class="module"><div class="module__icon is-tax"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12l2 2 4-4M5 4h14a2 2 0 012 2v14l-4-2-3 2-3-2-4 2V6a2 2 0 012-2z"/></svg></div><div><div class="module__t">VAT Compliance</div><div class="module__d">Output · input · refundable · 19.25%</div></div></div>
+        <div class="module"><div class="module__icon is-tax"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8zM14 2v6h6M9 13h6M9 17h6"/></svg></div><div><div class="module__t">Invoice Compliance</div><div class="module__d">CGI Art. 117 invoice-level checks</div></div></div>
+        <div class="module"><div class="module__icon is-tax"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg></div><div><div class="module__t">Monthly Tax Return</div><div class="module__d">DSF data prep · variance flags</div></div></div>
+      </div>
+    </div>
+
+    <div class="module-group">
+      <div class="module-group__h">Financial Planning — forward-looking</div>
+      <div class="module-row">
+        <div class="module"><div class="module__icon is-fp"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h2l2-7 4 14 3-10 4 8 3-5h4"/></svg></div><div><div class="module__t">Macro Economics</div><div class="module__d">CFA region indicators · sector benchmarks</div></div></div>
+        <div class="module"><div class="module__icon is-fp"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3-9 4 18 3-9h4"/></svg></div><div><div class="module__t">Working Capital</div><div class="module__d">CCC · DSO · DIO · DPO · 13-mo trend</div></div></div>
+        <div class="module"><div class="module__icon is-fp"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4v16h16M8 14l3-4 3 3 4-6"/></svg></div><div><div class="module__t">P&amp;L Forecast</div><div class="module__d">Budget vs actual · commentary · variance</div></div></div>
+        <div class="module"><div class="module__icon is-fp"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg></div><div><div class="module__t">Budget Upload</div><div class="module__d">Excel/CSV · P&amp;L lines + product budgets</div></div></div>
+        <div class="module"><div class="module__icon is-fp"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10h18M3 14h18M7 6h10v12H7z"/></svg></div><div><div class="module__t">Cashflow Forecast</div><div class="module__d">Direct method · 13-week rolling</div></div></div>
+        <div class="module"><div class="module__icon is-fp"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M5 9l7-7 7 7M5 17h14"/></svg></div><div><div class="module__t">Investment Analysis</div><div class="module__d">NPV · IRR · payback</div></div></div>
+      </div>
+    </div>
+
+    <div class="module-group">
+      <div class="module-group__h">Human Resources</div>
+      <div class="module-row">
+        <div class="module"><div class="module__icon is-hr"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21v-2a4 4 0 014-4h8a4 4 0 014 4v2"/></svg></div><div><div class="module__t">Payroll Processing <span class="module__soon">Soon</span></div><div class="module__d">Gross-to-net · CNPS · IRPP · CAC · FNE</div></div></div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ─────────────────────────────────────────────────────────────────
+     LIVE DASHBOARD DEMO (interactive)
+     ───────────────────────────────────────────────────────────────── -->
+<section class="section dashboard-demo" id="demo">
+  <div class="container">
+
+    <div class="section-eyebrow">See the suite in action</div>
+    <h2 class="section-title">Interactive demo — toggle the views.</h2>
+    <p class="section-sub">
+      Every chart below renders with realistic OHADA-region data using the
+      same ECharts engine and the same colour palette as the live product.
+      Tap a tab on your phone or click on desktop — totally responsive.
+    </p>
+
+    <div class="demo__shell">
+      <div class="demo__tabs">
+        <button class="demo__tab is-active" data-demo-tab="revenue">Revenue Analysis</button>
+        <button class="demo__tab" data-demo-tab="pl">Profit &amp; Loss</button>
+        <button class="demo__tab" data-demo-tab="cash">Treasury</button>
+        <button class="demo__tab" data-demo-tab="product">Product Revenue</button>
+      </div>
+      <div class="demo__body">
+
+        <div class="demo-tab-content is-active" data-demo-pane="revenue">
+          <div class="demo-grid">
+            <div class="demo-card">
+              <div class="demo-card__h">
+                <div>
+                  <div class="demo-card__t">Cumulative revenue · YTD vs Budget vs Linear pace</div>
+                  <div class="demo-card__sub">HT basis · sourced from class 70 GL movements · Jan-May</div>
+                </div>
+              </div>
+              <div class="chart" id="demo-rev-traj"></div>
+            </div>
+            <div class="demo-card">
+              <div class="demo-card__h">
+                <div>
+                  <div class="demo-card__t">Top 5 customers · YTD</div>
+                  <div class="demo-card__sub">By revenue · partner_id grouping</div>
+                </div>
+              </div>
+              <div class="chart-mini" id="demo-top-customers"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="demo-tab-content" data-demo-pane="pl">
+          <div class="demo-grid">
+            <div class="demo-card">
+              <div class="demo-card__h">
+                <div>
+                  <div class="demo-card__t">Margin waterfall</div>
+                  <div class="demo-card__sub">Revenue → COGS → GP → OpEx → EBITDA → D&amp;A+T → NP</div>
+                </div>
+              </div>
+              <div class="chart" id="demo-waterfall"></div>
+            </div>
+            <div class="demo-card">
+              <div class="demo-card__h">
+                <div>
+                  <div class="demo-card__t">Cost ratios · CpO &amp; discounts</div>
+                  <div class="demo-card__sub">Vs targets · ≤35% benchmark</div>
+                </div>
+              </div>
+              <div class="chart-mini" id="demo-cost"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="demo-tab-content" data-demo-pane="cash">
+          <div class="demo-grid">
+            <div class="demo-card">
+              <div class="demo-card__h">
+                <div>
+                  <div class="demo-card__t">Liquidity ratios · 13-month TTM</div>
+                  <div class="demo-card__sub">Current ratio · quick ratio · cash ratio</div>
+                </div>
+              </div>
+              <div class="chart" id="demo-liquidity"></div>
+            </div>
+            <div class="demo-card">
+              <div class="demo-card__h">
+                <div>
+                  <div class="demo-card__t">Cash Conversion Cycle · DSO / DIO / DPO</div>
+                  <div class="demo-card__sub">TTM-anchored · partial-period annualised</div>
+                </div>
+              </div>
+              <div class="chart-mini" id="demo-ccc"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="demo-tab-content" data-demo-pane="product">
+          <div class="demo-grid">
+            <div class="demo-card">
+              <div class="demo-card__h">
+                <div>
+                  <div class="demo-card__t">Product revenue · actual vs budget · YTD</div>
+                  <div class="demo-card__sub">12 products · GL class 706 sub-account mapping</div>
+                </div>
+              </div>
+              <div class="chart" id="demo-products"></div>
+            </div>
+            <div class="demo-card">
+              <div class="demo-card__h">
+                <div>
+                  <div class="demo-card__t">Variance decomposition</div>
+                  <div class="demo-card__sub">Volume effect · Price effect · Net</div>
+                </div>
+              </div>
+              <div class="chart-mini" id="demo-variance"></div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ─────────────────────────────────────────────────────────────────
+     EXPERTISE — emphasizing wealth of knowledge
+     ───────────────────────────────────────────────────────────────── -->
+<section class="section expertise" id="expertise">
+  <div class="container">
+    <div class="section-eyebrow">Built by accountants who run audits</div>
+    <h2 class="section-title">The expertise is in the code, not the consulting hours.</h2>
+    <p class="section-sub">
+      Every BMS module encodes a specific piece of OHADA / IFRS / CGI knowledge.
+      No-one on your team needs to remember it — the platform applies it
+      automatically and consistently across every report. Audit-ready by default.
+    </p>
+
+    <div class="expertise__grid">
+
+      <div class="expertise__card">
+        <div class="expertise__tag">OHADA · CLASS 70</div>
+        <div class="expertise__t">Revenue HT, not TTC</div>
+        <div class="expertise__d">
+          Revenue is always sourced from <code>amount_untaxed_signed</code>
+          (HT) on customer invoices, matching the OHADA P&amp;L definition and
+          class 70 GL movements. VAT (class 4431) is kept separate by design.
+          Budgets compare apples to apples.
+        </div>
+      </div>
+
+      <div class="expertise__card">
+        <div class="expertise__tag">OHADA · CLASSES 6/7/8</div>
+        <div class="expertise__t">P&amp;L accounts zero out at year-end</div>
+        <div class="expertise__d">
+          On the Trial Balance, classes 6, 7, 8 are recognised as nominal —
+          they reset every fiscal year via close-out journals to class 13X.
+          No more polluted opening balances on the Balance Générale, regardless
+          of how clean the closing entries actually were.
+        </div>
+      </div>
+
+      <div class="expertise__card">
+        <div class="expertise__tag">CGI · ART. 117</div>
+        <div class="expertise__t">Invoice compliance, line by line</div>
+        <div class="expertise__d">
+          Every customer invoice checked against Cameroon's Code Général des
+          Impôts — TIN format, FNE block presence, sequential numbering,
+          mandatory narrative fields. Compliance gaps flagged before
+          submission, not during inspection.
+        </div>
+      </div>
+
+      <div class="expertise__card">
+        <div class="expertise__tag">REVENUE RECONCILIATION</div>
+        <div class="expertise__t">Scan → Bill → Cash, three legs</div>
+        <div class="expertise__d">
+          The full revenue-recognition chain visualised as a Sankey:
+          Scanned (expected) → Billed (invoice posted) → Collected (cash in).
+          Both leakages — bill leak and AR — visible in one glance.
+          Drill-down to the underlying invoices in one click.
+        </div>
+      </div>
+
+      <div class="expertise__card">
+        <div class="expertise__tag">PRICE × VOLUME × MIX</div>
+        <div class="expertise__t">Variance decomposed correctly</div>
+        <div class="expertise__d">
+          Revenue gap split into volume effect <code>(act_qty − bud_qty) × bud_price</code>
+          and price effect <code>(act_price − bud_price) × act_qty</code>.
+          Standard finance pattern, encoded once, applied everywhere a
+          budget meets actuals. Net always reconciles.
+        </div>
+      </div>
+
+      <div class="expertise__card">
+        <div class="expertise__tag">CCC · 13-MONTH TTM</div>
+        <div class="expertise__t">Cash conversion, annualised correctly</div>
+        <div class="expertise__d">
+          DSO · DIO · DPO computed on a trailing-twelve-month basis, with
+          partial-period annualisation when the data window is shorter
+          (e.g. a new tenant in month 4 of operations). No artificial spikes,
+          no missing data points — the chart renders the full 13-month strip.
+        </div>
+      </div>
+
+      <div class="expertise__card">
+        <div class="expertise__tag">CONFIGURABLE REVENUE MAPPING</div>
+        <div class="expertise__t">Product revenue from GL, by description</div>
+        <div class="expertise__d">
+          Map each product to one or more class 706 sub-accounts via
+          name-pattern matching. Catch-all accounts (e.g. "Services vendus
+          dans la Région") can be redistributed across products on a
+          configurable share. Diagnostic panel shows every assignment.
+        </div>
+      </div>
+
+      <div class="expertise__card">
+        <div class="expertise__tag">VAT · 19.25%</div>
+        <div class="expertise__t">HT / TTC, never confused</div>
+        <div class="expertise__d">
+          Every figure carries its basis. AR balances, payments, customer
+          invoices: TTC (what the customer pays). Revenue, P&amp;L, budgets,
+          Class 70 GL: HT (what the business earns). The platform doesn't
+          let the two mix.
+        </div>
+      </div>
+
+      <div class="expertise__card">
+        <div class="expertise__tag">MULTI-TENANT · NATIVE</div>
+        <div class="expertise__t">White-label from day one</div>
+        <div class="expertise__d">
+          Each tenant gets its own Odoo connection, brand, period filter,
+          chart of accounts. Super admins manage modules &amp; services per
+          tenant from <code>/admin/tenants/{id}</code>. Zero data
+          cross-contamination. Bilingual (EN/FR) UI throughout.
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ─────────────────────────────────────────────────────────────────
+     INDUSTRIES
+     ───────────────────────────────────────────────────────────────── -->
+<section class="section" id="industries">
+  <div class="container">
+
+    <div class="section-eyebrow">One suite, every industry</div>
+    <h2 class="section-title">Tailored KPIs out of the box.</h2>
+    <p class="section-sub">
+      Pick your industry at onboarding — BMS auto-enables the modules + KPIs
+      that matter to your business. Operators see the right numbers from day
+      one. Switch verticals later? Super admin toggle, no data migration.
+    </p>
+
+    <div class="industry-switch">
+      <button class="is-active" data-ind="logistics">Logistics &amp; Ports</button>
+      <button data-ind="retail">Retail</button>
+      <button data-ind="manufacturing">Manufacturing</button>
+      <button data-ind="services">Services</button>
+      <button data-ind="nonprofit">Non-Profit</button>
+    </div>
+
+    <div class="industry-pane is-active" data-ind="logistics">
+      <h3>Logistics &amp; Port Operations</h3>
+      <p>Container scans, vehicle classifications, wood truckloads, OOG cargo, bill leakage tracking — built around the AW Cargo Odoo module and the official Grille Tarifaire.</p>
+      <div class="industry-kpis">
+        <div class="industry-kpi"><div class="industry-kpi__l">Containers scanned</div><div class="industry-kpi__v">3,210<span class="u">/mo</span></div></div>
+        <div class="industry-kpi"><div class="industry-kpi__l">Scan rate</div><div class="industry-kpi__v">96.4<span class="u">%</span></div></div>
+        <div class="industry-kpi"><div class="industry-kpi__l">Median time-to-scan</div><div class="industry-kpi__v">2.1<span class="u">hr</span></div></div>
+        <div class="industry-kpi"><div class="industry-kpi__l">Scan revenue</div><div class="industry-kpi__v">274<span class="u">M XAF</span></div></div>
+        <div class="industry-kpi"><div class="industry-kpi__l">Vehicle scans</div><div class="industry-kpi__v">3,167<span class="u">/mo</span></div></div>
+        <div class="industry-kpi"><div class="industry-kpi__l">Bill leakage</div><div class="industry-kpi__v">8.2<span class="u">M XAF</span></div></div>
+        <div class="industry-kpi"><div class="industry-kpi__l">Scan-to-cash</div><div class="industry-kpi__v">72.8<span class="u">%</span></div></div>
+        <div class="industry-kpi"><div class="industry-kpi__l">Wood truckloads</div><div class="industry-kpi__v">1,320<span class="u">/mo</span></div></div>
+      </div>
+    </div>
+
+    <div class="industry-pane" data-ind="retail">
+      <h3>Retail &amp; Distribution</h3>
+      <p>SKU-level revenue, sell-through, inventory turns, customer concentration, discount-to-revenue ratio — designed for multi-location retailers and distribution networks.</p>
+      <div class="industry-kpis">
+        <div class="industry-kpi"><div class="industry-kpi__l">Revenue / day</div><div class="industry-kpi__v">7.4<span class="u">M XAF</span></div></div>
+        <div class="industry-kpi"><div class="industry-kpi__l">Inventory turns</div><div class="industry-kpi__v">6.2<span class="u">/yr</span></div></div>
+        <div class="industry-kpi"><div class="industry-kpi__l">Sell-through</div><div class="industry-kpi__v">78.5<span class="u">%</span></div></div>
+        <div class="industry-kpi"><div class="industry-kpi__l">Top 5 SKU share</div><div class="industry-kpi__v">42<span class="u">%</span></div></div>
+        <div class="industry-kpi"><div class="industry-kpi__l">Gross margin</div><div class="industry-kpi__v">28.4<span class="u">%</span></div></div>
+        <div class="industry-kpi"><div class="industry-kpi__l">Discount rate</div><div class="industry-kpi__v">5.8<span class="u">%</span></div></div>
+        <div class="industry-kpi"><div class="industry-kpi__l">Stockout days</div><div class="industry-kpi__v">3.2<span class="u">d</span></div></div>
+        <div class="industry-kpi"><div class="industry-kpi__l">RpC</div><div class="industry-kpi__v">38<span class="u">K XAF</span></div></div>
+      </div>
+    </div>
+
+    <div class="industry-pane" data-ind="manufacturing">
+      <h3>Manufacturing</h3>
+      <p>BoM, work-order completion, capacity utilisation, raw-materials inventory, supplier lead time, gross margin per product — wired to the production ledger.</p>
+      <div class="industry-kpis">
+        <div class="industry-kpi"><div class="industry-kpi__l">Capacity utilisation</div><div class="industry-kpi__v">73<span class="u">%</span></div></div>
+        <div class="industry-kpi"><div class="industry-kpi__l">Units produced</div><div class="industry-kpi__v">12,400<span class="u">/mo</span></div></div>
+        <div class="industry-kpi"><div class="industry-kpi__l">Raw materials</div><div class="industry-kpi__v">340<span class="u">M XAF</span></div></div>
+        <div class="industry-kpi"><div class="industry-kpi__l">Standard margin</div><div class="industry-kpi__v">32<span class="u">%</span></div></div>
+        <div class="industry-kpi"><div class="industry-kpi__l">WIP value</div><div class="industry-kpi__v">85<span class="u">M XAF</span></div></div>
+        <div class="industry-kpi"><div class="industry-kpi__l">Defect rate</div><div class="industry-kpi__v">1.4<span class="u">%</span></div></div>
+        <div class="industry-kpi"><div class="industry-kpi__l">Lead time</div><div class="industry-kpi__v">18<span class="u">d</span></div></div>
+        <div class="industry-kpi"><div class="industry-kpi__l">Fixed asset NBV</div><div class="industry-kpi__v">2.1<span class="u">B XAF</span></div></div>
+      </div>
+    </div>
+
+    <div class="industry-pane" data-ind="services">
+      <h3>Professional Services</h3>
+      <p>Billable hours, utilisation, project margin, WIP, partner contribution, realisation rate — built for accounting firms, consulting, legal, design.</p>
+      <div class="industry-kpis">
+        <div class="industry-kpi"><div class="industry-kpi__l">Utilisation</div><div class="industry-kpi__v">68<span class="u">%</span></div></div>
+        <div class="industry-kpi"><div class="industry-kpi__l">Realisation</div><div class="industry-kpi__v">88<span class="u">%</span></div></div>
+        <div class="industry-kpi"><div class="industry-kpi__l">Revenue / head</div><div class="industry-kpi__v">3.8<span class="u">M XAF</span></div></div>
+        <div class="industry-kpi"><div class="industry-kpi__l">WIP days</div><div class="industry-kpi__v">28<span class="u">d</span></div></div>
+        <div class="industry-kpi"><div class="industry-kpi__l">Active engagements</div><div class="industry-kpi__v">42</div></div>
+        <div class="industry-kpi"><div class="industry-kpi__l">Win rate</div><div class="industry-kpi__v">34<span class="u">%</span></div></div>
+        <div class="industry-kpi"><div class="industry-kpi__l">Avg engagement</div><div class="industry-kpi__v">12<span class="u">M XAF</span></div></div>
+        <div class="industry-kpi"><div class="industry-kpi__l">Project margin</div><div class="industry-kpi__v">42<span class="u">%</span></div></div>
+      </div>
+    </div>
+
+    <div class="industry-pane" data-ind="nonprofit">
+      <h3>Non-Profit &amp; Foundations</h3>
+      <p>Donor concentration, grant utilisation, program vs admin ratio, restricted-fund tracking, multi-currency receipts — designed for charities, foundations, social enterprises.</p>
+      <div class="industry-kpis">
+        <div class="industry-kpi"><div class="industry-kpi__l">Total donations</div><div class="industry-kpi__v">485<span class="u">M XAF</span></div></div>
+        <div class="industry-kpi"><div class="industry-kpi__l">Program ratio</div><div class="industry-kpi__v">82<span class="u">%</span></div></div>
+        <div class="industry-kpi"><div class="industry-kpi__l">Top 5 donors</div><div class="industry-kpi__v">68<span class="u">%</span></div></div>
+        <div class="industry-kpi"><div class="industry-kpi__l">Grants in-flight</div><div class="industry-kpi__v">14</div></div>
+        <div class="industry-kpi"><div class="industry-kpi__l">Restricted funds</div><div class="industry-kpi__v">120<span class="u">M XAF</span></div></div>
+        <div class="industry-kpi"><div class="industry-kpi__l">Admin ratio</div><div class="industry-kpi__v">11<span class="u">%</span></div></div>
+        <div class="industry-kpi"><div class="industry-kpi__l">Cash runway</div><div class="industry-kpi__v">14<span class="u">mo</span></div></div>
+        <div class="industry-kpi"><div class="industry-kpi__l">Reporting on time</div><div class="industry-kpi__v">96<span class="u">%</span></div></div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ─────────────────────────────────────────────────────────────────
+     STATS — the wealth of expertise, quantified
+     ───────────────────────────────────────────────────────────────── -->
+<section class="section" style="background:var(--slate-50);">
+  <div class="container">
+
+    <div class="section-eyebrow">The expertise, by the numbers</div>
+    <h2 class="section-title">What's actually inside the suite.</h2>
+
+    <div class="stats-strip">
+      <div class="stats-strip__c">
+        <div class="stats-strip__v">30<span class="u">+</span></div>
+        <div class="stats-strip__l">Production modules</div>
+      </div>
+      <div class="stats-strip__c">
+        <div class="stats-strip__v">120<span class="u">+</span></div>
+        <div class="stats-strip__l">KPIs encoded</div>
+      </div>
+      <div class="stats-strip__c">
+        <div class="stats-strip__v">9</div>
+        <div class="stats-strip__l">SYSCOHADA classes</div>
+      </div>
+      <div class="stats-strip__c">
+        <div class="stats-strip__v">5</div>
+        <div class="stats-strip__l">Industry verticals</div>
+      </div>
+      <div class="stats-strip__c">
+        <div class="stats-strip__v">4</div>
+        <div class="stats-strip__l">Standards (OHADA · IFRS · IAS · CGI)</div>
+      </div>
+      <div class="stats-strip__c">
+        <div class="stats-strip__v">127<span class="u">+</span></div>
+        <div class="stats-strip__l">Shipped PRs</div>
+      </div>
+      <div class="stats-strip__c">
+        <div class="stats-strip__v">5<span class="u">min</span></div>
+        <div class="stats-strip__l">Session cache · live data</div>
+      </div>
+      <div class="stats-strip__c">
+        <div class="stats-strip__v">EN/FR</div>
+        <div class="stats-strip__l">Bilingual UI</div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ─────────────────────────────────────────────────────────────────
+     QUOTE
+     ───────────────────────────────────────────────────────────────── -->
+<section class="section quote">
+  <div class="container">
+    <p class="quote__text">
+      "We used to spend the first 10 days of every month rebuilding a P&amp;L
+      from Excel exports. With BMS, the same numbers — reconciled to our
+      Trial Balance — are on screen the morning of day one. Our auditors
+      stopped asking for working papers because the platform IS the working
+      paper."
+    </p>
+    <div class="quote__cite">
+      <div class="quote__cite-name">— CFO, mid-sized logistics group · Douala</div>
+      <div>Composite of feedback from production deployments</div>
+    </div>
+  </div>
+</section>
+
+<!-- ─────────────────────────────────────────────────────────────────
+     FINAL CTA
+     ───────────────────────────────────────────────────────────────── -->
+<section class="section cta-final" id="cta">
+  <div class="container">
+    <h2>Stop reconciling spreadsheets.<br>Start running on live numbers.</h2>
+    <p>30-minute demo against your own Odoo data. No commitment, no slide deck — just the live suite walked through against your real chart of accounts.</p>
+    <a href="mailto:hello@cm-ea.com?subject=BMS demo request" class="btn btn--primary">
+      Book your demo
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M5 12h14M12 5l7 7-7 7"/>
+      </svg>
+    </a>
+  </div>
+</section>
+
+<!-- ─────────────────────────────────────────────────────────────────
+     FOOTER
+     ───────────────────────────────────────────────────────────────── -->
+<footer class="footer">
+  <div class="container">
+    <div class="footer__grid">
+      <div>
+        <div class="footer__brand-mark">Elite Advisors BMS</div>
+        <p>Live financial intelligence for OHADA-region businesses. Wired to Odoo. Audit-ready. Bilingual.</p>
+        <p style="font-size:11px; color:#64748b; line-height:1.5;">
+          Built by chartered accountants. Engineered for the reality of running a
+          business in Cameroon, Côte d'Ivoire, Sénégal, Gabon, Congo and across
+          the OHADA region.
+        </p>
+      </div>
+      <div class="footer__col">
+        <h4>Suite</h4>
+        <a href="#modules">All modules</a>
+        <a href="#demo">Live demo</a>
+        <a href="#industries">Industries</a>
+        <a href="#expertise">Expertise</a>
+      </div>
+      <div class="footer__col">
+        <h4>Standards</h4>
+        <a href="#">OHADA SYSCOHADA</a>
+        <a href="#">IFRS / IAS</a>
+        <a href="#">Cameroon CGI</a>
+        <a href="#">VAT 19.25%</a>
+      </div>
+      <div class="footer__col">
+        <h4>Contact</h4>
+        <a href="mailto:hello@cm-ea.com">hello@cm-ea.com</a>
+        <a href="#">Douala · Cameroon</a>
+        <a href="#cta">Book a demo</a>
+      </div>
+    </div>
+    <div class="footer__bottom">
+      <span>© 2026 Elite Advisors. All rights reserved.</span>
+      <span>Built with ECharts · Laravel · Odoo</span>
+    </div>
+  </div>
+</footer>
+
+<!-- ─────────────────────────────────────────────────────────────────
+     JS — chart rendering + interactive tabs + reveal
+     ───────────────────────────────────────────────────────────────── -->
+<script>
+(function () {
+  /* ── Palette (mirrors dashboard.blade.php) ── */
+  const t = {
+    pri:  '#0d6e6e', pos: '#047857', neg: '#b91c1c',
+    warn: '#d97706', warnLt: '#fbbf24', indigo: '#4338ca',
+    textM: '#64748b', textF: '#94a3b8',
+    grid: '#f1f5f9', base: '#cbd5e1', area: 'rgba(13,110,110,0.10)',
+  };
+  const FF = "'Segoe UI',-apple-system,BlinkMacSystemFont,Inter,system-ui,sans-serif";
+  const tip = {
+    trigger: 'axis', backgroundColor: '#fff', borderColor: '#e2e8f0',
+    borderWidth: 1, padding: [6, 10],
+    textStyle: { color: '#0f172a', fontSize: 11, fontFamily: FF },
+    axisPointer: { type: 'line', lineStyle: { color: '#cbd5e1', type: 'dashed' } },
+  };
+
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+  function fmtM(v) {
+    if (v == null) return '—';
+    const a = Math.abs(v);
+    if (a >= 1e9) return (v / 1e9).toFixed(2) + 'B';
+    if (a >= 1e6) return (v / 1e6).toFixed(0) + 'M';
+    if (a >= 1e3) return (v / 1e3).toFixed(0) + 'K';
+    return v.toFixed(0);
+  }
+
+  /* ── Hero · revenue trajectory (cumulative YTD vs Budget) ── */
+  const heroTraj = echarts.init(document.getElementById('hero-trajectory'));
+  const actual = [142, 285, 425, 572, 720, null, null, null, null, null, null, null].map(v => v == null ? null : v * 1_000_000);
+  const linear = [113, 226, 339, 452, 566, 679, 792, 905, 1018, 1131, 1244, 1357].map(v => v * 1_000_000);
+  const budget = [120, 240, 360, 480, 600, 720, 840, 960, 1080, 1200, 1320, 1440].map(v => v * 1_000_000);
+
+  heroTraj.setOption({
+    textStyle: { fontFamily: FF, color: '#374151' },
+    grid: { left: 56, right: 14, top: 26, bottom: 24, containLabel: false },
+    legend: { right: 8, top: 0, icon: 'roundRect', itemWidth: 14, itemHeight: 4,
+              textStyle: { fontSize: 10, color: t.textM, fontFamily: FF } },
+    tooltip: { ...tip, valueFormatter: v => fmtM(v) + ' XAF' },
+    xAxis: { type: 'category', data: months,
+             axisLine: { lineStyle: { color: t.base } }, axisTick: { show: false },
+             axisLabel: { color: t.textM, fontSize: 10 } },
+    yAxis: { type: 'value', axisLine: { show: false }, axisTick: { show: false },
+             splitLine: { lineStyle: { color: t.grid } },
+             axisLabel: { color: t.textM, fontSize: 9, formatter: v => fmtM(v) } },
+    series: [
+      { name: 'Actual (cum)', type: 'line', data: actual,
+        lineStyle: { color: t.pri, width: 2.4 }, itemStyle: { color: t.pri },
+        areaStyle: { color: t.area }, symbol: 'circle', symbolSize: 5, connectNulls: false },
+      { name: 'Annual budget', type: 'line', data: budget, smooth: true,
+        lineStyle: { color: t.warn, type: 'dashed', width: 1.6 }, itemStyle: { color: t.warn },
+        symbol: 'none' },
+      { name: 'Linear pace', type: 'line', data: linear,
+        lineStyle: { color: t.textF, type: 'dashed', width: 1.5 }, itemStyle: { color: t.textF },
+        symbol: 'none' },
+    ],
+  });
+
+  /* ── Hero · product mix donut ── */
+  const heroMix = echarts.init(document.getElementById('hero-mix'));
+  heroMix.setOption({
+    textStyle: { fontFamily: FF, color: '#374151' },
+    tooltip: { ...tip, formatter: '{b}: {c}M XAF ({d}%)' },
+    series: [{
+      type: 'pie', radius: ['52%', '78%'], center: ['50%', '50%'],
+      avoidLabelOverlap: true,
+      itemStyle: { borderRadius: 3, borderColor: '#fff', borderWidth: 2 },
+      label: { show: true, fontSize: 10, color: t.textM, formatter: '{b}\n{d}%' },
+      labelLine: { length: 6, length2: 6 },
+      data: [
+        { value: 612, name: 'Container Import 40',  itemStyle: { color: '#1e3a8a' } },
+        { value: 439, name: 'Container Import 20',  itemStyle: { color: '#3b82f6' } },
+        { value: 161, name: 'Container Export 40',  itemStyle: { color: '#0ea5e9' } },
+        { value: 147, name: 'Container Export 20',  itemStyle: { color: '#06b6d4' } },
+        { value:   5, name: 'OOG',                  itemStyle: { color: '#0891b2' } },
+      ],
+    }],
+  });
+
+  /* ── Demo · revenue trajectory (similar to hero but standalone) ── */
+  const demoCharts = {};
+
+  function initDemo() {
+    if (demoCharts.revTraj) return;
+
+    // Revenue trajectory
+    demoCharts.revTraj = echarts.init(document.getElementById('demo-rev-traj'));
+    demoCharts.revTraj.setOption({
+      textStyle: { fontFamily: FF, color: '#374151' },
+      grid: { left: 64, right: 16, top: 30, bottom: 26 },
+      legend: { right: 8, top: 0, icon: 'roundRect', itemWidth: 14, itemHeight: 4,
+                textStyle: { fontSize: 11, color: t.textM, fontFamily: FF } },
+      tooltip: { ...tip, valueFormatter: v => fmtM(v) + ' XAF' },
+      xAxis: { type: 'category', data: months,
+               axisLine: { lineStyle: { color: t.base } }, axisTick: { show: false },
+               axisLabel: { color: t.textM, fontSize: 11 } },
+      yAxis: { type: 'value', axisLine: { show: false }, axisTick: { show: false },
+               splitLine: { lineStyle: { color: t.grid } },
+               axisLabel: { color: t.textM, fontSize: 10, formatter: v => fmtM(v) } },
+      series: [
+        { name: 'Actual', type: 'line', data: actual,
+          lineStyle: { color: t.pri, width: 2.4 }, itemStyle: { color: t.pri },
+          areaStyle: { color: t.area }, symbol: 'circle', symbolSize: 6, connectNulls: false },
+        { name: 'Budget', type: 'line', data: budget, smooth: true,
+          lineStyle: { color: t.warn, type: 'dashed', width: 1.6 }, itemStyle: { color: t.warn }, symbol: 'none' },
+        { name: 'Linear pace', type: 'line', data: linear,
+          lineStyle: { color: t.textF, type: 'dashed', width: 1.5 }, itemStyle: { color: t.textF }, symbol: 'none' },
+      ],
+    });
+
+    // Top customers
+    demoCharts.topCust = echarts.init(document.getElementById('demo-top-customers'));
+    demoCharts.topCust.setOption({
+      textStyle: { fontFamily: FF, color: '#374151' },
+      grid: { left: 110, right: 36, top: 4, bottom: 18 },
+      tooltip: { ...tip, valueFormatter: v => fmtM(v) + ' XAF' },
+      yAxis: { type: 'category', data: ['Maersk Cam.', 'CMA CGM', 'MSC Logistics', 'BIA Group', 'SGS Cam.'].reverse(),
+               axisLine: { lineStyle: { color: t.base } }, axisTick: { show: false },
+               axisLabel: { color: t.textM, fontSize: 10 } },
+      xAxis: { type: 'value', axisLine: { show: false },
+               splitLine: { lineStyle: { color: t.grid } },
+               axisLabel: { color: t.textM, fontSize: 9, formatter: v => fmtM(v) } },
+      series: [{
+        type: 'bar', data: [285, 218, 175, 142, 95].reverse().map(v => v * 1e6),
+        itemStyle: { color: t.pri, borderRadius: [0, 4, 4, 0] },
+        barWidth: 16,
+        label: { show: true, position: 'right', color: t.textM, fontSize: 10, formatter: p => fmtM(p.value) },
+      }],
+    });
+
+    // Waterfall (P&L)
+    demoCharts.waterfall = echarts.init(document.getElementById('demo-waterfall'));
+    const wfStages = [
+      { name: 'Revenue', value: 1360,  type: 'total' },
+      { name: 'COGS',    value: -640,  type: 'out'   },
+      { name: 'GP',      value: 720,   type: 'sub'   },
+      { name: 'OpEx',    value: -395,  type: 'out'   },
+      { name: 'EBITDA',  value: 325,   type: 'sub'   },
+      { name: 'D&A+T',   value: -125,  type: 'out'   },
+      { name: 'NP',      value: 200,   type: 'tot'   },
+    ];
+    let running = 0;
+    const placeholders = [];
+    const positives = [];
+    const negatives = [];
+    const totals = [];
+    wfStages.forEach(s => {
+      if (s.type === 'total' || s.type === 'sub' || s.type === 'tot') {
+        placeholders.push(0); positives.push(0); negatives.push(0); totals.push(s.value);
+        running = s.value;
+      } else if (s.value < 0) {
+        placeholders.push(running + s.value); negatives.push(-s.value); positives.push(0); totals.push(0);
+        running += s.value;
+      } else {
+        placeholders.push(running); positives.push(s.value); negatives.push(0); totals.push(0);
+        running += s.value;
+      }
+    });
+    demoCharts.waterfall.setOption({
+      textStyle: { fontFamily: FF, color: '#374151' },
+      grid: { left: 50, right: 16, top: 24, bottom: 26 },
+      tooltip: { ...tip, valueFormatter: v => fmtM(v * 1e6) + ' XAF' },
+      xAxis: { type: 'category', data: wfStages.map(s => s.name),
+               axisLine: { lineStyle: { color: t.base } }, axisTick: { show: false },
+               axisLabel: { color: t.textM, fontSize: 11 } },
+      yAxis: { type: 'value', axisLine: { show: false }, axisTick: { show: false },
+               splitLine: { lineStyle: { color: t.grid } },
+               axisLabel: { color: t.textM, fontSize: 10, formatter: v => fmtM(v * 1e6) } },
+      series: [
+        { name: 'placeholder', type: 'bar', stack: 'wf', data: placeholders,
+          itemStyle: { color: 'transparent' }, barWidth: 32 },
+        { name: '+', type: 'bar', stack: 'wf', data: positives,
+          itemStyle: { color: t.pri }, barWidth: 32,
+          label: { show: true, position: 'top', color: t.textM, fontSize: 10, formatter: p => p.value > 0 ? '+' + p.value : '' } },
+        { name: '−', type: 'bar', stack: 'wf', data: negatives,
+          itemStyle: { color: t.neg }, barWidth: 32,
+          label: { show: true, position: 'top', color: t.textM, fontSize: 10, formatter: p => p.value > 0 ? '−' + p.value : '' } },
+        { name: 'total', type: 'bar', stack: 'wf', data: totals,
+          itemStyle: { color: '#475569' }, barWidth: 32,
+          label: { show: true, position: 'top', color: '#0f172a', fontSize: 10, fontWeight: 700, formatter: p => p.value > 0 ? p.value : '' } },
+      ],
+    });
+
+    // Cost ratios
+    demoCharts.cost = echarts.init(document.getElementById('demo-cost'));
+    demoCharts.cost.setOption({
+      textStyle: { fontFamily: FF, color: '#374151' },
+      grid: { left: 56, right: 50, top: 8, bottom: 20 },
+      tooltip: { ...tip, valueFormatter: v => v.toFixed(0) + '%' },
+      yAxis: { type: 'category', data: ['DpC/RpC', 'DpOT/RpO', 'CpO/RpO'],
+               axisLine: { lineStyle: { color: t.base } }, axisTick: { show: false },
+               axisLabel: { color: t.textM, fontSize: 11, fontWeight: 600 } },
+      xAxis: { type: 'value', max: 60, axisLine: { show: false },
+               splitLine: { lineStyle: { color: t.grid } },
+               axisLabel: { color: t.textM, fontSize: 9, formatter: '{value}%' } },
+      series: [{
+        type: 'bar', data: [
+          { value: 12, itemStyle: { color: t.pri } },
+          { value: 22, itemStyle: { color: t.pri } },
+          { value: 47, itemStyle: { color: t.warn } },
+        ],
+        barWidth: 14,
+        label: { show: true, position: 'right', color: t.textM, fontSize: 10, formatter: p => p.value + '%' },
+        markLine: { silent: true, symbol: 'none',
+          lineStyle: { color: t.textF, type: 'dashed', width: 1 },
+          label: { position: 'end', formatter: '≤35%', color: t.textM, fontSize: 9, distance: 4 },
+          data: [{ xAxis: 35 }] }
+      }],
+    });
+
+    // Liquidity
+    demoCharts.liq = echarts.init(document.getElementById('demo-liquidity'));
+    const liqMonths = ['May 25','Jun','Jul','Aug','Sep','Oct','Nov','Dec','Jan 26','Feb','Mar','Apr','May'];
+    demoCharts.liq.setOption({
+      textStyle: { fontFamily: FF, color: '#374151' },
+      grid: { left: 38, right: 14, top: 30, bottom: 24 },
+      legend: { right: 8, top: 0, icon: 'roundRect', itemWidth: 14, itemHeight: 4,
+                textStyle: { fontSize: 11, color: t.textM, fontFamily: FF } },
+      tooltip: { ...tip, valueFormatter: v => v.toFixed(2) + 'x' },
+      xAxis: { type: 'category', data: liqMonths,
+               axisLine: { lineStyle: { color: t.base } }, axisTick: { show: false },
+               axisLabel: { color: t.textM, fontSize: 10 } },
+      yAxis: { type: 'value', axisLine: { show: false }, axisTick: { show: false },
+               splitLine: { lineStyle: { color: t.grid } },
+               axisLabel: { color: t.textM, fontSize: 9, formatter: v => v.toFixed(1) + 'x' } },
+      series: [
+        { name: 'Current', type: 'line', data: [1.1, 1.15, 1.2, 1.18, 1.22, 1.28, 1.3, 1.32, 1.35, 1.38, 1.4, 1.42, 1.45],
+          lineStyle: { color: t.pri, width: 2.2 }, itemStyle: { color: t.pri }, symbol: 'circle', symbolSize: 5 },
+        { name: 'Quick', type: 'line', data: [0.7, 0.72, 0.75, 0.74, 0.78, 0.82, 0.85, 0.87, 0.9, 0.92, 0.94, 0.96, 0.98],
+          lineStyle: { color: t.pos, width: 1.8 }, itemStyle: { color: t.pos }, symbol: 'circle', symbolSize: 4 },
+        { name: 'Cash', type: 'line', data: [0.35, 0.38, 0.40, 0.41, 0.43, 0.45, 0.46, 0.48, 0.50, 0.52, 0.53, 0.54, 0.56],
+          lineStyle: { color: t.warn, width: 1.5, type: 'dashed' }, itemStyle: { color: t.warn }, symbol: 'circle', symbolSize: 4 },
+      ],
+    });
+
+    // CCC
+    demoCharts.ccc = echarts.init(document.getElementById('demo-ccc'));
+    demoCharts.ccc.setOption({
+      textStyle: { fontFamily: FF, color: '#374151' },
+      grid: { left: 40, right: 14, top: 24, bottom: 20 },
+      legend: { right: 8, top: 0, icon: 'roundRect', itemWidth: 14, itemHeight: 4,
+                textStyle: { fontSize: 10, color: t.textM, fontFamily: FF } },
+      tooltip: { ...tip, valueFormatter: v => v.toFixed(1) + 'd' },
+      xAxis: { type: 'category', data: liqMonths.slice(-7),
+               axisLine: { lineStyle: { color: t.base } }, axisTick: { show: false },
+               axisLabel: { color: t.textM, fontSize: 9 } },
+      yAxis: { type: 'value', axisLine: { show: false }, axisTick: { show: false },
+               splitLine: { lineStyle: { color: t.grid } },
+               axisLabel: { color: t.textM, fontSize: 9, formatter: v => v + 'd' } },
+      series: [
+        { name: 'DSO', type: 'line', data: [48, 46, 44, 43, 42, 41, 40],
+          lineStyle: { color: t.pri, width: 2.2 }, symbol: 'circle', symbolSize: 4 },
+        { name: 'DIO', type: 'line', data: [28, 27, 26, 25, 25, 24, 24],
+          lineStyle: { color: t.pos, width: 1.6 }, symbol: 'circle', symbolSize: 4 },
+        { name: 'DPO', type: 'line', data: [-32, -33, -34, -35, -35, -36, -36],
+          lineStyle: { color: t.warn, width: 1.6 }, symbol: 'circle', symbolSize: 4 },
+        { name: 'CCC', type: 'line', data: [44, 40, 36, 33, 32, 29, 28],
+          lineStyle: { color: t.indigo, width: 2.8 }, areaStyle: { color: 'rgba(67,56,202,0.10)' }, symbol: 'circle', symbolSize: 5 },
+      ],
+    });
+
+    // Product revenue (vertical bars · 12 products · actual vs budget)
+    demoCharts.products = echarts.init(document.getElementById('demo-products'));
+    const prodLabels = ["Imp 40'", "Imp 20'", "Exp 40'", "Exp 20'", 'Empty', 'OOG', 'Cars', 'Trucks', 'Heavy', 'Wood', 'Gen C.', 'Pacs+MAFI'];
+    demoCharts.products.setOption({
+      textStyle: { fontFamily: FF, color: '#374151' },
+      grid: { left: 50, right: 14, top: 30, bottom: 38 },
+      legend: { right: 8, top: 0, icon: 'roundRect', itemWidth: 14, itemHeight: 4,
+                textStyle: { fontSize: 11, color: t.textM, fontFamily: FF } },
+      tooltip: { ...tip, valueFormatter: v => fmtM(v * 1e6) + ' XAF' },
+      xAxis: { type: 'category', data: prodLabels,
+               axisLine: { lineStyle: { color: t.base } }, axisTick: { show: false },
+               axisLabel: { color: t.textM, fontSize: 10, rotate: 35 } },
+      yAxis: { type: 'value', axisLine: { show: false }, axisTick: { show: false },
+               splitLine: { lineStyle: { color: t.grid } },
+               axisLabel: { color: t.textM, fontSize: 10, formatter: v => v + 'M' } },
+      series: [
+        { name: 'Budget', type: 'bar', data: [580, 420, 145, 132, 0, 0, 850, 113, 41, 230, 770, 3],
+          itemStyle: { color: '#94a3b8', borderRadius: [3, 3, 0, 0] }, barWidth: '32%' },
+        { name: 'Actual', type: 'bar', data: [612, 439, 161, 147, 0, 5, 862, 116, 42, 231, 0, 0],
+          itemStyle: { color: t.pri, borderRadius: [3, 3, 0, 0] }, barWidth: '32%' },
+      ],
+    });
+
+    // Variance breakdown
+    demoCharts.variance = echarts.init(document.getElementById('demo-variance'));
+    demoCharts.variance.setOption({
+      textStyle: { fontFamily: FF, color: '#374151' },
+      grid: { left: 70, right: 18, top: 8, bottom: 18 },
+      tooltip: { ...tip, valueFormatter: v => fmtM(v * 1e6) + ' XAF' },
+      yAxis: { type: 'category', data: ['Net variance', 'Price effect', 'Volume effect'],
+               axisLine: { lineStyle: { color: t.base } }, axisTick: { show: false },
+               axisLabel: { color: t.textM, fontSize: 11, fontWeight: 600 } },
+      xAxis: { type: 'value', axisLine: { show: false },
+               splitLine: { lineStyle: { color: t.grid } },
+               axisLabel: { color: t.textM, fontSize: 9, formatter: v => v + 'M' } },
+      series: [{
+        type: 'bar',
+        data: [
+          { value: 28, itemStyle: { color: t.pos } },
+          { value:  4, itemStyle: { color: t.pos } },
+          { value: 24, itemStyle: { color: t.pos } },
+        ],
+        barWidth: 16,
+        label: { show: true, position: 'right', color: t.textM, fontSize: 10, formatter: p => '+' + p.value + 'M' },
+      }],
+    });
+  }
+
+  // Init demo charts now (the section is visible at full height; ECharts
+  // handles offscreen rendering fine).
+  initDemo();
+
+  /* ── Tab switching ── */
+  document.querySelectorAll('.demo__tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const target = btn.dataset.demoTab;
+      document.querySelectorAll('.demo__tab').forEach(b => b.classList.toggle('is-active', b === btn));
+      document.querySelectorAll('.demo-tab-content').forEach(p => p.classList.toggle('is-active', p.dataset.demoPane === target));
+      // Resize charts in the now-visible pane
+      setTimeout(() => {
+        Object.values(demoCharts).forEach(c => c && c.resize());
+      }, 100);
+    });
+  });
+
+  /* ── Industry switching ── */
+  document.querySelectorAll('.industry-switch button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const target = btn.dataset.ind;
+      document.querySelectorAll('.industry-switch button').forEach(b => b.classList.toggle('is-active', b === btn));
+      document.querySelectorAll('.industry-pane').forEach(p => p.classList.toggle('is-active', p.dataset.ind === target));
+    });
+  });
+
+  /* ── Reveal on scroll ── */
+  if ('IntersectionObserver' in window) {
+    const io = new IntersectionObserver((entries) => {
+      entries.forEach(e => {
+        if (e.isIntersecting) {
+          e.target.classList.add('is-visible');
+          io.unobserve(e.target);
+        }
+      });
+    }, { threshold: 0.12 });
+    document.querySelectorAll('.pillar, .module, .expertise__card, .industry-kpi, .stats-strip__c').forEach(el => {
+      el.classList.add('reveal');
+      io.observe(el);
+    });
+  }
+
+  /* ── Window resize → resize every chart ── */
+  let resizeTimer;
+  window.addEventListener('resize', () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      heroTraj.resize();
+      heroMix.resize();
+      Object.values(demoCharts).forEach(c => c && c.resize());
+    }, 150);
+  });
+
+})();
+</script>
+</body>
+</html>
