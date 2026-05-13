@@ -49,16 +49,14 @@ class BillingController extends Controller
 
         try {
             $client = OdooFactory::fromConfig();
-            // Cache prefix bumped to `billing_v2_` when:
-            //   - the service started paginating invoices (no more
-            //     hard 5000-row truncation)
-            //   - analyze() output gained 'time_to_invoice_series' and
-            //     'credit_note_series' for the new trend charts
-            //   - 'slowest_billings' switched from 5 to 30 rows
-            // Old `billing_` entries would deserialise to a shape the
-            // view doesn't expect — the prefix bump bypasses them
-            // cleanly until they age out of the 5-min TTL.
-            $cacheKey = "billing_v2_{$type}_{$year}_{$month}";
+            // Cache prefix bumped to `billing_v3_` when:
+            //   v2: paginated invoices + slowest top-30 + tti/cn trend series
+            //   v3: analyze() now also returns invoice_volume_series for
+            //       the chart that sits directly under the Invoice
+            //       Issuance KPI card. Old v2 entries lack that key so
+            //       the new view template would render empty for the
+            //       3rd column until the cache turns over.
+            $cacheKey = "billing_v3_{$type}_{$year}_{$month}";
             $billing  = ea_cached(
                 $cacheKey,
                 fn () => (new BillingService($client))->analyze(null, $period)
