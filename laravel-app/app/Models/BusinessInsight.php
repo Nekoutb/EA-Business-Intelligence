@@ -23,6 +23,12 @@ class BusinessInsight extends Model
     public const STATUS_OK      = 'ok';
     public const STATUS_FAILED  = 'failed';
     public const STATUS_SKIPPED = 'skipped';
+    // PARTIAL means: the live Odoo fetch couldn't get every block, so
+    // BusinessInsightsService composed the snapshot from the latest
+    // OK row's `kpis_snapshot` (stale-but-usable). The narrative is
+    // still generated, but the row is marked so the admin can spot
+    // when stale data is in play.
+    public const STATUS_PARTIAL = 'partial';
 
     protected $fillable = [
         'tenant_id', 'generated_at', 'model',

@@ -75,18 +75,19 @@ class BusinessInsightsController extends Controller
     public function runAll(Request $request, BusinessInsightsService $svc)
     {
         $tenants = Tenant::orderBy('id')->get();
-        $ok = 0; $failed = 0; $skipped = 0;
+        $ok = 0; $partial = 0; $failed = 0; $skipped = 0;
         foreach ($tenants as $t) {
             try {
                 $r = $svc->generate($t, true);
-                if ($r->status === 'ok')      $ok++;
-                elseif ($r->status === 'skipped') $skipped++;
-                else                           $failed++;
+                if      ($r->status === 'ok')      $ok++;
+                elseif  ($r->status === 'partial') $partial++;
+                elseif  ($r->status === 'skipped') $skipped++;
+                else                                $failed++;
             } catch (\Throwable $e) { $failed++; }
         }
         return redirect('/admin/business-insights')->with('flash', [
             'type' => $failed === 0 ? 'success' : 'error',
-            'msg'  => "Fleet-wide regeneration done: ok={$ok} · skipped={$skipped} · failed={$failed}",
+            'msg'  => "Fleet-wide regeneration done: ok={$ok} · partial={$partial} · skipped={$skipped} · failed={$failed}",
         ]);
     }
 }

@@ -61,6 +61,20 @@
         <div class="mt-3 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">
             <b>Skipped:</b> {{ $latest->error_msg ?? 'no Odoo data available — sync first' }}
         </div>
+      @elseif ($latest->status === 'partial')
+        @php
+            $staleBlocks = is_array($latest->kpis_snapshot)
+                ? (array) ($latest->kpis_snapshot['stale_blocks'] ?? [])
+                : [];
+        @endphp
+        <div class="mt-3 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">
+            <b>Partial data:</b> today's live fetch failed for
+            <code class="font-mono text-[10px] bg-white px-1 rounded">{{ implode(', ', $staleBlocks) ?: 'one or more blocks' }}</code>.
+            Those figures are from the prior snapshot — directional only.
+            @if ($latest->error_msg)
+              <span class="block mt-1 text-amber-600">{{ $latest->error_msg }}</span>
+            @endif
+        </div>
       @endif
   </div>
 

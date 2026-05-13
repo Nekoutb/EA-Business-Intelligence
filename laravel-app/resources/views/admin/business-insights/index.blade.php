@@ -60,10 +60,16 @@
           [$pLabel, $pCls] = $row ? $row->priorityBadge() : ['Pending', 'bg-slate-100 text-slate-600 border-slate-200'];
           $statusCls = match ($row?->status) {
               'ok'      => 'text-emerald-700',
+              'partial' => 'text-amber-700',
               'failed'  => 'text-rose-700',
               'skipped' => 'text-amber-700',
               default   => 'text-slate-500',
           };
+          // Surface the list of stale blocks (if any) so the operator
+          // can see at a glance which data is from a prior snapshot.
+          $staleBlocks = is_array($row?->kpis_snapshot)
+              ? (array) ($row->kpis_snapshot['stale_blocks'] ?? [])
+              : [];
       @endphp
       <a href="/admin/business-insights/{{ $t->id }}" class="panel p-4 hover:shadow-md transition group block">
           <div class="flex items-start justify-between gap-2 mb-2">
@@ -76,10 +82,17 @@
               </span>
           </div>
 
-          @if ($row && $row->status === 'ok')
+          @if ($row && in_array($row->status, ['ok', 'partial'], true))
             <p class="text-[12px] text-slate-700 leading-relaxed mb-3">{{ \Illuminate\Support\Str::limit($row->summary, 220) }}</p>
             <div class="flex items-center justify-between text-[10px] text-slate-500">
-                <span>{{ $row->generated_at->diffForHumans() }} · {{ $row->model }}</span>
+                <span>
+                    {{ $row->generated_at->diffForHumans() }} · {{ $row->model }}
+                    @if ($row->status === 'partial')
+                      <span class="ml-1 inline-flex items-center px-1.5 py-0.5 rounded-full border border-amber-200 bg-amber-50 text-amber-700 text-[9px] font-semibold uppercase tracking-wider" title="Stale blocks: {{ implode(', ', $staleBlocks) }}">
+                          Partial · {{ count($staleBlocks) }} stale
+                      </span>
+                    @endif
+                </span>
                 <span class="group-hover:text-indigo-600 transition">View →</span>
             </div>
           @elseif ($row)
