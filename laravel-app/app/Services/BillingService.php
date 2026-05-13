@@ -107,9 +107,11 @@ final class BillingService
             // this list behind a <details> accordion (closed by default)
             // and surfaces an Excel export for the full 30.
             'slowest_billings'   => $this->slowestBillingsFromData($latencyData, 30),
-            // New trend series — feed the two ECharts line charts in
-            // the view. Both honour the master period filter via the
-            // granularity computed above.
+            // New trend series — feed the three ECharts line charts that
+            // sit directly beneath the three KPI cards. All three honour
+            // the master period filter via the granularity computed above
+            // (monthly on YTD, daily on MTD / Month).
+            'invoice_volume_series'  => $this->invoiceVolumeSeries($cyFrom, $cyTo, $granularity),
             'time_to_invoice_series' => $this->timeToInvoiceSeries($latencyData, $cyFrom, $cyTo, $granularity),
             'credit_note_series'     => $this->creditNoteRateSeries($cyFrom, $cyTo, $granularity),
             'reconciliation'   => $reconciliation,
@@ -861,6 +863,82 @@ final class BillingService
             'rate'        => $rate,
             'invoices'    => $invOut,
             'refunds'     => $refOut,
+        ];
+    }
+
+    /**
+     * Build a time-series of invoice issuance volume for the chart panel
+     * — count of posted out_invoices per bucket. Bucketed by day (MTD /
+     * Month) or month (YTD). Single Odoo round-trip via read_group.
+     *
+     * Used for the new trend chart directly beneath the "Invoice
+     * Issuance" KPI card. Output mirrors creditNoteRateSeries() so
+     * the view side stays a copy-paste of the same chart template:
+     *   [
+     *     'granularity' => 'day' | 'month',
+     *     'labels'      => [...],
+     *     'count'       => [120, 135, ...]   invoices per bucket
+     *     'amount'      => [..., null, ...]  amount_total_signed sum
+     *                                        (HT-signed) per bucket
+     *   ]
+     */
+    public function invoiceVolumeSeries(\DateTimeImmutable $from, \DateTimeImmutable $to, string $granularity = 'month'): array
+    {
+        $labels = $this->bucketRange($from, $to, $granularity);
+        $empty  = [
+            'granularity' => $granularity,
+            'labels'      => $labels,
+            'count'       => array_fill(0, count($labels), 0),
+            'amount'      => array_fill(0, count($labels), 0.0),
+        ];
+
+        try {
+            $groupKey = 'invoice_date:' . $granularity;
+            $rows = $this->odoo->callModel('account.move', 'read_group', [
+                'domain' => [
+                    ['move_type', '=', 'out_invoice'],
+                    ['state', '=', 'posted'],
+                    ['invoice_date', '>=', $from->format('Y-m-d')],
+                    ['invoice_date', '<=', $to->format('Y-m-d')],
+                ],
+                'fields'  => ['id:count', 'amount_untaxed_signed:sum'],
+                'groupby' => [$groupKey],
+                'lazy'    => false,
+            ]);
+        } catch (\Throwable $e) {
+            return $empty;
+        }
+
+        $countByBucket  = array_fill_keys($labels, 0);
+        $amountByBucket = array_fill_keys($labels, 0.0);
+
+        foreach ($rows as $r) {
+            $rangeFrom = $r[$groupKey . '_range']['from']
+                ?? ($r['__range'][$groupKey]['from'] ?? null);
+            if (!$rangeFrom) {
+                $raw = $r[$groupKey] ?? null;
+                if (is_array($raw) && isset($raw[0])) $rangeFrom = (string) $raw[0];
+                elseif (is_string($raw))               $rangeFrom = $raw;
+            }
+            if (!$rangeFrom) continue;
+
+            try {
+                $bucket = (new \DateTimeImmutable($rangeFrom))
+                    ->format($granularity === 'day' ? 'Y-m-d' : 'Y-m');
+            } catch (\Throwable $e) {
+                continue;
+            }
+            if (!isset($countByBucket[$bucket])) continue;
+
+            $countByBucket[$bucket]  += (int) ($r['id_count'] ?? $r['__count'] ?? 0);
+            $amountByBucket[$bucket] += (float) ($r['amount_untaxed_signed'] ?? 0);
+        }
+
+        return [
+            'granularity' => $granularity,
+            'labels'      => $labels,
+            'count'       => array_map(fn ($b) => $countByBucket[$b],  $labels),
+            'amount'      => array_map(fn ($b) => $amountByBucket[$b], $labels),
         ];
     }
 

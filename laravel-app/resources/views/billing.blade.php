@@ -129,6 +129,93 @@
         </div>
     @endforeach
 
+    {{-- ── Trend charts directly under each KPI card ──────────────────────
+         A 3-column grid that mirrors the KPI grid above — one chart per
+         metric, aligned vertically with its parent card. Granularity
+         follows the master period filter:
+             YTD       → monthly buckets
+             MTD / Month → daily buckets
+         All three series come pre-bucketed from BillingService::analyze()
+         so the JS just renders. ECharts is loaded globally in the
+         layout — no extra script include.
+         ──────────────────────────────────────────────────────────────── --}}
+    @php
+        $ivSer   = $billing['invoice_volume_series']  ?? null;
+        $ttiSer  = $billing['time_to_invoice_series'] ?? null;
+        $cnSer   = $billing['credit_note_series']     ?? null;
+        $periodTag = $period['type'] === 'mtd' ? 'MTD' : ($period['type'] === 'month' ? 'Month' : 'YTD');
+        $ivHas   = !empty($ivSer['labels'])  && array_sum($ivSer['count']  ?? [0]) > 0;
+        $ttiHas  = !empty($ttiSer['labels']) && array_filter($ttiSer['median'] ?? [], fn ($v) => $v !== null);
+        $cnHas   = !empty($cnSer['labels'])  && array_filter($cnSer['rate']   ?? [], fn ($v) => $v !== null);
+        $granTag = fn ($g) => $g === 'day' ? 'daily' : 'monthly';
+    @endphp
+
+    @if ($ivHas || $ttiHas || $cnHas)
+      <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 mb-7">
+
+          {{-- 1 · Invoice Issuance Volume trend (aligns with the invoice_volume KPI) --}}
+          <div class="bg-white border border-[#e8e4de] rounded-xl p-4">
+              <div class="flex items-center justify-between mb-2 flex-wrap gap-2">
+                  <h4 class="text-xs font-semibold text-[#1e3d44]">
+                      Invoice Issuance — Trend
+                      <span class="text-[9px] uppercase tracking-wider text-[#a09d95] font-medium ml-1">
+                          {{ $periodTag }} · {{ $granTag($ivSer['granularity'] ?? 'month') }}
+                      </span>
+                  </h4>
+              </div>
+              @if ($ivHas)
+                <div id="ea-iv-chart" style="height: 200px;"></div>
+                <div class="text-[10px] text-[#7c7466] mt-1.5 leading-snug">
+                    Posted out_invoices per {{ $ivSer['granularity'] }}.
+                </div>
+              @else
+                <div class="h-[200px] flex items-center justify-center text-[11px] text-[#a09d95] italic">No data in period.</div>
+              @endif
+          </div>
+
+          {{-- 2 · Time-to-Invoice trend (aligns with the time_to_invoice KPI) --}}
+          <div class="bg-white border border-[#e8e4de] rounded-xl p-4">
+              <div class="flex items-center justify-between mb-2 flex-wrap gap-2">
+                  <h4 class="text-xs font-semibold text-[#1e3d44]">
+                      Time-to-Invoice — Trend
+                      <span class="text-[9px] uppercase tracking-wider text-[#a09d95] font-medium ml-1">
+                          {{ $periodTag }} · {{ $granTag($ttiSer['granularity'] ?? 'month') }}
+                      </span>
+                  </h4>
+              </div>
+              @if ($ttiHas)
+                <div id="ea-tti-chart" style="height: 200px;"></div>
+                <div class="text-[10px] text-[#7c7466] mt-1.5 leading-snug">
+                    Median days from last scan to invoice posted.
+                </div>
+              @else
+                <div class="h-[200px] flex items-center justify-center text-[11px] text-[#a09d95] italic">No scan-linked invoices in period.</div>
+              @endif
+          </div>
+
+          {{-- 3 · Credit Note Rate trend (aligns with the credit_note_rate KPI) --}}
+          <div class="bg-white border border-[#e8e4de] rounded-xl p-4">
+              <div class="flex items-center justify-between mb-2 flex-wrap gap-2">
+                  <h4 class="text-xs font-semibold text-[#1e3d44]">
+                      Credit Note Rate — Trend
+                      <span class="text-[9px] uppercase tracking-wider text-[#a09d95] font-medium ml-1">
+                          {{ $periodTag }} · {{ $granTag($cnSer['granularity'] ?? 'month') }}
+                      </span>
+                  </h4>
+              </div>
+              @if ($cnHas)
+                <div id="ea-cn-chart" style="height: 200px;"></div>
+                <div class="text-[10px] text-[#7c7466] mt-1.5 leading-snug">
+                    Share of invoices that turned into credit notes. Lower is better.
+                </div>
+              @else
+                <div class="h-[200px] flex items-center justify-center text-[11px] text-[#a09d95] italic">No invoices in period.</div>
+              @endif
+          </div>
+
+      </div>
+    @endif
+
     {{-- ── Revenue Reconciliation (Expected → Billed → Collected) ──────────
          Gated by the per-tenant `revenue_reconciliation` module flag.
          When the super-admin disables it from /admin/tenants/{id}, the
@@ -580,70 +667,24 @@
     @endif
     @endif {{-- /revenue_reconciliation module flag --}}
 
-    {{-- ── Time-to-Invoice — trend line, distribution bars, top-30 ─────────
-         Layout:
-           1. Trend line chart (monthly on YTD / daily on MTD or Month)
-              — ECharts, same engine as Dashboard / Revenue.
-           2. Existing 6-bucket distribution bars (kept — useful "shape"
-              read at a glance).
-           3. Collapsible <details> accordion with the top-30 offenders
-              table and an Excel-download button inside the <summary>.
+    {{-- ── Time-to-Invoice — distribution bars + top-30 accordion ─────────
+         Trend charts moved into the 3-column grid directly under the
+         KPI cards (above). What remains here is the distribution shape
+         + the slowest-billings drill-down.
          ──────────────────────────────────────────────────────────────── --}}
     @php
         $b2     = $billingKpis['time_to_invoice'] ?? null;
         $dist   = (!empty($b2) && empty($b2['pending'])) ? ($b2['distribution'] ?? []) : [];
         $slow   = $billing['slowest_billings'] ?? [];
-        $ttiSer = $billing['time_to_invoice_series'] ?? null;
-        // Build the export URL once so the button reflects the current filter.
+        // Export URL for the slowest-billings XLSX — reflects the current
+        // master filter so MTD/YTD/Month each get their own slice.
         $exportQs = http_build_query([
             'period' => $period['type'],
             'year'   => $period['year'],
             'month'  => $period['month'],
         ]);
         $ttiExportUrl = tenant_url('/billing/slowest-billings-export?' . $exportQs);
-        $periodTag = $period['type'] === 'mtd' ? 'MTD' : ($period['type'] === 'month' ? 'Month' : 'YTD');
     @endphp
-
-    {{-- Trend chart: median time-to-invoice over time --}}
-    @if (!empty($ttiSer['labels']) && array_filter($ttiSer['median'] ?? [], fn ($v) => $v !== null))
-      <div class="bg-white border border-[#e8e4de] rounded-xl p-5 mb-6">
-          <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
-              <h3 class="text-sm font-semibold text-[#1e3d44]">
-                  Time-to-Invoice — Trend
-                  <span class="text-[10px] uppercase tracking-wider text-[#a09d95] font-medium ml-1">
-                    {{ $periodTag }} · {{ $ttiSer['granularity'] === 'day' ? 'daily' : 'monthly' }}
-                  </span>
-              </h3>
-              <div class="text-[11px] text-[#7c7466]">Median days · per {{ $ttiSer['granularity'] }}</div>
-          </div>
-          <div id="ea-tti-chart" style="height: 260px;"></div>
-          <div class="text-[11px] text-[#7c7466] mt-2 leading-relaxed">
-              <strong>Reading the trend:</strong> each point is the median days from last cargo scan to invoice posted for shipments billed in that {{ $ttiSer['granularity'] }}. Persistent climb = the billing team is falling behind operations.
-          </div>
-      </div>
-    @endif
-
-    {{-- Credit-note % trend chart --}}
-    @php
-        $cnSer = $billing['credit_note_series'] ?? null;
-    @endphp
-    @if (!empty($cnSer['labels']) && array_filter($cnSer['rate'] ?? [], fn ($v) => $v !== null))
-      <div class="bg-white border border-[#e8e4de] rounded-xl p-5 mb-6">
-          <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
-              <h3 class="text-sm font-semibold text-[#1e3d44]">
-                  Credit Note Rate — Trend
-                  <span class="text-[10px] uppercase tracking-wider text-[#a09d95] font-medium ml-1">
-                    {{ $periodTag }} · {{ $cnSer['granularity'] === 'day' ? 'daily' : 'monthly' }}
-                  </span>
-              </h3>
-              <div class="text-[11px] text-[#7c7466]">% · count(out_refund) ÷ count(out_invoice)</div>
-          </div>
-          <div id="ea-cn-chart" style="height: 260px;"></div>
-          <div class="text-[11px] text-[#7c7466] mt-2 leading-relaxed">
-              <strong>Reading the trend:</strong> share of posted invoices that turned into credit notes in the {{ $cnSer['granularity'] === 'day' ? 'day' : 'month' }}. Lower is better — a sustained spike points at a billing-accuracy or customer-dispute issue.
-          </div>
-      </div>
-    @endif
 
     @if (!empty($dist) || !empty($slow))
       <div class="bg-white border border-[#e8e4de] rounded-xl p-5 mb-6">
@@ -743,11 +784,14 @@
       </div>
     @endif
 
-    {{-- ── ECharts initialisation for the two trend charts ──────────────
+    {{-- ── ECharts initialisation for the three trend charts ─────────────
          ECharts is loaded once globally in layouts/app.blade.php so we
-         just call echarts.init() against the two container divs above.
-         Both charts honour the master period filter through the data
+         just call echarts.init() against each container div above. All
+         three charts honour the master period filter through the data
          payload computed server-side (granularity, labels, series).
+         The smaller chart height (200px) plays nicely with the 3-column
+         layout — axes, padding and font sizes are all dialled down a
+         notch from the previous full-width version.
          ─────────────────────────────────────────────────────────────── --}}
     <script>
     (function () {
@@ -762,36 +806,73 @@
         textStyle: { color: '#1e3d44', fontSize: 11, fontFamily: FF },
         axisPointer: { type: 'line', lineStyle: { color: '#cbc7be', type: 'dashed' } },
       };
+      // Shared axis config — the 3-column layout means we want a slimmer
+      // gutter than the full-width chart had, and we hide overlapping
+      // labels because daily granularity on a narrow column can pack
+      // 30+ labels into ~300px.
+      const xAxisBase = {
+        type: 'category',
+        axisLine: { lineStyle: { color: '#cbc7be' } },
+        axisTick: { show: false },
+        axisLabel: { color: axisText, fontSize: 9, hideOverlap: true },
+      };
+      const yAxisBase = {
+        type: 'value',
+        nameTextStyle: { color: axisText, fontSize: 9 },
+        axisLine: { show: false }, axisTick: { show: false },
+        splitLine: { lineStyle: { color: grid } },
+      };
+      // Compact grid padding — fits the smaller cards above.
+      const gridBase = { left: 42, right: 12, top: 14, bottom: 24 };
 
-      @if (!empty($ttiSer['labels']) && array_filter($ttiSer['median'] ?? [], fn ($v) => $v !== null))
-      // Time-to-invoice trend
+      @if ($ivHas)
+      // 1 · Invoice issuance volume trend
+      const ivEl = document.getElementById('ea-iv-chart');
+      if (ivEl) {
+        const ivChart = echarts.init(ivEl);
+        ivChart.setOption({
+          textStyle: { fontFamily: FF, color: '#374151' },
+          grid: gridBase,
+          tooltip: { ...tip, valueFormatter: v => v == null ? '—' : Number(v).toLocaleString() + ' inv.' },
+          xAxis: { ...xAxisBase, data: @json($ivSer['labels']) },
+          yAxis: { ...yAxisBase, name: 'Invoices',
+            axisLabel: { ...yAxisBase.axisLabel, color: axisText, fontSize: 9, formatter: v => v.toLocaleString() } },
+          series: [{
+            name: 'Posted invoices', type: 'line',
+            data: @json($ivSer['count']),
+            lineStyle: { color: '#0d6e6e', width: 2.2 },
+            itemStyle: { color: '#0d6e6e' },
+            symbol: 'circle', symbolSize: 5,
+            areaStyle: { color: 'rgba(13,110,110,0.10)' },
+          }],
+        });
+        window.addEventListener('resize', () => ivChart.resize());
+      }
+      @endif
+
+      @if ($ttiHas)
+      // 2 · Time-to-invoice trend
       const ttiEl = document.getElementById('ea-tti-chart');
       if (ttiEl) {
         const ttiChart = echarts.init(ttiEl);
         ttiChart.setOption({
           textStyle: { fontFamily: FF, color: '#374151' },
-          grid: { left: 44, right: 16, top: 18, bottom: 28 },
+          grid: gridBase,
           tooltip: { ...tip, valueFormatter: v => v == null ? '—' : v.toFixed(1) + ' d' },
-          xAxis: { type: 'category',
-            data: @json($ttiSer['labels']),
-            axisLine: { lineStyle: { color: '#cbc7be' } }, axisTick: { show: false },
-            axisLabel: { color: axisText, fontSize: 10, hideOverlap: true } },
-          yAxis: { type: 'value', name: 'Median days',
-            nameTextStyle: { color: axisText, fontSize: 10 },
-            axisLine: { show: false }, axisTick: { show: false },
-            splitLine: { lineStyle: { color: grid } },
-            axisLabel: { color: axisText, fontSize: 10, formatter: v => v.toFixed(0) + 'd' } },
+          xAxis: { ...xAxisBase, data: @json($ttiSer['labels']) },
+          yAxis: { ...yAxisBase, name: 'Median days',
+            axisLabel: { ...yAxisBase.axisLabel, formatter: v => v.toFixed(0) + 'd' } },
           series: [{
             name: 'Median time-to-invoice', type: 'line',
             data: @json($ttiSer['median']),
             lineStyle: { color: '#1e3d44', width: 2.2 },
             itemStyle: { color: '#1e3d44' },
-            symbol: 'circle', symbolSize: 6,
+            symbol: 'circle', symbolSize: 5,
             connectNulls: false,
             areaStyle: { color: 'rgba(30,61,68,0.08)' },
             markLine: { silent: true, symbol: 'none',
               lineStyle: { color: '#d97706', type: 'dashed', width: 1 },
-              label: { position: 'end', formatter: '14d warn', color: '#92400e', fontSize: 9 },
+              label: { position: 'end', formatter: '14d', color: '#92400e', fontSize: 9 },
               data: [{ yAxis: 14 }] }
           }],
         });
@@ -799,30 +880,24 @@
       }
       @endif
 
-      @if (!empty($cnSer['labels']) && array_filter($cnSer['rate'] ?? [], fn ($v) => $v !== null))
-      // Credit-note % trend
+      @if ($cnHas)
+      // 3 · Credit-note % trend
       const cnEl = document.getElementById('ea-cn-chart');
       if (cnEl) {
         const cnChart = echarts.init(cnEl);
         cnChart.setOption({
           textStyle: { fontFamily: FF, color: '#374151' },
-          grid: { left: 44, right: 16, top: 18, bottom: 28 },
+          grid: gridBase,
           tooltip: { ...tip, valueFormatter: v => v == null ? '—' : v.toFixed(2) + ' %' },
-          xAxis: { type: 'category',
-            data: @json($cnSer['labels']),
-            axisLine: { lineStyle: { color: '#cbc7be' } }, axisTick: { show: false },
-            axisLabel: { color: axisText, fontSize: 10, hideOverlap: true } },
-          yAxis: { type: 'value', name: 'Credit note %',
-            nameTextStyle: { color: axisText, fontSize: 10 },
-            axisLine: { show: false }, axisTick: { show: false },
-            splitLine: { lineStyle: { color: grid } },
-            axisLabel: { color: axisText, fontSize: 10, formatter: v => v.toFixed(1) + '%' } },
+          xAxis: { ...xAxisBase, data: @json($cnSer['labels']) },
+          yAxis: { ...yAxisBase, name: 'Credit note %',
+            axisLabel: { ...yAxisBase.axisLabel, formatter: v => v.toFixed(1) + '%' } },
           series: [{
             name: 'Credit note %', type: 'line',
             data: @json($cnSer['rate']),
             lineStyle: { color: '#b00020', width: 2.2 },
             itemStyle: { color: '#b00020' },
-            symbol: 'circle', symbolSize: 6,
+            symbol: 'circle', symbolSize: 5,
             connectNulls: false,
             areaStyle: { color: 'rgba(176,0,32,0.07)' },
           }],
