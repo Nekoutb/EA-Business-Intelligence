@@ -27,12 +27,38 @@ final class BusinessInsightsService
     private const ANTHROPIC_VERSION = '2023-06-01';
     private const TIMEOUT_SECONDS   = 60;
 
+    /**
+     * How many times each Odoo service call is retried on transient
+     * failure (connection timeout, 5xx, etc.) before we give up on that
+     * block. 3 attempts is enough to ride out most single-packet flake
+     * without pinning the daily job for minutes on a dead host.
+     */
+    private const ODOO_RETRY_ATTEMPTS = 3;
+
+    /**
+     * Backoff between retry attempts, in microseconds. We use a fixed
+     * 2s rather than exponential — the daily job already runs at 06:00
+     * with no other consumers, so we're optimising for "ride out a
+     * transient" not "back off from a stressed service".
+     */
+    private const ODOO_RETRY_BACKOFF_US = 2_000_000;
+
     public function __construct(private TenantContext $context) {}
 
     /**
-     * Aggregate the headline KPIs for a tenant. Defensive: if any
-     * sub-service throws (e.g. Odoo not configured yet), the bucket
-     * is set to null and noted in `errors` rather than aborting.
+     * Aggregate the headline KPIs for a tenant. Defensive on two axes:
+     *
+     *   1. If any sub-service throws (Odoo not configured / unreachable),
+     *      we retry it ODOO_RETRY_ATTEMPTS times with a fixed backoff.
+     *      Most "translanticd.com timeout 153ms" failures are single-
+     *      packet flake — three attempts ride them out cleanly.
+     *
+     *   2. The bucket for a service that fails *every* attempt is left
+     *      null, noted in `errors`, and (downstream of this method)
+     *      back-filled from the latest OK snapshot in the DB so the
+     *      narrative is computed against stale-but-real numbers rather
+     *      than zeros that the model would interpret as "business has
+     *      flatlined". See generate() for the back-fill logic.
      */
     public function aggregateKpis(Tenant $tenant): array
     {
@@ -59,34 +85,43 @@ final class BusinessInsightsService
             $source = (string) config_env('REVENUE_SOURCE', 'invoice');
 
             // Revenue (RpD, RpO, OpD, RpC, CpO + YoY + customers/outfits)
-            try {
-                $rev = (new RevenueService($client, $source))->analyze();
+            $rev = $this->withRetry('revenue', $errors,
+                fn () => (new RevenueService($client, $source))->analyze());
+            if ($rev !== null) {
                 $out['currency'] = $rev['currency'] ?? null;
                 $out['revenue']  = $this->trimRevenue($rev);
-            } catch (\Throwable $e) { $errors[] = 'revenue: ' . $e->getMessage(); }
+            }
 
             // P&L (gross, ebitda, net, opex, all margin pcts)
-            try {
-                $pl = (new ProfitLossService($client))->analyze();
+            $pl = $this->withRetry('pl', $errors,
+                fn () => (new ProfitLossService($client))->analyze());
+            if ($pl !== null) {
                 $out['pl'] = $this->trimPl($pl);
-            } catch (\Throwable $e) { $errors[] = 'pl: ' . $e->getMessage(); }
+            }
 
-            // Receivables (DSO, AR, ageing)
-            try {
-                $revYtd  = (float) ($out['revenue']['total'] ?? 0);
-                $daysYtd = (int)   ($out['revenue']['days']  ?? 1);
-                $rec = (new ReceivablesService($client))->analyze(
+            // Receivables (DSO, AR, ageing). Depends on revenue YTD —
+            // pass safe defaults when revenue itself failed so the call
+            // still goes out (Receivables stands on its own for AR/DSO).
+            $revYtd  = (float) ($out['revenue']['total'] ?? 0);
+            $daysYtd = (int)   ($out['revenue']['days']  ?? 1);
+            $rec = $this->withRetry('receivables', $errors,
+                fn () => (new ReceivablesService($client))->analyze(
                     $revYtd, max($daysYtd, 1), (string) ($out['currency'] ?? 'USD')
-                );
+                ));
+            if ($rec !== null) {
                 $out['receivables'] = $this->trimReceivables($rec);
-            } catch (\Throwable $e) { $errors[] = 'receivables: ' . $e->getMessage(); }
+            }
 
             // Reconciliation (Expected → Billed → Cash)
-            try {
-                $bill = (new BillingService($client))->reconciliationOnly();
+            $bill = $this->withRetry('reconciliation', $errors,
+                fn () => (new BillingService($client))->reconciliationOnly());
+            if ($bill !== null) {
                 $out['reconciliation'] = $this->trimReconciliation($bill);
-            } catch (\Throwable $e) { $errors[] = 'reconciliation: ' . $e->getMessage(); }
+            }
         } catch (\Throwable $e) {
+            // OdooFactory itself failed — credentials missing, host
+            // unresolvable, etc. Don't retry: this is a configuration
+            // problem, not transient flake.
             $errors[] = 'odoo: ' . $e->getMessage();
         }
 
@@ -94,6 +129,61 @@ final class BusinessInsightsService
         if ($previous) $this->context->set($previous); else $this->context->clear();
 
         return $out;
+    }
+
+    /**
+     * Call $producer up to ODOO_RETRY_ATTEMPTS times, sleeping
+     * ODOO_RETRY_BACKOFF_US between attempts. Returns the result on
+     * success, null on terminal failure (all attempts exhausted) —
+     * append all attempt errors to $errors so the operator can see
+     * the full retry history in the saved snapshot.
+     */
+    private function withRetry(string $label, array &$errors, \Closure $producer)
+    {
+        $lastError = null;
+        for ($attempt = 1; $attempt <= self::ODOO_RETRY_ATTEMPTS; $attempt++) {
+            try {
+                return $producer();
+            } catch (\Throwable $e) {
+                $lastError = $e;
+                if ($attempt < self::ODOO_RETRY_ATTEMPTS) {
+                    usleep(self::ODOO_RETRY_BACKOFF_US);
+                }
+            }
+        }
+        // All attempts failed — log a single consolidated error.
+        $errors[] = $label . ': ' . self::ODOO_RETRY_ATTEMPTS
+                  . ' attempts failed — ' . ($lastError?->getMessage() ?? 'unknown');
+        return null;
+    }
+
+    /**
+     * Composite snapshot: take the freshly-attempted $live snapshot,
+     * fall back to the corresponding block from $fallback (typically
+     * the latest OK row in the DB) for each block that's still null
+     * after retries. Returns the merged snapshot AND a list of which
+     * blocks were back-filled — that list goes into the prompt so the
+     * model sees the data is stale and frames its narrative accordingly.
+     *
+     * @return array{0: array, 1: array<int, string>}
+     */
+    private function mergeWithFallback(array $live, ?array $fallback): array
+    {
+        if (!is_array($fallback)) return [$live, []];
+
+        $backfilled = [];
+        foreach (['revenue', 'pl', 'receivables', 'reconciliation'] as $block) {
+            if ($live[$block] === null && is_array($fallback[$block] ?? null)) {
+                $live[$block]  = $fallback[$block];
+                $backfilled[]  = $block;
+            }
+        }
+        // Restore currency if revenue was back-filled and we didn't get
+        // a fresh one (revenue carries the currency tag).
+        if (in_array('revenue', $backfilled, true) && empty($live['currency'])) {
+            $live['currency'] = $fallback['currency'] ?? null;
+        }
+        return [$live, $backfilled];
     }
 
     /**
@@ -117,7 +207,21 @@ final class BusinessInsightsService
 
         $snapshot = $this->aggregateKpis($tenant);
 
-        // Skipped path — we have no usable Odoo data at all.
+        // Back-fill missing blocks from the most recent OK snapshot so a
+        // single bad fetch doesn't reset the narrative to "everything is
+        // zero". Older rows can be hours or days stale — that's fine; we
+        // mark the resulting row STATUS_PARTIAL and tell the model the
+        // data is stale (via `stale_blocks` in the snapshot). The
+        // alternative — generating against zeros — produced the
+        // "translanticd.com:1011 connection timeout 153ms" fabrication
+        // the operator just saw on /admin/business-insights.
+        $fallbackSource = $this->latestOkSnapshotFor($tenant);
+        [$snapshot, $staleBlocks] = $this->mergeWithFallback($snapshot, $fallbackSource);
+        $snapshot['stale_blocks'] = $staleBlocks;   // [] when fully fresh
+
+        // Skipped path — we have no usable Odoo data at all, AND no
+        // prior snapshot to fall back on. First-run state on a brand
+        // new tenant.
         $allNull = $snapshot['revenue'] === null
                 && $snapshot['pl'] === null
                 && $snapshot['receivables'] === null
@@ -154,6 +258,14 @@ final class BusinessInsightsService
             [$raw, $usage] = $this->callAnthropic($apiKey, $model, $snapshot);
             $parsed = $this->parseResponse($raw);
 
+            // Tag STATUS_PARTIAL whenever at least one block was
+            // back-filled from a prior snapshot — preserves visibility
+            // for the admin without preventing the narrative from
+            // being generated.
+            $status = empty($snapshot['stale_blocks'])
+                ? BusinessInsight::STATUS_OK
+                : BusinessInsight::STATUS_PARTIAL;
+
             return BusinessInsight::create([
                 'tenant_id'     => $tenant->id,
                 'generated_at'  => now(),
@@ -164,7 +276,10 @@ final class BusinessInsightsService
                 'priority'      => $parsed['priority'],
                 'input_tokens'  => $usage['input']  ?? 0,
                 'output_tokens' => $usage['output'] ?? 0,
-                'status'        => BusinessInsight::STATUS_OK,
+                'status'        => $status,
+                'error_msg'     => $status === BusinessInsight::STATUS_PARTIAL
+                    ? 'Stale blocks: ' . implode(', ', $snapshot['stale_blocks'])
+                    : null,
             ]);
         } catch (\Throwable $e) {
             Log::error('BusinessInsights generate failed for tenant ' . $tenant->slug . ': ' . $e->getMessage());
@@ -179,6 +294,25 @@ final class BusinessInsightsService
                 'error_msg'     => substr($e->getMessage(), 0, 480),
             ]);
         }
+    }
+
+    /**
+     * Load the most recent kpis_snapshot from a STATUS_OK row for this
+     * tenant — used to back-fill blocks that today's live fetch couldn't
+     * retrieve. Returns null on first run (no prior OK exists).
+     *
+     * We deliberately accept STATUS_OK rows of any age; the stale_blocks
+     * tag on the new row will tell the model + the admin that fallback
+     * was used.
+     */
+    private function latestOkSnapshotFor(Tenant $tenant): ?array
+    {
+        $row = BusinessInsight::where('tenant_id', $tenant->id)
+            ->where('status', BusinessInsight::STATUS_OK)
+            ->orderByDesc('generated_at')
+            ->first();
+        if (!$row || !is_array($row->kpis_snapshot)) return null;
+        return $row->kpis_snapshot;
     }
 
     // ── Trim helpers — keep the prompt small ─────────────────────────
@@ -326,6 +460,11 @@ KPI taxonomy you will see in the user message:
 
   - reconciliation.{expected, billed, collected, billing_gap, collection_gap, billing_realisation_pct, collection_realisation_pct}
 
+The snapshot may also contain:
+
+  - errors          : array of strings describing fetch failures (e.g. "revenue: 3 attempts failed — Connection timeout"). These tell you which blocks were not freshly retrieved.
+  - stale_blocks    : array naming the blocks that were back-filled from a prior day's snapshot when today's live fetch failed. If present, treat those blocks as stale data, NOT today's numbers.
+
 Return STRICT JSON with this shape (no prose outside the JSON):
 
 {
@@ -337,13 +476,31 @@ Return STRICT JSON with this shape (no prose outside the JSON):
   "insight_md": "Full markdown body. Use these section headings (omit ones that don't apply): ## Headline · ## What's working · ## What needs attention · ## Recommended actions (numbered list). Use **bold** for figures, percentages, and concrete numbers. Reference the KPI keys when stating findings (e.g. 'CpO is 43% of RpO, 8 pts above the 35% target')."
 }
 
-Rules:
-  - Be specific. Always cite the actual numbers from the snapshot.
-  - Always explicitly flag risk thresholds: CpO > 35% of RpO, DSO > 30d, overdue rate > 20%, EBITDA margin < 0%, AR > 90d > 10%.
-  - Recommend at most 4 actions, ordered by impact.
-  - If a major data block is missing or all zeros, note "data unavailable — sync needed" in the relevant section instead of hallucinating numbers.
-  - Currency: format amounts as the snapshot provides; never invent a different currency.
-  - No marketing speak. No bullet point apologetics. Direct, advisor tone.
+Hard rules — these prevent the most common failure modes:
+
+  1. CITE ONLY DATA THAT IS IN THE SNAPSHOT.
+     The snapshot is the ONLY source of truth. Do NOT invent hostnames, IP addresses, port numbers, latency figures, timestamps, currency codes, customer names, or any other specific that isn't literally present in the JSON. If a connection error occurred, the snapshot's `errors` array will contain a string — quote that string verbatim, do NOT elaborate with plausible-sounding details. Example of forbidden output: "Odoo at translanticd.com:1011 timed out after 153 ms" when those exact values are not in the snapshot.
+
+  2. If a data block is null:
+       - Mention "data unavailable — connection failed today" or "data unavailable — sync needed".
+       - DO NOT proceed to draw conclusions from the missing block (e.g. don't infer "EBITDA must be negative" from a null `pl` block).
+
+  3. If `stale_blocks` is non-empty:
+       - Open the narrative by noting that today's live fetch failed for those specific blocks and the figures shown for them are from the prior snapshot.
+       - Treat the stale figures as DIRECTIONAL signals only — they're useful context, not today's reading.
+       - The headline summary should still focus on whichever blocks are FRESH today.
+
+  4. If `stale_blocks` is empty AND no block is null, the data is fully fresh — proceed normally.
+
+  5. Be specific. Always cite the actual numbers from the snapshot when present.
+
+  6. Always explicitly flag risk thresholds: CpO > 35% of RpO, DSO > 30d, overdue rate > 20%, EBITDA margin < 0%, AR > 90d > 10%.
+
+  7. Recommend at most 4 actions, ordered by impact.
+
+  8. Currency: format amounts as the snapshot provides; never invent a different currency.
+
+  9. No marketing speak. No bullet point apologetics. Direct, advisor tone.
 MD;
     }
 
@@ -359,7 +516,11 @@ MD;
                  'pl'             => $snapshot['pl'],
                  'receivables'    => $snapshot['receivables'],
                  'reconciliation' => $snapshot['reconciliation'],
-                 'errors'         => $snapshot['errors'],
+                 // Pass both fetch errors AND the list of back-filled
+                 // blocks so the model can frame stale data honestly
+                 // instead of treating it as today's reading.
+                 'errors'         => $snapshot['errors']       ?? [],
+                 'stale_blocks'   => $snapshot['stale_blocks'] ?? [],
              ], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE)
              . "\n\nReturn the JSON object described in the system prompt.";
     }
