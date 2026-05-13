@@ -44,6 +44,12 @@ final class MonthlyTaxReturnService
         $sections    = $this->buildSections($auto);
         $recap       = $this->buildRecap($sections);
         $totalAPayer = (float) ($recap['total'] ?? 0);
+        // Build the side-rail reconciliation that compares the GL ground
+        // truth (sum of class-70 movements) against §2's reported CA
+        // Global HT (L15) and the sales-ledger total (L10 + L14). The
+        // method recomputes the GL total from class-70 accounts in the
+        // same period window the rest of the return uses.
+        $reconciliation = $this->buildReconciliation($auto, $sections, $from, $to);
 
         return [
             'declarant' => $this->loadDeclarant($tenant, $from),
@@ -60,6 +66,7 @@ final class MonthlyTaxReturnService
             'currency'         => $this->detectCurrency(),
             'sections'         => $sections,
             'recap'            => $recap,
+            'reconciliation'   => $reconciliation,
             'total_a_payer'    => round($totalAPayer, 2),
             'available_months' => $this->buildMonthOptions($today),
             'as_of'            => $today->format('Y-m-d'),
@@ -304,6 +311,147 @@ final class MonthlyTaxReturnService
             'penalites' => round($penalites, 2),
             'total'     => round($total, 2),
             'unit'      => $unit,    // optional display unit (e.g. '%') for the 'amount' layout
+        ];
+    }
+
+    /**
+     * Tax-return reconciliation card — surfaces three figures and two
+     * targeted comparisons so the operator can spot whether the §2
+     * sales declaration ties to the underlying GL ground truth before
+     * filing.
+     *
+     * Three figures:
+     *   1. GL class-70 total (excl. 709 "rabais, remises, ristournes accordés")
+     *      — sum of every credit and debit on class 70 accounts for the
+     *      declaration window, abs()'d to a positive amount.
+     *   2. Sales ledger total = L10 + L14 — total class-70 credits that
+     *      came specifically from the SALES JOURNAL (already split by
+     *      splitSalesByVat in autoExtract).
+     *   3. L15 CA Global HT — what the §2 line declares to the DGI
+     *      (L10 + L11 + L12 + L13, recomputed here from the section data
+     *      so we don't depend on a precomputed accumulator).
+     *
+     * Two checks (per user spec 2026-05-13):
+     *
+     *   Check A · GL Class 70 vs Sales Ledger
+     *     Ideal: 0 diff (every class-70 movement should originate from
+     *     the sales journal). Non-zero ≠ wrong, but every XAF needs
+     *     justification — typically manual JEs, OD reclassifications,
+     *     year-end close-outs, or refunds posted outside the sales
+     *     journal.
+     *
+     *   Check B · GL Class 70 vs L15 CA Global HT
+     *     Ideal NOT 0 — L15 = L10 + L11 + L12 + L13 (taxable subset)
+     *     while GL also includes L14 (exempt). Diff origins are mapped
+     *     out below so the user sees which delta is structural vs
+     *     suspicious.
+     */
+    private function buildReconciliation(array $auto, array $sections, \DateTimeImmutable $from, \DateTimeImmutable $to): array
+    {
+        // GL ground truth: total class-70 movement for the window.
+        // Reuses the existing classSalesAccountIds() exclusion (no 709).
+        $salesIds  = $this->classSalesAccountIds();
+        $gl70      = abs($this->sumBalanceWindow($salesIds, $from, $to));
+
+        // L10 + L14 already computed in autoExtract via splitSalesByVat —
+        // these are the sales-journal-sourced class-70 credits.
+        $L10  = (float) ($auto['L10'] ?? 0);
+        $L14  = (float) ($auto['L14'] ?? 0);
+        $sales = $L10 + $L14;
+
+        // L15 is recomputed from §2 line data. We could read it from
+        // autoExtract, but the section build is the canonical source
+        // (it's where L11/L12/L13 live). Read from $sections instead.
+        $l15 = 0.0;
+        foreach ($sections as $s) {
+            if (($s['id'] ?? '') !== 'tva_ca') continue;
+            foreach ($s['lines'] ?? [] as $ln) {
+                if (($ln['code'] ?? '') === 'L15') {
+                    $l15 = (float) ($ln['principal'] ?? $ln['total'] ?? 0);
+                    break 2;
+                }
+            }
+        }
+
+        // Severity bands (% of GL absolute size) — tighter than the
+        // generic 1% tolerance because tax declarations face DGI
+        // scrutiny: even a 1% slip on a 100M XAF CA is 1M to explain.
+        $severity = function (float $diff, float $base): string {
+            if ($base <= 0) return 'ok';
+            $pct = abs($diff) / $base;
+            if ($pct < 0.005) return 'ok';     // < 0.5%
+            if ($pct < 0.05)  return 'minor';  // < 5%
+            return 'major';                     // ≥ 5%
+        };
+
+        // Check A — pure GL vs sales-ledger reconciliation.
+        $diffA = $gl70 - $sales;
+        $pctA  = $gl70 > 0 ? 100.0 * $diffA / $gl70 : 0.0;
+        $checkA = [
+            'key'         => 'gl_vs_sales_ledger',
+            'label'       => 'Class 70 (GL) vs Sales Ledger',
+            'left_label'  => 'GL Class 70 (excl. 709)',
+            'left'        => round($gl70, 2),
+            'right_label' => 'Sales Ledger (L10 + L14)',
+            'right'       => round($sales, 2),
+            'diff'        => round($diffA, 2),
+            'pct'         => round($pctA, 2),
+            'severity'    => $severity($diffA, $gl70),
+            'expectation' => 'Should reconcile to zero — every class-70 movement should originate from the sales journal.',
+            'origins'     => [
+                'Manual journal entries posted directly to class 70 outside the sales journal (accruals, end-of-period adjustments).',
+                'Year-end close-out journals reclassifying class 70 to class 13X.',
+                'OD (opérations diverses) reclassifications between class-70 sub-accounts.',
+                'Customer refund credit notes (out_refund) posted via a refund journal instead of the sales journal.',
+                'Class 709 (rabais, remises, ristournes accordés) — excluded from this GL total by design; if your sales journal includes 709 debits the sales ledger figure will be higher than the GL.',
+                'Period boundary issues — invoice dates in window but posting dates outside (or vice versa).',
+            ],
+        ];
+
+        // Check B — GL vs declared CA HT.
+        $diffB = $gl70 - $l15;
+        $pctB  = $gl70 > 0 ? 100.0 * $diffB / $gl70 : 0.0;
+        $checkB = [
+            'key'         => 'gl_vs_l15',
+            'label'       => 'Class 70 (GL) vs L15 CA Global HT',
+            'left_label'  => 'GL Class 70 (excl. 709)',
+            'left'        => round($gl70, 2),
+            'right_label' => 'L15 CA Global HT (§2)',
+            'right'       => round($l15, 2),
+            'diff'        => round($diffB, 2),
+            'pct'         => round($pctB, 2),
+            'severity'    => $severity($diffB, $gl70),
+            // L15 = L10 + L11 + L12 + L13 (taxable CA). GL class 70
+            // also captures L14 (CA exonéré). So a positive diff (GL >
+            // L15) of roughly L14's amount is STRUCTURAL — that's the
+            // form's design. We surface this as the first hint so the
+            // operator doesn't chase it.
+            'expectation' => 'Expected diff ≈ L14 (CA exonéré in GL but not in L15). Any residual after subtracting L14 needs justification.',
+            'origins'     => [
+                sprintf('Structural: L14 CA exonéré = %s XAF — in GL but excluded from L15 by DGI form design.', number_format($L14, 0, ',', ' ')),
+                'L11 (droit d\'accises) is included in L15 but is NOT class 70 — it lives in a separate excise account, so it does NOT inflate the GL side.',
+                'Non-sales-journal entries to class 70 (same family of causes as Check A — manual JEs, OD, year-end close-out).',
+                'Possible double-counting in §2: L11 was already reported elsewhere or L10/L14 split is mis-tagged for some sales (VAT vs exempt classification).',
+                'Sales returns / credit notes posted with positive class-70 amounts instead of negative ones.',
+            ],
+        ];
+
+        // Headline severity = worst of the two checks. Drives the panel
+        // border colour and "OK / À investiguer / Critique" pill.
+        $rankings = ['ok' => 0, 'minor' => 1, 'major' => 2];
+        $worst = max($rankings[$checkA['severity']], $rankings[$checkB['severity']]);
+        $headline = array_search($worst, $rankings, true);
+
+        return [
+            'period_from'  => $from->format('Y-m-d'),
+            'period_to'    => $to->format('Y-m-d'),
+            'figures'      => [
+                'gl70_total'         => round($gl70, 2),
+                'sales_ledger_total' => round($sales, 2),
+                'l15_ca_global'      => round($l15, 2),
+            ],
+            'checks'       => [$checkA, $checkB],
+            'severity'     => $headline,    // 'ok' | 'minor' | 'major'
         ];
     }
 
