@@ -33,8 +33,35 @@ final class BillingService
 {
     private OdooClient $odoo;
 
-    /** Cap fetched invoices per period (XML-RPC payload guardrail). */
-    private const INVOICE_FETCH_CAP = 5000;
+    /**
+     * Per-page size when paginating invoices over Odoo (XML-RPC payload
+     * guardrail). The page used to hard-cap the total fetch at 5000 —
+     * which silently truncated on high-volume tenants and left the
+     * user with the famous "189 of 5000 invoices scoped" footer. We
+     * now paginate in slices of this size up to INVOICE_TOTAL_LIMIT,
+     * so the full set is covered while still bounding the worst case.
+     */
+    private const INVOICE_PAGE_SIZE = 5000;
+
+    /**
+     * Safety ceiling on total invoices fetched per period. Tenants
+     * above this size would spin Odoo for a long time on every cache
+     * miss; at the ceiling we stop paginating and surface a "truncated
+     * at N of M" banner in the diagnostic so the analyst sees it.
+     * 50K invoices ≈ 10 round-trips ≈ a few seconds on the first hit,
+     * then session-cached for 5 min.
+     */
+    private const INVOICE_TOTAL_LIMIT = 50000;
+
+    /**
+     * Legacy single-shot cap, still used by reconciliationDetails() and
+     * computeReconciliationFigures(). Those flows are not on the
+     * "median time-to-invoice across all invoices" code path and stay
+     * on a single-page fetch deliberately (large reconciliation tables
+     * are paginated by the view, not by the service). Kept as a named
+     * alias of the page size for clarity.
+     */
+    private const INVOICE_FETCH_CAP = self::INVOICE_PAGE_SIZE;
 
     public function __construct(OdooClient $odoo)
     {
@@ -60,6 +87,14 @@ final class BillingService
             'credit_note_rate'  => $this->creditNoteRate($cyFrom, $cyTo, $pyFrom, $pyTo),
         ];
 
+        // Trend granularity follows the user's mental model:
+        //   YTD             → monthly line
+        //   MTD / Month     → daily line
+        // Same rule applies to both the time-to-invoice and the credit
+        // note % charts, so they read symmetrically on every period.
+        $type        = (string) ($period['type'] ?? 'ytd');
+        $granularity = $type === 'ytd' ? 'month' : 'day';
+
         // Revenue reconciliation: Expected (scan-derived) → Billed (invoice
         // total) → Collected (billed × payment progress). Bucketed by
         // month (YTD) or week (MTD/Month) for the chart.
@@ -68,7 +103,15 @@ final class BillingService
         return [
             'kpis'             => $kpis,
             'period_label'     => $periodLabel,
-            'slowest_billings' => $this->slowestBillingsFromData($latencyData, 5),
+            // Top-N drill-down raised from 5 → 30. The view collapses
+            // this list behind a <details> accordion (closed by default)
+            // and surfaces an Excel export for the full 30.
+            'slowest_billings'   => $this->slowestBillingsFromData($latencyData, 30),
+            // New trend series — feed the two ECharts line charts in
+            // the view. Both honour the master period filter via the
+            // granularity computed above.
+            'time_to_invoice_series' => $this->timeToInvoiceSeries($latencyData, $cyFrom, $cyTo, $granularity),
+            'credit_note_series'     => $this->creditNoteRateSeries($cyFrom, $cyTo, $granularity),
             'reconciliation'   => $reconciliation,
             'pending_overall'  => array_reduce(
                 $kpis,
@@ -418,18 +461,20 @@ final class BillingService
     private function shipmentLatencyData(\DateTimeImmutable $from, \DateTimeImmutable $to): array
     {
         try {
-            // 1) Pull invoices in window (id + date only — keep payload small).
-            $invoices = $this->odoo->searchRead(
-                'account.move',
-                [
-                    ['move_type', '=', 'out_invoice'],
-                    ['state', '=', 'posted'],
-                    ['invoice_date', '>=', $from->format('Y-m-d')],
-                    ['invoice_date', '<=', $to->format('Y-m-d')],
-                ],
-                ['id', 'invoice_date', 'name', 'amount_total_signed'],
-                ['limit' => self::INVOICE_FETCH_CAP, 'order' => 'invoice_date desc']
-            );
+            // 1) Pull every invoice in the window via pagination — was a
+            //    hard 5000-row cap before, now we loop offset/limit until
+            //    the result set is exhausted (or we hit INVOICE_TOTAL_LIMIT
+            //    as a safety stop). Tracks 'invoices_truncated' so the
+            //    view can surface a banner if we did stop short.
+            $domain = [
+                ['move_type', '=', 'out_invoice'],
+                ['state', '=', 'posted'],
+                ['invoice_date', '>=', $from->format('Y-m-d')],
+                ['invoice_date', '<=', $to->format('Y-m-d')],
+            ];
+            $invoices         = $this->fetchAllInvoices($domain);
+            $invoicesTotalRaw = $this->odoo->searchCount('account.move', $domain);
+            $truncated        = $invoicesTotalRaw > count($invoices);
 
             if (empty($invoices)) {
                 return ['ok' => false, 'reason' => 'no_invoices_in_period'];
@@ -441,13 +486,10 @@ final class BillingService
             }
             $invoiceIds = array_keys($invoiceById);
 
-            // 2) Cargos linked to those invoices.
-            $cargos = $this->odoo->searchRead(
-                'aw_cargo.cargo',
-                [['invoice_ids', 'in', $invoiceIds]],
-                ['id', 'name', 'transport_ref', 'vessel_name', 'journey_ref', 'invoice_ids'],
-                ['limit' => self::INVOICE_FETCH_CAP]
-            );
+            // 2) Cargos linked to those invoices — paginated for the
+            //    same reason invoices are. Cargo count typically tracks
+            //    invoice count 1:N so we reuse the same ceiling.
+            $cargos = $this->fetchAllCargos($invoiceIds);
 
             if (empty($cargos)) {
                 return ['ok' => false, 'reason' => 'no_cargo_links'];
@@ -530,15 +572,69 @@ final class BillingService
             }
 
             return [
-                'ok'             => !empty($rows),
-                'reason'         => empty($rows) ? 'no_scoped_pairs' : null,
-                'rows'           => $rows,
-                'invoices_total' => count($invoiceIds),
-                'invoices_scoped' => count(array_unique(array_column($rows, 'invoice_id'))),
+                'ok'                 => !empty($rows),
+                'reason'             => empty($rows) ? 'no_scoped_pairs' : null,
+                'rows'               => $rows,
+                'invoices_total'     => count($invoiceIds),
+                'invoices_total_raw' => $invoicesTotalRaw,
+                'invoices_truncated' => $truncated,
+                'invoices_scoped'    => count(array_unique(array_column($rows, 'invoice_id'))),
             ];
         } catch (\Throwable $e) {
             return ['ok' => false, 'reason' => 'error', 'error' => $e->getMessage()];
         }
+    }
+
+    /**
+     * Paginated search_read on out_invoice up to INVOICE_TOTAL_LIMIT.
+     * Loops offset += INVOICE_PAGE_SIZE until either the underlying
+     * recordset is exhausted (a short page comes back) or we hit the
+     * safety ceiling. Caller checks `count($invoices) < searchCount(...)`
+     * to decide whether to surface the truncation banner.
+     */
+    private function fetchAllInvoices(array $domain): array
+    {
+        $all   = [];
+        $offset = 0;
+        while ($offset < self::INVOICE_TOTAL_LIMIT) {
+            $limit = min(self::INVOICE_PAGE_SIZE, self::INVOICE_TOTAL_LIMIT - $offset);
+            $page  = $this->odoo->searchRead(
+                'account.move',
+                $domain,
+                ['id', 'invoice_date', 'name', 'amount_total_signed'],
+                ['limit' => $limit, 'offset' => $offset, 'order' => 'invoice_date desc']
+            );
+            if (empty($page)) break;
+            $all    = array_merge($all, $page);
+            if (count($page) < $limit) break;   // last page reached
+            $offset += $limit;
+        }
+        return $all;
+    }
+
+    /**
+     * Paginated search_read on aw_cargo.cargo for a given set of
+     * invoice_ids. Same loop pattern as fetchAllInvoices().
+     */
+    private function fetchAllCargos(array $invoiceIds): array
+    {
+        if (empty($invoiceIds)) return [];
+        $all   = [];
+        $offset = 0;
+        while ($offset < self::INVOICE_TOTAL_LIMIT) {
+            $limit = min(self::INVOICE_PAGE_SIZE, self::INVOICE_TOTAL_LIMIT - $offset);
+            $page  = $this->odoo->searchRead(
+                'aw_cargo.cargo',
+                [['invoice_ids', 'in', $invoiceIds]],
+                ['id', 'name', 'transport_ref', 'vessel_name', 'journey_ref', 'invoice_ids'],
+                ['limit' => $limit, 'offset' => $offset]
+            );
+            if (empty($page)) break;
+            $all    = array_merge($all, $page);
+            if (count($page) < $limit) break;
+            $offset += $limit;
+        }
+        return $all;
     }
 
     private function timeToInvoiceFromData(array $latency): array
@@ -581,15 +677,25 @@ final class BillingService
             else                $buckets['30+']++;
         }
 
+        // For the "X of Y invoices scoped" footer prefer the *raw* invoice
+        // count from search_count — it reflects every invoice in the
+        // period regardless of whether we hit the pagination ceiling.
+        // The fallback covers the rare case where searchCount itself
+        // wasn't recorded (legacy callers).
+        $totalForLabel = (int) ($latency['invoices_total_raw'] ?? $latency['invoices_total'] ?? 0);
+        $truncated     = (bool) ($latency['invoices_truncated'] ?? false);
+
         return [
             'value'        => round($median, 1) . ' days',
             'sub'          => sprintf(
-                '%d of %d invoices scoped',
+                '%d of %d invoices scoped%s',
                 $latency['invoices_scoped'],
-                $latency['invoices_total']
+                $totalForLabel,
+                $truncated ? ' · truncated at safety cap' : ''
             ),
             'pending'      => false,
             'distribution' => $buckets,
+            'truncated'    => $truncated,
         ];
     }
 
@@ -599,6 +705,195 @@ final class BillingService
         $rows = $latency['rows'];
         usort($rows, fn ($a, $b) => $b['latency_days'] <=> $a['latency_days']);
         return array_slice($rows, 0, $topN);
+    }
+
+    /**
+     * Build a time-series of median time-to-invoice for the chart panel,
+     * bucketed by day (MTD / Month) or month (YTD). Reuses the latency
+     * rows already pulled by shipmentLatencyData() so we don't pay a
+     * second Odoo round-trip — every row carries an invoice_date that
+     * we group on.
+     *
+     * Output:
+     *   [
+     *     'granularity' => 'day' | 'month',
+     *     'labels'      => ['2026-01', '2026-02', ...]  or  ['2026-05-01', '2026-05-02', ...],
+     *     'median'      => [3.5, 4.2, ...]              days per bucket
+     *     'count'       => [42, 58, ...]                invoices per bucket
+     *   ]
+     */
+    public function timeToInvoiceSeries(array $latency, \DateTimeImmutable $from, \DateTimeImmutable $to, string $granularity = 'month'): array
+    {
+        $empty = ['granularity' => $granularity, 'labels' => [], 'median' => [], 'count' => []];
+        if (empty($latency['ok']) || empty($latency['rows'])) return $empty;
+
+        $labels = $this->bucketRange($from, $to, $granularity);
+        $byBucket = array_fill_keys($labels, []);
+
+        // Date-format that drives bucketing — 'Y-m-d' for daily,
+        // 'Y-m' for monthly. Matches bucketRange()'s label format.
+        $dateFmt = $granularity === 'day' ? 'Y-m-d' : 'Y-m';
+
+        foreach ($latency['rows'] as $row) {
+            $invDate = (string) ($row['invoice_date'] ?? '');
+            if ($invDate === '') continue;
+            try {
+                $bucket = (new \DateTimeImmutable($invDate))->format($dateFmt);
+            } catch (\Throwable $e) {
+                continue;
+            }
+            if (!isset($byBucket[$bucket])) continue;
+            $byBucket[$bucket][] = (int) $row['latency_days'];
+        }
+
+        $median = [];
+        $count  = [];
+        foreach ($labels as $b) {
+            $vals = $byBucket[$b] ?? [];
+            sort($vals);
+            $median[] = empty($vals) ? null : round($this->percentile($vals, 50), 1);
+            $count[]  = count($vals);
+        }
+
+        return [
+            'granularity' => $granularity,
+            'labels'      => $labels,
+            'median'      => $median,
+            'count'       => $count,
+        ];
+    }
+
+    /**
+     * Build a time-series of credit-note % (= refunds ÷ invoices) for
+     * the chart panel, bucketed by day (MTD / Month) or month (YTD).
+     * Uses Odoo read_group on account.move grouped by date + move_type,
+     * so this is a single round-trip regardless of period size.
+     *
+     * Output mirrors timeToInvoiceSeries():
+     *   [
+     *     'granularity' => 'day' | 'month',
+     *     'labels'      => [...],
+     *     'rate'        => [2.1, 3.0, ...]   percentage points per bucket
+     *     'invoices'    => [120, 135, ...]
+     *     'refunds'     => [3, 4, ...]
+     *   ]
+     */
+    public function creditNoteRateSeries(\DateTimeImmutable $from, \DateTimeImmutable $to, string $granularity = 'month'): array
+    {
+        $labels = $this->bucketRange($from, $to, $granularity);
+        $empty  = [
+            'granularity' => $granularity,
+            'labels'      => $labels,
+            'rate'        => array_fill(0, count($labels), null),
+            'invoices'    => array_fill(0, count($labels), 0),
+            'refunds'     => array_fill(0, count($labels), 0),
+        ];
+
+        try {
+            // Odoo read_group keyword is 'invoice_date:month' or
+            // 'invoice_date:day' — both supported by v15+.
+            $groupKey = 'invoice_date:' . $granularity;
+            $rows = $this->odoo->callModel('account.move', 'read_group', [
+                'domain' => [
+                    ['move_type', 'in', ['out_invoice', 'out_refund']],
+                    ['state', '=', 'posted'],
+                    ['invoice_date', '>=', $from->format('Y-m-d')],
+                    ['invoice_date', '<=', $to->format('Y-m-d')],
+                ],
+                'fields'  => ['id:count'],
+                'groupby' => [$groupKey, 'move_type'],
+                'lazy'    => false,
+            ]);
+        } catch (\Throwable $e) {
+            return $empty;
+        }
+
+        // Odoo returns labels like "May 2026" for month or "01 May 2026"
+        // for day; we want them in Y-m or Y-m-d to align with our labels.
+        // The __range subkey (when present) gives us iso-style 'from'
+        // strings that are easier to parse.
+        $invCounts    = array_fill_keys($labels, 0);
+        $refundCounts = array_fill_keys($labels, 0);
+
+        foreach ($rows as $r) {
+            $rangeFrom = $r[$groupKey . '_range']['from']
+                ?? ($r['__range'][$groupKey]['from'] ?? null);
+            if (!$rangeFrom) {
+                // Last-resort parse — read_group returns either a tuple
+                // [iso_label, display_label] or a display string. Try
+                // strtotime() and fall back if it can't make sense of it.
+                $raw = $r[$groupKey] ?? null;
+                if (is_array($raw) && isset($raw[0])) $rangeFrom = (string) $raw[0];
+                elseif (is_string($raw))               $rangeFrom = $raw;
+            }
+            if (!$rangeFrom) continue;
+
+            try {
+                $bucket = (new \DateTimeImmutable($rangeFrom))
+                    ->format($granularity === 'day' ? 'Y-m-d' : 'Y-m');
+            } catch (\Throwable $e) {
+                continue;
+            }
+            if (!isset($invCounts[$bucket])) continue;
+
+            $mt    = $r['move_type'] ?? null;
+            $mtKey = is_array($mt) ? ($mt[0] ?? null) : $mt;
+            $n     = (int) ($r['id_count'] ?? $r['__count'] ?? 0);
+
+            if ($mtKey === 'out_invoice') $invCounts[$bucket]    += $n;
+            elseif ($mtKey === 'out_refund') $refundCounts[$bucket] += $n;
+        }
+
+        $rate     = [];
+        $invOut   = [];
+        $refOut   = [];
+        foreach ($labels as $b) {
+            $inv = $invCounts[$b];
+            $ref = $refundCounts[$b];
+            $rate[]   = $inv > 0 ? round(100.0 * $ref / $inv, 2) : null;
+            $invOut[] = $inv;
+            $refOut[] = $ref;
+        }
+
+        return [
+            'granularity' => $granularity,
+            'labels'      => $labels,
+            'rate'        => $rate,
+            'invoices'    => $invOut,
+            'refunds'     => $refOut,
+        ];
+    }
+
+    /**
+     * Generate an inclusive list of bucket labels between $from and
+     * $to at the requested granularity. Used by both trend series
+     * above so the x-axis is well-defined even when a bucket has zero
+     * rows (avoids the "gappy chart" look).
+     *
+     *   'day'   → ['2026-05-01', '2026-05-02', …, '2026-05-12']
+     *   'month' → ['2026-01', '2026-02', '2026-03', '2026-04', '2026-05']
+     */
+    private function bucketRange(\DateTimeImmutable $from, \DateTimeImmutable $to, string $granularity): array
+    {
+        $out = [];
+        if ($granularity === 'day') {
+            $cursor = $from->setTime(0, 0, 0);
+            $end    = $to->setTime(0, 0, 0);
+            while ($cursor <= $end) {
+                $out[] = $cursor->format('Y-m-d');
+                $cursor = $cursor->modify('+1 day');
+            }
+        } else {
+            // Monthly — start at first-of-month for $from, walk one month
+            // at a time until we pass $to.
+            $cursor = $from->modify('first day of this month')->setTime(0, 0, 0);
+            $end    = $to->modify('first day of this month')->setTime(0, 0, 0);
+            while ($cursor <= $end) {
+                $out[] = $cursor->format('Y-m');
+                $cursor = $cursor->modify('+1 month');
+            }
+        }
+        return $out;
     }
 
     // ─── B3: Credit Note Rate ────────────────────────────────────────────────

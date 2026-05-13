@@ -1407,6 +1407,12 @@ Route::prefix('t/{tenant}')
                 Route::get('/billing',           [BillingController::class, 'index'])->middleware('module:billing');
                 Route::get('/billing/reconciliation-export',
                     [BillingController::class, 'reconciliationExcel'])->middleware('module:revenue_reconciliation');
+                // Top-30 slowest billings export — gated by the same module
+                // flag as the billing page itself (not by revenue_reconciliation,
+                // since the slowest-billings table is independent of the
+                // reconciliation panel).
+                Route::get('/billing/slowest-billings-export',
+                    [BillingController::class, 'slowestBillingsExport'])->middleware('module:billing');
                 Route::get('/procurement',       [ProcurementController::class, 'index'])->middleware('module:procurement');
 
                 // ── Financial Planning service ────────────────────────────────
