@@ -153,9 +153,17 @@ final class MonthlyTaxReturnService
             'L18' => $L18,             // TVA déductible sur achats locaux (4452*)
             'L19' => $L19,             // TVA déductible sur services locaux (4454*)
             'L45' => abs($sum('4471')),// Acompte sur CA retenu à la source — balance of 4471*
-            'L67' => abs($sum('4421')),// IRPP retenu sur traitements et salaires
             'L42' => abs($sum('4426')),// Précomptes sur loyers (15 %)
             'L0'  => abs($sum('4423')),// TSR pool
+            // §12 RTS sources (per user spec 2026-05-13):
+            //   L67 IRPP s/ traitements et salaires       ← 4472XX (was 4421 — corrected)
+            //   L68 CFC Part Salariale                    ← 4474XX
+            //   L69 CFC Part Patronale                    ← class 64 (Impôts et taxes)
+            //   L70 FNE                                   ← 4477XX (existing, unchanged)
+            //   L71 Redevance audiovisuelle               ← (manual — source not yet specified)
+            'L67' => abs($sum('4472')),// IRPP retenu sur traitements et salaires (4472*)
+            'L68' => abs($sum('4474')),// CFC part salariale (4474*)
+            'L69' => abs($sum('64')),  // CFC part patronale — class 64 Impôts et taxes
             'L70' => abs($sum('4477')),// FNE (autres taxes)
         ];
     }
@@ -365,6 +373,11 @@ final class MonthlyTaxReturnService
         $s4 = [
             'id' => 'tva_reg', 'code' => '4', 'title' => 'RÉGULARISATIONS EXCEPTIONNELLES',
             'subtitle' => 'TVA à reverser ou à déduire',
+            // Form §4 columns: Principal · CAC · Pénalités · Total — no
+            // Base/Taux (these lines carry a single signed amount and
+            // CAC/Pénalités are typically 0; the view renders them as
+            // dashes which reads cleaner than the 8-col default).
+            'layout' => 'tax_due',
             'lines' => [
                 $this->line('L24', 'Régularisation TVA déductible / TVA déjà retenue à la source (−)', principal: -$L24),
                 $this->line('L25', "Régularisation TVA prise en charge par l'État (−)",                 principal: -$L25),
@@ -447,6 +460,10 @@ final class MonthlyTaxReturnService
         $s7 = [
             'id' => 'ir_rev', 'code' => '7', 'title' => 'ACOMPTES ET PRÉCOMPTES À REVERSER',
             'subtitle' => "Retenues effectuées par l'entreprise",
+            // Form §7 columns: Principal · CAC · Pénalités · Total — no
+            // Base/Taux. The retention amount is the "principal" the
+            // entity must reverser; CAC is computed on top.
+            'layout' => 'tax_due',
             'lines' => [
                 $this->line('L40', 'Acompte sur CA retenu à la source',                              principal: $L40, cac: $L40 * 0.10),
                 $this->line('L41', 'Précomptes sur achats retenus (0,5 % / 1 % / 3 % / 5 % / 10 %)', principal: $L41, cac: $L41 * 0.10),
@@ -479,6 +496,11 @@ final class MonthlyTaxReturnService
         $s8 = [
             'id' => 'ir_ded', 'code' => '8', 'title' => 'ACOMPTES ET PRÉCOMPTES À DÉDUIRE',
             'subtitle' => "L45 Total = balance(4471) · CAC 10 % du Total · Principal = Total − CAC",
+            // Form §8 columns: Principal · CAC · Pénalités · Total — no
+            // Base/Taux. The retention amount feeds back into §9 L52
+            // as a déduction; the section header (set below) shows the
+            // total deductible at a glance.
+            'layout' => 'tax_due',
             'lines' => [
                 $this->line('L45', 'Acompte sur CA retenu à la source',                principal: $L45principal, cac: $L45cac, total: $L45total),
                 $this->line('L46', 'Précomptes sur achats (0,5 % / 1 % / 3 % / 5 %)',   principal: $L46principal, cac: $L46cac, total: $L46total),
@@ -582,13 +604,29 @@ final class MonthlyTaxReturnService
             'total' => $L66 * 0.15 + $cacOnL66,
         ];
 
-        // §12 RTS
-        $L67 = $L('L67'); $L68 = 0; $L69 = 0; $L70 = $L('L70'); $L71 = 0; $L72 = 0;
+        // §12 RTS — sources per user spec (2026-05-13):
+        //   L67 IRPP s/ traitements et salaires       ← sum of 4472XX
+        //   L68 CFC Part Salariale                    ← sum of 4474XX
+        //   L69 CFC Part Patronale                    ← sum of class 64
+        //   L70 FNE                                   ← sum of 4477XX (pre-existing)
+        //   L71 Redevance audiovisuelle               ← manual (no source provided yet)
+        //   L72 Taxe de Développement Local           ← manual
+        $L67 = $L('L67');
+        $L68 = $L('L68');
+        $L69 = $L('L69');
+        $L70 = $L('L70');
+        $L71 = 0;
+        $L72 = 0;
         $L73 = $L67 + $L68 + $L69 + $L70 + $L71 + $L72;
         $cacOnL73 = $L73 * 0.10;
         $s12 = [
             'id' => 'rts', 'code' => '12', 'title' => 'IMPÔTS RETENUS SUR SALAIRES',
             'subtitle' => 'Charges sociales et taxes salariales',
+            // Form §12 columns: Principal · CAC · Pénalités · Total — no
+            // Base/Taux. Salary retentions carry only a principal amount
+            // (the taux is implicit in payroll calculations upstream);
+            // CAC applies on IRPP (L67) only.
+            'layout' => 'tax_due',
             'lines' => [
                 $this->line('L67', 'IRPP sur traitements et salaires',           principal: $L67, cac: $L67 * 0.10),
                 $this->line('L68', 'Crédit Foncier du Cameroun (part salariale)', principal: $L68),
@@ -694,7 +732,21 @@ final class MonthlyTaxReturnService
 
     private function resolveAccountIdsByPrefix(): array
     {
-        $prefixes = ['4421', '4423', '4426', '4431', '4434', '4452', '4454', '4456', '4471', '4477'];
+        // Prefix list — feeds account.move.line sums in autoExtract().
+        // The longest-match logic below routes each found account to the
+        // most specific prefix bucket, so '4472' and '4474' co-exist with
+        // the broader '44' and '4' prefixes without overlap.
+        // Class 64 ("Impôts et taxes") sources L69 (Crédit Foncier patronale) —
+        // it's the only 2-char prefix here so the longest-match rule
+        // doesn't swallow longer 44xx prefixes that happen to start with 6.
+        $prefixes = [
+            '4421', '4423', '4426', '4431', '4434',
+            '4452', '4454', '4456', '4471',
+            '4472',  // L67 — IRPP retenu sur traitements et salaires
+            '4474',  // L68 — Crédit Foncier du Cameroun (part salariale)
+            '4477',  // L70 — FNE
+            '64',    // L69 — Crédit Foncier du Cameroun (part patronale)  → class 64 Impôts et taxes
+        ];
 
         $domain = [];
         for ($i = 1; $i < count($prefixes); $i++) $domain[] = '|';
