@@ -118,6 +118,43 @@ final class MonthlyTaxReturnService
     {
         $sum = fn (string $prefix) => $this->sumBalanceWindow($idsByPrefix[$prefix] ?? [], $from, $to);
 
+        // §12 RTS — split account 4472XX into four buckets by description
+        // keyword (one fetch, four buckets). User spec 2026-05-13:
+        //   L67 IRPP  ← descriptions containing "IRPP" / "Impôt sur le Revenu des Personnes Physiques"
+        //   L70 FNE   ← descriptions containing "FNE" / "Fonds National d'Emploi"
+        //   L71 RAV   ← descriptions containing "RAV" / "Redevance Audio Visuel"
+        //   L72 TDL   ← descriptions containing "TDL" / "Taxe de Développement Local"
+        // Matching is case-insensitive + accent-folded, first-match-wins
+        // in iteration order so we keep IRPP precedence (it's the largest
+        // bucket; a line tagged "IRPP - FNE adjustment" goes to IRPP).
+        $rtsBuckets = $this->bucketLinesByDescription(
+            $idsByPrefix['4472'] ?? [],
+            $from, $to,
+            [
+                'irpp' => ['IRPP', 'impôt sur le revenu', 'impot sur le revenu',
+                           'revenu des personnes physiques', 'traitements et salaires'],
+                'fne'  => ['FNE', "fonds national d'emploi", "fonds national de l'emploi"],
+                'rav'  => ['RAV', 'redevance audio visuel', 'redevance audiovisuel',
+                           'redevance audiovisuelle'],
+                'tdl'  => ['TDL', 'taxe de développement', 'taxe de developpement',
+                           'développement local', 'developpement local'],
+            ]
+        );
+
+        // §12 L68 — CFC part salariale. User specified 4474XX with a
+        // description hint (CFC / Contribution au Crédit Foncier). 4474
+        // is dedicated to CFC in SYSCOHADA so the description filter is
+        // usually a no-op, but we apply it anyway per spec — keeps the
+        // service honest if the tenant ever co-uses 4474 for something else.
+        $cfcSalariale = $this->bucketLinesByDescription(
+            $idsByPrefix['4474'] ?? [],
+            $from, $to,
+            [
+                'cfc' => ['CFC', 'crédit foncier', 'credit foncier',
+                          'contribution au crédit foncier', 'contribution au credit foncier'],
+            ]
+        )['cfc'] ?? 0.0;
+
         $salesIds = $this->classSalesAccountIds();
 
         // §2 — split class 70 sales between L10 (with VAT) and L14 (exempt)
@@ -155,16 +192,21 @@ final class MonthlyTaxReturnService
             'L45' => abs($sum('4471')),// Acompte sur CA retenu à la source — balance of 4471*
             'L42' => abs($sum('4426')),// Précomptes sur loyers (15 %)
             'L0'  => abs($sum('4423')),// TSR pool
-            // §12 RTS sources (per user spec 2026-05-13):
-            //   L67 IRPP s/ traitements et salaires       ← 4472XX (was 4421 — corrected)
-            //   L68 CFC Part Salariale                    ← 4474XX
-            //   L69 CFC Part Patronale                    ← class 64 (Impôts et taxes)
-            //   L70 FNE                                   ← 4477XX (existing, unchanged)
-            //   L71 Redevance audiovisuelle               ← (manual — source not yet specified)
-            'L67' => abs($sum('4472')),// IRPP retenu sur traitements et salaires (4472*)
-            'L68' => abs($sum('4474')),// CFC part salariale (4474*)
-            'L69' => abs($sum('64')),  // CFC part patronale — class 64 Impôts et taxes
-            'L70' => abs($sum('4477')),// FNE (autres taxes)
+            // §12 RTS sources (per user spec 2026-05-13, revised):
+            //   L67 IRPP s/ traitements et salaires       ← 4472XX bucketed by "IRPP" keyword
+            //   L68 CFC Part Salariale                    ← 4474XX bucketed by "CFC" keyword
+            //   L69 CFC Part Patronale                    ← 6413XX plain sum (specific sub-prefix)
+            //   L70 FNE                                   ← 4472XX bucketed by "FNE" keyword
+            //   L71 Redevance audiovisuelle (RAV)         ← 4472XX bucketed by "RAV" keyword
+            //   L72 Taxe de Développement Local (TDL)     ← 4472XX bucketed by "TDL" keyword
+            // 4472XX is one Odoo fetch split into 4 buckets above — one round-trip,
+            // not four. 4477XX is no longer used for L70 (the user moved FNE to 4472).
+            'L67' => $rtsBuckets['irpp'] ?? 0.0,
+            'L68' => $cfcSalariale,
+            'L69' => abs($sum('6413')),
+            'L70' => $rtsBuckets['fne']  ?? 0.0,
+            'L71' => $rtsBuckets['rav']  ?? 0.0,
+            'L72' => $rtsBuckets['tdl']  ?? 0.0,
         ];
     }
 
@@ -604,19 +646,22 @@ final class MonthlyTaxReturnService
             'total' => $L66 * 0.15 + $cacOnL66,
         ];
 
-        // §12 RTS — sources per user spec (2026-05-13):
-        //   L67 IRPP s/ traitements et salaires       ← sum of 4472XX
-        //   L68 CFC Part Salariale                    ← sum of 4474XX
-        //   L69 CFC Part Patronale                    ← sum of class 64
-        //   L70 FNE                                   ← sum of 4477XX (pre-existing)
-        //   L71 Redevance audiovisuelle               ← manual (no source provided yet)
-        //   L72 Taxe de Développement Local           ← manual
+        // §12 RTS — sources per user spec (2026-05-13, revised):
+        //   L67 IRPP s/ traitements et salaires       ← 4472XX, lines tagged "IRPP" / "Impôt sur le Revenu des Personnes Physiques"
+        //   L68 CFC Part Salariale                    ← 4474XX, lines tagged "CFC" / "Contribution au Crédit Foncier"
+        //   L69 CFC Part Patronale                    ← 6413XX (plain sum)
+        //   L70 FNE                                   ← 4472XX, lines tagged "FNE" / "Fonds National d'Emploi"
+        //   L71 Redevance audiovisuelle (RAV)         ← 4472XX, lines tagged "RAV" / "Redevance Audio Visuel"
+        //   L72 Taxe de Développement Local (TDL)     ← 4472XX, lines tagged "TDL" / "Taxe de Développement Local"
+        // All five 4472-based buckets share a single Odoo round-trip
+        // (autoExtract uses bucketLinesByDescription); the values
+        // arrive here already separated.
         $L67 = $L('L67');
         $L68 = $L('L68');
         $L69 = $L('L69');
         $L70 = $L('L70');
-        $L71 = 0;
-        $L72 = 0;
+        $L71 = $L('L71');
+        $L72 = $L('L72');
         $L73 = $L67 + $L68 + $L69 + $L70 + $L71 + $L72;
         $cacOnL73 = $L73 * 0.10;
         $s12 = [
@@ -734,18 +779,26 @@ final class MonthlyTaxReturnService
     {
         // Prefix list — feeds account.move.line sums in autoExtract().
         // The longest-match logic below routes each found account to the
-        // most specific prefix bucket, so '4472' and '4474' co-exist with
-        // the broader '44' and '4' prefixes without overlap.
-        // Class 64 ("Impôts et taxes") sources L69 (Crédit Foncier patronale) —
-        // it's the only 2-char prefix here so the longest-match rule
-        // doesn't swallow longer 44xx prefixes that happen to start with 6.
+        // most specific prefix bucket.
+        //
+        // §12 RTS — user spec 2026-05-13 (revised):
+        //   4472 hosts FOUR State retentions distinguished only by line
+        //   description (IRPP / FNE / RAV / TDL). autoExtract pulls the
+        //   4472 line-set once and buckets in PHP via
+        //   bucketLinesByDescription() — no extra round-trips.
+        //   4474 hosts CFC Part Salariale (description-filtered for
+        //   safety).
+        //   6413 hosts CFC Part Patronale (plain sum).
+        //
+        // The old 4477 prefix (FNE) is removed — user moved FNE to 4472.
+        // The earlier '64' (class-wide Impôts et taxes) prefix is also
+        // removed in favour of the narrower 6413.
         $prefixes = [
             '4421', '4423', '4426', '4431', '4434',
             '4452', '4454', '4456', '4471',
-            '4472',  // L67 — IRPP retenu sur traitements et salaires
-            '4474',  // L68 — Crédit Foncier du Cameroun (part salariale)
-            '4477',  // L70 — FNE
-            '64',    // L69 — Crédit Foncier du Cameroun (part patronale)  → class 64 Impôts et taxes
+            '4472',  // L67 IRPP · L70 FNE · L71 RAV · L72 TDL (description-bucketed)
+            '4474',  // L68 — CFC Part Salariale
+            '6413',  // L69 — CFC Part Patronale  → 64 Impôts et taxes (specific sub-prefix)
         ];
 
         $domain = [];
@@ -804,6 +857,99 @@ final class MonthlyTaxReturnService
         } catch (\Throwable $e) {
             return 0.0;
         }
+    }
+
+    /**
+     * Account 4472XX is a single SYSCOHADA bucket that the user's COA
+     * uses for multiple State retentions (IRPP, FNE, RAV, TDL — same
+     * account, distinguished only by the line description). To avoid
+     * 4 separate Odoo round-trips on the same dataset, we fetch the
+     * 4472XX lines ONCE for the period and bucket them by description
+     * keyword. Returns an associative array keyed by bucket label, with
+     * the absolute balance sum per bucket.
+     *
+     * Matching is:
+     *   - case-insensitive
+     *   - accent-fold via mb_convert_encoding + iconv (best-effort —
+     *     no-op if iconv is unavailable)
+     *   - substring against `name` (account.move.line.name) — Odoo's
+     *     line label, which is what shows up in the journal entry detail
+     *   - first-match-wins in $bucketKeywords iteration order, so the
+     *     caller can prioritise specific buckets over generic ones
+     *
+     * Unmatched lines are dropped (not double-counted, not surfaced).
+     *
+     * @param array<string, array<int, string>> $bucketKeywords  e.g. ['irpp' => ['IRPP', 'impôt sur le revenu'], 'fne' => ['FNE', "Fonds National d'Emploi"]]
+     * @return array<string, float>
+     */
+    private function bucketLinesByDescription(
+        array $accountIds,
+        \DateTimeImmutable $from,
+        \DateTimeImmutable $to,
+        array $bucketKeywords
+    ): array {
+        $buckets = array_fill_keys(array_keys($bucketKeywords), 0.0);
+        if ($accountIds === []) return $buckets;
+
+        // Pre-fold every keyword to lowercase, accent-stripped form so the
+        // match loop runs comparable strings (one fold pass at setup, not
+        // per-row).
+        $foldedKw = [];
+        foreach ($bucketKeywords as $bucket => $kws) {
+            $foldedKw[$bucket] = array_filter(array_map(
+                fn ($k) => $this->foldText((string) $k),
+                $kws
+            ));
+        }
+
+        try {
+            $rows = $this->odoo->searchRead('account.move.line', [
+                ['account_id', 'in', $accountIds],
+                ['date', '>=', $from->format('Y-m-d')],
+                ['date', '<=', $to->format('Y-m-d')],
+                ['parent_state', '=', 'posted'],
+            ], ['name', 'balance'], []);
+        } catch (\Throwable $e) {
+            return $buckets;
+        }
+
+        foreach ($rows as $r) {
+            $name = $this->foldText((string) ($r['name'] ?? ''));
+            if ($name === '') continue;
+            foreach ($foldedKw as $bucket => $kws) {
+                foreach ($kws as $kw) {
+                    if (str_contains($name, $kw)) {
+                        $buckets[$bucket] += (float) ($r['balance'] ?? 0);
+                        continue 3; // first-match-wins: skip remaining buckets for this row
+                    }
+                }
+            }
+            // No bucket matched — line is dropped. Diagnostic surfacing
+            // could be added later if the user wants to see uncategorised
+            // 4472 movements.
+        }
+
+        // Buckets are absolute amounts (the underlying balance is
+        // negative for credit-normal liability accounts).
+        foreach ($buckets as $k => $v) $buckets[$k] = abs($v);
+        return $buckets;
+    }
+
+    /**
+     * Normalise a string for substring matching: lowercase + accent fold.
+     * "Impôt" → "impot", "Crédit Foncier" → "credit foncier", etc.
+     * iconv with TRANSLIT may be unavailable on some PHP builds — falls
+     * back to a plain mb_strtolower in that case so matching still works
+     * on accent-free keywords.
+     */
+    private function foldText(string $s): string
+    {
+        $s = mb_strtolower($s, 'UTF-8');
+        if (function_exists('iconv')) {
+            $folded = @iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $s);
+            if (is_string($folded) && $folded !== '') return $folded;
+        }
+        return $s;
     }
 
     private function detectCurrency(): string
