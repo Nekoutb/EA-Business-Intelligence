@@ -49,7 +49,16 @@ class BillingController extends Controller
 
         try {
             $client = OdooFactory::fromConfig();
-            $cacheKey = "billing_{$type}_{$year}_{$month}";
+            // Cache prefix bumped to `billing_v2_` when:
+            //   - the service started paginating invoices (no more
+            //     hard 5000-row truncation)
+            //   - analyze() output gained 'time_to_invoice_series' and
+            //     'credit_note_series' for the new trend charts
+            //   - 'slowest_billings' switched from 5 to 30 rows
+            // Old `billing_` entries would deserialise to a shape the
+            // view doesn't expect — the prefix bump bypasses them
+            // cleanly until they age out of the 5-min TTL.
+            $cacheKey = "billing_v2_{$type}_{$year}_{$month}";
             $billing  = ea_cached(
                 $cacheKey,
                 fn () => (new BillingService($client))->analyze(null, $period)
@@ -238,6 +247,113 @@ class BillingController extends Controller
                 . 'Collected (HT) = HT × payment_progress, where payment_progress = (TTC − Residual) / TTC. '
                 . 'Days Overdue = today − due_date when due_date is past and residual > 0; 0 otherwise. '
                 . 'Headline figures match /billing Reconciliation panel exactly.'
+            ], $noteStyle));
+
+            $writer->close();
+        }, 200, [
+            'Content-Type'           => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'Content-Disposition'    => 'attachment; filename="' . $filename . '"',
+            'Cache-Control'          => 'no-store, max-age=0',
+            'X-Content-Type-Options' => 'nosniff',
+        ]);
+    }
+
+    /**
+     * Excel (.xlsx) export of the top-30 slowest billings — same
+     * rows the view shows behind the <details> accordion, but in a
+     * format the user can drop straight into an outreach workbook.
+     *
+     * Mirrors reconciliationExcel()'s shape: streamed via openspout to
+     * keep memory flat, numeric cells written as real numbers (so
+     * Excel formulas work on the latency column directly), styled
+     * header + cell borders for readability.
+     */
+    public function slowestBillingsExport(Request $request)
+    {
+        $today  = new \DateTimeImmutable();
+        $type   = strtolower((string) $request->query('period', 'ytd'));
+        if (!in_array($type, ['ytd', 'mtd', 'month'], true)) $type = 'ytd';
+        $year   = (int) $request->query('year',  $today->format('Y'));
+        $month  = (int) $request->query('month', $today->format('m'));
+        $period = ['type' => $type, 'year' => $year, 'month' => $month];
+
+        [$cyFrom, $cyTo, $periodLabel] = ea_resolve_period($today, $period);
+
+        $client  = OdooFactory::fromConfig();
+        $billing = (new BillingService($client))->analyze(null, $period);
+        $rows    = $billing['slowest_billings'] ?? [];
+
+        $filename = "billing_slowest_top30_{$type}_{$year}_{$month}.xlsx";
+
+        return new StreamedResponse(function () use ($rows, $periodLabel, $cyFrom, $cyTo) {
+            $writer = new Writer();
+            $writer->openToFile('php://output');
+
+            // Styles — same openspout v5 immutable pattern the
+            // reconciliation export uses, kept in sync visually.
+            $headerBorder = new Border(
+                new BorderPart(BorderName::BOTTOM, '000000', BorderWidth::THIN, BorderStyle::SOLID)
+            );
+            $headerStyle = (new Style())
+                ->withFontBold(true)->withFontSize(11)
+                ->withFontColor(Color::WHITE)
+                ->withBackgroundColor('1E3D44')
+                ->withCellAlignment(CellAlignment::LEFT)
+                ->withBorder($headerBorder);
+            $titleStyle = (new Style())->withFontBold(true)->withFontSize(13);
+            $metaStyle  = (new Style())->withFontSize(10)->withFontColor('888888');
+            $cellBorder = new Border(
+                new BorderPart(BorderName::BOTTOM, 'E5E5E5', BorderWidth::THIN, BorderStyle::SOLID)
+            );
+            $cellStyle    = (new Style())->withFontSize(10)->withBorder($cellBorder);
+            $intCellStyle = (new Style())->withFontSize(10)->withBorder($cellBorder)
+                                         ->withFormat('#,##0;[Red]-#,##0');
+            $latencyHigh  = (new Style())->withFontSize(10)->withBorder($cellBorder)
+                                         ->withFontColor('B00020')->withFontBold(true);
+            $noteStyle    = (new Style())->withFontSize(9)->withFontColor('666666')->withShouldWrapText(true);
+
+            $styledRow = static function (array $values, Style $style): Row {
+                $cells = array_map(fn ($v) => Cell::fromValue($v, $style), $values);
+                return new Row($cells);
+            };
+
+            // Title + meta
+            $writer->addRow($styledRow(['Billing — Slowest Billings (top 30 by latency)'], $titleStyle));
+            $writer->addRow($styledRow([
+                'Period: ' . $periodLabel
+                . '   ·   ' . $cyFrom->format('Y-m-d') . ' to ' . $cyTo->format('Y-m-d')
+                . '   ·   Generated: ' . (new \DateTimeImmutable())->format('Y-m-d H:i')
+            ], $metaStyle));
+            $writer->addRow(Row::fromValues(['']));
+
+            // Header
+            $writer->addRow($styledRow([
+                'Invoice', 'BL / Transport ref', 'Vessel', 'Journey ref',
+                'Last scan', 'Invoice date', 'Latency (days)',
+            ], $headerStyle));
+
+            foreach ($rows as $r) {
+                $latency = (int) ($r['latency_days'] ?? 0);
+                // Highlight rows worse than two weeks — same threshold
+                // the view uses for the coral colouring.
+                $latencyStyle = $latency > 14 ? $latencyHigh : $intCellStyle;
+
+                $writer->addRow(new Row([
+                    Cell::fromValue((string) ($r['invoice_name'] ?: ('#' . ($r['invoice_id'] ?? ''))), $cellStyle),
+                    Cell::fromValue((string) ($r['transport_ref'] ?? ''),  $cellStyle),
+                    Cell::fromValue((string) ($r['vessel_name']   ?? ''),  $cellStyle),
+                    Cell::fromValue((string) ($r['journey_ref']   ?? ''),  $cellStyle),
+                    Cell::fromValue((string) ($r['last_scan']     ?? ''),  $cellStyle),
+                    Cell::fromValue((string) ($r['invoice_date']  ?? ''),  $cellStyle),
+                    Cell::fromValue($latency, $latencyStyle),
+                ]));
+            }
+
+            $writer->addRow(Row::fromValues(['']));
+            $writer->addRow($styledRow([
+                'Methodology: Latency = invoice_date − MAX(scanned_date) across the cargo line '
+                . 'items (equipment / vehicule / bois). Negative means billed on or before completion. '
+                . 'Top 30 sorted by latency desc — escalate the longest waits first.'
             ], $noteStyle));
 
             $writer->close();

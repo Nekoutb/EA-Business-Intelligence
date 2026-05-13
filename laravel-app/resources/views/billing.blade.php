@@ -580,18 +580,77 @@
     @endif
     @endif {{-- /revenue_reconciliation module flag --}}
 
-    {{-- ── Time-to-Invoice distribution + slowest billings ──────────────── --}}
+    {{-- ── Time-to-Invoice — trend line, distribution bars, top-30 ─────────
+         Layout:
+           1. Trend line chart (monthly on YTD / daily on MTD or Month)
+              — ECharts, same engine as Dashboard / Revenue.
+           2. Existing 6-bucket distribution bars (kept — useful "shape"
+              read at a glance).
+           3. Collapsible <details> accordion with the top-30 offenders
+              table and an Excel-download button inside the <summary>.
+         ──────────────────────────────────────────────────────────────── --}}
     @php
-        $b2 = $billingKpis['time_to_invoice'] ?? null;
-        $dist = (!empty($b2) && empty($b2['pending'])) ? ($b2['distribution'] ?? []) : [];
-        $slow = $billing['slowest_billings'] ?? [];
+        $b2     = $billingKpis['time_to_invoice'] ?? null;
+        $dist   = (!empty($b2) && empty($b2['pending'])) ? ($b2['distribution'] ?? []) : [];
+        $slow   = $billing['slowest_billings'] ?? [];
+        $ttiSer = $billing['time_to_invoice_series'] ?? null;
+        // Build the export URL once so the button reflects the current filter.
+        $exportQs = http_build_query([
+            'period' => $period['type'],
+            'year'   => $period['year'],
+            'month'  => $period['month'],
+        ]);
+        $ttiExportUrl = tenant_url('/billing/slowest-billings-export?' . $exportQs);
+        $periodTag = $period['type'] === 'mtd' ? 'MTD' : ($period['type'] === 'month' ? 'Month' : 'YTD');
     @endphp
+
+    {{-- Trend chart: median time-to-invoice over time --}}
+    @if (!empty($ttiSer['labels']) && array_filter($ttiSer['median'] ?? [], fn ($v) => $v !== null))
+      <div class="bg-white border border-[#e8e4de] rounded-xl p-5 mb-6">
+          <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+              <h3 class="text-sm font-semibold text-[#1e3d44]">
+                  Time-to-Invoice — Trend
+                  <span class="text-[10px] uppercase tracking-wider text-[#a09d95] font-medium ml-1">
+                    {{ $periodTag }} · {{ $ttiSer['granularity'] === 'day' ? 'daily' : 'monthly' }}
+                  </span>
+              </h3>
+              <div class="text-[11px] text-[#7c7466]">Median days · per {{ $ttiSer['granularity'] }}</div>
+          </div>
+          <div id="ea-tti-chart" style="height: 260px;"></div>
+          <div class="text-[11px] text-[#7c7466] mt-2 leading-relaxed">
+              <strong>Reading the trend:</strong> each point is the median days from last cargo scan to invoice posted for shipments billed in that {{ $ttiSer['granularity'] }}. Persistent climb = the billing team is falling behind operations.
+          </div>
+      </div>
+    @endif
+
+    {{-- Credit-note % trend chart --}}
+    @php
+        $cnSer = $billing['credit_note_series'] ?? null;
+    @endphp
+    @if (!empty($cnSer['labels']) && array_filter($cnSer['rate'] ?? [], fn ($v) => $v !== null))
+      <div class="bg-white border border-[#e8e4de] rounded-xl p-5 mb-6">
+          <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+              <h3 class="text-sm font-semibold text-[#1e3d44]">
+                  Credit Note Rate — Trend
+                  <span class="text-[10px] uppercase tracking-wider text-[#a09d95] font-medium ml-1">
+                    {{ $periodTag }} · {{ $cnSer['granularity'] === 'day' ? 'daily' : 'monthly' }}
+                  </span>
+              </h3>
+              <div class="text-[11px] text-[#7c7466]">% · count(out_refund) ÷ count(out_invoice)</div>
+          </div>
+          <div id="ea-cn-chart" style="height: 260px;"></div>
+          <div class="text-[11px] text-[#7c7466] mt-2 leading-relaxed">
+              <strong>Reading the trend:</strong> share of posted invoices that turned into credit notes in the {{ $cnSer['granularity'] === 'day' ? 'day' : 'month' }}. Lower is better — a sustained spike points at a billing-accuracy or customer-dispute issue.
+          </div>
+      </div>
+    @endif
+
     @if (!empty($dist) || !empty($slow))
       <div class="bg-white border border-[#e8e4de] rounded-xl p-5 mb-6">
           <div class="flex items-center justify-between mb-3">
               <h3 class="text-sm font-semibold text-[#1e3d44]">
                   Time-to-Invoice — Distribution &amp; Slowest Billings
-                  <span class="text-[10px] uppercase tracking-wider text-[#a09d95] font-medium ml-1">{{ $period['type'] === 'mtd' ? 'MTD' : 'YTD' }}</span>
+                  <span class="text-[10px] uppercase tracking-wider text-[#a09d95] font-medium ml-1">{{ $periodTag }}</span>
               </h3>
           </div>
 
@@ -622,40 +681,60 @@
             </div>
           @endif
 
+          {{-- Top-30 slowest — collapsed by default behind a <details>
+               accordion so the page doesn't dump a 30-row table on
+               every load. Excel-export button sits in the <summary>
+               so it's accessible without opening the table. --}}
           @if (!empty($slow))
-            <div class="overflow-x-auto">
-                <table class="w-full text-xs">
-                    <thead>
-                        <tr class="text-[10px] uppercase tracking-wider text-[#8a8578] border-b border-[#e8e4de]">
-                            <th class="text-left  py-2 pr-3 font-medium">Slowest billings</th>
-                            <th class="text-left  py-2 px-3 font-medium">BL</th>
-                            <th class="text-left  py-2 px-3 font-medium">Vessel · Journey</th>
-                            <th class="text-right py-2 px-3 font-medium">Last scan</th>
-                            <th class="text-right py-2 px-3 font-medium">Invoice date</th>
-                            <th class="text-right py-2 pl-3 font-medium">Latency</th>
-                        </tr>
-                    </thead>
-                    <tbody class="divide-y divide-[#f1ede5]">
-                        @foreach ($slow as $r)
-                            <tr class="text-[#2d3748]">
-                                <td class="py-2 pr-3 font-medium">{{ $r['invoice_name'] ?: '#' . $r['invoice_id'] }}</td>
-                                <td class="py-2 px-3">{{ $r['transport_ref'] ?: '—' }}</td>
-                                <td class="py-2 px-3">
-                                    {{ $r['vessel_name'] ?: '—' }}
-                                    @if (!empty($r['journey_ref']))
-                                      <span class="text-[#a09d95]"> · {{ $r['journey_ref'] }}</span>
-                                    @endif
-                                </td>
-                                <td class="py-2 px-3 text-right tabular-nums text-[#7c7466]">{{ \Carbon\Carbon::parse($r['last_scan'])->format('Y-m-d') }}</td>
-                                <td class="py-2 px-3 text-right tabular-nums">{{ $r['invoice_date'] }}</td>
-                                <td class="py-2 pl-3 text-right tabular-nums font-semibold {{ $r['latency_days'] > 14 ? 'text-coral-700' : 'text-[#2d3748]' }}">
-                                    {{ $r['latency_days'] }} d
-                                </td>
+            <details class="group">
+                <summary class="cursor-pointer list-none flex items-center justify-between gap-3 py-2 px-3 -mx-3 rounded-md bg-[#faf8f5] border border-[#e8e4de] hover:bg-[#f3efe6] transition-colors">
+                    <div class="flex items-center gap-2">
+                        <svg class="w-4 h-4 text-[#5a6a70] transition-transform group-open:rotate-90" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
+                        <span class="text-xs font-semibold text-[#1e3d44]">Top {{ count($slow) }} slowest billings</span>
+                        <span class="text-[11px] text-[#7c7466]">(click to expand)</span>
+                    </div>
+                    <a href="{{ $ttiExportUrl }}"
+                       class="inline-flex items-center gap-1.5 text-[11px] font-medium text-[#1e3d44] bg-white border border-[#cbc7be] rounded-md px-2.5 py-1 hover:bg-[#1e3d44] hover:text-white transition-colors"
+                       onclick="event.stopPropagation();"
+                       title="Download top 30 as Excel">
+                        <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v12m0 0l-4-4m4 4l4-4M4 20h16"/></svg>
+                        Download Excel
+                    </a>
+                </summary>
+                <div class="overflow-x-auto mt-3">
+                    <table class="w-full text-xs">
+                        <thead>
+                            <tr class="text-[10px] uppercase tracking-wider text-[#8a8578] border-b border-[#e8e4de]">
+                                <th class="text-left  py-2 pr-3 font-medium">Invoice</th>
+                                <th class="text-left  py-2 px-3 font-medium">BL</th>
+                                <th class="text-left  py-2 px-3 font-medium">Vessel · Journey</th>
+                                <th class="text-right py-2 px-3 font-medium">Last scan</th>
+                                <th class="text-right py-2 px-3 font-medium">Invoice date</th>
+                                <th class="text-right py-2 pl-3 font-medium">Latency</th>
                             </tr>
-                        @endforeach
-                    </tbody>
-                </table>
-            </div>
+                        </thead>
+                        <tbody class="divide-y divide-[#f1ede5]">
+                            @foreach ($slow as $r)
+                                <tr class="text-[#2d3748]">
+                                    <td class="py-2 pr-3 font-medium">{{ $r['invoice_name'] ?: '#' . $r['invoice_id'] }}</td>
+                                    <td class="py-2 px-3">{{ $r['transport_ref'] ?: '—' }}</td>
+                                    <td class="py-2 px-3">
+                                        {{ $r['vessel_name'] ?: '—' }}
+                                        @if (!empty($r['journey_ref']))
+                                          <span class="text-[#a09d95]"> · {{ $r['journey_ref'] }}</span>
+                                        @endif
+                                    </td>
+                                    <td class="py-2 px-3 text-right tabular-nums text-[#7c7466]">{{ \Carbon\Carbon::parse($r['last_scan'])->format('Y-m-d') }}</td>
+                                    <td class="py-2 px-3 text-right tabular-nums">{{ $r['invoice_date'] }}</td>
+                                    <td class="py-2 pl-3 text-right tabular-nums font-semibold {{ $r['latency_days'] > 14 ? 'text-coral-700' : 'text-[#2d3748]' }}">
+                                        {{ $r['latency_days'] }} d
+                                    </td>
+                                </tr>
+                            @endforeach
+                        </tbody>
+                    </table>
+                </div>
+            </details>
           @endif
 
           <div class="text-[11px] text-[#7c7466] mt-3 leading-relaxed">
@@ -663,5 +742,95 @@
           </div>
       </div>
     @endif
+
+    {{-- ── ECharts initialisation for the two trend charts ──────────────
+         ECharts is loaded once globally in layouts/app.blade.php so we
+         just call echarts.init() against the two container divs above.
+         Both charts honour the master period filter through the data
+         payload computed server-side (granularity, labels, series).
+         ─────────────────────────────────────────────────────────────── --}}
+    <script>
+    (function () {
+      if (typeof echarts === 'undefined') return;
+
+      const FF = "'Inter','Segoe UI',-apple-system,BlinkMacSystemFont,sans-serif";
+      const grid = '#f1ede5';
+      const axisText = '#7c7466';
+      const tip = {
+        trigger: 'axis', backgroundColor: '#fff', borderColor: '#e8e4de',
+        borderWidth: 1, padding: [6, 10],
+        textStyle: { color: '#1e3d44', fontSize: 11, fontFamily: FF },
+        axisPointer: { type: 'line', lineStyle: { color: '#cbc7be', type: 'dashed' } },
+      };
+
+      @if (!empty($ttiSer['labels']) && array_filter($ttiSer['median'] ?? [], fn ($v) => $v !== null))
+      // Time-to-invoice trend
+      const ttiEl = document.getElementById('ea-tti-chart');
+      if (ttiEl) {
+        const ttiChart = echarts.init(ttiEl);
+        ttiChart.setOption({
+          textStyle: { fontFamily: FF, color: '#374151' },
+          grid: { left: 44, right: 16, top: 18, bottom: 28 },
+          tooltip: { ...tip, valueFormatter: v => v == null ? '—' : v.toFixed(1) + ' d' },
+          xAxis: { type: 'category',
+            data: @json($ttiSer['labels']),
+            axisLine: { lineStyle: { color: '#cbc7be' } }, axisTick: { show: false },
+            axisLabel: { color: axisText, fontSize: 10, hideOverlap: true } },
+          yAxis: { type: 'value', name: 'Median days',
+            nameTextStyle: { color: axisText, fontSize: 10 },
+            axisLine: { show: false }, axisTick: { show: false },
+            splitLine: { lineStyle: { color: grid } },
+            axisLabel: { color: axisText, fontSize: 10, formatter: v => v.toFixed(0) + 'd' } },
+          series: [{
+            name: 'Median time-to-invoice', type: 'line',
+            data: @json($ttiSer['median']),
+            lineStyle: { color: '#1e3d44', width: 2.2 },
+            itemStyle: { color: '#1e3d44' },
+            symbol: 'circle', symbolSize: 6,
+            connectNulls: false,
+            areaStyle: { color: 'rgba(30,61,68,0.08)' },
+            markLine: { silent: true, symbol: 'none',
+              lineStyle: { color: '#d97706', type: 'dashed', width: 1 },
+              label: { position: 'end', formatter: '14d warn', color: '#92400e', fontSize: 9 },
+              data: [{ yAxis: 14 }] }
+          }],
+        });
+        window.addEventListener('resize', () => ttiChart.resize());
+      }
+      @endif
+
+      @if (!empty($cnSer['labels']) && array_filter($cnSer['rate'] ?? [], fn ($v) => $v !== null))
+      // Credit-note % trend
+      const cnEl = document.getElementById('ea-cn-chart');
+      if (cnEl) {
+        const cnChart = echarts.init(cnEl);
+        cnChart.setOption({
+          textStyle: { fontFamily: FF, color: '#374151' },
+          grid: { left: 44, right: 16, top: 18, bottom: 28 },
+          tooltip: { ...tip, valueFormatter: v => v == null ? '—' : v.toFixed(2) + ' %' },
+          xAxis: { type: 'category',
+            data: @json($cnSer['labels']),
+            axisLine: { lineStyle: { color: '#cbc7be' } }, axisTick: { show: false },
+            axisLabel: { color: axisText, fontSize: 10, hideOverlap: true } },
+          yAxis: { type: 'value', name: 'Credit note %',
+            nameTextStyle: { color: axisText, fontSize: 10 },
+            axisLine: { show: false }, axisTick: { show: false },
+            splitLine: { lineStyle: { color: grid } },
+            axisLabel: { color: axisText, fontSize: 10, formatter: v => v.toFixed(1) + '%' } },
+          series: [{
+            name: 'Credit note %', type: 'line',
+            data: @json($cnSer['rate']),
+            lineStyle: { color: '#b00020', width: 2.2 },
+            itemStyle: { color: '#b00020' },
+            symbol: 'circle', symbolSize: 6,
+            connectNulls: false,
+            areaStyle: { color: 'rgba(176,0,32,0.07)' },
+          }],
+        });
+        window.addEventListener('resize', () => cnChart.resize());
+      }
+      @endif
+    })();
+    </script>
 
 @endsection
