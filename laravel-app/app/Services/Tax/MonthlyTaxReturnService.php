@@ -321,7 +321,12 @@ final class MonthlyTaxReturnService
                 $this->line('L14', "Chiffre d'affaires exonéré",                          $L14),
                 $this->line('L15', 'CA global hors taxes = L10 + L11 + L12 + L13',         principal: $L15),
             ],
-            'total' => $tvaSurL10 + $tvaSurL11,
+            // Section total tracks L28 (TVA collectée on §5 line 381) for
+            // consistency — was previously $tvaSurL10 + $tvaSurL11 which
+            // silently dropped L12. Currently $tvaSurL12 = 0 so this is
+            // a no-op, but locks the two computations in lockstep so a
+            // future L12 carrying value can't desync them.
+            'total' => $tvaSurL10 + $tvaSurL11 + $tvaSurL12,
         ];
 
         // §3 TVA déductible
@@ -481,7 +486,16 @@ final class MonthlyTaxReturnService
                 $this->line('L48', 'Précomptes sur rémunérations et honoraires (5 %)',  principal: $L48principal, cac: $L48cac, total: $L48total),
                 $this->line('L49', 'TOTAL = L45 + L46 + L47 + L48',                     principal: $L49principal, cac: $L49cac, total: $L49total),
             ],
-            'total' => 0,    // §8 is deductive — does not contribute to total à payer
+            // Section header total = L49 (the section's own TOTAL line).
+            // Was previously hardcoded to 0 because §8 is deductive — but
+            // that conflated two separate concepts: "does this section
+            // contribute to total_a_payer?" (no, the deductive part is
+            // already credited via §9 L52 — buildRecap below excludes
+            // §8 from $defs anyway) vs "what does the section header
+            // display?" (the row sum, same as every other section). The
+            // displayed total now matches L49 so the user can see the
+            // amount deductible at a glance, without affecting recap.
+            'total' => $L49total,
         ];
 
         // §9 IR — Liquidation
