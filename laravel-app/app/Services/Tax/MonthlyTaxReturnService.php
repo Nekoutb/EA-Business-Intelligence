@@ -804,32 +804,56 @@ final class MonthlyTaxReturnService
         // All five 4472-based buckets share a single Odoo round-trip
         // (autoExtract uses bucketLinesByDescription); the values
         // arrive here already separated.
-        $L67 = $L('L67');
+        // §12 — L67 carries a Principal + CAC split where the SOURCED
+        // amount in 4472XX (filtered by IRPP keyword in autoExtract) IS
+        // the total to declare. User spec 2026-05-14:
+        //   Total     = sourced amount         (e.g. 5,000,000)
+        //   Principal = Total / 1.10           (e.g. 4,545,454.55)
+        //   CAC       = Principal × 10%        (e.g. 454,545.45)
+        // Principal + CAC = Total (modulo float rounding ≤ 1 XAF).
+        // Different from §8 L45's split (which uses CAC = Total × 10%);
+        // here the CAC is computed on the Principal, not on the Total.
+        $L67total     = $L('L67');
+        $L67principal = $L67total / 1.10;
+        $L67cac       = $L67principal * 0.10;
+
+        // L68-L72 stay as single-column (Principal only — no CAC) for
+        // now; user hasn't requested an equivalent split for them.
         $L68 = $L('L68');
         $L69 = $L('L69');
         $L70 = $L('L70');
         $L71 = $L('L71');
         $L72 = $L('L72');
-        $L73 = $L67 + $L68 + $L69 + $L70 + $L71 + $L72;
-        $cacOnL73 = $L73 * 0.10;
+
+        // L73 TOTAL aggregates the actual sub-line column values so the
+        // row math closes. Was previously $L73 * 0.10 for CAC which
+        // double-counted L67's CAC; now we sum sub-line CACs directly
+        // (= L67's CAC, since L68-L72 don't carry one).
+        $L73principal = $L67principal + $L68 + $L69 + $L70 + $L71 + $L72;
+        $L73cac       = $L67cac;
+        $L73total     = $L67total     + $L68 + $L69 + $L70 + $L71 + $L72;
+
         $s12 = [
             'id' => 'rts', 'code' => '12', 'title' => 'IMPÔTS RETENUS SUR SALAIRES',
             'subtitle' => 'Charges sociales et taxes salariales',
             // Form §12 columns: Principal · CAC · Pénalités · Total — no
-            // Base/Taux. Salary retentions carry only a principal amount
-            // (the taux is implicit in payroll calculations upstream);
-            // CAC applies on IRPP (L67) only.
+            // Base/Taux. CAC applies on IRPP (L67) only; other lines
+            // carry just a Principal column.
             'layout' => 'tax_due',
             'lines' => [
-                $this->line('L67', 'IRPP sur traitements et salaires',           principal: $L67, cac: $L67 * 0.10),
+                $this->line('L67', 'IRPP sur traitements et salaires',            principal: $L67principal, cac: $L67cac, total: $L67total),
                 $this->line('L68', 'Crédit Foncier du Cameroun (part salariale)', principal: $L68),
                 $this->line('L69', 'Crédit Foncier du Cameroun (part patronale)', principal: $L69),
                 $this->line('L70', "Fonds National de l'Emploi",                  principal: $L70),
                 $this->line('L71', 'Redevance audiovisuelle',                     principal: $L71),
                 $this->line('L72', 'Taxe de Développement Local (taxe communale)', principal: $L72),
-                $this->line('L73', 'TOTAL = L67 + L68 + L69 + L70 + L71 + L72',   principal: $L73, cac: $cacOnL73),
+                $this->line('L73', 'TOTAL = L67 + L68 + L69 + L70 + L71 + L72',   principal: $L73principal, cac: $L73cac, total: $L73total),
             ],
-            'total' => $L73 + $cacOnL73,
+            // Section header total = L73's Total column = sum of sub-line
+            // Totals. Recap (buildRecap line 654) reads $find('rts', 'L73')
+            // and pulls its 'total' field, so the L73-Total update flows
+            // through cleanly.
+            'total' => $L73total,
         ];
 
         // §13 PV
