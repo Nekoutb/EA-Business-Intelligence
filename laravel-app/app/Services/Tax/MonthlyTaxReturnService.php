@@ -800,8 +800,21 @@ final class MonthlyTaxReturnService
             'lines' => [
                 $this->line('L50', 'Acompte sur CA déclaré',                        $L50base, '2 %',  principal: $L50principal, cac: $L50cac, total: $L50total),
                 $this->line('L51', 'Acompte de 15 % sur loyers perçus',             $L51base, '15 %', principal: $L51principal, cac: $L51cac, total: $L51total),
-                $this->line('L52', 'Déductions à opérer = L49',                                    principal: $L52principal,                  total: $L52total),
-                $this->line('L53', 'Crédit antérieur = L55 déclaration précédente',                principal: $L53principal,                  total: $L53total),
+                // L52 references L49 (§8 déductions). Pass Principal,
+                // CAC and Total explicitly so the displayed row carries
+                // ALL three columns from L49 — was previously dropping
+                // the CAC column so the visible row showed Principal +
+                // blank CAC + Total, which looked like an additive bug
+                // even though the L54 computation below used the right
+                // values. The rule: any line that says "= L<other>"
+                // must carry every column of the referenced line.
+                $this->line('L52', 'Déductions à opérer = L49',                                    principal: $L52principal, cac: $L52cac,    total: $L52total),
+                // L53 references L55 of the prior declaration. Same rule
+                // applies — pass all three even though the current value
+                // is zero across the board (prior-month carry isn't
+                // implemented yet); keeps the contract consistent so a
+                // future implementation doesn't silently drop CAC.
+                $this->line('L53', 'Crédit antérieur = L55 déclaration précédente',                principal: $L53principal, cac: $L53cac,    total: $L53total),
                 $this->line('L54', 'Acompte à payer = (L50 + L51) − (L52 + L53)',                  principal: $L54principal, cac: $L54cac,    total: $L54total),
                 $this->line('L55', "Crédit d'impôt à reporter (solde négatif L54)",                principal: $L55principal, cac: $L55cac,    total: $L55total),
             ],

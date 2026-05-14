@@ -17,7 +17,7 @@
         <div class="text-xs text-slate-700 leading-relaxed">
             <strong>Confidential — internal reference.</strong> This page documents the exact data sources, filters, and formulas behind every box in the BMS. The intent is that a tax accountant or financial controller can read a line, understand where the number comes from, and confidently request a change. Use it to onboard new operators, audit assumptions, and plan rule changes.
             <br><br>
-            <em>Status:</em> Currently documenting <strong>Tax Return sections §7 (Acomptes à reverser), §8 (Acomptes à déduire) and §12 (Impôts retenus sur salaires)</strong>. Other sections will be added on request.
+            <em>Status:</em> Currently documenting <strong>Tax Return sections §7 (Acomptes à reverser), §8 (Acomptes à déduire), §9 (IR Liquidation) and §12 (Impôts retenus sur salaires)</strong>, plus a cross-cutting rules panel at the top. Other sections will be added on request.
         </div>
     </div>
 </div>
@@ -25,10 +25,56 @@
 {{-- Quick anchors --}}
 <div class="panel p-3 mb-5 flex gap-2 flex-wrap">
     <span class="text-[10px] uppercase tracking-wider text-slate-500 font-medium px-2 py-1">Jump to</span>
+    <a href="#cross-cutting-rules" class="text-xs px-3 py-1 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-700 transition">Cross-cutting rules</a>
     <a href="#tax-return-s7"  class="text-xs px-3 py-1 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-700 transition">Tax Return · §7 Acomptes à reverser</a>
     <a href="#tax-return-s8"  class="text-xs px-3 py-1 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-700 transition">Tax Return · §8 Acomptes à déduire</a>
+    <a href="#tax-return-s9"  class="text-xs px-3 py-1 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-700 transition">Tax Return · §9 IR Liquidation</a>
     <a href="#tax-return-s12" class="text-xs px-3 py-1 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-700 transition">Tax Return · §12 RTS</a>
 </div>
+
+{{-- ─────────────────────────────────────── Cross-cutting rules ──── --}}
+<section id="cross-cutting-rules" class="panel p-6 mb-5 scroll-mt-6">
+    <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+        <div>
+            <h2 class="text-base font-bold text-slate-900">Cross-cutting rules · apply to every line on the tax return</h2>
+            <p class="text-[11px] text-slate-500 mt-0.5">General conventions that govern how lines are sourced, split and propagated. Documented once here so per-line cards don't have to repeat them.</p>
+        </div>
+    </div>
+
+    <div class="space-y-3 text-[12.5px] text-slate-700 leading-relaxed">
+        <div class="border border-slate-200 rounded-md bg-white p-4">
+            <h3 class="text-[12px] font-semibold text-slate-900 mb-1.5">Reference-line carry-through</h3>
+            <p>
+                When a line's label says <em>"= L<other>"</em>, the row carries forward <strong>every column</strong> of the referenced line — Principal, CAC, Pénalités and Total. None are dropped.
+            </p>
+            <p class="mt-1.5">
+                Example: §9 L52 "Déductions à opérer = L49" must display L49's Principal AND L49's CAC AND L49's Total — not just the Principal. Same rule applies to L36 (= L32), L53 (= L55 prior month), and any future reference line.
+            </p>
+        </div>
+
+        <div class="border border-slate-200 rounded-md bg-white p-4">
+            <h3 class="text-[12px] font-semibold text-slate-900 mb-1.5">Period anchor</h3>
+            <p>
+                Every line that sources from the GL is restricted to the declaration window — first to last calendar day of the chosen month. Only posted entries (<code class="font-mono text-[11px] bg-slate-100 px-1 rounded">account.move.line.parent_state = 'posted'</code>). Drafts and cancelled moves are excluded.
+            </p>
+        </div>
+
+        <div class="border border-slate-200 rounded-md bg-white p-4">
+            <h3 class="text-[12px] font-semibold text-slate-900 mb-1.5">Principal / CAC split variants</h3>
+            <p>The form mixes two CAC conventions; both currently coexist depending on the line:</p>
+            <ul class="mt-1.5 pl-5 list-disc space-y-1">
+                <li><strong>Total/1.10 split</strong> (used on §7 L40, §8 L45, §12 L67): the GL amount IS the Total. Principal = Total ÷ 1.10, CAC = Principal × 10%. Principal + CAC ≈ Total.</li>
+                <li><strong>Principal + 10% on top</strong> (legacy — used on §6 L36, §7 L41–L43, §10–§11 lines): the GL amount IS the Principal. CAC = Principal × 10% added on top. Total = Principal + CAC = Principal × 1.10.</li>
+            </ul>
+            <p class="mt-1.5 text-slate-600">Each line's card below specifies which variant applies.</p>
+        </div>
+
+        <div class="border border-slate-200 rounded-md bg-white p-4">
+            <h3 class="text-[12px] font-semibold text-slate-900 mb-1.5">Section header total</h3>
+            <p>The figure shown next to each <code class="font-mono text-[11px] bg-slate-100 px-1 rounded">§N</code> collapsed header equals that section's TOTAL line's Total column (L9 / L15 / L22 / L32 / L39 / L44 / L49 / L54 / L62 / L66 / L73 / L77 / L80 depending on the section). §8 is deductive — its header is shown for visibility but does NOT feed Total à payer (the deductible already flows through §9 L52).</p>
+        </div>
+    </div>
+</section>
 
 {{-- ────────────────────────────── Tax Return · §7 IR à reverser ──── --}}
 <section id="tax-return-s7" class="panel p-6 mb-5 scroll-mt-6">
@@ -289,6 +335,166 @@
     </div>
 </section>
 
+{{-- ────────────────────────────────── Tax Return · §9 IR Liquidation ──── --}}
+<section id="tax-return-s9" class="panel p-6 mb-5 scroll-mt-6">
+    <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+        <div>
+            <h2 class="text-base font-bold text-slate-900">Tax Return — Section 9 · Liquidation des Acomptes Impôts sur le Revenu</h2>
+            <p class="text-[11px] text-slate-500 mt-0.5">Monthly IR acompte computation · uses §2 L15 + §8 L49 + prior-month L55</p>
+        </div>
+        <span class="text-[10px] uppercase tracking-wider text-slate-400 font-medium font-mono">/monthly-tax-return</span>
+    </div>
+
+    <div class="bg-slate-50 border border-slate-200 rounded-md p-4 mb-5 text-[12.5px] text-slate-700 leading-relaxed">
+        <h3 class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold mb-2">Section context</h3>
+        <p>
+            §9 liquidates the monthly IR acompte. The base (L50) is 2 % of the §2 CA Global HT (L15). Adds the rental acompte (L51), subtracts §8 deductible retentions (L52 = L49) and any prior-month credit carry (L53). The result (L54) is either the amount due for the month or a credit to carry forward (L55).
+        </p>
+        <p class="mt-2 text-[11.5px] text-slate-600">
+            <strong>Column-wise propagation:</strong> L52, L53, L54 and L55 all propagate Principal, CAC, Pénalités and Total <em>independently</em> through the (L50 + L51) − (L52 + L53) formula. The displayed row for L52 mirrors L49 column-by-column; for L53 the prior-month L55 column-by-column.
+        </p>
+    </div>
+
+    <div class="space-y-3">
+
+        {{-- L50 --}}
+        <div class="border border-slate-200 rounded-md overflow-hidden bg-white">
+            <div class="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-center gap-3 flex-wrap">
+                <span class="font-mono text-[11px] font-semibold tracking-wider bg-slate-900 text-white px-2 py-0.5 rounded">L50</span>
+                <span class="text-[13px] font-semibold text-slate-900">Acompte sur CA déclaré</span>
+                <span class="ml-auto text-[10px] uppercase tracking-wider text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full font-semibold">Derived</span>
+            </div>
+            <div class="px-4 py-3 grid sm:grid-cols-12 gap-x-4 gap-y-2 text-[12px]">
+                <div class="sm:col-span-2 text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Source</div>
+                <div class="sm:col-span-10 text-slate-800">§2 L15 (CA Global HT) — not from Odoo directly.</div>
+
+                <div class="sm:col-span-2 text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Formula</div>
+                <div class="sm:col-span-10 text-slate-800">
+                    <div class="font-mono text-[11.5px] bg-slate-50 border border-slate-200 rounded p-2 leading-relaxed">
+                        Base       = L15<br>
+                        Taux       = 2%<br>
+                        Principal  = L15 × 2%<br>
+                        CAC        = Principal × 10%<br>
+                        Total      = Principal + CAC
+                    </div>
+                </div>
+
+                <div class="sm:col-span-2 text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Notes</div>
+                <div class="sm:col-span-10 text-slate-600">Uses the "Principal + 10% on top" CAC variant (legacy model). 2% is the régime du réel rate; régime simplifié uses 5% — not currently parameterised.</div>
+            </div>
+        </div>
+
+        {{-- L51 --}}
+        <div class="border border-slate-200 rounded-md overflow-hidden bg-white">
+            <div class="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-center gap-3 flex-wrap">
+                <span class="font-mono text-[11px] font-semibold tracking-wider bg-slate-900 text-white px-2 py-0.5 rounded">L51</span>
+                <span class="text-[13px] font-semibold text-slate-900">Acompte de 15 % sur loyers perçus</span>
+                <span class="ml-auto text-[10px] uppercase tracking-wider text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full font-semibold">Manual entry</span>
+            </div>
+            <div class="px-4 py-3 grid sm:grid-cols-12 gap-x-4 gap-y-2 text-[12px]">
+                <div class="sm:col-span-2 text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Source</div>
+                <div class="sm:col-span-10 text-slate-800">No Odoo source — Base defaults to 0 pending user direction.</div>
+                <div class="sm:col-span-2 text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Formula</div>
+                <div class="sm:col-span-10 text-slate-800">Principal = Base × 15% · CAC = Principal × 10% · Total = Principal + CAC.</div>
+                <div class="sm:col-span-2 text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Notes</div>
+                <div class="sm:col-span-10 text-slate-600">Tell me which account hosts rental income (typically class 706 sub-account) and I'll auto-source it.</div>
+            </div>
+        </div>
+
+        {{-- L52 --}}
+        <div class="border border-slate-200 rounded-md overflow-hidden bg-white">
+            <div class="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-center gap-3 flex-wrap">
+                <span class="font-mono text-[11px] font-semibold tracking-wider bg-slate-900 text-white px-2 py-0.5 rounded">L52</span>
+                <span class="text-[13px] font-semibold text-slate-900">Déductions à opérer = L49</span>
+                <span class="ml-auto text-[10px] uppercase tracking-wider text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-full font-semibold">Reference line</span>
+            </div>
+            <div class="px-4 py-3 grid sm:grid-cols-12 gap-x-4 gap-y-2 text-[12px]">
+                <div class="sm:col-span-2 text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Source</div>
+                <div class="sm:col-span-10 text-slate-800">§8 L49 — the TOTAL row of "Acomptes et précomptes à déduire" for the same month.</div>
+
+                <div class="sm:col-span-2 text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Carry-through</div>
+                <div class="sm:col-span-10 text-slate-800">
+                    <div class="font-mono text-[11.5px] bg-slate-50 border border-slate-200 rounded p-2 leading-relaxed">
+                        L52.Principal = L49.Principal<br>
+                        L52.CAC       = L49.CAC<br>
+                        L52.Total     = L49.Total
+                    </div>
+                    All three columns are carried forward — see the cross-cutting <em>Reference-line carry-through</em> rule at the top of this page.
+                </div>
+
+                <div class="sm:col-span-2 text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Notes</div>
+                <div class="sm:col-span-10 text-slate-600">Was previously dropping the CAC column when rendering — fixed 2026-05-14 (PR #145). Now matches L49 column-by-column.</div>
+            </div>
+        </div>
+
+        {{-- L53 --}}
+        <div class="border border-slate-200 rounded-md overflow-hidden bg-white">
+            <div class="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-center gap-3 flex-wrap">
+                <span class="font-mono text-[11px] font-semibold tracking-wider bg-slate-900 text-white px-2 py-0.5 rounded">L53</span>
+                <span class="text-[13px] font-semibold text-slate-900">Crédit antérieur = L55 déclaration précédente</span>
+                <span class="ml-auto text-[10px] uppercase tracking-wider text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-full font-semibold">Reference line</span>
+            </div>
+            <div class="px-4 py-3 grid sm:grid-cols-12 gap-x-4 gap-y-2 text-[12px]">
+                <div class="sm:col-span-2 text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Source</div>
+                <div class="sm:col-span-10 text-slate-800">L55 of the <em>previous</em> month's declaration. Carries the prior-month credit forward to offset this month's acompte.</div>
+                <div class="sm:col-span-2 text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Carry-through</div>
+                <div class="sm:col-span-10 text-slate-800">Principal / CAC / Total — all three columns. Currently 0 across the board (prior-month carry not yet implemented); the row still passes explicit zeros so the column contract is consistent.</div>
+                <div class="sm:col-span-2 text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Notes</div>
+                <div class="sm:col-span-10 text-slate-600">Implementation backlog: pull last month's L55 from session storage or recompute. Tell me when you want this lit up.</div>
+            </div>
+        </div>
+
+        {{-- L54 --}}
+        <div class="border border-slate-200 rounded-md overflow-hidden bg-white">
+            <div class="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-center gap-3 flex-wrap">
+                <span class="font-mono text-[11px] font-semibold tracking-wider bg-slate-900 text-white px-2 py-0.5 rounded">L54</span>
+                <span class="text-[13px] font-semibold text-slate-900">Acompte à payer = (L50 + L51) − (L52 + L53)</span>
+                <span class="ml-auto text-[10px] uppercase tracking-wider text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full font-semibold">Derived</span>
+            </div>
+            <div class="px-4 py-3 grid sm:grid-cols-12 gap-x-4 gap-y-2 text-[12px]">
+                <div class="sm:col-span-2 text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Formula</div>
+                <div class="sm:col-span-10 text-slate-800">
+                    <div class="font-mono text-[11.5px] bg-slate-50 border border-slate-200 rounded p-2 leading-relaxed">
+                        Principal = (L50.P + L51.P) − (L52.P + L53.P)<br>
+                        CAC       = (L50.C + L51.C) − (L52.C + L53.C)<br>
+                        Total     = (L50.T + L51.T) − (L52.T + L53.T)
+                    </div>
+                    Each column propagates independently. The section header total = max(L54.Total, 0) — only the net due is owed; if L54 is negative it becomes L55 (credit to carry).
+                </div>
+            </div>
+        </div>
+
+        {{-- L55 --}}
+        <div class="border border-slate-200 rounded-md overflow-hidden bg-white">
+            <div class="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-center gap-3 flex-wrap">
+                <span class="font-mono text-[11px] font-semibold tracking-wider bg-slate-900 text-white px-2 py-0.5 rounded">L55</span>
+                <span class="text-[13px] font-semibold text-slate-900">Crédit d'impôt à reporter (solde négatif L54)</span>
+                <span class="ml-auto text-[10px] uppercase tracking-wider text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full font-semibold">Derived</span>
+            </div>
+            <div class="px-4 py-3 grid sm:grid-cols-12 gap-x-4 gap-y-2 text-[12px]">
+                <div class="sm:col-span-2 text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Formula</div>
+                <div class="sm:col-span-10 text-slate-800">
+                    <div class="font-mono text-[11.5px] bg-slate-50 border border-slate-200 rounded p-2 leading-relaxed">
+                        If L54.Total &lt; 0:<br>
+                        &nbsp;&nbsp;Principal = |L54.Principal|<br>
+                        &nbsp;&nbsp;CAC       = |L54.CAC|<br>
+                        &nbsp;&nbsp;Total     = |L54.Total|<br>
+                        Otherwise all three = 0.
+                    </div>
+                </div>
+                <div class="sm:col-span-2 text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Notes</div>
+                <div class="sm:col-span-10 text-slate-600">L55 of this month becomes L53 of the next month (carry-forward — backlog).</div>
+            </div>
+        </div>
+
+    </div>
+
+    <div class="mt-5 pt-4 border-t border-slate-200 text-[11px] text-slate-500">
+        <h3 class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold mb-1.5">Where the code lives</h3>
+        <code class="font-mono bg-slate-50 border border-slate-200 px-1 rounded">app/Services/Tax/MonthlyTaxReturnService.php</code> · <code>buildSections()</code> §9 builds L50–L55 with column-wise propagation. Recap row <em>"Acompte à payer (= L54)"</em> reads L54.Total via <code>buildRecap()</code>'s <code>$find('ir_liq', 'L54')</code>.
+    </div>
+</section>
+
 {{-- ──────────────────────────────────── Tax Return · §12 RTS ──── --}}
 <section id="tax-return-s12" class="panel p-6 mb-5 scroll-mt-6">
     <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
@@ -542,7 +748,7 @@
 
 {{-- Future-section placeholder --}}
 <div class="panel p-4 border-l-4 border-slate-300 text-[12px] text-slate-600 leading-relaxed">
-    <strong>Next:</strong> §7, §8, §12 are documented above. Pending: §0 (TSR), §1–§6 (TVA chain), §9 (IR liquidation), §10 (IRCM), §11 (IRNCS), §13 (Plus-values), §14 (Timbre aéroport). After tax return: BI modules (Dashboard / Revenue / Receivables / Treasury / etc.), then the Financial Reporting suite. Tell me which section to document next.
+    <strong>Next:</strong> §7, §8, §9, §12 + cross-cutting rules are documented above. Pending: §0 (TSR), §1–§6 (TVA chain), §10 (IRCM), §11 (IRNCS), §13 (Plus-values), §14 (Timbre aéroport). After tax return: BI modules (Dashboard / Revenue / Receivables / Treasury / etc.), then the Financial Reporting suite. Tell me which section to document next.
 </div>
 
 @endsection
