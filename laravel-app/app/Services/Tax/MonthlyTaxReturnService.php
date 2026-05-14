@@ -196,7 +196,16 @@ final class MonthlyTaxReturnService
             'L17' => $priorL33,        // Report du crédit antérieur = L33 (mois précédent)
             'L18' => $L18,             // TVA déductible sur achats locaux (4452*)
             'L19' => $L19,             // TVA déductible sur services locaux (4454*)
-            'L45' => abs($sum('4471')),// Acompte sur CA retenu à la source — balance of 4471*
+            // §7 / §8 — Acompte sur CA retenu à la source, split across
+            // two specific sub-accounts of 4471 per user spec 2026-05-14:
+            //   L40 (§7, à reverser)  ← 44712XX  (retentions made BY the
+            //                            entity on others — owed to the State)
+            //   L45 (§8, à déduire)   ← 44711XX  (retentions made on the
+            //                            entity by others — claimable credit)
+            // Both lines apply the same Total/Principal/CAC split in
+            // buildSections() — see §7/§8 builders.
+            'L40' => abs($sum('44712')),
+            'L45' => abs($sum('44711')),
             'L42' => abs($sum('4426')),// Précomptes sur loyers (15 %)
             'L0'  => abs($sum('4423')),// TSR pool
             // §12 RTS sources (per user spec 2026-05-13, revised):
@@ -644,36 +653,76 @@ final class MonthlyTaxReturnService
         ];
 
         // §7 IR — Acomptes / précomptes à reverser
-        $L40 = 0; $L41 = 0; $L42 = $L('L42'); $L43 = 0;
-        $L44 = $L40 + $L41 + $L42 + $L43;
-        $cacOnL44 = $L44 * 0.10;
+        // L40 = Acompte sur CA retenu à la source — sourced from 44712XX
+        // per user spec 2026-05-14. Same Total/Principal/CAC split as
+        // §8 L45 and §12 L67:
+        //   Total     = sum(44712XX) for month
+        //   Principal = Total / 1.10
+        //   CAC       = Principal × 10%
+        // L41-L43 stay on the legacy "Principal + 10% CAC on top" model
+        // (user hasn't requested a split for them — different from L40
+        // because L40 receives the gross amount already including CAC,
+        // while L41-L43 are entered as just the Principal).
+        $L40total     = $L('L40');
+        $L40principal = $L40total / 1.10;
+        $L40cac       = $L40principal * 0.10;
+
+        $L41 = 0;
+        $L41principal = $L41;
+        $L41cac       = $L41 * 0.10;
+        $L41total     = $L41principal + $L41cac;
+
+        $L42 = $L('L42');
+        $L42principal = $L42;
+        $L42cac       = $L42 * 0.10;
+        $L42total     = $L42principal + $L42cac;
+
+        $L43 = 0;
+        $L43principal = $L43;
+        $L43cac       = $L43 * 0.10;
+        $L43total     = $L43principal + $L43cac;
+
+        // L44 TOTAL — aggregate sub-line columns directly.
+        $L44principal = $L40principal + $L41principal + $L42principal + $L43principal;
+        $L44cac       = $L40cac       + $L41cac       + $L42cac       + $L43cac;
+        $L44total     = $L40total     + $L41total     + $L42total     + $L43total;
+
         $s7 = [
             'id' => 'ir_rev', 'code' => '7', 'title' => 'ACOMPTES ET PRÉCOMPTES À REVERSER',
-            'subtitle' => "Retenues effectuées par l'entreprise",
+            'subtitle' => "L40 Total = balance(44712) · Principal = Total ÷ 1.10 · CAC = Principal × 10 %",
             // Form §7 columns: Principal · CAC · Pénalités · Total — no
-            // Base/Taux. The retention amount is the "principal" the
-            // entity must reverser; CAC is computed on top.
+            // Base/Taux. L40 carries the new Total/1.10 split; L41-L43
+            // remain on the legacy "Principal + 10% CAC on top" model
+            // pending separate user direction.
             'layout' => 'tax_due',
             'lines' => [
-                $this->line('L40', 'Acompte sur CA retenu à la source',                              principal: $L40, cac: $L40 * 0.10),
-                $this->line('L41', 'Précomptes sur achats retenus (0,5 % / 1 % / 3 % / 5 % / 10 %)', principal: $L41, cac: $L41 * 0.10),
-                $this->line('L42', 'Précomptes sur loyers (15 %)',                                   principal: $L42, cac: $L42 * 0.10),
-                $this->line('L43', 'Précomptes sur rémunérations et honoraires (5 %)',               principal: $L43, cac: $L43 * 0.10),
-                $this->line('L44', 'TOTAL = L40 + L41 + L42 + L43',                                  principal: $L44, cac: $cacOnL44),
+                $this->line('L40', 'Acompte sur CA retenu à la source',                              principal: $L40principal, cac: $L40cac, total: $L40total),
+                $this->line('L41', 'Précomptes sur achats retenus (0,5 % / 1 % / 3 % / 5 % / 10 %)', principal: $L41principal, cac: $L41cac, total: $L41total),
+                $this->line('L42', 'Précomptes sur loyers (15 %)',                                   principal: $L42principal, cac: $L42cac, total: $L42total),
+                $this->line('L43', 'Précomptes sur rémunérations et honoraires (5 %)',               principal: $L43principal, cac: $L43cac, total: $L43total),
+                $this->line('L44', 'TOTAL = L40 + L41 + L42 + L43',                                  principal: $L44principal, cac: $L44cac, total: $L44total),
             ],
-            'total' => $L44 + $cacOnL44,
+            // Section header total = L44's Total column. buildRecap
+            // resolves the recap row "AC / IR + Précomptes (= L44)" by
+            // reading L44.total via $find('ir_rev', 'L44'), so the
+            // recap value flows through cleanly without a separate
+            // assignment here.
+            'total' => $L44total,
         ];
 
         // §8 IR — Acomptes / précomptes à déduire
-        // L45 = Acompte sur CA retenu à la source — sourced from balance(4471):
-        //   Total     = balance of account 4471 (any sub-account starting 4471)
-        //   CAC       = 10 % × Total
-        //   Principal = Total − CAC                  (= 90 % × Total)
+        // L45 = Acompte sur CA retenu à la source — sourced from 44711XX
+        // per user spec 2026-05-14. Split uses the same formula as §12
+        // L67 (CAC computed on Principal, not on Total):
+        //   Total     = sum(44711XX) for month             (e.g. 5,000,000)
+        //   Principal = Total / 1.10                       (e.g. 4,545,454)
+        //   CAC       = Principal × 10%                    (e.g.   454,545)
+        // Principal + CAC ≈ Total (±1 XAF float rounding).
         // L46-L48 stay zero pending manual entry.
-        // L49 = column-wise sum of L45-L48.
+        // L49 = column-wise sum of L45-L48 (built below — unchanged).
         $L45total     = $L('L45');
-        $L45cac       = $L45total * 0.10;
-        $L45principal = $L45total - $L45cac;
+        $L45principal = $L45total / 1.10;
+        $L45cac       = $L45principal * 0.10;
 
         $L46principal = 0; $L46cac = 0; $L46total = 0;
         $L47principal = 0; $L47cac = 0; $L47total = 0;
@@ -685,7 +734,7 @@ final class MonthlyTaxReturnService
 
         $s8 = [
             'id' => 'ir_ded', 'code' => '8', 'title' => 'ACOMPTES ET PRÉCOMPTES À DÉDUIRE',
-            'subtitle' => "L45 Total = balance(4471) · CAC 10 % du Total · Principal = Total − CAC",
+            'subtitle' => "L45 Total = balance(44711) · Principal = Total ÷ 1.10 · CAC = Principal × 10 %",
             // Form §8 columns: Principal · CAC · Pénalités · Total — no
             // Base/Taux. The retention amount feeds back into §9 L52
             // as a déduction; the section header (set below) shows the
@@ -967,7 +1016,10 @@ final class MonthlyTaxReturnService
         // removed in favour of the narrower 6413.
         $prefixes = [
             '4421', '4423', '4426', '4431', '4434',
-            '4452', '4454', '4456', '4471',
+            '4452', '4454', '4456',
+            '4471',  // legacy parent — kept harmlessly; specific children below
+            '44711', // §8 L45 — Acompte sur CA retenu à la source (à déduire)
+            '44712', // §7 L40 — Acompte sur CA retenu à la source (à reverser)
             '4472',  // L67 IRPP · L70 FNE · L71 RAV · L72 TDL (description-bucketed)
             '4474',  // L68 — CFC Part Salariale
             '6413',  // L69 — CFC Part Patronale  → 64 Impôts et taxes (specific sub-prefix)
