@@ -57,7 +57,13 @@ class MonthlyTaxReturnController extends Controller
         //     L49 and the prior-month L55. Was dropping CAC, which
         //     made the displayed row not sum to its own Total even
         //     though the L54 math used the right values internally.
-        $cacheKey = 'monthly_tax_return_v5_' . ($month ?: 'current');
+        //   v5 → v6 (2026-05-14, PR #146): buildReconciliation() gains
+        //     two new figures (vat_expected, vat_actual), a third check
+        //     (Check C — TVA attendue vs comptabilisée) and a
+        //     manual_443_entries investigation list. Stale v5 entries
+        //     lack the new keys; the box title also changes to
+        //     "Réconciliation du Chiffre d'affaires et la TVA".
+        $cacheKey = 'monthly_tax_return_v6_' . ($month ?: 'current');
 
         try {
             $analysis = ea_cached($cacheKey, function () use ($month, $tenant) {
