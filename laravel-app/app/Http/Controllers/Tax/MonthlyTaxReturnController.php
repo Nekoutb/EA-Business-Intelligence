@@ -34,7 +34,15 @@ class MonthlyTaxReturnController extends Controller
         }
 
         $tenant = app(TenantContext::class)->has() ? app(TenantContext::class)->tenant() : null;
-        $cacheKey = 'monthly_tax_return_' . ($month ?: 'current');
+        // Cache key version suffix — bumped on every structural change
+        // to the analyze() output shape so stale session-cache entries
+        // don't suppress new view branches. Latest bump:
+        //   v1 → v2 (2026-05-14, PR #141): analyze() now returns a new
+        //     top-level 'reconciliation' key consumed by the vertical
+        //     reconciliation card; old v1 entries lack the key and the
+        //     view's @if guard quietly hid the card for 5 min after
+        //     deploy. Bumping the prefix bypasses the stale shape.
+        $cacheKey = 'monthly_tax_return_v2_' . ($month ?: 'current');
 
         try {
             $analysis = ea_cached($cacheKey, function () use ($month, $tenant) {
