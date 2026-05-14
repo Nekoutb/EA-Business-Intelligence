@@ -86,8 +86,8 @@
                           <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4M9 3h6a2 2 0 0 1 2 2v14l-5-3-5 3V5a2 2 0 0 1 2-2Z"/>
                       </svg>
                       <div>
-                          <h3 class="text-[13px] font-semibold uppercase tracking-wider text-slate-900">Réconciliation des contrôles · {{ $monthLabel }}</h3>
-                          <p class="text-[11px] text-slate-500 mt-0.5">Vérifications avant dépôt — GL ground truth vs §2 déclaré · {{ $cur }}</p>
+                          <h3 class="text-[13px] font-semibold uppercase tracking-wider text-slate-900">Réconciliation du Chiffre d'affaires et la TVA · {{ $monthLabel }}</h3>
+                          <p class="text-[11px] text-slate-500 mt-0.5">CA déclaré vs GL · TVA collectée attendue vs comptabilisée · {{ $cur }}</p>
                       </div>
                   </div>
                   <span class="inline-flex items-center px-2.5 py-1 rounded-full border text-[10px] font-semibold uppercase tracking-wider {{ $chipBg }} {{ $chipText }} border-slate-200">
@@ -95,8 +95,9 @@
                   </span>
               </div>
 
-              {{-- Three figures shown horizontally at the top --}}
-              <div class="grid grid-cols-1 sm:grid-cols-3 divide-y sm:divide-y-0 sm:divide-x divide-slate-200 border-b border-slate-200">
+              {{-- Five figures shown in two rows: top row is revenue, bottom
+                   row is VAT. xl screens get the 5-up; smaller stack neatly. --}}
+              <div class="grid grid-cols-1 sm:grid-cols-3 xl:grid-cols-5 divide-y sm:divide-y-0 sm:divide-x divide-slate-200 border-b border-slate-200">
                   <div class="px-5 py-4">
                       <p class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">GL Class 70</p>
                       <p class="text-[11px] text-slate-400">Ground truth · excl. 709</p>
@@ -111,6 +112,16 @@
                       <p class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">L15 CA Global HT</p>
                       <p class="text-[11px] text-slate-400">§2 declared · L10 + L11 + L12 + L13</p>
                       <p class="mt-1.5 text-xl font-bold tabular-nums text-slate-900">{{ $fmt($figs['l15_ca_global'] ?? 0) }} <span class="text-[11px] font-semibold text-slate-500">{{ $cur }}</span></p>
+                  </div>
+                  <div class="px-5 py-4">
+                      <p class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">TVA attendue</p>
+                      <p class="text-[11px] text-slate-400">(GL − L14) × 19.25%</p>
+                      <p class="mt-1.5 text-xl font-bold tabular-nums text-slate-900">{{ $fmt($figs['vat_expected'] ?? 0) }} <span class="text-[11px] font-semibold text-slate-500">{{ $cur }}</span></p>
+                  </div>
+                  <div class="px-5 py-4">
+                      <p class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">TVA comptabilisée</p>
+                      <p class="text-[11px] text-slate-400">Σ class 443XX · GL</p>
+                      <p class="mt-1.5 text-xl font-bold tabular-nums text-slate-900">{{ $fmt($figs['vat_actual'] ?? 0) }} <span class="text-[11px] font-semibold text-slate-500">{{ $cur }}</span></p>
                   </div>
               </div>
 
@@ -171,6 +182,66 @@
               </div>
           </div>
 
+          {{-- Manual class-443 entries — surfaced when Check C has a
+               discrepancy. Helps the operator identify VAT bookings that
+               didn't go through the sales journal (typically manual JEs,
+               OD reclassifications, or year-end adjustments). --}}
+          @php $manual443 = $reconciliation['manual_443_entries'] ?? []; @endphp
+          @if (!empty($manual443))
+            <div class="bg-white border border-amber-300 rounded-xl shadow-sm mb-4 overflow-hidden">
+                <div class="px-5 py-3 bg-amber-50 border-b border-amber-200 flex items-center justify-between flex-wrap gap-2">
+                    <div class="flex items-center gap-3">
+                        <svg class="w-5 h-5 text-amber-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+                        <div>
+                            <h4 class="text-[13px] font-semibold uppercase tracking-wider text-slate-900">Écritures manuelles sur 443XX · Investigation</h4>
+                            <p class="text-[11px] text-slate-500 mt-0.5">{{ count($manual443) }} {{ count($manual443) === 1 ? 'écriture' : 'écritures' }} hors journal des ventes — à examiner avant de demander le certificat d'exonération.</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-[11.5px]">
+                        <thead>
+                            <tr class="text-left text-[10px] text-slate-500 uppercase tracking-wider bg-slate-50 border-b border-slate-200">
+                                <th class="px-4 py-2.5 font-semibold w-24">Date</th>
+                                <th class="px-3 py-2.5 font-semibold w-32">Compte</th>
+                                <th class="px-3 py-2.5 font-semibold">Libellé</th>
+                                <th class="px-3 py-2.5 font-semibold w-36">Journal</th>
+                                <th class="px-3 py-2.5 font-semibold w-32">Partenaire</th>
+                                <th class="px-3 py-2.5 font-semibold w-28 text-right">Montant ({{ $cur }})</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-100">
+                            @foreach ($manual443 as $line)
+                                @php
+                                    $amt    = (float) ($line['amount'] ?? 0);
+                                    $amtCls = abs($amt) < 1 ? 'text-slate-500'
+                                            : ($amt >= 0 ? 'text-slate-900' : 'text-rose-700');
+                                @endphp
+                                <tr class="bg-white">
+                                    <td class="px-4 py-2 font-mono text-[10.5px] text-slate-500">{{ $line['date'] }}</td>
+                                    <td class="px-3 py-2 font-mono text-[10.5px]"><span class="text-slate-900">{{ $line['account_code'] ?: '—' }}</span> <span class="text-slate-500">{{ $line['account_name'] }}</span></td>
+                                    <td class="px-3 py-2 text-slate-700">
+                                        <div>{{ $line['label'] ?: '(sans libellé)' }}</div>
+                                        @if (!empty($line['move_name']))
+                                          <div class="text-[10px] text-slate-400 font-mono">{{ $line['move_name'] }}</div>
+                                        @endif
+                                    </td>
+                                    <td class="px-3 py-2 text-slate-600">{{ $line['journal_name'] ?: '—' }}</td>
+                                    <td class="px-3 py-2 text-slate-600">{{ $line['partner_name'] ?: '—' }}</td>
+                                    <td class="px-3 py-2 text-right tabular-nums font-semibold {{ $amtCls }}">
+                                        {{ ($amt > 0 ? '+' : '') . $fmt($amt) }}
+                                    </td>
+                                </tr>
+                            @endforeach
+                        </tbody>
+                    </table>
+                </div>
+                <div class="px-5 py-3 bg-slate-50 border-t border-slate-200 text-[11px] text-slate-600 leading-relaxed">
+                    <strong>Lecture :</strong> ces lignes affectent la TVA collectée comptabilisée sans passer par une facture client. Si toutes sont légitimes (corrections, régularisations approuvées) → passer à la suite ; sinon corriger en amont. <strong>Si l'écart Check C ne s'explique pas par ces écritures</strong>, la prochaine étape est de demander le certificat d'exonération TVA pour les ventes exonérées de la période <em>(Phase B — voir le PR description)</em>.
+                </div>
+            </div>
+          @endif
+
           {{-- ─────────── Methodology footer ─────────── --}}
           <div class="bg-white border border-slate-200 rounded-xl shadow-sm p-5 text-[12px] text-slate-700 leading-relaxed">
               <h3 class="text-[11px] uppercase tracking-widest text-slate-500 font-semibold mb-2">Methodology</h3>
@@ -183,9 +254,14 @@
               <p class="mb-2">
                   <strong>L15 CA Global HT</strong> — the §2 line: L10 + L11 + L12 + L13. This is what gets declared to the DGI. <em>By design</em>, L14 (CA exonéré) is not included, so a residual diff against GL = L14 is structural.
               </p>
+              <p class="mb-2">
+                  <strong>TVA attendue</strong> — <code class="text-[11px] bg-slate-100 px-1 rounded">(GL Class 70 − L14) × 19.25 %</code>. L14 (exempt) is subtracted because exempt sales don't carry VAT by design; the figure is therefore the VAT that <em>should</em> have been booked if every non-exempt sale carried the standard rate.
+              </p>
+              <p class="mb-2">
+                  <strong>TVA comptabilisée</strong> — sum of <code class="text-[11px] bg-slate-100 px-1 rounded">balance</code> on every class 443XX account in the window (TVA facturée + variants), abs()'d. Compared against TVA attendue in Check C.
+              </p>
               <p class="mt-3 text-[11px] text-slate-500 italic">
-                  Severity bands: diff &lt; 0.5 % of GL = OK · 0.5–5 % = À investiguer · ≥ 5 % = Critique.
-                  Both checks default open on this page so investigation lists are visible without further clicks.
+                  Severity bands: diff &lt; 0.5 % of GL = OK · 0.5–5 % = À investiguer · ≥ 5 % = Critique. All three checks default open on this page so investigation lists are visible without further clicks.
               </p>
           </div>
         @else

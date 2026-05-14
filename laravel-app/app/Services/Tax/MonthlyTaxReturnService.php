@@ -324,36 +324,36 @@ final class MonthlyTaxReturnService
     }
 
     /**
-     * Tax-return reconciliation card — surfaces three figures and two
+     * Tax-return reconciliation card — surfaces five figures and three
      * targeted comparisons so the operator can spot whether the §2
      * sales declaration ties to the underlying GL ground truth before
      * filing.
      *
-     * Three figures:
-     *   1. GL class-70 total (excl. 709 "rabais, remises, ristournes accordés")
-     *      — sum of every credit and debit on class 70 accounts for the
-     *      declaration window, abs()'d to a positive amount.
-     *   2. Sales ledger total = L10 + L14 — total class-70 credits that
-     *      came specifically from the SALES JOURNAL (already split by
-     *      splitSalesByVat in autoExtract).
-     *   3. L15 CA Global HT — what the §2 line declares to the DGI
-     *      (L10 + L11 + L12 + L13, recomputed here from the section data
-     *      so we don't depend on a precomputed accumulator).
+     * Five figures:
+     *   1. GL class-70 total (excl. 709) — sum of every class-70 movement
+     *      in the window, abs()'d. Ground truth on revenue.
+     *   2. Sales ledger total = L10 + L14 — class-70 credits from the
+     *      sales journal only.
+     *   3. L15 CA Global HT — §2 declared (L10+L11+L12+L13).
+     *   4. VAT expected = GL Class 70 × 19.25% — what VAT should have
+     *      been collected if every sale carried VAT at the standard rate.
+     *   5. VAT actual = sum of class 443XX movements in the window —
+     *      what was actually booked in TVA-collectée accounts.
      *
-     * Two checks (per user spec 2026-05-13):
+     * Three checks (per user spec 2026-05-13 and 2026-05-14):
      *
-     *   Check A · GL Class 70 vs Sales Ledger
-     *     Ideal: 0 diff (every class-70 movement should originate from
-     *     the sales journal). Non-zero ≠ wrong, but every XAF needs
-     *     justification — typically manual JEs, OD reclassifications,
-     *     year-end close-outs, or refunds posted outside the sales
-     *     journal.
+     *   Check A · GL Class 70 vs Sales Ledger          (revenue plumbing)
+     *   Check B · GL Class 70 vs L15 CA Global HT      (declaration tie)
+     *   Check C · VAT expected vs VAT actual (443XX)   (NEW — VAT plumbing)
      *
-     *   Check B · GL Class 70 vs L15 CA Global HT
-     *     Ideal NOT 0 — L15 = L10 + L11 + L12 + L13 (taxable subset)
-     *     while GL also includes L14 (exempt). Diff origins are mapped
-     *     out below so the user sees which delta is structural vs
-     *     suspicious.
+     * Check C origins of a discrepancy:
+     *   - Manual JEs to class 443 outside the sales journal
+     *     (surfaced as `manual_443_entries` so the operator can drill in)
+     *   - VAT-exempt sales (L14) — structural; reduces the expected
+     *     side. The check reports both gross and L14-adjusted figures.
+     *   - Mis-tagged sales (taxable booked as exempt)
+     *   - Pending VAT exoneration certificates that aren't yet in scope
+     *     (workflow piece — see Phase B in the PR description)
      */
     private function buildReconciliation(array $auto, array $sections, \DateTimeImmutable $from, \DateTimeImmutable $to): array
     {
@@ -445,22 +445,200 @@ final class MonthlyTaxReturnService
             ],
         ];
 
-        // Headline severity = worst of the two checks. Drives the panel
-        // border colour and "OK / À investiguer / Critique" pill.
+        // Check C — VAT expected (= GL × 19.25%) vs VAT actually booked
+        // in class 443XX. User spec 2026-05-14.
+        //
+        // Two adjustments to the "expected" side:
+        //   - Standard rate is 19.25% (Cameroon CGI). Anything else
+        //     would mean a structural taux variant (régime simplifié,
+        //     exports at 0%, etc.) — call those out separately.
+        //   - L14 (CA exonéré) does NOT generate VAT. The "GL × 19.25%"
+        //     figure is the GROSS expectation assuming every sale was
+        //     taxable; we also compute the L14-adjusted expected so the
+        //     operator can see whether the diff is structural (= 19.25%
+        //     × L14, expected because exempt sales don't book VAT) or
+        //     real (something else is off).
+        $vatRate            = 0.1925;
+        $vatExpectedGross   = $gl70 * $vatRate;                  // every sale taxable
+        $vatExpectedNetL14  = ($gl70 - $L14) * $vatRate;         // adjusted for exempt
+        $vatActual          = abs($this->sumVatCollected($from, $to));
+        $diffC              = $vatExpectedNetL14 - $vatActual;
+        $pctC               = $vatExpectedNetL14 > 0 ? 100.0 * $diffC / $vatExpectedNetL14 : 0.0;
+
+        // If Check C surfaces a discrepancy, surface every class-443
+        // movement that DIDN'T come through the sales journal — those
+        // are the manual JEs the user wants to investigate first.
+        // Skip the fetch when the diff is negligible (saves a round-trip).
+        $manual443 = (abs($diffC) > 1.0)
+            ? $this->fetchNonInvoice443Lines($from, $to)
+            : ['rows' => [], 'count' => 0, 'amount' => 0.0];
+
+        $checkC = [
+            'key'         => 'vat_expected_vs_actual',
+            'label'       => 'TVA attendue (19.25%) vs TVA collectée comptable',
+            'left_label'  => sprintf('TVA attendue · (GL − L14) × %.2f%%', $vatRate * 100),
+            'left'        => round($vatExpectedNetL14, 2),
+            'right_label' => 'TVA comptabilisée · Σ 443XX',
+            'right'       => round($vatActual, 2),
+            'diff'        => round($diffC, 2),
+            'pct'         => round($pctC, 2),
+            'severity'    => $severity($diffC, $vatExpectedNetL14),
+            'expectation' => sprintf(
+                'TVA attendue ≈ TVA comptabilisée après exclusion de L14 (CA exonéré = %s XAF). Ecart structurel = 0.',
+                number_format($L14, 0, ',', ' ')
+            ),
+            'origins'     => [
+                'Écritures manuelles directement passées en 443XX hors du journal des ventes — listées ci-dessous pour investigation.',
+                'Ventes taxables mal classées en exonérées (mauvais L10/L14) — la TVA attendue paraît trop élevée.',
+                'Ventes exonérées sans certificat de TVA valide pour la période — la TVA collectée comptable est trop basse, il faut régulariser (voir Phase B ci-dessous).',
+                'Taux réduits ou spécifiques non capturés par le calcul standard (ex. exports à 0%, biens à taux réduit) — à valider avec le contribuable.',
+                'Périmètre — entrées datées dans la fenêtre mais non posted, ou postées au mois suivant.',
+            ],
+            // Extra figures exposed for the view (gross expected etc.)
+            'extra' => [
+                'vat_rate'             => $vatRate,
+                'vat_expected_gross'   => round($vatExpectedGross, 2),
+                'vat_expected_net_l14' => round($vatExpectedNetL14, 2),
+                'l14_exempt'           => round($L14, 2),
+                'manual_443_count'     => (int) ($manual443['count'] ?? 0),
+                'manual_443_amount'    => round((float) ($manual443['amount'] ?? 0), 2),
+            ],
+        ];
+
+        // Headline severity = worst of the three checks.
         $rankings = ['ok' => 0, 'minor' => 1, 'major' => 2];
-        $worst = max($rankings[$checkA['severity']], $rankings[$checkB['severity']]);
+        $worst = max($rankings[$checkA['severity']], $rankings[$checkB['severity']], $rankings[$checkC['severity']]);
         $headline = array_search($worst, $rankings, true);
 
         return [
             'period_from'  => $from->format('Y-m-d'),
             'period_to'    => $to->format('Y-m-d'),
             'figures'      => [
-                'gl70_total'         => round($gl70, 2),
-                'sales_ledger_total' => round($sales, 2),
-                'l15_ca_global'      => round($l15, 2),
+                'gl70_total'           => round($gl70, 2),
+                'sales_ledger_total'   => round($sales, 2),
+                'l15_ca_global'        => round($l15, 2),
+                'vat_expected'         => round($vatExpectedNetL14, 2),
+                'vat_actual'           => round($vatActual, 2),
             ],
-            'checks'       => [$checkA, $checkB],
-            'severity'     => $headline,    // 'ok' | 'minor' | 'major'
+            'checks'             => [$checkA, $checkB, $checkC],
+            'severity'           => $headline,            // 'ok' | 'minor' | 'major'
+            'manual_443_entries' => $manual443['rows'],   // Investigation list — empty if Check C is clean
+        ];
+    }
+
+    /**
+     * Sum all class-443XX (TVA collectée + variants) movements for the
+     * given period. Returns the SIGNED sum — caller usually wraps in
+     * abs() since 443X is a credit-normal liability. One Odoo round-trip
+     * via read_group.
+     */
+    private function sumVatCollected(\DateTimeImmutable $from, \DateTimeImmutable $to): float
+    {
+        try {
+            $accts = $this->odoo->searchRead(
+                'account.account',
+                [['code', '=like', '443%']],
+                ['id'], []
+            );
+            if (empty($accts)) return 0.0;
+            $ids = array_map(fn ($r) => (int) $r['id'], $accts);
+            return $this->sumBalanceWindow($ids, $from, $to);
+        } catch (\Throwable $e) {
+            return 0.0;
+        }
+    }
+
+    /**
+     * Fetch every posted class-443XX line in the window whose parent
+     * move is NOT a customer invoice / refund — the "manual entries"
+     * the user wants to investigate when Check C surfaces a discrepancy.
+     *
+     * Cap at 200 lines (sorted by absolute amount desc). For a typical
+     * monthly window the result set is well under 50 rows; the cap is
+     * a safety stop.
+     *
+     * @return array{count:int, amount:float, rows:array<int,array>}
+     */
+    private function fetchNonInvoice443Lines(\DateTimeImmutable $from, \DateTimeImmutable $to): array
+    {
+        $empty = ['count' => 0, 'amount' => 0.0, 'rows' => []];
+        try {
+            $rows = $this->odoo->searchRead(
+                'account.move.line',
+                [
+                    ['account_id.code',   '=like', '443%'],
+                    ['parent_state',      '=',     'posted'],
+                    ['date',              '>=',    $from->format('Y-m-d')],
+                    ['date',              '<=',    $to->format('Y-m-d')],
+                    ['move_id.move_type', 'not in', ['out_invoice', 'out_refund']],
+                ],
+                ['id', 'date', 'name', 'debit', 'credit',
+                 'account_id', 'journal_id', 'move_id', 'partner_id'],
+                ['order' => 'date desc, id desc', 'limit' => 1000]
+            );
+        } catch (\Throwable $e) {
+            return $empty;
+        }
+        if (empty($rows)) return $empty;
+
+        // Resolve move_type for each move in one batch read.
+        $moveIds = [];
+        foreach ($rows as $r) {
+            $mid = is_array($r['move_id'] ?? null) ? (int) $r['move_id'][0] : 0;
+            if ($mid > 0) $moveIds[$mid] = true;
+        }
+        $moveType = [];
+        if (!empty($moveIds)) {
+            try {
+                $mvs = $this->odoo->read('account.move', array_keys($moveIds), ['id', 'move_type']);
+                foreach ($mvs as $mv) {
+                    $moveType[(int) $mv['id']] = (string) ($mv['move_type'] ?? 'entry');
+                }
+            } catch (\Throwable $e) { /* fall through with empty type map */ }
+        }
+
+        $m2oId   = fn ($v) => is_array($v) && isset($v[0]) ? (int) $v[0] : 0;
+        $m2oName = fn ($v) => is_array($v) && isset($v[1]) ? (string) $v[1] : '';
+
+        $out         = [];
+        $totalAmount = 0.0;
+        foreach ($rows as $r) {
+            $debit  = (float) ($r['debit']  ?? 0);
+            $credit = (float) ($r['credit'] ?? 0);
+            $amount = $credit - $debit;   // 443 is credit-normal → positive = VAT booked
+            $totalAmount += $amount;
+
+            $mvId   = $m2oId($r['move_id'] ?? null);
+            $mt     = $moveType[$mvId] ?? 'entry';
+            $aName  = $m2oName($r['account_id'] ?? null);
+            // account.account display_name format = "<code> <name>".
+            $parts  = preg_split('/\s+/', trim($aName), 2);
+            $code   = is_array($parts) && count($parts) === 2 && ctype_alnum(str_replace('.', '', $parts[0]))
+                ? $parts[0] : '';
+            $label  = is_array($parts) && count($parts) === 2 ? $parts[1] : $aName;
+
+            $out[] = [
+                'date'         => (string) ($r['date'] ?? ''),
+                'account_code' => $code,
+                'account_name' => $label,
+                'journal_name' => $m2oName($r['journal_id'] ?? null),
+                'move_name'    => $m2oName($r['move_id'] ?? null),
+                'move_type'    => $mt,
+                'partner_name' => $m2oName($r['partner_id'] ?? null),
+                'label'        => (string) ($r['name'] ?? ''),
+                'amount'       => $amount,
+            ];
+        }
+
+        // Sort by abs amount desc and cap at 200 rows so the panel doesn't
+        // explode for high-volume tenants.
+        usort($out, fn ($a, $b) => abs((float) $b['amount']) <=> abs((float) $a['amount']));
+        $out = array_slice($out, 0, 200);
+
+        return [
+            'count'  => count($out),
+            'amount' => $totalAmount,
+            'rows'   => $out,
         ];
     }
 
