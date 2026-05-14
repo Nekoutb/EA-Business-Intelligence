@@ -29,6 +29,7 @@ use App\Http\Controllers\SettingsController;
 use App\Http\Controllers\TenantUsersController;
 use App\Http\Controllers\Tax\IncomeTaxComplianceController;
 use App\Http\Controllers\Tax\MonthlyTaxReturnController;
+use App\Http\Controllers\Tax\ReturnReconciliationController;
 use App\Http\Controllers\Tax\TaxDashboardController;
 use App\Http\Controllers\Tax\VATComplianceController;
 use App\Http\Controllers\Tax\VATInvoiceComplianceController;
@@ -1458,6 +1459,10 @@ Route::prefix('t/{tenant}')
                 Route::get('/vat-invoice-compliance', [VATInvoiceComplianceController::class, 'index'])->middleware('module:vat_invoice_compliance');
                 Route::get('/monthly-tax-return',       [MonthlyTaxReturnController::class, 'index'])    ->middleware('module:monthly_tax_return');
                 Route::get('/monthly-tax-return/print', [MonthlyTaxReturnController::class, 'printable'])->middleware('module:monthly_tax_return');
+                // Return Reconciliation — standalone reconciliation page
+                // for the Monthly Tax Return. Reuses the same analyze()
+                // payload (and cache namespace) as /monthly-tax-return.
+                Route::get('/return-reconciliation',    [ReturnReconciliationController::class, 'index'])->middleware('module:return_reconciliation');
                 // Back-compat: old URL redirects to new one (preserves bookmarks).
                 Route::get('/monthly-vat-return', fn () => redirect()->to(tenant_url('/monthly-tax-return')));
                 // Backward-compat redirects (old URLs from prior to 2026-04-27 reshuffle)

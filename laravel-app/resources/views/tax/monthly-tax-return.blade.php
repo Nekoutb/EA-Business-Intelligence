@@ -20,7 +20,6 @@
             $dueStatus    = $period['due_status'] ?? 'pending';
             $sections     = $analysis['sections'] ?? [];
             $recap        = $analysis['recap']    ?? ['rows'=>[], 'total'=>0];
-            $reconciliation = $analysis['reconciliation'] ?? null;
             $totalAPayer  = (float) ($analysis['total_a_payer'] ?? 0);
             $months       = $analysis['available_months'] ?? [];
             $statusBadge  = match ($dueStatus) {
@@ -113,133 +112,9 @@
             </div>
         </div>
 
-        {{-- ─────────── Reconciliation panel ─────────────────────────────
-             Vertical card that performs two pre-filing checks against the
-             GL ground truth (sum of class-70 movements for the period):
-
-               A · GL Class 70 vs Sales Ledger (L10 + L14)
-               B · GL Class 70 vs L15 CA Global HT (§2)
-
-             For each check we surface the diff, the % of GL, a severity
-             pill (OK / À investiguer / Critique), an expectation line
-             (what the diff SHOULD look like), and a bulleted list of
-             discrepancy origins for investigation.
-
-             Hidden when the service returns null (e.g. Odoo unreachable —
-             we don't render zeros that look like a healthy reconciliation).
-             ─────────────────────────────────────────────────────────── --}}
-        @if ($reconciliation)
-          @php
-              $figs = $reconciliation['figures'] ?? [];
-              $checks = $reconciliation['checks'] ?? [];
-              $sev    = $reconciliation['severity'] ?? 'ok';
-              // Border + chip styling based on overall severity. OK keeps
-              // a neutral slate look; minor goes amber; major goes rose.
-              [$cardBorder, $chipBg, $chipText, $chipLabel] = match ($sev) {
-                  'major' => ['border-rose-300',  'bg-rose-100',  'text-rose-800',  'Critique · diff > 5 %'],
-                  'minor' => ['border-amber-300', 'bg-amber-100', 'text-amber-800', 'À investiguer · diff > 0.5 %'],
-                  default => ['border-emerald-300','bg-emerald-100','text-emerald-800','Réconcilié · diff < 0.5 %'],
-              };
-              // Per-check severity styling reused inside the loop below.
-              $checkChip = fn (string $s) => match ($s) {
-                  'major' => ['Critique',       'bg-rose-100  text-rose-800  border-rose-200'],
-                  'minor' => ['À investiguer',  'bg-amber-100 text-amber-800 border-amber-200'],
-                  default => ['Réconcilié',     'bg-emerald-100 text-emerald-800 border-emerald-200'],
-              };
-          @endphp
-          <div class="bg-white border-2 {{ $cardBorder }} rounded-xl shadow-sm mb-4 overflow-hidden">
-              <div class="flex items-center justify-between px-5 py-3 bg-slate-50/60 border-b border-slate-200 flex-wrap gap-2">
-                  <div class="flex items-center gap-3">
-                      <svg class="w-5 h-5 text-slate-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
-                          <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4M9 3h6a2 2 0 0 1 2 2v14l-5-3-5 3V5a2 2 0 0 1 2-2Z"/>
-                      </svg>
-                      <div>
-                          <h3 class="text-[13px] font-semibold uppercase tracking-wider text-slate-900">Réconciliation des contrôles · {{ $monthLabel }}</h3>
-                          <p class="text-[11px] text-slate-500 mt-0.5">Vérifications avant dépôt — GL ground truth vs §2 déclaré · {{ $cur }}</p>
-                      </div>
-                  </div>
-                  <span class="inline-flex items-center px-2.5 py-1 rounded-full border text-[10px] font-semibold uppercase tracking-wider {{ $chipBg }} {{ $chipText }} border-slate-200">
-                      {{ $chipLabel }}
-                  </span>
-              </div>
-
-              {{-- Three figures shown horizontally at the top --}}
-              <div class="grid grid-cols-1 sm:grid-cols-3 divide-y sm:divide-y-0 sm:divide-x divide-slate-200 border-b border-slate-200">
-                  <div class="px-5 py-4">
-                      <p class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">GL Class 70</p>
-                      <p class="text-[11px] text-slate-400">Ground truth · excl. 709</p>
-                      <p class="mt-1.5 text-xl font-bold tabular-nums text-slate-900">{{ $fmt($figs['gl70_total'] ?? 0) }} <span class="text-[11px] font-semibold text-slate-500">{{ $cur }}</span></p>
-                  </div>
-                  <div class="px-5 py-4">
-                      <p class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Sales Ledger</p>
-                      <p class="text-[11px] text-slate-400">L10 + L14 · sales journal only</p>
-                      <p class="mt-1.5 text-xl font-bold tabular-nums text-slate-900">{{ $fmt($figs['sales_ledger_total'] ?? 0) }} <span class="text-[11px] font-semibold text-slate-500">{{ $cur }}</span></p>
-                  </div>
-                  <div class="px-5 py-4">
-                      <p class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">L15 CA Global HT</p>
-                      <p class="text-[11px] text-slate-400">§2 declared · L10 + L11 + L12 + L13</p>
-                      <p class="mt-1.5 text-xl font-bold tabular-nums text-slate-900">{{ $fmt($figs['l15_ca_global'] ?? 0) }} <span class="text-[11px] font-semibold text-slate-500">{{ $cur }}</span></p>
-                  </div>
-              </div>
-
-              {{-- Two checks stacked vertically — that's the "vertical
-                   medium" requested. Each check is a panel with a header
-                   row (label + diff + severity chip), a one-line
-                   expectation, and an expandable list of discrepancy
-                   origins for investigation. --}}
-              <div class="divide-y divide-slate-200">
-                  @foreach ($checks as $i => $check)
-                      @php
-                          [$ckLabel, $ckChipCls] = $checkChip($check['severity'] ?? 'ok');
-                          $diff = (float) ($check['diff'] ?? 0);
-                          $pct  = (float) ($check['pct']  ?? 0);
-                          // Diff sign colour — negative = GL lower than the
-                          // declared side (potentially missing GL postings);
-                          // positive = GL higher (potentially undeclared CA).
-                          $diffCls = abs($diff) < 1 ? 'text-slate-500'
-                                   : ($diff >= 0 ? 'text-rose-700' : 'text-amber-700');
-                      @endphp
-                      <details class="group" {{ $check['severity'] !== 'ok' ? 'open' : '' }}>
-                          <summary class="cursor-pointer list-none px-5 py-4 hover:bg-slate-50/60 flex flex-wrap items-center gap-3">
-                              <svg class="w-4 h-4 shrink-0 text-slate-400 group-open:rotate-90 transition-transform" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                                  <path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 0 1 .02-1.06L11.168 10 7.23 6.29a.75.75 0 1 1 1.04-1.08l4.5 4.25a.75.75 0 0 1 0 1.08l-4.5 4.25a.75.75 0 0 1-1.06-.02Z" clip-rule="evenodd"/>
-                              </svg>
-                              <span class="font-mono text-[10px] tracking-widest text-slate-400 w-6 shrink-0">{{ chr(64 + $i + 1) }}</span>
-                              <div class="flex-1 min-w-0">
-                                  <p class="text-[12.5px] font-semibold text-slate-900 truncate">{{ $check['label'] }}</p>
-                                  <p class="text-[11px] text-slate-500 truncate mt-0.5">
-                                      {{ $fmt($check['left'] ?? 0) }} · vs · {{ $fmt($check['right'] ?? 0) }}
-                                  </p>
-                              </div>
-                              <div class="text-right tabular-nums shrink-0">
-                                  <p class="text-sm font-bold {{ $diffCls }}">
-                                      {{ ($diff > 0 ? '+' : '') . $fmt($diff) }} {{ $cur }}
-                                  </p>
-                                  <p class="text-[10px] text-slate-400">{{ ($pct > 0 ? '+' : '') . number_format($pct, 2) }} %</p>
-                              </div>
-                              <span class="inline-flex items-center px-2 py-0.5 rounded-full border text-[10px] font-semibold uppercase tracking-wider {{ $ckChipCls }} shrink-0">{{ $ckLabel }}</span>
-                          </summary>
-                          <div class="px-5 pb-4 pt-1 bg-slate-50/30 border-t border-slate-100">
-                              @if (!empty($check['expectation']))
-                                <p class="text-[11.5px] text-slate-700 leading-relaxed mb-2">
-                                    <span class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Attendu · </span>
-                                    {{ $check['expectation'] }}
-                                </p>
-                              @endif
-                              @if (!empty($check['origins']))
-                                <p class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mt-3 mb-1.5">Origines possibles à investiguer</p>
-                                <ul class="space-y-1.5 text-[11.5px] text-slate-700 leading-relaxed pl-4">
-                                    @foreach ($check['origins'] as $origin)
-                                        <li class="relative before:content-['•'] before:absolute before:-left-3 before:text-slate-400">{{ $origin }}</li>
-                                    @endforeach
-                                </ul>
-                              @endif
-                          </div>
-                      </details>
-                  @endforeach
-              </div>
-          </div>
-        @endif
+        {{-- Reconciliation card moved to its own page at /return-reconciliation
+             (PR #142). Operators can pivot to it from the sidebar
+             "Return Reconciliation" entry under TAX COMPLIANCE. --}}
 
         {{-- ─────────── Sections — collapsible accordion ─────────── --}}
         <div class="space-y-2 mb-4">

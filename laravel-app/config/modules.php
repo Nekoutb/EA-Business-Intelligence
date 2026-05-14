@@ -348,19 +348,22 @@ return [
             // Return Reconciliation — sub-feature positioned under
             // Tax Returns. Reconciles filed returns to the GL so the
             // auditor can spot mis-declarations or carry-forward gaps
-            // between successive periods. Coming-soon placeholder until
-            // the page is built; sidebar entry shows greyed-out with a
-            // "Soon" badge so users discover it without being able to
-            // navigate yet.
+            // between successive periods.
+            //
+            // Live since 2026-05-14 (PR #142): the page ties the
+            // Monthly Tax Return's §2 declared CA Global HT against
+            // the GL ground truth (sum of class-70 movements) and the
+            // sales-ledger total (L10 + L14), with two checks and a
+            // list of discrepancy origins per check for investigation.
             'key'     => 'return_reconciliation',
             'service' => 'tax_compliance',
             'label'   => 'Return Reconciliation',
             'url'     => '/return-reconciliation',
             'active'  => 'return_reconciliation',
             'icon'    => 'M4 4v16h16M8 14l3-4 3 3 4-6M16 4h4v4',
-            'default' => false,
+            'default' => true,
             'core'    => false,
-            'status'  => 'coming_soon',
+            'status'  => 'live',
         ],
 
         // ── Financial Reporting ───────────────────────────────────────────
