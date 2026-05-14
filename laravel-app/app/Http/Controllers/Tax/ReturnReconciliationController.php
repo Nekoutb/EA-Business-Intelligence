@@ -39,7 +39,7 @@ class ReturnReconciliationController extends Controller
         // analyze() payload, two routes consuming it. The v2_ prefix
         // version comes from the same place (PR #141) so a single shape
         // change updates both pages atomically.
-        $cacheKey = 'monthly_tax_return_v2_' . ($month ?: 'current');
+        $cacheKey = 'monthly_tax_return_v3_' . ($month ?: 'current');
 
         try {
             $analysis = ea_cached($cacheKey, function () use ($month, $tenant) {

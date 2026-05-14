@@ -2,9 +2,9 @@
 @section('title', 'Methodology')
 
 @section('header')
-    <h1 class="text-2xl font-bold text-slate-900">Module Methodology</h1>
+    <h1 class="text-2xl font-bold text-slate-900">Methodology — Assumptions reference</h1>
     <p class="text-xs text-slate-500 mt-1">
-        Per-module data sources, formulas and design rationale.
+        Per-line documentation of every KPI / box / row in the BMS. One source of truth for what each value means, where it comes from, and how it's computed.
         <span class="ml-1 inline-flex items-center text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 border border-rose-200">Internal — not shown to clients</span>
     </p>
 @endsection
@@ -15,7 +15,9 @@
     <div class="flex items-start gap-3">
         <svg class="w-5 h-5 text-amber-600 shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
         <div class="text-xs text-slate-700 leading-relaxed">
-            <strong>Confidential — for internal eyes only.</strong> The notes below describe the proprietary methodology behind each KPI: which Odoo models we query, which fields we anchor on, the joins and aggregations we apply, and the trade-offs we made along the way. This is platform IP. It used to be visible at the bottom of each client-facing module page; that exposure has been removed and the content lives here exclusively. If a client needs an explanation of a metric, hand-craft a sanitised summary — do not paste from this page.
+            <strong>Confidential — internal reference.</strong> This page documents the exact data sources, filters, and formulas behind every box in the BMS. The intent is that a tax accountant or financial controller can read a line, understand where the number comes from, and confidently request a change. Use it to onboard new operators, audit assumptions, and plan rule changes.
+            <br><br>
+            <em>Status:</em> Currently documenting <strong>Tax Return — Section 12 (Impôts retenus sur salaires)</strong>. Other sections will be added once this template is validated.
         </div>
     </div>
 </div>
@@ -23,138 +25,263 @@
 {{-- Quick anchors --}}
 <div class="panel p-3 mb-5 flex gap-2 flex-wrap">
     <span class="text-[10px] uppercase tracking-wider text-slate-500 font-medium px-2 py-1">Jump to</span>
-    <a href="#operations"  class="text-xs px-3 py-1 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-700 transition">Operations</a>
-    <a href="#billing"     class="text-xs px-3 py-1 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-700 transition">Billing</a>
-    <a href="#procurement" class="text-xs px-3 py-1 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-700 transition">Procurement</a>
+    <a href="#tax-return-s12" class="text-xs px-3 py-1 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-700 transition">Tax Return · §12 RTS</a>
 </div>
 
-{{-- ────────────────────────────────────────────────── Operations ── --}}
-<section id="operations" class="panel p-6 mb-5 scroll-mt-6">
-    <div class="flex items-center justify-between mb-4">
+{{-- ──────────────────────────────────── Tax Return · §12 RTS ──── --}}
+<section id="tax-return-s12" class="panel p-6 mb-5 scroll-mt-6">
+    <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
         <div>
-            <h2 class="text-base font-bold text-slate-900">Operations</h2>
-            <p class="text-[11px] text-slate-500 mt-0.5">Container &amp; logistics analytics — sourced from the customer's Odoo Logistique module.</p>
+            <h2 class="text-base font-bold text-slate-900">Tax Return — Section 12 · Impôts retenus sur salaires (RTS)</h2>
+            <p class="text-[11px] text-slate-500 mt-0.5">Charges sociales et taxes salariales · Cameroon DGI monthly tax return</p>
         </div>
-        <span class="text-[10px] uppercase tracking-wider text-slate-400 font-medium">/operations</span>
+        <span class="text-[10px] uppercase tracking-wider text-slate-400 font-medium font-mono">/monthly-tax-return</span>
     </div>
-    <div class="text-xs text-slate-700 leading-relaxed space-y-3">
-        <div>
-            <span class="font-semibold text-slate-900">Models in use</span> —
-            <code class="text-[11px] bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5">aw_cargo.stopover</code> (vessel calls),
-            <code class="text-[11px] bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5">aw_cargo.cargo</code> (bills of lading),
-            <code class="text-[11px] bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5">aw_cargo.equipment</code> (containers),
-            <code class="text-[11px] bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5">aw_vehicule.vehicule</code> (vehicles, classified via <code>cylinders</code>),
-            <code class="text-[11px] bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5">aw_bois.bois</code> (wood line items),
-            <code class="text-[11px] bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5">aw_cargo_invoice.product</code> (size↔product billing legend).
+
+    {{-- Section-level context --}}
+    <div class="bg-slate-50 border border-slate-200 rounded-md p-4 mb-5 text-[12.5px] text-slate-700 leading-relaxed">
+        <h3 class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold mb-2">Section context</h3>
+        <p>
+            §12 captures every retention the employer applied to staff remunerations during the declaration month — IRPP on salaries, the two CFC contributions (employee + employer), FNE, the audiovisual royalty and the local development tax. The form displays four columns: <strong>Principal</strong>, <strong>CAC</strong>, <strong>Pénalités</strong>, <strong>Total</strong>. Base and Taux columns are not used in §12 (the rate is implicit in upstream payroll calculations).
+        </p>
+        <p class="mt-2">
+            <strong>Declaration period:</strong> month-of-declaration window — first to last calendar day of the month (e.g. May 2026 → 2026-05-01 to 2026-05-31). Posted entries only (<code class="text-[10.5px] bg-white px-1 rounded">account.move.line.parent_state = posted</code>).
+        </p>
+    </div>
+
+    {{-- Line-by-line documentation. Card per line — Source · Filter · Formula · Notes. --}}
+    <div class="space-y-3">
+
+        {{-- L67 ----------------------------------------------------- --}}
+        <div class="border border-slate-200 rounded-md overflow-hidden bg-white">
+            <div class="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-center gap-3 flex-wrap">
+                <span class="font-mono text-[11px] font-semibold tracking-wider bg-slate-900 text-white px-2 py-0.5 rounded">L67</span>
+                <span class="text-[13px] font-semibold text-slate-900">IRPP sur traitements et salaires</span>
+                <span class="ml-auto text-[10px] uppercase tracking-wider text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full font-semibold">Sourced from Odoo</span>
+            </div>
+            <div class="px-4 py-3 grid sm:grid-cols-12 gap-x-4 gap-y-2 text-[12px]">
+                <div class="sm:col-span-2 text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Source</div>
+                <div class="sm:col-span-10 text-slate-800">
+                    Account <code class="font-mono text-[11px] bg-slate-100 px-1.5 rounded">4472XX</code> · sum of <code class="font-mono text-[11px] bg-slate-100 px-1.5 rounded">account.move.line.balance</code> for the declaration month.
+                </div>
+
+                <div class="sm:col-span-2 text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Filter</div>
+                <div class="sm:col-span-10 text-slate-800 leading-relaxed">
+                    Line description (<code class="font-mono text-[11px] bg-slate-100 px-1.5 rounded">name</code> field) must contain — case-insensitive, accent-folded — any of:
+                    <ul class="mt-1.5 pl-4 space-y-0.5 list-disc">
+                        <li><code class="font-mono text-[11px] bg-slate-100 px-1.5 rounded">IRPP</code></li>
+                        <li><code class="font-mono text-[11px] bg-slate-100 px-1.5 rounded">Impôt sur le Revenu des Personnes Physiques</code></li>
+                        <li>or any close variant (<em>"impot sur le revenu", "revenu des personnes physiques", "traitements et salaires"</em>)</li>
+                    </ul>
+                    First-match-wins: a line tagged "IRPP + FNE adjustment" goes to IRPP (this line), not FNE.
+                </div>
+
+                <div class="sm:col-span-2 text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Formula</div>
+                <div class="sm:col-span-10 text-slate-800 leading-relaxed">
+                    The sourced amount is the <strong>Total</strong> (what was withheld). Principal and CAC are then derived so they sum back to the Total:
+                    <div class="mt-1.5 font-mono text-[11.5px] bg-slate-50 border border-slate-200 rounded p-2 leading-relaxed">
+                        Total      = sum(4472XX with IRPP-keyword) for month<br>
+                        Principal  = Total ÷ 1.10<br>
+                        CAC        = Principal × 10%<br>
+                        Principal + CAC = Total  <span class="text-slate-500">(modulo float rounding ≤ 1 XAF)</span>
+                    </div>
+                    <p class="mt-2 text-[11.5px] text-slate-600">
+                        Example: if 4472XX shows 5,000,000 XAF tagged as IRPP for the month, the form shows
+                        <strong>Principal 4,545,454</strong> · <strong>CAC 454,545</strong> · <strong>Total 5,000,000</strong>.
+                    </p>
+                </div>
+
+                <div class="sm:col-span-2 text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Notes</div>
+                <div class="sm:col-span-10 text-slate-800 leading-relaxed">
+                    Account 4472XX is shared with L70 (FNE), L71 (RAV) and L72 (TDL) — the description keyword is the only discriminator. The bucketing makes a single Odoo round-trip and splits in PHP. Unmatched 4472XX lines (no recognised keyword) are dropped from §12 entirely; flag them if you notice §12 reads low.
+                </div>
+            </div>
         </div>
-        <div>
-            <span class="font-semibold text-slate-900">Period anchor</span> — every KPI filters by
-            <code class="text-[11px] bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5">create_date</code>
-            because <code class="text-[11px] bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5">eta</code> is sparsely populated. Containers Scanned uses
-            <code class="text-[11px] bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5">scanned_date</code>.
+
+        {{-- L68 ----------------------------------------------------- --}}
+        <div class="border border-slate-200 rounded-md overflow-hidden bg-white">
+            <div class="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-center gap-3 flex-wrap">
+                <span class="font-mono text-[11px] font-semibold tracking-wider bg-slate-900 text-white px-2 py-0.5 rounded">L68</span>
+                <span class="text-[13px] font-semibold text-slate-900">Crédit Foncier du Cameroun · Part Salariale</span>
+                <span class="ml-auto text-[10px] uppercase tracking-wider text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full font-semibold">Sourced from Odoo</span>
+            </div>
+            <div class="px-4 py-3 grid sm:grid-cols-12 gap-x-4 gap-y-2 text-[12px]">
+                <div class="sm:col-span-2 text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Source</div>
+                <div class="sm:col-span-10 text-slate-800">
+                    Account <code class="font-mono text-[11px] bg-slate-100 px-1.5 rounded">4474XX</code> · sum of <code class="font-mono text-[11px] bg-slate-100 px-1.5 rounded">account.move.line.balance</code> for the declaration month.
+                </div>
+
+                <div class="sm:col-span-2 text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Filter</div>
+                <div class="sm:col-span-10 text-slate-800">
+                    Line description must contain — case-insensitive, accent-folded — any of:
+                    <code class="font-mono text-[11px] bg-slate-100 px-1.5 rounded">CFC</code>,
+                    <code class="font-mono text-[11px] bg-slate-100 px-1.5 rounded">Crédit Foncier</code>,
+                    <code class="font-mono text-[11px] bg-slate-100 px-1.5 rounded">Contribution au Crédit Foncier</code>.
+                    4474XX is dedicated to CFC in SYSCOHADA so this is usually a no-op safety filter.
+                </div>
+
+                <div class="sm:col-span-2 text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Formula</div>
+                <div class="sm:col-span-10 text-slate-800">Principal = filtered sum. No CAC. Total = Principal.</div>
+
+                <div class="sm:col-span-2 text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Notes</div>
+                <div class="sm:col-span-10 text-slate-600">If the Principal/CAC split should be applied here too (same logic as L67), tell me and I'll mirror it.</div>
+            </div>
         </div>
-        <div>
-            <span class="font-semibold text-slate-900">Working-day basis</span> — Mon–Sat (consistent with the Dashboard's RpD &amp; Run-Rate).
+
+        {{-- L69 ----------------------------------------------------- --}}
+        <div class="border border-slate-200 rounded-md overflow-hidden bg-white">
+            <div class="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-center gap-3 flex-wrap">
+                <span class="font-mono text-[11px] font-semibold tracking-wider bg-slate-900 text-white px-2 py-0.5 rounded">L69</span>
+                <span class="text-[13px] font-semibold text-slate-900">Crédit Foncier du Cameroun · Part Patronale</span>
+                <span class="ml-auto text-[10px] uppercase tracking-wider text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full font-semibold">Sourced from Odoo</span>
+            </div>
+            <div class="px-4 py-3 grid sm:grid-cols-12 gap-x-4 gap-y-2 text-[12px]">
+                <div class="sm:col-span-2 text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Source</div>
+                <div class="sm:col-span-10 text-slate-800">
+                    Account <code class="font-mono text-[11px] bg-slate-100 px-1.5 rounded">6413XX</code> · sum of <code class="font-mono text-[11px] bg-slate-100 px-1.5 rounded">account.move.line.balance</code> for the declaration month. No description filter — the whole 6413XX balance is taken.
+                </div>
+
+                <div class="sm:col-span-2 text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Filter</div>
+                <div class="sm:col-span-10 text-slate-800">None — 6413 in SYSCOHADA is "Charges sociales sur rémunérations" and is dedicated to the patronal CFC posting.</div>
+
+                <div class="sm:col-span-2 text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Formula</div>
+                <div class="sm:col-span-10 text-slate-800">Principal = full account balance. No CAC. Total = Principal.</div>
+
+                <div class="sm:col-span-2 text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Notes</div>
+                <div class="sm:col-span-10 text-slate-600">If 6413XX gets co-used for unrelated charges on a tenant, narrow the prefix (e.g. 64131, 64132) or add a description filter — tell me.</div>
+            </div>
         </div>
-        <div>
-            <span class="font-semibold text-slate-900">Vehicle classification</span> —
-            <code class="text-[11px] bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5">aw_vehicule.vehicule.cylinders</code> mirrors the
-            <code class="text-[11px] bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5">size</code> codes in
-            <code class="text-[11px] bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5">aw_cargo_invoice.product</code>:
-            cylinders ∈ {4, 6} → Voiture, 8 → Camion/Truck, 12 → Bulldoze. Other values fall into a non-vehicle residual bucket (the table also stores cartons, sacks, cookware, even loose 40' HC containers).
+
+        {{-- L70 ----------------------------------------------------- --}}
+        <div class="border border-slate-200 rounded-md overflow-hidden bg-white">
+            <div class="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-center gap-3 flex-wrap">
+                <span class="font-mono text-[11px] font-semibold tracking-wider bg-slate-900 text-white px-2 py-0.5 rounded">L70</span>
+                <span class="text-[13px] font-semibold text-slate-900">Fonds National de l'Emploi (FNE)</span>
+                <span class="ml-auto text-[10px] uppercase tracking-wider text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full font-semibold">Sourced from Odoo</span>
+            </div>
+            <div class="px-4 py-3 grid sm:grid-cols-12 gap-x-4 gap-y-2 text-[12px]">
+                <div class="sm:col-span-2 text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Source</div>
+                <div class="sm:col-span-10 text-slate-800">
+                    Account <code class="font-mono text-[11px] bg-slate-100 px-1.5 rounded">4472XX</code> · same pool as L67/L71/L72 · sum of <code class="font-mono text-[11px] bg-slate-100 px-1.5 rounded">balance</code> for the declaration month.
+                </div>
+
+                <div class="sm:col-span-2 text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Filter</div>
+                <div class="sm:col-span-10 text-slate-800">
+                    Line description must contain — case-insensitive, accent-folded — any of:
+                    <code class="font-mono text-[11px] bg-slate-100 px-1.5 rounded">FNE</code>,
+                    <code class="font-mono text-[11px] bg-slate-100 px-1.5 rounded">Fonds National d'Emploi</code>.
+                </div>
+
+                <div class="sm:col-span-2 text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Formula</div>
+                <div class="sm:col-span-10 text-slate-800">Principal = filtered sum. No CAC. Total = Principal.</div>
+
+                <div class="sm:col-span-2 text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Notes</div>
+                <div class="sm:col-span-10 text-slate-600">Shares 4472XX with L67/L71/L72 — bucketing happens in a single PHP pass after one Odoo round-trip.</div>
+            </div>
         </div>
-        <div>
-            <span class="font-semibold text-slate-900">Revenue model</span> — <em>Expected Revenue</em> applies the customer's official Grille Tarifaire to the scanned-container mix (per-row pricing in
-            <code class="text-[11px] bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5">App\Services\OperationsService::PRICE_HT_*</code> constants). To switch to actual invoiced revenue, traverse <code class="text-[11px] bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5">cargo.invoice_ids</code> → <code class="text-[11px] bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5">account.move</code> in a v2 — the expected vs actual delta then becomes a leakage metric.
+
+        {{-- L71 ----------------------------------------------------- --}}
+        <div class="border border-slate-200 rounded-md overflow-hidden bg-white">
+            <div class="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-center gap-3 flex-wrap">
+                <span class="font-mono text-[11px] font-semibold tracking-wider bg-slate-900 text-white px-2 py-0.5 rounded">L71</span>
+                <span class="text-[13px] font-semibold text-slate-900">Redevance Audiovisuelle (RAV)</span>
+                <span class="ml-auto text-[10px] uppercase tracking-wider text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full font-semibold">Sourced from Odoo</span>
+            </div>
+            <div class="px-4 py-3 grid sm:grid-cols-12 gap-x-4 gap-y-2 text-[12px]">
+                <div class="sm:col-span-2 text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Source</div>
+                <div class="sm:col-span-10 text-slate-800">
+                    Account <code class="font-mono text-[11px] bg-slate-100 px-1.5 rounded">4472XX</code> · same pool as L67/L70/L72.
+                </div>
+
+                <div class="sm:col-span-2 text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Filter</div>
+                <div class="sm:col-span-10 text-slate-800">
+                    Line description must contain — case-insensitive, accent-folded — any of:
+                    <code class="font-mono text-[11px] bg-slate-100 px-1.5 rounded">RAV</code>,
+                    <code class="font-mono text-[11px] bg-slate-100 px-1.5 rounded">Redevance Audio Visuel</code>,
+                    <code class="font-mono text-[11px] bg-slate-100 px-1.5 rounded">Redevance Audiovisuelle</code>.
+                </div>
+
+                <div class="sm:col-span-2 text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Formula</div>
+                <div class="sm:col-span-10 text-slate-800">Principal = filtered sum. No CAC. Total = Principal.</div>
+
+                <div class="sm:col-span-2 text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Notes</div>
+                <div class="sm:col-span-10 text-slate-600">Typically a small fixed amount per employee — if the live figure looks too high or low, check the line descriptions in 4472XX.</div>
+            </div>
         </div>
-        <div>
-            <span class="font-semibold text-slate-900">Deferred to v2</span> —
-            <em>Top Vessels by Volume</em> (drill-down list page),
-            <em>Single-container detail page</em>,
-            <em>Customer / Destination breakdowns</em> (the <code class="text-[11px] bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5">partner_id</code> field is mostly empty in the source data — needs upstream data quality work).
+
+        {{-- L72 ----------------------------------------------------- --}}
+        <div class="border border-slate-200 rounded-md overflow-hidden bg-white">
+            <div class="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-center gap-3 flex-wrap">
+                <span class="font-mono text-[11px] font-semibold tracking-wider bg-slate-900 text-white px-2 py-0.5 rounded">L72</span>
+                <span class="text-[13px] font-semibold text-slate-900">Taxe de Développement Local (TDL)</span>
+                <span class="ml-auto text-[10px] uppercase tracking-wider text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full font-semibold">Sourced from Odoo</span>
+            </div>
+            <div class="px-4 py-3 grid sm:grid-cols-12 gap-x-4 gap-y-2 text-[12px]">
+                <div class="sm:col-span-2 text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Source</div>
+                <div class="sm:col-span-10 text-slate-800">
+                    Account <code class="font-mono text-[11px] bg-slate-100 px-1.5 rounded">4472XX</code> · same pool as L67/L70/L71.
+                </div>
+
+                <div class="sm:col-span-2 text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Filter</div>
+                <div class="sm:col-span-10 text-slate-800">
+                    Line description must contain — case-insensitive, accent-folded — any of:
+                    <code class="font-mono text-[11px] bg-slate-100 px-1.5 rounded">TDL</code>,
+                    <code class="font-mono text-[11px] bg-slate-100 px-1.5 rounded">Taxe de Développement</code>,
+                    <code class="font-mono text-[11px] bg-slate-100 px-1.5 rounded">Développement Local</code>.
+                </div>
+
+                <div class="sm:col-span-2 text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Formula</div>
+                <div class="sm:col-span-10 text-slate-800">Principal = filtered sum. No CAC. Total = Principal.</div>
+
+                <div class="sm:col-span-2 text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Notes</div>
+                <div class="sm:col-span-10 text-slate-600">Communal tax with brackets — check that the underlying payroll computation in Odoo applies the right band for each employee.</div>
+            </div>
         </div>
+
+        {{-- L73 ----------------------------------------------------- --}}
+        <div class="border-2 border-slate-300 rounded-md overflow-hidden bg-white">
+            <div class="px-4 py-3 bg-slate-100 border-b border-slate-200 flex items-center gap-3 flex-wrap">
+                <span class="font-mono text-[11px] font-semibold tracking-wider bg-slate-900 text-white px-2 py-0.5 rounded">L73</span>
+                <span class="text-[13px] font-semibold text-slate-900">TOTAL — sum of L67 to L72</span>
+                <span class="ml-auto text-[10px] uppercase tracking-wider text-slate-700 bg-slate-200 border border-slate-300 px-2 py-0.5 rounded-full font-semibold">Aggregate row</span>
+            </div>
+            <div class="px-4 py-3 grid sm:grid-cols-12 gap-x-4 gap-y-2 text-[12px]">
+                <div class="sm:col-span-2 text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Source</div>
+                <div class="sm:col-span-10 text-slate-800">No direct Odoo source — computed from L67 through L72.</div>
+
+                <div class="sm:col-span-2 text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Formula</div>
+                <div class="sm:col-span-10 text-slate-800">
+                    <div class="font-mono text-[11.5px] bg-slate-50 border border-slate-200 rounded p-2 leading-relaxed">
+                        Principal = L67.Principal + L68 + L69 + L70 + L71 + L72<br>
+                        CAC       = L67.CAC                       <span class="text-slate-500">(only L67 carries a CAC today)</span><br>
+                        Total     = L67.Total + L68 + L69 + L70 + L71 + L72
+                    </div>
+                </div>
+
+                <div class="sm:col-span-2 text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Section header</div>
+                <div class="sm:col-span-10 text-slate-800">The §12 collapsed header total in the tax-return page = L73.Total (above). Recap row "RTS / salaires (= L73)" also reads L73.Total.</div>
+
+                <div class="sm:col-span-2 text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Notes</div>
+                <div class="sm:col-span-10 text-slate-600">If L68/L70/L71/L72 ever pick up CAC, the CAC sum here will need to widen to include them. Currently a no-op since only L67 has one.</div>
+            </div>
+        </div>
+
+    </div>
+
+    {{-- File pointers --}}
+    <div class="mt-5 pt-4 border-t border-slate-200 text-[11px] text-slate-500">
+        <h3 class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold mb-1.5">Where the code lives</h3>
+        <ul class="space-y-0.5">
+            <li>Service: <code class="font-mono bg-slate-50 border border-slate-200 px-1 rounded">app/Services/Tax/MonthlyTaxReturnService.php</code> — see <code>autoExtract()</code> for 4472/4474/6413 bucketing, <code>buildSections()</code> §12 for the L67 Principal/CAC split, <code>bucketLinesByDescription()</code> for the keyword filter logic.</li>
+            <li>Controller: <code class="font-mono bg-slate-50 border border-slate-200 px-1 rounded">app/Http/Controllers/Tax/MonthlyTaxReturnController.php</code></li>
+            <li>View: <code class="font-mono bg-slate-50 border border-slate-200 px-1 rounded">resources/views/tax/monthly-tax-return.blade.php</code></li>
+        </ul>
     </div>
 </section>
 
-{{-- ────────────────────────────────────────────────────── Billing ── --}}
-<section id="billing" class="panel p-6 mb-5 scroll-mt-6">
-    <div class="flex items-center justify-between mb-4">
-        <div>
-            <h2 class="text-base font-bold text-slate-900">Billing</h2>
-            <p class="text-[11px] text-slate-500 mt-0.5">Invoice-issuance lens — volume, time-to-invoice (shipment basis), accuracy.</p>
-        </div>
-        <span class="text-[10px] uppercase tracking-wider text-slate-400 font-medium">/billing</span>
-    </div>
-    <div class="text-xs text-slate-700 leading-relaxed space-y-3">
-        <div>
-            <span class="font-semibold text-slate-900">Models in use</span> —
-            <code class="text-[11px] bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5">account.move</code> (invoices &amp; credit notes),
-            <code class="text-[11px] bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5">aw_cargo.cargo</code> (shipment ↔ invoice link via <code>invoice_ids</code>),
-            <code class="text-[11px] bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5">aw_cargo.equipment / aw_vehicule.vehicule / aw_bois.bois</code> (line items, source of <code>scanned_date</code>).
-        </div>
-        <div>
-            <span class="font-semibold text-slate-900">Period anchor</span> — invoice volume and credit-note rate filter on <code class="text-[11px] bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5">invoice_date</code> (the actual billing event). Time-to-Invoice computes <code>invoice_date − MAX(scanned_date)</code> per shipment.
-        </div>
-        <div>
-            <span class="font-semibold text-slate-900">Why MAX(scanned_date)</span> — the moment the operation is complete on the last container/vehicle/wood line in the cargo. Earliest defensible point at which billing can be issued. Negative latency = advance billing; we surface it rather than mask it.
-        </div>
-        <div>
-            <span class="font-semibold text-slate-900">Distinct from Receivables</span> — Receivables answers "what's outstanding and how aged". Billing answers "are we issuing invoices on time, in volume, accurately?". The two together cover the full O2C cycle without overlap.
-        </div>
-    </div>
-</section>
-
-{{-- ───────────────────────────────────────────────────── Procurement ── --}}
-<section id="procurement" class="panel p-6 mb-5 scroll-mt-6">
-    <div class="flex items-center justify-between mb-4">
-        <div>
-            <h2 class="text-base font-bold text-slate-900">Procurement</h2>
-            <p class="text-[11px] text-slate-500 mt-0.5">PO-lifecycle lens — volume, cycle time, compliance, total spend.</p>
-        </div>
-        <span class="text-[10px] uppercase tracking-wider text-slate-400 font-medium">/procurement</span>
-    </div>
-    <div class="text-xs text-slate-700 leading-relaxed space-y-3">
-        <div>
-            <span class="font-semibold text-slate-900">Models in use</span> —
-            <code class="text-[11px] bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5">purchase.order</code> (PO header, source for volume &amp; cycle time),
-            <code class="text-[11px] bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5">account.move</code> (vendor bills, <code>move_type='in_invoice'</code>),
-            <code class="text-[11px] bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5">account.move.line.purchase_line_id</code> (primary PO link), with <code>purchase.order.invoice_ids</code> as fallback.
-        </div>
-        <div>
-            <span class="font-semibold text-slate-900">Period anchors</span> — PO Volume &amp; Cycle Time anchor on <code class="text-[11px] bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5">date_order</code>; PO Compliance and Total Spend anchor on <code class="text-[11px] bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5">invoice_date</code> (the moment the "did it follow process?" / "what did it cost?" questions crystallise). The Open POs sandbox is anchored on <em>today</em> — it asks "what's open right now?", not "what was open in the period?".
-        </div>
-        <div>
-            <span class="font-semibold text-slate-900">Cycle-time scope</span> — POs with <code class="text-[11px] bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5">date_order</code> are included if either (a) <code class="text-[11px] bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5">effective_date</code> is populated (Odoo's computed first-receipt anchor) or (b) at least one linked invoice has been posted (we use the earliest <code class="text-[11px] bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5">invoice_date</code>). POs with neither are still in flight and are excluded from the average.
-        </div>
-        <div>
-            <span class="font-semibold text-slate-900">PO Compliance — sign convention</span> — headline is the compliance rate (% of bills WITH a PO), not its inverse. Detection: line-level
-            <code class="text-[11px] bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5">account.move.line.purchase_line_id</code>
-            with reverse-lookup via
-            <code class="text-[11px] bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5">purchase.order.invoice_ids</code>
-            as fallback.
-        </div>
-        <div>
-            <span class="font-semibold text-slate-900">PO Volume vs Total Spend</span> — P1 measures spend you've <em>committed</em> via POs (whether received yet or not); Total Spend measures what you've actually been <em>billed</em> for (whether through a PO or maverick). Total Spend uses
-            <code class="text-[11px] bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5">amount_untaxed_signed</code>
-            (net of taxes), with abs() applied because vendor bills are P&amp;L-direction signed (negative). Top-suppliers ranking sorts in PHP by abs() to be robust against the sign convention.
-        </div>
-        <div>
-            <span class="font-semibold text-slate-900">Top supplier "Recorded in" column</span> — for each top-N supplier, the dominant expense account is computed via
-            <code class="text-[11px] bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5">account.move.line</code>
-            <code class="text-[11px] bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5">read_group</code>
-            on (move_id IN supplier_bills, debit &gt; 0) grouped by
-            <code class="text-[11px] bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5">account_id</code>, picking the top 1 by debit:sum.
-        </div>
-        <div>
-            <span class="font-semibold text-slate-900">Distinct from Payables</span> — Payables answers "what we owe vendors and how aged". Procurement answers "are purchases controlled, fast, and properly authorised?". Together they cover the full P2P cycle without overlap.
-        </div>
-    </div>
-</section>
-
-<div class="panel p-4 text-[11px] text-slate-500 leading-relaxed">
-    <strong class="text-slate-700">Maintenance:</strong> when a KPI's data source, period anchor or formula changes, update the corresponding section in
-    <code class="text-[10px] bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5">resources/views/admin/methodology.blade.php</code>
-    so this page stays the single source of truth for "how the platform works".
+{{-- Future-section placeholder --}}
+<div class="panel p-4 border-l-4 border-slate-300 text-[12px] text-slate-600 leading-relaxed">
+    <strong>Next:</strong> If the §12 template above works for you, the same pattern will be applied to the rest of the BMS — Tax Return §0–§14 first, then the BI modules (Dashboard / Revenue / Receivables / Treasury / etc.), then the Financial Reporting suite. Tell me which section to document next.
 </div>
 
 @endsection
