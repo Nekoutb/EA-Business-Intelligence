@@ -52,7 +52,12 @@ class MonthlyTaxReturnController extends Controller
         //     instead of the broader 4471) and §7 L40 (Acompte à
         //     reverser, newly sourced from 44712XX). Both §7 and §8
         //     row shapes changed — stale v3 entries would mis-render.
-        $cacheKey = 'monthly_tax_return_v4_' . ($month ?: 'current');
+        //   v4 → v5 (2026-05-14, PR #145): §9 L52 and L53 now pass all
+        //     three columns (Principal + CAC + Total) when referencing
+        //     L49 and the prior-month L55. Was dropping CAC, which
+        //     made the displayed row not sum to its own Total even
+        //     though the L54 math used the right values internally.
+        $cacheKey = 'monthly_tax_return_v5_' . ($month ?: 'current');
 
         try {
             $analysis = ea_cached($cacheKey, function () use ($month, $tenant) {
