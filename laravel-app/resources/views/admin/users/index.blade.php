@@ -38,6 +38,7 @@
                             <span class="block mt-1 text-rose-700">
                                 <strong>Welcome email failed</strong> — share the credentials manually.
                                 Reason: <code class="bg-rose-50 border border-rose-200 px-1 rounded text-[10.5px]">{{ $nc['mail']['error'] }}</code>
+                                <a href="/admin/mail-diagnostic" class="underline font-semibold ml-1">Open mail diagnostic →</a>
                             </span>
                         @elseif ($nc['mail']['driver'] === 'log')
                             <span class="block mt-1 text-amber-700">
@@ -45,6 +46,7 @@
                                 the welcome email was written to <code class="bg-amber-50 border border-amber-200 px-1 rounded text-[10.5px]">storage/logs/laravel.log</code>
                                 instead of being delivered. Set <code class="bg-amber-50 border border-amber-200 px-1 rounded text-[10.5px]">MAIL_MAILER=smtp</code>
                                 + SMTP credentials in <code class="bg-amber-50 border border-amber-200 px-1 rounded text-[10.5px]">.env</code> for real delivery, or share the credentials manually now.
+                                <a href="/admin/mail-diagnostic" class="underline font-semibold ml-1">Open mail diagnostic →</a>
                             </span>
                         @else
                             <span class="block mt-1 text-emerald-700">

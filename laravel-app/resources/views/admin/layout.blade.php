@@ -31,6 +31,7 @@
                 ['business_insights', '/admin/business-insights', 'Business Insights', 'M9.663 17h4.673M12 3v1M3 12h1M20 12h1M5.6 5.6l.7.7M18.4 5.6l-.7.7M8 14a4 4 0 1 1 8 0c0 1.5-.5 2.5-1.5 3.5L14 18h-4l-.5-.5C8.5 16.5 8 15.5 8 14z'],
                 ['methodology', '/admin/methodology', 'Methodology', 'M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2zM22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z'],
                 ['ai_settings', '/admin/settings/ai', 'AI Provider', 'M12 2a4 4 0 0 0-4 4v1H7a3 3 0 0 0-3 3v1a3 3 0 0 0 1 2.236V17a3 3 0 0 0 3 3h8a3 3 0 0 0 3-3v-3.764A3 3 0 0 0 20 11v-1a3 3 0 0 0-3-3h-1V6a4 4 0 0 0-4-4zM9 14h.01M15 14h.01'],
+                ['mail_diagnostic', '/admin/mail-diagnostic', 'Mail diagnostic', 'M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2zM22 6l-10 7L2 6'],
             ] as [$slug, $url, $label, $path])
               <a href="{{ $url }}"
                  class="flex items-center gap-2.5 px-3 py-2 rounded-lg transition

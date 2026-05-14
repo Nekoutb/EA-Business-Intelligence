@@ -36,6 +36,7 @@ use App\Http\Controllers\Tax\VATInvoiceComplianceController;
 use App\Http\Controllers\Admin\AdminAuthController;
 use App\Http\Controllers\Admin\AdminDashboardController;
 use App\Http\Controllers\Admin\BusinessInsightsController as AdminBusinessInsightsController;
+use App\Http\Controllers\Admin\MailDiagnosticController as AdminMailDiagnosticController;
 use App\Http\Controllers\Admin\UsersController as AdminUsersController;
 use App\Http\Controllers\Admin\AiSettingsController as AdminAiSettingsController;
 use App\Http\Controllers\Admin\IndustryController as AdminIndustryController;
@@ -92,6 +93,13 @@ Route::prefix('admin')->group(function () {
         Route::get   ('/users/{id}/edit',      [AdminUsersController::class, 'edit'])->whereNumber('id');
         Route::post  ('/users/{id}',           [AdminUsersController::class, 'update'])->whereNumber('id');
         Route::post  ('/users/{id}/delete',    [AdminUsersController::class, 'destroy'])->whereNumber('id');
+
+        // Mail diagnostic — quick way to verify the configured driver
+        // actually delivers, without having to create a throwaway user.
+        // Renders the real WelcomeUserMail template so success here ==
+        // a working welcome-email flow on /admin/users/create.
+        Route::get ('/mail-diagnostic', [AdminMailDiagnosticController::class, 'index']);
+        Route::post('/mail-diagnostic', [AdminMailDiagnosticController::class, 'send']);
 
         // Daily Claude-generated business insights (super-admin only —
         // already gated by admin.auth above).
