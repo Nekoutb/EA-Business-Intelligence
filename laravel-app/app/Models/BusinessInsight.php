@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Services\BusinessInsightsScorer;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -69,5 +70,21 @@ class BusinessInsight extends Model
             self::PRIORITY_GOOD   => ['Good',   'bg-emerald-50 text-emerald-700 border-emerald-200'],
             default               => ['—',      'bg-slate-50 text-slate-600 border-slate-200'],
         };
+    }
+
+    /**
+     * Resolve the scorecard for this row's snapshot. Newly-generated rows
+     * carry `scorecard` baked into `kpis_snapshot` (set by the service
+     * during generate()). Older rows pre-date that wiring — re-compute
+     * on the fly so the index/show views uniformly render the KPI strip
+     * and risk register without needing to regenerate every historical
+     * insight. The computation is pure / deterministic, so callers can
+     * also cache this if it becomes a hot path.
+     */
+    public function scorecard(): array
+    {
+        $snap = is_array($this->kpis_snapshot) ? $this->kpis_snapshot : [];
+        if (is_array($snap['scorecard'] ?? null)) return $snap['scorecard'];
+        return BusinessInsightsScorer::score($snap);
     }
 }
