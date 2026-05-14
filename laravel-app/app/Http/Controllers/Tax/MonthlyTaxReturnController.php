@@ -47,7 +47,12 @@ class MonthlyTaxReturnController extends Controller
         //     sub-line CACs instead of computing 10% on the principal
         //     sum, so the "5,000,000 IRPP" case correctly displays as
         //     4,545,454 + 454,545 = 5,000,000 (not 5,000,000 + 500,000).
-        $cacheKey = 'monthly_tax_return_v3_' . ($month ?: 'current');
+        //   v3 → v4 (2026-05-14, PR #144): same Total/1.10 split rolled
+        //     out to §8 L45 (Acompte à déduire, sourced from 44711XX
+        //     instead of the broader 4471) and §7 L40 (Acompte à
+        //     reverser, newly sourced from 44712XX). Both §7 and §8
+        //     row shapes changed — stale v3 entries would mis-render.
+        $cacheKey = 'monthly_tax_return_v4_' . ($month ?: 'current');
 
         try {
             $analysis = ea_cached($cacheKey, function () use ($month, $tenant) {
