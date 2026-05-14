@@ -197,7 +197,7 @@ class BusinessInsightsScorerTest extends TestCase
                     'rpo'   => 95.0,         // +5.26% → green (>5%)
                     'opd'   => 12.0,         // 0% → amber
                     'rpc'   => 1_400.0,      // +7.14% → green
-                    'cpo'   => 35.0,         // higher_better metric assumed; +8.57% — actually CpO is treated as higher_better here in builder; that's fine, the column shows the figures faithfully
+                    'cpo'   => 35.0,         // CpO (cost) +8.57% — cost rising is adverse → red
                 ],
             ],
         ];
@@ -213,5 +213,46 @@ class BusinessInsightsScorerTest extends TestCase
         $this->assertNotNull($opdRow);
         $this->assertSame('+0.0%', $opdRow['variance_pct_fmt']);
         $this->assertSame('amber', $opdRow['status']);
+    }
+
+    /**
+     * Lock down the direction-aware variance scoring: cost-side metrics
+     * (CpO) MUST flag rising costs as adverse, even though the raw
+     * variance % is positive. This was the bug I caught in the UI
+     * screenshot — without it, CpO +18.8% renders with a green dot
+     * and the report tells the owner cost inflation is good news.
+     */
+    public function test_cpo_rising_is_adverse_not_favourable(): void
+    {
+        $snap = [
+            'revenue' => [
+                'cpo'  => 38_500.0,
+                'prev' => ['cpo' => 32_400.0],   // +18.8%
+            ],
+        ];
+        $table = BusinessInsightsScorer::score($snap)['variance_table'];
+        $cpoRow = collect($table)->firstWhere('label', 'Cost per outfit (CpO)');
+        $this->assertNotNull($cpoRow);
+        $this->assertSame('+18.8%', $cpoRow['variance_pct_fmt']);
+        // CpO rising 18.8% is a 5+ pt adverse move on a lower-better
+        // metric → red, NOT green.
+        $this->assertSame('red', $cpoRow['status']);
+    }
+
+    public function test_cpo_falling_is_favourable(): void
+    {
+        $snap = [
+            'revenue' => [
+                'cpo'  => 30_000.0,
+                'prev' => ['cpo' => 36_000.0],   // -16.7%
+            ],
+        ];
+        $table = BusinessInsightsScorer::score($snap)['variance_table'];
+        $cpoRow = collect($table)->firstWhere('label', 'Cost per outfit (CpO)');
+        $this->assertNotNull($cpoRow);
+        $this->assertSame('-16.7%', $cpoRow['variance_pct_fmt']);
+        // CpO falling = costs dropping = favourable for a lower-better
+        // metric → green.
+        $this->assertSame('green', $cpoRow['status']);
     }
 }

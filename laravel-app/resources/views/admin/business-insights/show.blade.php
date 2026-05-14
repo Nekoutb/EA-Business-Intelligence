@@ -35,6 +35,50 @@
 @endsection
 
 @section('content')
+{{-- Narrative typography + print rules. Inlined here (rather than via
+     @push('styles')) because the admin layout doesn't expose a styles
+     stack. Scoped to .ea-narrative + the print media query so it can't
+     leak to other admin pages. --}}
+<style>
+  .ea-narrative h1 { font-size: 14px; font-weight: 700; color: #0f172a; margin: 0 0 12px; }
+  .ea-narrative h2 {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #475569;
+    margin: 20px 0 10px;
+    padding-bottom: 5px;
+    border-bottom: 1px solid #e2e8f0;
+  }
+  .ea-narrative h2:first-child { margin-top: 0; }
+  .ea-narrative h3 { font-size: 12px; font-weight: 600; color: #334155; margin: 14px 0 6px; }
+  .ea-narrative p, .ea-narrative li {
+    font-size: 13px; line-height: 1.65; color: #334155; margin: 0 0 8px;
+  }
+  .ea-narrative ul, .ea-narrative ol { padding-left: 1.25rem; margin: 6px 0 12px; }
+  .ea-narrative ol { list-style-type: decimal; }
+  .ea-narrative ul { list-style-type: disc; }
+  .ea-narrative li { margin-bottom: 6px; }
+  .ea-narrative strong { color: #0f172a; font-weight: 700; }
+  .ea-narrative code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11.5px;
+    background: #f1f5f9;
+    padding: 1px 5px;
+    border-radius: 4px;
+  }
+
+  /* Print-friendly: drop the dark sidebar + sticky chrome so the
+     advisory body fills the page when the admin prints to PDF for
+     a client meeting. */
+  @media print {
+    aside, .print\:hidden, header { display: none !important; }
+    body { background: white !important; color: black !important; }
+    .panel { box-shadow: none !important; border: 1px solid #e5e7eb; }
+  }
+</style>
+
 @if (!$latest)
   <div class="panel p-6 text-center text-slate-500">
       No insight generated yet for this tenant. Click <b>Refresh now</b> to generate the first one, or wait for the 06:00 schedule.
@@ -243,7 +287,7 @@
             <h2 class="text-sm font-semibold text-slate-900">Advisor narrative</h2>
             <span class="text-[10px] uppercase tracking-wider text-slate-500">Structured per Management Reporting standard</span>
         </div>
-        <article class="prose prose-slate max-w-none prose-headings:text-slate-900 prose-h2:text-sm prose-h2:font-semibold prose-h2:uppercase prose-h2:tracking-wider prose-h2:text-slate-700 prose-h2:mt-5 prose-h2:mb-2 prose-h2:border-b prose-h2:border-slate-200 prose-h2:pb-1 prose-p:text-[13px] prose-p:leading-relaxed prose-li:text-[13px] prose-li:leading-relaxed prose-strong:text-slate-900 prose-strong:font-semibold prose-ol:my-2 prose-ul:my-2">
+        <article class="ea-narrative">
             {!! \Illuminate\Support\Str::markdown($latest->insight_md) !!}
         </article>
     </div>
@@ -272,16 +316,4 @@
   </div>
 @endif
 
-@push('styles')
-<style>
-  /* Print-friendly: drop the dark sidebar + sticky chrome so the
-     advisory body fills the page when the admin prints to PDF for
-     a client meeting. */
-  @media print {
-    aside, .print\:hidden, header { display: none !important; }
-    body { background: white !important; color: black !important; }
-    .panel { box-shadow: none !important; border: 1px solid #e5e7eb; }
-  }
-</style>
-@endpush
 @endsection

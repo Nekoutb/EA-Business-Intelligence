@@ -219,32 +219,38 @@ final class BusinessInsightsScorer
     {
         $rows = [];
 
-        // Top-line + drivers from the Revenue block (RpD / RpO / OpD / RpC / CpO)
+        // Top-line + drivers from the Revenue block (RpD / RpO / OpD / RpC / CpO).
+        // The 'direction' tuple element matters: CpO is a cost metric — rising
+        // CpO is adverse, not favourable. Same for Opex below. Without this
+        // the variance table renders CpO +19% with a green dot, which is
+        // exactly the kind of "tells the owner the wrong thing" mistake the
+        // Management Reporting skill flags as a primary failure mode.
         $cur  = $rev;
         $prv  = is_array($rev['prev'] ?? null) ? $rev['prev'] : [];
         foreach ([
-            ['Revenue (total)', 'total', '$'],
-            ['Revenue per day (RpD)', 'rpd', '$'],
-            ['Revenue per outfit (RpO)', 'rpo', '$'],
-            ['Outfits per day (OpD)', 'opd', 'count'],
-            ['Revenue per customer (RpC)', 'rpc', '$'],
-            ['Cost per outfit (CpO)', 'cpo', '$'],
-        ] as [$label, $key, $unit]) {
+            ['Revenue (total)',            'total', '$',     'higher_better'],
+            ['Revenue per day (RpD)',      'rpd',   '$',     'higher_better'],
+            ['Revenue per outfit (RpO)',   'rpo',   '$',     'higher_better'],
+            ['Outfits per day (OpD)',      'opd',   'count', 'higher_better'],
+            ['Revenue per customer (RpC)', 'rpc',   '$',     'higher_better'],
+            ['Cost per outfit (CpO)',      'cpo',   '$',     'lower_better'],
+        ] as [$label, $key, $unit, $direction]) {
             if (!array_key_exists($key, $cur)) continue;
-            $rows[] = self::buildVarianceRow($label, $cur[$key] ?? null, $prv[$key] ?? null, $unit, 'higher_better');
+            $rows[] = self::buildVarianceRow($label, $cur[$key] ?? null, $prv[$key] ?? null, $unit, $direction);
         }
 
-        // P&L doesn't carry a `prev` block in the trimmed snapshot, so
-        // we can only show current absolutes. Still useful for the
-        // narrative; flagged as "no comparison".
+        // P&L doesn't carry a `prev` block in the trimmed snapshot, so we can
+        // only show current absolutes (variance column shows '—'). Direction
+        // is still set correctly in case a future iteration adds prior-period
+        // P&L figures.
         foreach ([
-            ['Gross profit', 'gross_profit', '$'],
-            ['Operating expense', 'opex', '$'],
-            ['EBITDA', 'ebitda', '$'],
-            ['Net profit', 'net_profit', '$'],
-        ] as [$label, $key, $unit]) {
+            ['Gross profit',      'gross_profit', '$', 'higher_better'],
+            ['Operating expense', 'opex',         '$', 'lower_better'],
+            ['EBITDA',            'ebitda',       '$', 'higher_better'],
+            ['Net profit',        'net_profit',   '$', 'higher_better'],
+        ] as [$label, $key, $unit, $direction]) {
             if (!array_key_exists($key, $pl)) continue;
-            $rows[] = self::buildVarianceRow($label, $pl[$key] ?? null, null, $unit, 'higher_better');
+            $rows[] = self::buildVarianceRow($label, $pl[$key] ?? null, null, $unit, $direction);
         }
 
         return $rows;
