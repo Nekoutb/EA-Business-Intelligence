@@ -45,22 +45,53 @@
         </div>
 
         <nav class="flex-1 px-3 py-4 space-y-0.5 text-[13px] overflow-y-auto">
-            @foreach ([
-                ['dashboard',   '/demo/sandbox',              'Dashboard',     'M3 12l9-9 9 9M5 10v10h14V10'],
-                ['revenue',     '/demo/sandbox/revenue',      'Revenue',       'M3 3v18h18M7 14l4-4 4 4 5-5'],
-                ['receivables', '/demo/sandbox/receivables',  'Receivables',   'M4 4h16v16H4zM4 12h16M9 4v16'],
-                ['profit_loss', '/demo/sandbox/profit-loss',  'Profit & Loss', 'M12 2v20M2 12h20M5 5l14 14M5 19L19 5'],
-            ] as [$slug, $url, $label, $path])
-              <a href="{{ $url }}"
-                 class="flex items-center gap-2.5 px-3 py-2 rounded-lg transition
-                        {{ $active === $slug ? 'bg-stone-800 text-white' : 'text-stone-400 hover:bg-stone-800/60 hover:text-white' }}">
-                  <svg class="w-[15px] h-[15px] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="{{ $path }}"/></svg>
-                  <span>{{ $label }}</span>
-              </a>
-            @endforeach
+            {{-- Group 1: Business Intelligence --}}
+            <a href="/demo/sandbox"
+               class="flex items-center gap-2.5 px-3 py-2 rounded-lg transition
+                      {{ $active === 'dashboard' ? 'bg-stone-800 text-white' : 'text-stone-400 hover:bg-stone-800/60 hover:text-white' }}">
+                <svg class="w-[15px] h-[15px] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12l9-9 9 9M5 10v10h14V10"/></svg>
+                <span>Dashboard</span>
+            </a>
 
-            <div class="pt-4 mt-3 border-t border-stone-800">
-                <div class="px-3 pb-1.5 text-[10px] uppercase tracking-widest text-stone-500 font-semibold">Sandbox controls</div>
+            <div class="pt-3">
+                <div class="px-3 pb-1.5 text-[10px] uppercase tracking-widest text-stone-500 font-semibold">Business Intelligence</div>
+                @foreach ([
+                    ['revenue',           '/demo/sandbox/revenue',            'Revenue',           'M3 3v18h18M7 14l4-4 4 4 5-5'],
+                    ['receivables',       '/demo/sandbox/receivables',        'Receivables',       'M4 4h16v16H4zM4 12h16M9 4v16'],
+                    ['profit_loss',       '/demo/sandbox/profit-loss',        'Profit & Loss',     'M12 2v20M2 12h20'],
+                    ['working_capital',   '/demo/sandbox/working-capital',    'Working Capital',   'M21 12c0 5-4 9-9 9s-9-4-9-9 4-9 9-9 9 4 9 9zM12 3v18M3 12h18'],
+                    ['billing',           '/demo/sandbox/billing',            'Billing',           'M4 6h16v12H4zM4 10h16'],
+                    ['customer_insights', '/demo/sandbox/customer-insights',  'Customer Insights', 'M17 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z'],
+                ] as [$slug, $url, $label, $path])
+                  <a href="{{ $url }}"
+                     class="flex items-center gap-2.5 px-3 py-2 rounded-lg transition
+                            {{ $active === $slug ? 'bg-stone-800 text-white' : 'text-stone-400 hover:bg-stone-800/60 hover:text-white' }}">
+                      <svg class="w-[15px] h-[15px] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="{{ $path }}"/></svg>
+                      <span>{{ $label }}</span>
+                  </a>
+                @endforeach
+            </div>
+
+            {{-- Group 2: Accounting & Compliance --}}
+            <div class="pt-3 mt-2 border-t border-stone-800">
+                <div class="px-3 pt-2 pb-1.5 text-[10px] uppercase tracking-widest text-stone-500 font-semibold">Accounting & Compliance</div>
+                @foreach ([
+                    ['trial_balance', '/demo/sandbox/trial-balance', 'Trial Balance', 'M3 12h18M9 6l-6 6 6 6M15 6l6 6-6 6'],
+                    ['gl_quality',    '/demo/sandbox/gl-quality',    'GL Quality',    'M9 12l2 2 4-4M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z'],
+                    ['tax_return',    '/demo/sandbox/tax-return',    'Tax Return',    'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6'],
+                ] as [$slug, $url, $label, $path])
+                  <a href="{{ $url }}"
+                     class="flex items-center gap-2.5 px-3 py-2 rounded-lg transition
+                            {{ $active === $slug ? 'bg-stone-800 text-white' : 'text-stone-400 hover:bg-stone-800/60 hover:text-white' }}">
+                      <svg class="w-[15px] h-[15px] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="{{ $path }}"/></svg>
+                      <span>{{ $label }}</span>
+                  </a>
+                @endforeach
+            </div>
+
+            {{-- Group 3: Sandbox controls (data editing) --}}
+            <div class="pt-3 mt-2 border-t border-stone-800">
+                <div class="px-3 pt-2 pb-1.5 text-[10px] uppercase tracking-widest text-amber-400 font-semibold">Sandbox controls</div>
                 @foreach ([
                     ['data',    '/demo/sandbox/data',    'Data tables',  'M3 5h18M3 12h18M3 19h18'],
                     ['console', '/demo/sandbox/console', 'NL console',   'M6 6l4 6-4 6M14 18h6'],

@@ -3,8 +3,11 @@ declare(strict_types=1);
 
 namespace App\Services\Demo;
 
+use App\Models\Demo\DemoAccount;
+use App\Models\Demo\DemoCustomer;
 use App\Models\Demo\DemoInvoice;
 use App\Models\Demo\DemoInvoiceLine;
+use App\Models\Demo\DemoJournalEntry;
 use App\Models\Demo\DemoJournalLine;
 use App\Models\Demo\DemoPayment;
 use App\Models\Tenant;
@@ -104,12 +107,17 @@ final class DemoFactsService
         $cur = $this->revenueWindow($tenant, $start, $now);
         $prv = $this->revenueWindow($tenant, $prevStart, $prevEnd);
 
-        // By customer
+        // By customer.
+        // CAREFUL: both demo_invoices and demo_customers have a tenant_id
+        // column. After the join below, every column reference in WHERE /
+        // GROUP BY / ORDER BY must be fully qualified or MySQL will throw
+        // "Column 'tenant_id' in where clause is ambiguous" (production-only
+        // bug — SQLite was happily picking one).
         $byCustomer = DemoInvoice::query()
-            ->where('tenant_id', $tenant->id)
-            ->whereBetween('invoice_date', [$start, $now])
-            ->where('status', '!=', 'cancelled')
             ->join('demo_customers', 'demo_customers.id', '=', 'demo_invoices.customer_id')
+            ->where('demo_invoices.tenant_id', $tenant->id)
+            ->whereBetween('demo_invoices.invoice_date', [$start, $now])
+            ->where('demo_invoices.status', '!=', 'cancelled')
             ->groupBy('demo_customers.id', 'demo_customers.name', 'demo_customers.category')
             ->orderByDesc(\DB::raw('SUM(demo_invoices.amount_ht)'))
             ->limit(10)
@@ -277,6 +285,374 @@ final class DemoFactsService
             'net_margin_pct'   => $rev['revenue_ht'] > 0 ? ($netProfit / $rev['revenue_ht']) * 100 : 0,
             'opex_breakdown'   => $this->opexBreakdown($tenant, $start, $now),
         ];
+    }
+
+    // ── Additional BMS modules ─────────────────────────────────────
+
+    /**
+     * Trial balance — every account with non-zero movement in the
+     * window, debit + credit columns, plus opening balance and
+     * computed period balance. Drives the demo /trial-balance page.
+     */
+    public function trialBalance(Tenant $tenant, ?Carbon $asOf = null): array
+    {
+        $asOf = $asOf ?? now()->startOfDay();
+        $accounts = DemoAccount::where('tenant_id', $tenant->id)->orderBy('code')->get();
+
+        // Aggregate posted journal lines per account, up to as-of date.
+        $movement = DemoJournalLine::query()
+            ->join('demo_journal_entries', 'demo_journal_entries.id', '=', 'demo_journal_lines.entry_id')
+            ->where('demo_journal_entries.tenant_id', $tenant->id)
+            ->where('demo_journal_entries.posted', true)
+            ->where('demo_journal_entries.entry_date', '<=', $asOf)
+            ->groupBy('demo_journal_lines.account_code')
+            ->get([
+                'demo_journal_lines.account_code',
+                \DB::raw('SUM(demo_journal_lines.debit) as total_debit'),
+                \DB::raw('SUM(demo_journal_lines.credit) as total_credit'),
+            ])
+            ->keyBy('account_code');
+
+        // Invoice/AR side: posted invoices contribute to 411000 (clients)
+        // and 70110 (revenue) and 443100 (VAT collected). Payments
+        // contribute to 521000 (bank) and reduce 411000.
+        $invoiceTotals = DemoInvoice::query()
+            ->where('tenant_id', $tenant->id)
+            ->where('invoice_date', '<=', $asOf)
+            ->whereIn('status', ['posted', 'paid'])
+            ->get(['amount_ht', 'vat_amount', 'total']);
+        $paymentTotals = DemoPayment::query()
+            ->where('tenant_id', $tenant->id)
+            ->where('payment_date', '<=', $asOf)
+            ->get(['amount']);
+
+        $sumInvoiceHt   = (float) $invoiceTotals->sum('amount_ht');
+        $sumInvoiceVat  = (float) $invoiceTotals->sum('vat_amount');
+        $sumInvoiceTtc  = (float) $invoiceTotals->sum('total');
+        $sumPayments    = (float) $paymentTotals->sum('amount');
+        // Implicit double-entry from the operational side:
+        //   411000 Dr by total (invoiced), Cr by payments collected
+        //   701100 Cr by amount_ht
+        //   443100 Cr by vat
+        //   521000 Dr by payments collected
+        $implicit = [
+            '411000' => ['debit' => $sumInvoiceTtc, 'credit' => $sumPayments],
+            '701100' => ['debit' => 0,              'credit' => $sumInvoiceHt],
+            '443100' => ['debit' => 0,              'credit' => $sumInvoiceVat],
+            '521000' => ['debit' => $sumPayments,   'credit' => 0],
+        ];
+
+        $rows = [];
+        $totalDebit = 0.0; $totalCredit = 0.0;
+        foreach ($accounts as $a) {
+            $jlDebit  = (float) ($movement[$a->code]->total_debit ?? 0);
+            $jlCredit = (float) ($movement[$a->code]->total_credit ?? 0);
+            $impDebit = (float) ($implicit[$a->code]['debit'] ?? 0);
+            $impCredit= (float) ($implicit[$a->code]['credit']?? 0);
+            $debit    = $jlDebit  + $impDebit;
+            $credit   = $jlCredit + $impCredit;
+            $opening  = (float) $a->opening_balance;
+            $balance  = $opening + $debit - $credit;
+            if ($debit < 0.01 && $credit < 0.01 && abs($opening) < 0.01) continue;
+            $rows[] = [
+                'code'    => $a->code,
+                'name'    => $a->name,
+                'class'   => (int) $a->class,
+                'type'    => $a->type,
+                'opening' => $opening,
+                'debit'   => $debit,
+                'credit'  => $credit,
+                'balance' => $balance,
+            ];
+            $totalDebit  += $debit;
+            $totalCredit += $credit;
+        }
+
+        return [
+            'currency'   => 'XAF',
+            'as_of'      => $asOf->format('Y-m-d'),
+            'rows'       => $rows,
+            'total_debit'=> $totalDebit,
+            'total_credit'=>$totalCredit,
+            'balanced'   => abs($totalDebit - $totalCredit) < 0.5,
+        ];
+    }
+
+    /**
+     * GL quality findings — duplicate of the dashboard's
+     * "invoices without PO" flag plus more detail:
+     *   - invoices missing a PO number
+     *   - unbalanced journal entries (shouldn't exist but the
+     *     check is the value)
+     *   - draft invoices not yet posted
+     *   - posted invoices with no lines (data-quality issue)
+     */
+    public function glQuality(Tenant $tenant): array
+    {
+        $noPoInvoices = DemoInvoice::query()
+            ->with('customer')
+            ->where('tenant_id', $tenant->id)
+            ->where('has_po', false)
+            ->orderByDesc('invoice_date')
+            ->limit(50)
+            ->get();
+
+        $unbalancedEntries = DemoJournalEntry::query()
+            ->where('tenant_id', $tenant->id)
+            ->where('posted', true)
+            ->get()
+            ->filter(fn ($e) => !$e->isBalanced());
+
+        $draftInvoices = DemoInvoice::query()
+            ->with('customer')
+            ->where('tenant_id', $tenant->id)
+            ->where('status', 'draft')
+            ->get();
+
+        $totalInvoices  = DemoInvoice::where('tenant_id', $tenant->id)->count();
+        $noPoCount      = $noPoInvoices->count();
+        $unbalancedCount= $unbalancedEntries->count();
+        $draftCount     = $draftInvoices->count();
+
+        return [
+            'as_of'              => now()->format('Y-m-d'),
+            'currency'           => 'XAF',
+            'total_invoices'     => $totalInvoices,
+            'no_po_count'        => $noPoCount,
+            'no_po_pct'          => $totalInvoices > 0 ? ($noPoCount / $totalInvoices) * 100 : 0,
+            'no_po_invoices'     => $noPoInvoices,
+            'unbalanced_count'   => $unbalancedCount,
+            'unbalanced_entries' => $unbalancedEntries,
+            'draft_count'        => $draftCount,
+            'draft_invoices'     => $draftInvoices,
+            'overall_score'      => max(0, 100 - ($noPoCount * 5) - ($unbalancedCount * 10) - ($draftCount * 3)),
+        ];
+    }
+
+    /**
+     * Working capital — class-4 + class-5 balances at the as-of date
+     * give current assets vs current liabilities, current ratio, cash
+     * conversion cycle approximation.
+     */
+    public function workingCapital(Tenant $tenant): array
+    {
+        $tb = $this->trialBalance($tenant);
+        // Bucket by account type/code prefix.
+        $cashBalance        = $this->balanceForPrefixes($tb, ['521', '571']);
+        $arBalance          = $this->balanceForPrefixes($tb, ['411']);
+        $apBalance          = $this->balanceForPrefixes($tb, ['401']);   // negative-sign liability — flip
+        $vatPayable         = $this->balanceForPrefixes($tb, ['443']);   // VAT collected (liability)
+        $vatReceivable      = $this->balanceForPrefixes($tb, ['445']);
+        $inventoryBalance   = $this->balanceForPrefixes($tb, ['31', '37']);
+
+        $currentAssets      = $cashBalance + $arBalance + $vatReceivable + $inventoryBalance;
+        $currentLiabilities = abs($apBalance) + abs($vatPayable);
+
+        $currentRatio = $currentLiabilities > 0 ? $currentAssets / $currentLiabilities : 0;
+        $quickRatio   = $currentLiabilities > 0 ? ($cashBalance + $arBalance) / $currentLiabilities : 0;
+
+        // DSO + DPO approximation from facts already computed
+        $rec = $this->receivables($tenant);
+        $dso = (float) $rec['dso'];
+        // DPO needs purchase data; we synthesise from opex journals (~30d default)
+        $dpo = 30.0;
+        $ccc = $dso - $dpo;
+
+        return [
+            'currency'            => 'XAF',
+            'as_of'               => now()->format('Y-m-d'),
+            'cash_balance'        => $cashBalance,
+            'ar_balance'          => $arBalance,
+            'ap_balance'          => abs($apBalance),
+            'inventory_balance'   => $inventoryBalance,
+            'vat_receivable'      => $vatReceivable,
+            'vat_payable'         => abs($vatPayable),
+            'current_assets'      => $currentAssets,
+            'current_liabilities' => $currentLiabilities,
+            'working_capital'     => $currentAssets - $currentLiabilities,
+            'current_ratio'       => $currentRatio,
+            'quick_ratio'         => $quickRatio,
+            'dso'                 => $dso,
+            'dpo'                 => $dpo,
+            'cash_conversion_cycle' => $ccc,
+        ];
+    }
+
+    /**
+     * Billing analytics — invoice volume, time-to-bill,
+     * average invoice value, payment-method mix.
+     */
+    public function billing(Tenant $tenant, int $days = 90): array
+    {
+        $now   = now();
+        $start = $now->copy()->subDays($days)->startOfDay();
+
+        $invoices = DemoInvoice::query()
+            ->where('tenant_id', $tenant->id)
+            ->whereBetween('invoice_date', [$start, $now])
+            ->whereIn('status', ['posted', 'paid'])
+            ->get();
+        $payments = DemoPayment::query()
+            ->where('tenant_id', $tenant->id)
+            ->whereBetween('payment_date', [$start, $now])
+            ->get();
+
+        // Volume series — count of invoices per week
+        $byWeek = $invoices->groupBy(fn ($i) => $i->invoice_date->startOfWeek()->format('Y-m-d'))
+            ->map(fn ($g, $week) => [
+                'week'         => $week,
+                'count'        => $g->count(),
+                'total_ht'     => (float) $g->sum('amount_ht'),
+                'total_ttc'    => (float) $g->sum('total'),
+            ])->values()->toArray();
+
+        // Payment method mix
+        $byMethod = $payments->groupBy('method')->map(fn ($g, $m) => [
+            'method' => $m,
+            'count'  => $g->count(),
+            'amount' => (float) $g->sum('amount'),
+        ])->values()->toArray();
+
+        $avgInvoice = $invoices->count() > 0
+            ? (float) $invoices->sum('amount_ht') / $invoices->count()
+            : 0;
+
+        return [
+            'currency'           => 'XAF',
+            'days'               => $days,
+            'period_label'       => $start->format('d M') . ' → ' . $now->format('d M Y'),
+            'total_invoices'     => $invoices->count(),
+            'total_billed_ht'    => (float) $invoices->sum('amount_ht'),
+            'total_billed_ttc'   => (float) $invoices->sum('total'),
+            'total_collected'    => (float) $payments->sum('amount'),
+            'avg_invoice'        => $avgInvoice,
+            'by_week'            => $byWeek,
+            'by_method'          => $byMethod,
+        ];
+    }
+
+    /**
+     * Customer insights — segment customers, identify top-N + at-risk.
+     */
+    public function customerInsights(Tenant $tenant): array
+    {
+        $customers = DemoCustomer::query()
+            ->where('tenant_id', $tenant->id)
+            ->withCount('invoices')
+            ->get();
+
+        $today = now()->startOfDay();
+        $cards = $customers->map(function ($c) use ($today) {
+            $invoices = DemoInvoice::with('payments')
+                ->where('customer_id', $c->id)
+                ->whereIn('status', ['posted', 'paid'])
+                ->get();
+            $totalBilled = (float) $invoices->sum('amount_ht');
+            $totalPaid   = (float) $invoices->flatMap->payments->sum('amount');
+            $totalOutstanding = $invoices->sum(fn ($i) => max(0, (float) $i->total - (float) $i->payments->sum('amount')));
+            $overdueOutstanding = $invoices->sum(function ($i) use ($today) {
+                $bal = (float) $i->total - (float) $i->payments->sum('amount');
+                if ($bal <= 0.01) return 0;
+                if (!$i->due_date->isPast()) return 0;
+                return $bal;
+            });
+            return [
+                'id'                 => $c->id,
+                'name'               => $c->name,
+                'category'           => $c->category,
+                'payment_terms_days' => $c->payment_terms_days,
+                'invoice_count'      => $c->invoices_count,
+                'total_billed'       => $totalBilled,
+                'total_paid'         => $totalPaid,
+                'outstanding'        => (float) $totalOutstanding,
+                'overdue'            => (float) $overdueOutstanding,
+                'risk'               => $totalOutstanding > 0
+                    ? ($overdueOutstanding > 0 ? 'at_risk' : 'healthy')
+                    : 'paid_up',
+            ];
+        })->sortByDesc('total_billed')->values();
+
+        // Category aggregation
+        $byCategory = $cards->groupBy('category')->map(fn ($g, $cat) => [
+            'category'         => $cat ?? '—',
+            'customer_count'   => $g->count(),
+            'total_billed'     => (float) $g->sum('total_billed'),
+            'total_outstanding'=> (float) $g->sum('outstanding'),
+            'total_overdue'    => (float) $g->sum('overdue'),
+        ])->values()->toArray();
+
+        return [
+            'currency'        => 'XAF',
+            'as_of'           => $today->format('Y-m-d'),
+            'customer_count'  => $cards->count(),
+            'at_risk_count'   => $cards->where('risk', 'at_risk')->count(),
+            'healthy_count'   => $cards->where('risk', 'healthy')->count(),
+            'paid_up_count'   => $cards->where('risk', 'paid_up')->count(),
+            'customers'       => $cards->toArray(),
+            'by_category'     => $byCategory,
+        ];
+    }
+
+    /**
+     * Tax return summary — sales VAT collected (443XXX) vs deductible
+     * VAT (445XXX) for a chosen period. Drives a simple demo of the
+     * monthly tax-return module.
+     */
+    public function taxReturn(Tenant $tenant, ?Carbon $monthStart = null): array
+    {
+        $monthStart = $monthStart ?? now()->startOfMonth();
+        $monthEnd   = $monthStart->copy()->endOfMonth();
+
+        $invoicesInMonth = DemoInvoice::where('tenant_id', $tenant->id)
+            ->whereBetween('invoice_date', [$monthStart, $monthEnd])
+            ->whereIn('status', ['posted', 'paid'])
+            ->get(['amount_ht', 'vat_amount', 'total']);
+
+        $vatCollected      = (float) $invoicesInMonth->sum('vat_amount');   // §1 — VAT collected on sales
+        $caHt              = (float) $invoicesInMonth->sum('amount_ht');    // §15 — CA global HT
+        // Deductible VAT: synthesise as ~12% of opex booked in the month
+        $opex = $this->opexJournalSum($tenant, $monthStart, $monthEnd);
+        $vatDeductible = round($opex * 0.1925, 0);
+        $vatPayable    = max(0, $vatCollected - $vatDeductible);
+
+        // §12 IRPP retenu — synthesise as ~20% of payroll lines in month
+        $payrollMonth = DemoJournalLine::query()
+            ->join('demo_journal_entries', 'demo_journal_entries.id', '=', 'demo_journal_lines.entry_id')
+            ->where('demo_journal_entries.tenant_id', $tenant->id)
+            ->whereBetween('demo_journal_entries.entry_date', [$monthStart, $monthEnd])
+            ->whereIn('demo_journal_lines.account_code', ['641000', '661000'])
+            ->sum('demo_journal_lines.debit');
+        $irppRetenu = round($payrollMonth * 0.20, 0);
+
+        $totalDue = $vatPayable + $irppRetenu;
+
+        return [
+            'currency'         => 'XAF',
+            'month'            => $monthStart->format('Y-m'),
+            'period_label'     => $monthStart->format('F Y'),
+            'ca_ht'            => $caHt,
+            'vat_collected'    => $vatCollected,
+            'vat_deductible'   => $vatDeductible,
+            'vat_payable'      => $vatPayable,
+            'irpp_retenu'      => $irppRetenu,
+            'total_due'        => $totalDue,
+            'invoice_count'    => $invoicesInMonth->count(),
+        ];
+    }
+
+    /** Sum trial-balance row balances for accounts whose code starts with any of $prefixes. */
+    private function balanceForPrefixes(array $tb, array $prefixes): float
+    {
+        $sum = 0.0;
+        foreach ($tb['rows'] as $r) {
+            foreach ($prefixes as $p) {
+                if (str_starts_with((string) $r['code'], $p)) {
+                    $sum += (float) $r['balance'];
+                    break;
+                }
+            }
+        }
+        return $sum;
     }
 
     // ── helpers ────────────────────────────────────────────────────
