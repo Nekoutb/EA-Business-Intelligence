@@ -7,6 +7,29 @@
 @endsection
 
 @section('content')
+{{-- What this key powers — visible at a glance so super admins know what
+     stops working if they clear it. --}}
+<div class="panel p-4 mb-4 max-w-2xl border-l-4 border-amber-400 bg-amber-50/40">
+    <div class="text-[10px] uppercase tracking-widest text-amber-700 font-semibold mb-1.5">This key powers</div>
+    <ul class="text-[12px] text-slate-700 space-y-1 leading-relaxed">
+        <li class="flex items-start gap-2">
+            <span class="text-amber-600 mt-0.5">•</span>
+            <span><strong>Business Insights</strong> — daily management-report narrative per tenant (<a href="/admin/business-insights" class="text-indigo-600 hover:underline">/admin/business-insights</a>)</span>
+        </li>
+        <li class="flex items-start gap-2">
+            <span class="text-amber-600 mt-0.5">•</span>
+            <span><strong>Demo NL Console</strong> — natural-language commands in the visitor demo sandbox (<a href="/demo/enter" target="_blank" class="text-indigo-600 hover:underline">/demo</a>). Without a key, demo visitors fall back to the canned forms.</span>
+        </li>
+        <li class="flex items-start gap-2">
+            <span class="text-amber-600 mt-0.5">•</span>
+            <span><strong>AI Advisor</strong> — on-demand insights on tenant modules (where wired).</span>
+        </li>
+    </ul>
+    <div class="text-[10px] text-slate-500 mt-2.5 italic">
+        Resolved via <code class="bg-white px-1 py-0.5 rounded border border-amber-200 font-mono">config_env('AI_API_KEY')</code> from <code class="bg-white px-1 py-0.5 rounded border border-amber-200 font-mono">global_settings</code> — only super admins can change it; tenants inherit the same provider automatically.
+    </div>
+</div>
+
 <form method="POST" action="/admin/settings/ai" class="space-y-4 max-w-2xl">
     @csrf
 

@@ -75,7 +75,12 @@ final class DemoCommandParser
         $model  = (string) (config('bi.business_insights.model') ?: config_env('AI_MODEL', '') ?: 'claude-haiku-4-5');
 
         if ($apiKey === '') {
-            return $this->errorOp('AI provider not configured — set AI_API_KEY to enable the natural-language console. Use the canned forms in the Data tab instead.');
+            // Super admins should land in /admin/settings/ai where the key is
+            // stored — that's a single place that powers both Business Insights
+            // and the demo NL console. We don't reveal the link in the
+            // visitor-facing demo UI; the message is generic enough to make
+            // sense to a prospect without exposing admin internals.
+            return $this->errorOp('The natural-language console is offline in this session. Use the canned forms in the Data tab (Add Invoice / Add Journal Entry / Record Payment / Add Customer) — every change still flows through to the KPIs.');
         }
 
         $schema = $this->schemaForTenant($tenant);
