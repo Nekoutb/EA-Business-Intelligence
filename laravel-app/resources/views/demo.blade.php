@@ -475,6 +475,17 @@
         <div class="scroll-reveal">
             <span class="hero-disclaimer">Fictional illustrative figures · No client data</span>
         </div>
+        <div class="scroll-reveal" style="margin-top: var(--space-8); display: flex; flex-direction: column; align-items: center; gap: var(--space-3);">
+            <a href="/demo/enter" style="display: inline-flex; align-items: center; gap: 10px; padding: 14px 28px; background: linear-gradient(135deg, var(--bronze-500), var(--accent-hover)); color: #fff; font-weight: 600; font-size: 15px; border-radius: var(--radius-pill); text-decoration: none; box-shadow: var(--shadow-md); transition: transform var(--dur-quick) var(--ease-emphasis);"
+               onmouseover="this.style.transform='translateY(-1px)'"
+               onmouseout="this.style.transform='translateY(0)'">
+                Open my private sandbox
+                <span style="display: inline-block; font-size: 18px;">→</span>
+            </a>
+            <span style="font-size: var(--fs-caption); color: var(--fg-tertiary);">
+                Email-gated · 2-hour session · Edit data + watch KPIs recompute live
+            </span>
+        </div>
     </div>
 </section>
 
