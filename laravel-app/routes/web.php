@@ -88,8 +88,14 @@ Route::prefix('demo/sandbox')->middleware('demo.session')->group(function () {
     Route::get('/',             [\App\Http\Controllers\Demo\DemoSandboxController::class, 'dashboard']);
     Route::get('/revenue',      [\App\Http\Controllers\Demo\DemoSandboxController::class, 'revenue']);
     Route::get('/receivables',  [\App\Http\Controllers\Demo\DemoSandboxController::class, 'receivables']);
-    Route::get('/profit-loss',  [\App\Http\Controllers\Demo\DemoSandboxController::class, 'profitLoss']);
-    Route::post('/reset',       [\App\Http\Controllers\Demo\DemoSandboxController::class, 'reset']);
+    Route::get('/profit-loss',     [\App\Http\Controllers\Demo\DemoSandboxController::class, 'profitLoss']);
+    Route::get('/working-capital', [\App\Http\Controllers\Demo\DemoSandboxController::class, 'workingCapital']);
+    Route::get('/billing',         [\App\Http\Controllers\Demo\DemoSandboxController::class, 'billing']);
+    Route::get('/customer-insights',[\App\Http\Controllers\Demo\DemoSandboxController::class, 'customerInsights']);
+    Route::get('/trial-balance',   [\App\Http\Controllers\Demo\DemoSandboxController::class, 'trialBalance']);
+    Route::get('/gl-quality',      [\App\Http\Controllers\Demo\DemoSandboxController::class, 'glQuality']);
+    Route::get('/tax-return',      [\App\Http\Controllers\Demo\DemoSandboxController::class, 'taxReturn']);
+    Route::post('/reset',          [\App\Http\Controllers\Demo\DemoSandboxController::class, 'reset']);
 
     // Data tables — view + canned-form writes
     Route::get('/data',                       [\App\Http\Controllers\Demo\DemoDataController::class, 'index']);

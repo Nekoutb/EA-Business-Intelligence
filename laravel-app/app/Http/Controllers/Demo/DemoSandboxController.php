@@ -59,6 +59,72 @@ class DemoSandboxController extends Controller
         ]);
     }
 
+    public function trialBalance(Request $request, DemoFactsService $facts)
+    {
+        $tenant = $request->attributes->get('demo_tenant');
+        return view('demo.sandbox.trial-balance', [
+            'data'   => $facts->trialBalance($tenant),
+            'tenant' => $tenant,
+            'active' => 'trial_balance',
+        ]);
+    }
+
+    public function glQuality(Request $request, DemoFactsService $facts)
+    {
+        $tenant = $request->attributes->get('demo_tenant');
+        return view('demo.sandbox.gl-quality', [
+            'data'   => $facts->glQuality($tenant),
+            'tenant' => $tenant,
+            'active' => 'gl_quality',
+        ]);
+    }
+
+    public function workingCapital(Request $request, DemoFactsService $facts)
+    {
+        $tenant = $request->attributes->get('demo_tenant');
+        return view('demo.sandbox.working-capital', [
+            'data'   => $facts->workingCapital($tenant),
+            'tenant' => $tenant,
+            'active' => 'working_capital',
+        ]);
+    }
+
+    public function billing(Request $request, DemoFactsService $facts)
+    {
+        $tenant = $request->attributes->get('demo_tenant');
+        $days   = max(7, min(365, (int) $request->query('days', 90)));
+        return view('demo.sandbox.billing', [
+            'data'   => $facts->billing($tenant, $days),
+            'days'   => $days,
+            'tenant' => $tenant,
+            'active' => 'billing',
+        ]);
+    }
+
+    public function customerInsights(Request $request, DemoFactsService $facts)
+    {
+        $tenant = $request->attributes->get('demo_tenant');
+        return view('demo.sandbox.customer-insights', [
+            'data'   => $facts->customerInsights($tenant),
+            'tenant' => $tenant,
+            'active' => 'customer_insights',
+        ]);
+    }
+
+    public function taxReturn(Request $request, DemoFactsService $facts)
+    {
+        $tenant = $request->attributes->get('demo_tenant');
+        $month  = $request->query('month');
+        $monthStart = $month && preg_match('/^\d{4}-\d{2}$/', $month)
+            ? \Carbon\Carbon::createFromFormat('Y-m', $month)->startOfMonth()
+            : null;
+        return view('demo.sandbox.tax-return', [
+            'data'   => $facts->taxReturn($tenant, $monthStart),
+            'tenant' => $tenant,
+            'active' => 'tax_return',
+        ]);
+    }
+
     /** Reset the seed data on demand. */
     public function reset(Request $request, DemoTenantSeeder $seeder)
     {
