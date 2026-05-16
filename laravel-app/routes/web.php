@@ -72,6 +72,41 @@ Route::get('/login', function () {
    ────────────────────────────────────────────────────────────────────── */
 Route::view('/demo', 'demo')->name('demo');
 
+/* ── Interactive Demo Sandbox ──────────────────────────────────────────
+   Each visitor enters via /demo/enter (email-gated), gets a freshly-
+   spawned per-visitor demo Tenant + a seeded dataset, then navigates
+   /demo/sandbox/* to drive a full copy of the BMS against that sandbox.
+   Modifications via canned forms or the NL console flow through to KPIs
+   on next page load. ResolveDemoSession middleware binds the visitor's
+   demo tenant to TenantContext on every sandbox request.
+   ────────────────────────────────────────────────────────────────────── */
+Route::get('/demo/enter',  [\App\Http\Controllers\Demo\DemoEntryController::class, 'showEnterForm']);
+Route::post('/demo/start', [\App\Http\Controllers\Demo\DemoEntryController::class, 'start']);
+Route::get('/demo/exit',   [\App\Http\Controllers\Demo\DemoEntryController::class, 'exit']);
+
+Route::prefix('demo/sandbox')->middleware('demo.session')->group(function () {
+    Route::get('/',             [\App\Http\Controllers\Demo\DemoSandboxController::class, 'dashboard']);
+    Route::get('/revenue',      [\App\Http\Controllers\Demo\DemoSandboxController::class, 'revenue']);
+    Route::get('/receivables',  [\App\Http\Controllers\Demo\DemoSandboxController::class, 'receivables']);
+    Route::get('/profit-loss',  [\App\Http\Controllers\Demo\DemoSandboxController::class, 'profitLoss']);
+    Route::post('/reset',       [\App\Http\Controllers\Demo\DemoSandboxController::class, 'reset']);
+
+    // Data tables — view + canned-form writes
+    Route::get('/data',                       [\App\Http\Controllers\Demo\DemoDataController::class, 'index']);
+    Route::get('/data/invoices',              [\App\Http\Controllers\Demo\DemoDataController::class, 'invoices']);
+    Route::get('/data/journals',              [\App\Http\Controllers\Demo\DemoDataController::class, 'journals']);
+    Route::get('/data/customers',             [\App\Http\Controllers\Demo\DemoDataController::class, 'customers']);
+    Route::get('/data/payments',              [\App\Http\Controllers\Demo\DemoDataController::class, 'payments']);
+    Route::post('/data/invoices/add',         [\App\Http\Controllers\Demo\DemoDataController::class, 'addInvoice']);
+    Route::post('/data/payments/add',         [\App\Http\Controllers\Demo\DemoDataController::class, 'addPayment']);
+    Route::post('/data/journals/add',         [\App\Http\Controllers\Demo\DemoDataController::class, 'addJournalEntry']);
+    Route::post('/data/customers/add',        [\App\Http\Controllers\Demo\DemoDataController::class, 'addCustomer']);
+
+    // NL console
+    Route::get('/console',  [\App\Http\Controllers\Demo\DemoConsoleController::class, 'index']);
+    Route::post('/console', [\App\Http\Controllers\Demo\DemoConsoleController::class, 'run']);
+});
+
 /* ── Super Admin backend ─────────────────────────────────────────────── */
 Route::prefix('admin')->group(function () {
     Route::get('/login',  [AdminAuthController::class, 'showLogin']);

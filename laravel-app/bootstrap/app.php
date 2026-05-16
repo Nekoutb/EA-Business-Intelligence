@@ -19,6 +19,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'redirect.if.not.onboarded' => \App\Http\Middleware\RedirectIfNotOnboarded::class,
             'remember.period'            => \App\Http\Middleware\RememberPeriod::class,
             'tenant.admin'               => \App\Http\Middleware\RequireTenantAdmin::class,
+            'demo.session'               => \App\Http\Middleware\ResolveDemoSession::class,
         ]);
 
         // Exempt login routes from CSRF.
