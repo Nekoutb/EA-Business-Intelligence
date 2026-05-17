@@ -42,22 +42,59 @@ class TenantController extends Controller
     {
         $q       = trim((string) $request->query('q', ''));
         $status  = (string) $request->query('status', '');
+        // Default tab is 'bms' so the operator never sees the demo
+        // sandbox tenants mixed in with the real production ones.
+        // Visitor demos can balloon to dozens/day during prospecting
+        // and would otherwise drown out the real tenants.
+        $type    = (string) $request->query('type', 'bms');
+        if (!in_array($type, ['bms', 'demo', 'all'], true)) {
+            $type = 'bms';
+        }
 
-        $query = Tenant::withCount(['users', 'modules' => fn ($q) => $q->where('enabled', true)]);
+        $base = Tenant::query();
         if ($q !== '') {
-            $query->where(fn ($w) => $w->where('slug', 'like', "%{$q}%")->orWhere('name', 'like', "%{$q}%"));
+            $base->where(fn ($w) => $w->where('slug', 'like', "%{$q}%")->orWhere('name', 'like', "%{$q}%"));
         }
         if ($status !== '') {
-            $query->where('status', $status);
+            $base->where('status', $status);
         }
 
-        $tenants = $query->orderBy('id', 'desc')->paginate(25)->withQueryString();
+        // Independent counts for each tab so the user sees the
+        // population sizes at a glance (with the active filter
+        // applied — so a search for "acme" updates both counts).
+        $bmsCount  = (clone $base)->where(fn ($w) => $w->where('is_demo', false)->orWhereNull('is_demo'))->count();
+        $demoCount = (clone $base)->where('is_demo', true)->count();
+        $allCount  = $bmsCount + $demoCount;
+
+        // Apply the active tab's filter.
+        $query = (clone $base)->withCount(['users', 'modules' => fn ($q) => $q->where('enabled', true)]);
+        if ($type === 'bms') {
+            $query->where(fn ($w) => $w->where('is_demo', false)->orWhereNull('is_demo'));
+        } elseif ($type === 'demo') {
+            $query->where('is_demo', true);
+        }
+
+        // Demo tenants are ordered by expiry (most recent first)
+        // so the live sandboxes float to the top; BMS tenants by
+        // creation date desc (most recent customer wins first).
+        if ($type === 'demo') {
+            $query->orderByRaw('CASE WHEN demo_expires_at IS NULL THEN 1 ELSE 0 END')
+                  ->orderByDesc('demo_expires_at');
+        } else {
+            $query->orderBy('id', 'desc');
+        }
+
+        $tenants = $query->paginate(25)->withQueryString();
 
         return view('admin.tenants.index', [
-            'tenants' => $tenants,
-            'q'       => $q,
-            'status'  => $status,
-            'active'  => 'tenants',
+            'tenants'   => $tenants,
+            'q'         => $q,
+            'status'    => $status,
+            'type'      => $type,
+            'bmsCount'  => $bmsCount,
+            'demoCount' => $demoCount,
+            'allCount'  => $allCount,
+            'active'    => 'tenants',
         ]);
     }
 
