@@ -1544,6 +1544,12 @@ Route::prefix('t/{tenant}')
                         [\App\Http\Controllers\PostRetirementBenefits\ValuationController::class, 'show'])->whereNumber('id');
                     Route::post('/post-retirement-benefits/valuations/{id}/finalize',
                         [\App\Http\Controllers\PostRetirementBenefits\ValuationController::class, 'finalize'])->whereNumber('id');
+
+                    // Assumption editor
+                    Route::get ('/post-retirement-benefits/assumptions',
+                        [\App\Http\Controllers\PostRetirementBenefits\AssumptionsController::class, 'edit']);
+                    Route::post('/post-retirement-benefits/assumptions',
+                        [\App\Http\Controllers\PostRetirementBenefits\AssumptionsController::class, 'update']);
                 });
 
                 // ── Financial Planning service ────────────────────────────────

@@ -5,6 +5,7 @@ namespace App\Http\Controllers\PostRetirementBenefits;
 use App\Http\Controllers\Controller;
 use App\Models\PostRetirementBenefits\Employee;
 use App\Models\PostRetirementBenefits\Valuation;
+use App\Services\PostRetirementBenefits\SensitivityAnalyzer;
 use App\Services\PostRetirementBenefits\ValuationRunner;
 use App\Tenancy\TenantContext;
 use Carbon\Carbon;
@@ -61,7 +62,7 @@ class ValuationController extends Controller
             ]);
     }
 
-    public function show(Request $request, $tenantSlug, int $id)
+    public function show(Request $request, SensitivityAnalyzer $sensitivity, $tenantSlug, int $id)
     {
         $tenant = app(TenantContext::class)->tenant();
         $v = Valuation::where('tenant_id', $tenant->id)
@@ -72,11 +73,25 @@ class ValuationController extends Controller
         // at the top of the per-employee detail table.
         $lines = $v->lines->sortByDesc('pbo')->values();
 
+        // Sensitivity analysis — only when the run is finalized OR
+        // explicitly requested via ?sensitivity=1 (computing it on
+        // every show would slow large populations down).
+        $showSensitivity = $v->isFinalized() || $request->boolean('sensitivity');
+        $discountSensitivity = null;
+        $salarySensitivity   = null;
+        if ($showSensitivity && $v->pbo_closing > 0) {
+            $discountSensitivity = $sensitivity->discountRateSensitivity($tenant, $v);
+            $salarySensitivity   = $sensitivity->salaryIncreaseSensitivity($tenant, $v);
+        }
+
         return view('post-retirement-benefits.valuations.show', [
-            'valuation'  => $v,
-            'lines'      => $lines,
-            'assumptions'=> $v->assumptionSet,
-            'active'     => 'post_retirement_benefits',
+            'valuation'             => $v,
+            'lines'                 => $lines,
+            'assumptions'           => $v->assumptionSet,
+            'discountSensitivity'   => $discountSensitivity,
+            'salarySensitivity'     => $salarySensitivity,
+            'showSensitivity'       => $showSensitivity,
+            'active'                => 'post_retirement_benefits',
         ]);
     }
 

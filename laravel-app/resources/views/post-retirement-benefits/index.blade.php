@@ -93,9 +93,13 @@
     <div class="panel p-5">
         <div class="flex items-center justify-between mb-3">
             <h2 class="text-sm font-semibold text-slate-900">Actuarial assumptions</h2>
-            <span class="text-[10px] uppercase tracking-widest font-semibold {{ $assumptions ? 'text-emerald-700 bg-emerald-50' : 'text-slate-500 bg-slate-100' }} px-2 py-0.5 rounded">
-                {{ $assumptions ? 'tenant override' : 'platform defaults' }}
-            </span>
+            <div class="flex items-center gap-2">
+                <span class="text-[10px] uppercase tracking-widest font-semibold {{ $assumptions ? 'text-emerald-700 bg-emerald-50' : 'text-slate-500 bg-slate-100' }} px-2 py-0.5 rounded">
+                    {{ $assumptions ? 'tenant override' : 'platform defaults' }}
+                </span>
+                <a href="/t/{{ $tenantSlug }}/post-retirement-benefits/assumptions"
+                   class="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800">Edit →</a>
+            </div>
         </div>
         <table class="w-full text-[12.5px]">
             <tbody class="divide-y divide-stone-100">

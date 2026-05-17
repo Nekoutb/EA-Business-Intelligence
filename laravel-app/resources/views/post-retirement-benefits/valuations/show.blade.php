@@ -245,6 +245,104 @@
     </div>
 </div>
 
+{{-- Sensitivity analysis (Mercer §C.5 equivalent) --}}
+@if ($showSensitivity && ($discountSensitivity || $salarySensitivity))
+    <div class="panel p-5 mb-5">
+        <h2 class="text-sm font-semibold text-slate-900 mb-3">Sensitivity analysis</h2>
+        <p class="text-[11px] text-slate-500 mb-4">PBO under reasonably-possible shifts in the two most material assumptions. Discount rate is the dominant lever (typical ±100 bp shifts move the PBO 10-15%).</p>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+            @if ($discountSensitivity)
+                <div>
+                    <div class="text-[11px] uppercase tracking-widest text-slate-500 font-semibold mb-2">Discount rate shift</div>
+                    <table class="w-full text-[12px]">
+                        <thead class="text-[10px] uppercase tracking-widest text-slate-500 border-b border-stone-200">
+                            <tr>
+                                <th class="py-1.5 text-left">Shift</th>
+                                <th class="py-1.5 text-right">Rate</th>
+                                <th class="py-1.5 text-right">PBO</th>
+                                <th class="py-1.5 text-right">Change</th>
+                                <th class="py-1.5 text-right">%</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-stone-100">
+                            @foreach ($discountSensitivity as $row)
+                                <tr>
+                                    <td class="py-1.5 mono text-slate-700">{{ $row['label'] }}</td>
+                                    <td class="py-1.5 text-right mono text-slate-700">{{ number_format($row['discount_rate'] * 100, 2) }}%</td>
+                                    <td class="py-1.5 text-right mono text-slate-900">{{ number_format($row['pbo'], 0) }}</td>
+                                    <td class="py-1.5 text-right mono {{ $row['change'] >= 0 ? 'text-rose-700' : 'text-emerald-700' }}">
+                                        {{ ($row['change'] >= 0 ? '+' : '') }}{{ number_format($row['change'], 0) }}
+                                    </td>
+                                    <td class="py-1.5 text-right mono {{ $row['change_pct'] >= 0 ? 'text-rose-700' : 'text-emerald-700' }}">
+                                        {{ ($row['change_pct'] >= 0 ? '+' : '') }}{{ number_format($row['change_pct'], 1) }}%
+                                    </td>
+                                </tr>
+                            @endforeach
+                            <tr class="border-t-2 border-stone-300 bg-stone-50/40 font-semibold">
+                                <td class="py-1.5 mono text-slate-900">Baseline</td>
+                                <td class="py-1.5 text-right mono text-slate-900">{{ number_format((float) $assumptions->discount_rate * 100, 2) }}%</td>
+                                <td class="py-1.5 text-right mono text-slate-900">{{ number_format((float) $valuation->pbo_closing, 0) }}</td>
+                                <td class="py-1.5 text-right mono text-slate-500">—</td>
+                                <td class="py-1.5 text-right mono text-slate-500">—</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            @endif
+
+            @if ($salarySensitivity)
+                <div>
+                    <div class="text-[11px] uppercase tracking-widest text-slate-500 font-semibold mb-2">Salary increase shift</div>
+                    <table class="w-full text-[12px]">
+                        <thead class="text-[10px] uppercase tracking-widest text-slate-500 border-b border-stone-200">
+                            <tr>
+                                <th class="py-1.5 text-left">Shift</th>
+                                <th class="py-1.5 text-right">Rate</th>
+                                <th class="py-1.5 text-right">PBO</th>
+                                <th class="py-1.5 text-right">Change</th>
+                                <th class="py-1.5 text-right">%</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-stone-100">
+                            @foreach ($salarySensitivity as $row)
+                                <tr>
+                                    <td class="py-1.5 mono text-slate-700">{{ $row['label'] }}</td>
+                                    <td class="py-1.5 text-right mono text-slate-700">{{ number_format($row['salary_increase'] * 100, 2) }}%</td>
+                                    <td class="py-1.5 text-right mono text-slate-900">{{ number_format($row['pbo'], 0) }}</td>
+                                    <td class="py-1.5 text-right mono {{ $row['change'] >= 0 ? 'text-rose-700' : 'text-emerald-700' }}">
+                                        {{ ($row['change'] >= 0 ? '+' : '') }}{{ number_format($row['change'], 0) }}
+                                    </td>
+                                    <td class="py-1.5 text-right mono {{ $row['change_pct'] >= 0 ? 'text-rose-700' : 'text-emerald-700' }}">
+                                        {{ ($row['change_pct'] >= 0 ? '+' : '') }}{{ number_format($row['change_pct'], 1) }}%
+                                    </td>
+                                </tr>
+                            @endforeach
+                            <tr class="border-t-2 border-stone-300 bg-stone-50/40 font-semibold">
+                                <td class="py-1.5 mono text-slate-900">Baseline</td>
+                                <td class="py-1.5 text-right mono text-slate-900">{{ number_format((float) $assumptions->salary_increase_rate * 100, 2) }}%</td>
+                                <td class="py-1.5 text-right mono text-slate-900">{{ number_format((float) $valuation->pbo_closing, 0) }}</td>
+                                <td class="py-1.5 text-right mono text-slate-500">—</td>
+                                <td class="py-1.5 text-right mono text-slate-500">—</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            @endif
+        </div>
+    </div>
+@elseif (!$showSensitivity)
+    <div class="panel p-5 mb-5 border-l-4 border-amber-400 bg-amber-50/40">
+        <div class="flex items-center justify-between">
+            <div>
+                <h2 class="text-sm font-semibold text-slate-900">Sensitivity analysis</h2>
+                <p class="text-[11px] text-slate-600 mt-1">Hidden by default on drafts to keep page load fast. Click to compute the discount-rate and salary-rate shocks.</p>
+            </div>
+            <a href="?sensitivity=1" class="text-[11px] font-semibold text-amber-700 hover:text-amber-900 border border-amber-300 rounded-lg px-3 py-1.5">Compute now →</a>
+        </div>
+    </div>
+@endif
+
 {{-- Assumptions snapshot --}}
 <div class="panel p-5">
     <h2 class="text-sm font-semibold text-slate-900 mb-3">Assumptions used</h2>
