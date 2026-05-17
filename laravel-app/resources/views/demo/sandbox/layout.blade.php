@@ -30,13 +30,16 @@
             <div class="text-[11px] text-stone-400 mono truncate">{{ $demoTenant?->slug }}</div>
             @if ($demoSession)
                 @php
-                    // Carbon's diffForHumans() rounds down (2h00m future shows as "1 hour from now"),
-                    // which makes the 2h TTL look like 1h. Compute hours + minutes explicitly so the
-                    // display matches the actual remaining time.
-                    $remaining   = $demoSession->expires_at->diffInMinutes(now()->lt($demoSession->expires_at) ? now() : $demoSession->expires_at);
-                    $remainingHrs= intdiv((int) $remaining, 60);
-                    $remainingMin= (int) $remaining % 60;
-                    $remainingTxt= $remainingHrs > 0
+                    // Compute remaining hours+minutes explicitly so the display always reads
+                    // as positive values. Carbon 3 returns SIGNED minutes from diffInMinutes
+                    // by default (Carbon 2 returned absolute), and rounds down via
+                    // diffForHumans — both produce confusing strings like "-59m remaining"
+                    // or "1 hour" when the actual remaining time is 1h 59m. We bypass both
+                    // with a direct positive-clamped int calc.
+                    $remaining    = (int) max(0, now()->diffInMinutes($demoSession->expires_at, false));
+                    $remainingHrs = intdiv($remaining, 60);
+                    $remainingMin = $remaining % 60;
+                    $remainingTxt = $remainingHrs > 0
                         ? $remainingHrs . 'h ' . str_pad((string) $remainingMin, 2, '0', STR_PAD_LEFT) . 'm remaining'
                         : $remainingMin . 'm remaining';
                 @endphp
