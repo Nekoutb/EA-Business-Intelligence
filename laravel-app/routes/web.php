@@ -1534,6 +1534,16 @@ Route::prefix('t/{tenant}')
                         [\App\Http\Controllers\PostRetirementBenefits\EmployeeController::class, 'importStore']);
                     Route::get ('/post-retirement-benefits/employees/import/template',
                         [\App\Http\Controllers\PostRetirementBenefits\EmployeeController::class, 'importTemplate']);
+
+                    // Valuations — run, list, view, finalize
+                    Route::post('/post-retirement-benefits/valuations/run',
+                        [\App\Http\Controllers\PostRetirementBenefits\ValuationController::class, 'run']);
+                    Route::get ('/post-retirement-benefits/valuations',
+                        [\App\Http\Controllers\PostRetirementBenefits\ValuationController::class, 'index']);
+                    Route::get ('/post-retirement-benefits/valuations/{id}',
+                        [\App\Http\Controllers\PostRetirementBenefits\ValuationController::class, 'show'])->whereNumber('id');
+                    Route::post('/post-retirement-benefits/valuations/{id}/finalize',
+                        [\App\Http\Controllers\PostRetirementBenefits\ValuationController::class, 'finalize'])->whereNumber('id');
                 });
 
                 // ── Financial Planning service ────────────────────────────────
