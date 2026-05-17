@@ -125,6 +125,60 @@ class DemoSandboxController extends Controller
         ]);
     }
 
+    public function treasury(Request $request, DemoFactsService $facts)
+    {
+        $tenant = $request->attributes->get('demo_tenant');
+        $days   = max(7, min(365, (int) $request->query('days', 90)));
+        return view('demo.sandbox.treasury', [
+            'data'   => $facts->treasury($tenant, $days),
+            'days'   => $days,
+            'tenant' => $tenant,
+            'active' => 'treasury',
+        ]);
+    }
+
+    public function payables(Request $request, DemoFactsService $facts)
+    {
+        $tenant = $request->attributes->get('demo_tenant');
+        return view('demo.sandbox.payables', [
+            'data'   => $facts->payables($tenant),
+            'tenant' => $tenant,
+            'active' => 'payables',
+        ]);
+    }
+
+    public function procurement(Request $request, DemoFactsService $facts)
+    {
+        $tenant = $request->attributes->get('demo_tenant');
+        $days   = max(7, min(365, (int) $request->query('days', 90)));
+        return view('demo.sandbox.procurement', [
+            'data'   => $facts->procurement($tenant, $days),
+            'days'   => $days,
+            'tenant' => $tenant,
+            'active' => 'procurement',
+        ]);
+    }
+
+    public function fixedAssets(Request $request, DemoFactsService $facts)
+    {
+        $tenant = $request->attributes->get('demo_tenant');
+        return view('demo.sandbox.fixed-assets', [
+            'data'   => $facts->fixedAssets($tenant),
+            'tenant' => $tenant,
+            'active' => 'fixed_assets',
+        ]);
+    }
+
+    public function inventory(Request $request, DemoFactsService $facts)
+    {
+        $tenant = $request->attributes->get('demo_tenant');
+        return view('demo.sandbox.inventory', [
+            'data'   => $facts->inventory($tenant),
+            'tenant' => $tenant,
+            'active' => 'inventory',
+        ]);
+    }
+
     /** Reset the seed data on demand. */
     public function reset(Request $request, DemoTenantSeeder $seeder)
     {

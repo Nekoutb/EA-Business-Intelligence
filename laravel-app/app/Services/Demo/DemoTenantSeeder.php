@@ -5,12 +5,16 @@ namespace App\Services\Demo;
 
 use App\Models\Demo\DemoAccount;
 use App\Models\Demo\DemoCustomer;
+use App\Models\Demo\DemoFixedAsset;
 use App\Models\Demo\DemoInvoice;
 use App\Models\Demo\DemoInvoiceLine;
 use App\Models\Demo\DemoJournalEntry;
 use App\Models\Demo\DemoJournalLine;
 use App\Models\Demo\DemoPayment;
 use App\Models\Demo\DemoProduct;
+use App\Models\Demo\DemoSupplier;
+use App\Models\Demo\DemoSupplierBill;
+use App\Models\Demo\DemoSupplierPayment;
 use App\Models\Tenant;
 use Illuminate\Support\Facades\DB;
 
@@ -62,6 +66,10 @@ final class DemoTenantSeeder
             $invoices  = $this->seedInvoices($tenant, $customers, $products);
             $this->seedPayments($tenant, $invoices);
             $this->seedJournalEntries($tenant);
+            $suppliers = $this->seedSuppliers($tenant);
+            $bills     = $this->seedSupplierBills($tenant, $suppliers);
+            $this->seedSupplierPayments($tenant, $bills);
+            $this->seedFixedAssets($tenant);
         });
     }
 
@@ -79,6 +87,12 @@ final class DemoTenantSeeder
         DemoCustomer::where('tenant_id', $tenant->id)->delete();
         DemoProduct::where('tenant_id', $tenant->id)->delete();
         DemoAccount::where('tenant_id', $tenant->id)->delete();
+        // Buy-side
+        DemoSupplierPayment::where('tenant_id', $tenant->id)->delete();
+        DemoSupplierBill::where('tenant_id', $tenant->id)->delete();
+        DemoSupplier::where('tenant_id', $tenant->id)->delete();
+        // Fixed assets
+        DemoFixedAsset::where('tenant_id', $tenant->id)->delete();
     }
 
     private function seedAccounts(Tenant $tenant): void
@@ -334,6 +348,140 @@ final class DemoTenantSeeder
             ]);
             DemoJournalLine::create(['entry_id' => $bank->id, 'account_code' => '631100', 'account_name' => 'Frais bancaires',    'debit' => 85_000, 'credit' => 0]);
             DemoJournalLine::create(['entry_id' => $bank->id, 'account_code' => '521000', 'account_name' => 'Banque principale', 'debit' => 0,      'credit' => 85_000]);
+        }
+    }
+
+    /** @return array<int, DemoSupplier> */
+    private function seedSuppliers(Tenant $tenant): array
+    {
+        $rows = [
+            ['name' => 'SABC (Sté Anonyme Brasseries Cameroun)', 'category' => 'Beverages',  'payment_terms_days' => 45, 'country' => 'CM'],
+            ['name' => 'Guinness Cameroun',                       'category' => 'Beverages',  'payment_terms_days' => 30, 'country' => 'CM'],
+            ['name' => 'Pernod Ricard West Africa',               'category' => 'Beverages',  'payment_terms_days' => 60, 'country' => 'CI'],
+            ['name' => 'ENEO Cameroun',                           'category' => 'Utilities',  'payment_terms_days' => 30, 'country' => 'CM'],
+            ['name' => 'Camrail Logistique',                      'category' => 'Logistics',  'payment_terms_days' => 45, 'country' => 'CM'],
+            ['name' => 'MTN Cameroun (telecom)',                  'category' => 'Telecom',    'payment_terms_days' => 30, 'country' => 'CM'],
+            ['name' => 'Imprimerie Saint-Paul',                   'category' => 'Office',     'payment_terms_days' => 30, 'country' => 'CM'],
+            ['name' => 'Sécuricam',                               'category' => 'Security',   'payment_terms_days' => 30, 'country' => 'CM'],
+        ];
+        $out = [];
+        foreach ($rows as $r) {
+            $out[] = DemoSupplier::create($r + ['tenant_id' => $tenant->id]);
+        }
+        return $out;
+    }
+
+    /** @return array<int, DemoSupplierBill> */
+    private function seedSupplierBills(Tenant $tenant, array $suppliers): array
+    {
+        // ~40 bills over trailing 90 days. Mix of categories — COGS-side
+        // (Beverages from the wholesalers) + opex (utilities, telecom, etc).
+        // ~12% maverick (has_po=false) so the Procurement compliance flag
+        // has something to find.
+        $today = now()->startOfDay();
+        $bills = [];
+        $counter = 1;
+
+        mt_srand(($tenant->id * 7919) & 0x7fffffff);
+
+        $categoryMap = [
+            'Beverages' => ['COGS', 1_500_000, 4_500_000],
+            'Utilities' => ['Utilities', 180_000, 450_000],
+            'Logistics' => ['Logistics', 350_000, 1_200_000],
+            'Telecom'   => ['Telecom', 95_000, 280_000],
+            'Office'    => ['Office Supplies', 65_000, 220_000],
+            'Security'  => ['Security', 250_000, 250_000],
+        ];
+
+        for ($i = 0; $i < 40; $i++) {
+            $daysAgo = (int) (90 - ($i * 2.25) - mt_rand(0, 1));
+            $billDate = $today->copy()->subDays(max(0, $daysAgo));
+            $supplier = $suppliers[$i % count($suppliers)];
+            $mapping = $categoryMap[$supplier->category] ?? ['Other', 100_000, 500_000];
+            $costCategory = $mapping[0];
+            $amountHt = mt_rand($mapping[1], $mapping[2]);
+            // Round to nearest 1k
+            $amountHt = (int) round($amountHt / 1000) * 1000;
+            $vat   = (int) round($amountHt * 0.1925);
+            $total = $amountHt + $vat;
+            $hasPo = ($i % 8 !== 0);
+
+            $bills[] = DemoSupplierBill::create([
+                'tenant_id'   => $tenant->id,
+                'number'      => sprintf('BIL-%04d-%05d', $billDate->year, $counter++),
+                'supplier_id' => $supplier->id,
+                'bill_date'   => $billDate,
+                'due_date'    => $billDate->copy()->addDays($supplier->payment_terms_days),
+                'status'      => 'posted',
+                'category'    => $costCategory,
+                'amount_ht'   => $amountHt,
+                'vat_amount'  => $vat,
+                'total'       => $total,
+                'has_po'      => $hasPo,
+                'po_number'   => $hasPo ? sprintf('PO-OUT-%05d', 6000 + $i) : null,
+                'notes'       => null,
+            ]);
+        }
+        return $bills;
+    }
+
+    private function seedSupplierPayments(Tenant $tenant, array $bills): void
+    {
+        // Pay ~75% of bills in full; leave a tail open so Payables aging
+        // has something to show.
+        foreach ($bills as $i => $bill) {
+            if ($i % 4 === 0) continue;   // skip 25%
+
+            $payDays = mt_rand(5, ($bill->supplier->payment_terms_days ?? 30) + 10);
+            $payDate = $bill->bill_date->copy()->addDays($payDays);
+            if ($payDate->isFuture()) continue;
+
+            DemoSupplierPayment::create([
+                'tenant_id'    => $tenant->id,
+                'bill_id'      => $bill->id,
+                'payment_date' => $payDate,
+                'amount'       => $bill->total,
+                'method'       => 'bank_transfer',
+                'reference'    => 'PAY-OUT-' . str_pad((string) ($i + 500), 5, '0', STR_PAD_LEFT),
+            ]);
+            $bill->update(['status' => 'paid']);
+        }
+    }
+
+    private function seedFixedAssets(Tenant $tenant): void
+    {
+        // 12 representative assets across the typical Cameroon-SME mix.
+        // Useful lives follow OHADA convention (months): Buildings 240,
+        // Vehicles 60, Equipment 60, Furniture 84, IT 36.
+        $today = now()->startOfDay();
+        $assets = [
+            ['name' => 'Bâtiment siège Akwa',           'category' => 'Buildings', 'account_code' => '2412', 'cost' =>  85_000_000, 'life' => 240, 'months_ago' => 60],
+            ['name' => 'Land Cruiser CMR-1234',         'category' => 'Vehicles',  'account_code' => '2454', 'cost' =>  35_000_000, 'life' =>  60, 'months_ago' => 18],
+            ['name' => 'Toyota Hilux double cabine',    'category' => 'Vehicles',  'account_code' => '2454', 'cost' =>  28_500_000, 'life' =>  60, 'months_ago' => 30],
+            ['name' => 'Chambre froide industrielle',   'category' => 'Equipment', 'account_code' => '2440', 'cost' =>  14_200_000, 'life' => 120, 'months_ago' => 22],
+            ['name' => 'Groupe électrogène 250 KVA',    'category' => 'Equipment', 'account_code' => '2440', 'cost' =>  18_500_000, 'life' => 120, 'months_ago' => 8],
+            ['name' => 'Chariot élévateur Toyota',      'category' => 'Equipment', 'account_code' => '2440', 'cost' =>   9_200_000, 'life' =>  60, 'months_ago' => 36],
+            ['name' => 'Mobilier de bureau (lot)',      'category' => 'Furniture', 'account_code' => '2440', 'cost' =>   4_800_000, 'life' =>  84, 'months_ago' => 14],
+            ['name' => 'Climatiseurs muraux (x12)',     'category' => 'Furniture', 'account_code' => '2440', 'cost' =>   3_200_000, 'life' =>  60, 'months_ago' => 10],
+            ['name' => 'Serveur Dell PowerEdge',        'category' => 'IT',        'account_code' => '2421', 'cost' =>   3_500_000, 'life' =>  36, 'months_ago' => 12],
+            ['name' => 'Postes de travail (x8)',        'category' => 'IT',        'account_code' => '2421', 'cost' =>   4_400_000, 'life' =>  36, 'months_ago' => 20],
+            ['name' => 'Imprimantes multifonction',     'category' => 'IT',        'account_code' => '2421', 'cost' =>   1_650_000, 'life' =>  36, 'months_ago' =>  6],
+            ['name' => 'Système caméras CCTV',          'category' => 'Equipment', 'account_code' => '2440', 'cost' =>   2_300_000, 'life' =>  60, 'months_ago' =>  4],
+        ];
+
+        $i = 1;
+        foreach ($assets as $a) {
+            DemoFixedAsset::create([
+                'tenant_id'           => $tenant->id,
+                'asset_code'          => sprintf('FA-%03d', $i++),
+                'name'                => $a['name'],
+                'category'            => $a['category'],
+                'account_code'        => $a['account_code'],
+                'acquisition_date'    => $today->copy()->subMonthsNoOverflow($a['months_ago']),
+                'acquisition_cost'    => $a['cost'],
+                'useful_life_months'  => $a['life'],
+                'depreciation_method' => 'linear',
+            ]);
         }
     }
 }

@@ -58,10 +58,15 @@
                 @foreach ([
                     ['revenue',           '/demo/sandbox/revenue',            'Revenue',           'M3 3v18h18M7 14l4-4 4 4 5-5'],
                     ['receivables',       '/demo/sandbox/receivables',        'Receivables',       'M4 4h16v16H4zM4 12h16M9 4v16'],
+                    ['treasury',          '/demo/sandbox/treasury',           'Treasury',          'M12 1v22M2 12h20M4 5h4M4 19h4M16 5h4M16 19h4'],
+                    ['payables',          '/demo/sandbox/payables',           'Payables',          'M4 6h16M4 12h16M4 18h16'],
                     ['profit_loss',       '/demo/sandbox/profit-loss',        'Profit & Loss',     'M12 2v20M2 12h20'],
-                    ['working_capital',   '/demo/sandbox/working-capital',    'Working Capital',   'M21 12c0 5-4 9-9 9s-9-4-9-9 4-9 9-9 9 4 9 9zM12 3v18M3 12h18'],
                     ['billing',           '/demo/sandbox/billing',            'Billing',           'M4 6h16v12H4zM4 10h16'],
+                    ['procurement',       '/demo/sandbox/procurement',        'Procurement',       'M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17'],
                     ['customer_insights', '/demo/sandbox/customer-insights',  'Customer Insights', 'M17 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z'],
+                    ['working_capital',   '/demo/sandbox/working-capital',    'Working Capital',   'M21 12c0 5-4 9-9 9s-9-4-9-9 4-9 9-9 9 4 9 9zM12 3v18M3 12h18'],
+                    ['fixed_assets',      '/demo/sandbox/fixed-assets',       'Fixed Assets',      'M3 21h18M5 21V7l7-4 7 4v14M9 21v-6h6v6'],
+                    ['inventory',         '/demo/sandbox/inventory',          'Inventory',         'M3 3v18h18V3H3m3 2h12v2H6V5m0 6h12v2H6v-2m0 6h12v2H6v-2'],
                 ] as [$slug, $url, $label, $path])
                   <a href="{{ $url }}"
                      class="flex items-center gap-2.5 px-3 py-2 rounded-lg transition
