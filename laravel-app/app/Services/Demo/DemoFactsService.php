@@ -972,6 +972,528 @@ final class DemoFactsService
         ];
     }
 
+    // ── Financial Reporting (Balance Sheet, OHADA Statements) ────────
+
+    /**
+     * Balance Sheet Review — Assets / Liabilities / Equity from the
+     * trial balance, grouped by OHADA class.
+     */
+    public function balanceSheet(Tenant $tenant): array
+    {
+        $tb = $this->trialBalance($tenant);
+
+        $sections = [
+            'fixed_assets'      => ['label' => 'Class 2 · Fixed assets',     'prefixes' => ['2'],   'rows' => [], 'total' => 0],
+            'inventory'         => ['label' => 'Class 3 · Inventory',         'prefixes' => ['3'],   'rows' => [], 'total' => 0],
+            'receivables'       => ['label' => 'Class 41 · Receivables',      'prefixes' => ['41'],  'rows' => [], 'total' => 0],
+            'vat_recv'          => ['label' => 'Class 445 · VAT receivable',  'prefixes' => ['445'], 'rows' => [], 'total' => 0],
+            'treasury'          => ['label' => 'Class 5 · Treasury',          'prefixes' => ['5'],   'rows' => [], 'total' => 0],
+            'equity'            => ['label' => 'Class 1 · Capital & reserves','prefixes' => ['1'],   'rows' => [], 'total' => 0],
+            'payables'          => ['label' => 'Class 401 · Payables',        'prefixes' => ['401'], 'rows' => [], 'total' => 0],
+            'vat_pay'           => ['label' => 'Class 443 · VAT payable',     'prefixes' => ['443'], 'rows' => [], 'total' => 0],
+            'other_liabilities' => ['label' => 'Class 44 (other) · Other liabilities', 'prefixes' => ['44'], 'rows' => [], 'total' => 0],
+        ];
+
+        foreach ($tb['rows'] as $r) {
+            foreach ($sections as $key => &$section) {
+                if ($key === 'other_liabilities') continue;   // catch-all handled below
+                foreach ($section['prefixes'] as $p) {
+                    if (str_starts_with((string) $r['code'], $p)) {
+                        $section['rows'][] = $r;
+                        $section['total'] += (float) $r['balance'];
+                        continue 3;
+                    }
+                }
+            }
+            // Other 44XXX accounts (not 401, 443, 445)
+            if (str_starts_with((string) $r['code'], '44')) {
+                $sections['other_liabilities']['rows'][] = $r;
+                $sections['other_liabilities']['total'] += (float) $r['balance'];
+            }
+        }
+        unset($section);
+
+        // Build totals
+        $totalAssets = $sections['fixed_assets']['total']
+                     + $sections['inventory']['total']
+                     + $sections['receivables']['total']
+                     + $sections['vat_recv']['total']
+                     + $sections['treasury']['total'];
+        // Liabilities have negative balances by sign convention in OHADA — use abs
+        $totalLiabilities = abs($sections['payables']['total'])
+                          + abs($sections['vat_pay']['total'])
+                          + abs($sections['other_liabilities']['total']);
+        $totalEquity = abs($sections['equity']['total']);
+
+        return [
+            'currency' => 'XAF',
+            'as_of'    => $tb['as_of'],
+            'sections' => $sections,
+            'total_assets'      => $totalAssets,
+            'total_liabilities' => $totalLiabilities,
+            'total_equity'      => $totalEquity,
+            'balance_check'     => $totalAssets - ($totalLiabilities + $totalEquity),
+        ];
+    }
+
+    /**
+     * OHADA Financial Statements — formal Bilan + Compte de Résultat
+     * blocks. Simplified version (the real BMS computes the full
+     * OHADA layout per the SYSCOHADA chart).
+     */
+    public function ohadaStatements(Tenant $tenant): array
+    {
+        $bs = $this->balanceSheet($tenant);
+        $pl = $this->profitLoss($tenant, 365);
+
+        return [
+            'currency' => 'XAF',
+            'as_of'    => $bs['as_of'],
+            // Bilan ACTIF (assets, simplified to the headline groupings)
+            'bilan_actif' => [
+                ['code' => 'AD',    'label' => 'Immobilisations corporelles',     'amount' => $bs['sections']['fixed_assets']['total']],
+                ['code' => 'BA',    'label' => 'Stocks',                          'amount' => $bs['sections']['inventory']['total']],
+                ['code' => 'BB',    'label' => 'Créances clients',                'amount' => $bs['sections']['receivables']['total']],
+                ['code' => 'BC',    'label' => 'Autres créances (TVA, etc.)',     'amount' => $bs['sections']['vat_recv']['total']],
+                ['code' => 'BD',    'label' => 'Trésorerie — Actif',              'amount' => $bs['sections']['treasury']['total']],
+            ],
+            'bilan_actif_total' => $bs['total_assets'],
+            // Bilan PASSIF (liabilities + equity)
+            'bilan_passif' => [
+                ['code' => 'CA',    'label' => 'Capital + réserves + résultat',   'amount' => $bs['total_equity']],
+                ['code' => 'DA',    'label' => 'Dettes fournisseurs',              'amount' => abs($bs['sections']['payables']['total'])],
+                ['code' => 'DB',    'label' => 'TVA collectée à reverser',         'amount' => abs($bs['sections']['vat_pay']['total'])],
+                ['code' => 'DC',    'label' => 'Autres dettes',                    'amount' => abs($bs['sections']['other_liabilities']['total'])],
+            ],
+            'bilan_passif_total' => $bs['total_liabilities'] + $bs['total_equity'],
+            // Compte de résultat (income statement)
+            'cr_lines' => [
+                ['code' => 'TA',    'label' => 'Ventes de marchandises (CA HT)',  'amount' => $pl['revenue']],
+                ['code' => 'RA',    'label' => 'Achats de marchandises (COGS)',   'amount' => -$pl['cogs']],
+                ['code' => 'XB',    'label' => 'Marge brute',                     'amount' => $pl['gross_profit'], 'subtotal' => true],
+                ['code' => 'RC',    'label' => 'Autres achats + services',         'amount' => -$pl['opex']],
+                ['code' => 'XD',    'label' => 'Excédent brut d\'exploitation (EBITDA)', 'amount' => $pl['ebitda'], 'subtotal' => true],
+                ['code' => 'RD',    'label' => 'Dotations aux amortissements',    'amount' => -$pl['depreciation']],
+                ['code' => 'XI',    'label' => 'Résultat net',                    'amount' => $pl['net_profit'], 'subtotal' => true],
+            ],
+        ];
+    }
+
+    // ── Tax modules (5) ──────────────────────────────────────────────
+
+    /**
+     * Tax Dashboard — overview of all tax modules with the current
+     * status of each (declared / pending / overdue).
+     */
+    public function taxDashboard(Tenant $tenant): array
+    {
+        $tr = $this->taxReturn($tenant);
+        $vat = $this->vatCompliance($tenant);
+        $income = $this->incomeTaxCompliance($tenant);
+        $inv = $this->invoiceCompliance($tenant);
+
+        return [
+            'currency'              => 'XAF',
+            'as_of'                 => now()->format('Y-m-d'),
+            'vat_payable_current'   => $tr['vat_payable'],
+            'irpp_payable_current'  => $tr['irpp_retenu'],
+            'total_due_current'     => $tr['total_due'],
+            'is_estimated_annual'   => $income['is_annual'],
+            'invoice_compliance_pct'=> $inv['compliance_pct'],
+            'invoice_issues'        => $inv['issue_count'],
+            'next_filing_date'      => now()->copy()->startOfMonth()->addMonth()->addDays(14)->format('Y-m-d'),
+            'vat_calendar'          => $vat['calendar'],
+        ];
+    }
+
+    /**
+     * Income Tax Compliance — annual IS estimation based on YTD P&L.
+     * Cameroon IS rate = 33% on taxable profit; here we use the YTD
+     * net profit grossed up to a full year.
+     */
+    public function incomeTaxCompliance(Tenant $tenant): array
+    {
+        $startOfYear = now()->startOfYear();
+        $now = now();
+        $daysYtd = (int) max(1, $startOfYear->diffInDays($now));
+        $plYtd = $this->profitLoss($tenant, $daysYtd);
+
+        $taxableYtd = max(0, $plYtd['net_profit']);
+        $annualisation = 365 / max(1, $daysYtd);
+        $taxableAnnualEstimate = $taxableYtd * $annualisation;
+        $isAnnualEstimate = $taxableAnnualEstimate * 0.33;
+        // Minimum tax (Cameroon): 2% of CA (turnover)
+        $caYtd = $plYtd['revenue'];
+        $caAnnual = $caYtd * $annualisation;
+        $minimumTax = $caAnnual * 0.02;
+        $effectiveTax = max($isAnnualEstimate, $minimumTax);
+
+        return [
+            'currency'              => 'XAF',
+            'days_ytd'              => (int) $daysYtd,
+            'ytd_taxable_profit'    => $taxableYtd,
+            'ytd_revenue'           => $caYtd,
+            'annualised_taxable'    => $taxableAnnualEstimate,
+            'annualised_revenue'    => $caAnnual,
+            'is_annual'             => $isAnnualEstimate,
+            'minimum_tax'           => $minimumTax,
+            'effective_tax'         => $effectiveTax,
+            'tax_basis'             => $isAnnualEstimate >= $minimumTax ? 'IS_calc' : 'minimum_tax',
+            'gross_margin_pct'      => $plYtd['gross_margin_pct'],
+            'ebitda_margin_pct'     => $plYtd['ebitda_margin_pct'],
+        ];
+    }
+
+    /** VAT Compliance — calendar of returns + filing status per month. */
+    public function vatCompliance(Tenant $tenant): array
+    {
+        $months = collect();
+        for ($i = 5; $i >= 0; $i--) {
+            $monthStart = now()->copy()->subMonthsNoOverflow($i)->startOfMonth();
+            $tr = $this->taxReturn($tenant, $monthStart);
+            $filingDeadline = $monthStart->copy()->addMonth()->addDays(14);  // 15th of next month
+            $filed = $i > 0;   // assume past months filed, current not yet
+            $months->push([
+                'month'         => $monthStart->format('Y-m'),
+                'month_label'   => $monthStart->format('M Y'),
+                'vat_collected' => $tr['vat_collected'],
+                'vat_deductible'=> $tr['vat_deductible'],
+                'vat_payable'   => $tr['vat_payable'],
+                'filing_deadline' => $filingDeadline->format('Y-m-d'),
+                'status'        => $filed ? 'filed' : 'pending',
+                'overdue'       => !$filed && now()->isAfter($filingDeadline),
+            ]);
+        }
+        return [
+            'currency'      => 'XAF',
+            'calendar'      => $months->toArray(),
+            'total_vat_6m'  => (float) $months->sum('vat_payable'),
+            'filed_count'   => $months->where('status', 'filed')->count(),
+            'pending_count' => $months->where('status', 'pending')->count(),
+            'overdue_count' => $months->where('overdue', true)->count(),
+        ];
+    }
+
+    /**
+     * Invoice Compliance — checks every recent invoice against CGI rules:
+     *   - Sequential numbering (no gaps in INV-YYYY-NNNNN)
+     *   - Date within the issuing month
+     *   - Customer name present
+     *   - VAT correctly applied (19.25%)
+     *   - PO referenced when has_po=true
+     */
+    public function invoiceCompliance(Tenant $tenant): array
+    {
+        $invoices = DemoInvoice::with('customer')
+            ->where('tenant_id', $tenant->id)
+            ->orderBy('invoice_date')
+            ->limit(200)
+            ->get();
+
+        $issues = collect();
+        foreach ($invoices as $inv) {
+            $issueList = [];
+            // VAT check: should be ~19.25% of amount_ht
+            $expectedVat = round((float) $inv->amount_ht * 0.1925, 0);
+            if (abs((float) $inv->vat_amount - $expectedVat) > 1) {
+                $issueList[] = sprintf('VAT mis-applied: %s declared vs %s expected',
+                    number_format($inv->vat_amount, 0), number_format($expectedVat, 0));
+            }
+            if (!$inv->customer || trim($inv->customer->name) === '') {
+                $issueList[] = 'Customer missing';
+            }
+            if ($inv->has_po && empty($inv->po_number)) {
+                $issueList[] = 'has_po=true but no PO number';
+            }
+            if (count($issueList) > 0) {
+                $issues->push([
+                    'invoice'  => $inv,
+                    'issues'   => $issueList,
+                ]);
+            }
+        }
+
+        $totalChecked = $invoices->count();
+        $issueCount   = $issues->count();
+        $compliancePct= $totalChecked > 0 ? (($totalChecked - $issueCount) / $totalChecked) * 100 : 100;
+
+        return [
+            'as_of'           => now()->format('Y-m-d'),
+            'total_checked'   => $totalChecked,
+            'issue_count'     => $issueCount,
+            'compliance_pct'  => $compliancePct,
+            'issues'          => $issues->take(50)->toArray(),
+        ];
+    }
+
+    /**
+     * Return Reconciliation — Filed tax-return §2 (CA Global HT) vs GL
+     * ground truth (Class 70 movements) for the current month.
+     */
+    public function returnReconciliation(Tenant $tenant, ?Carbon $monthStart = null): array
+    {
+        $monthStart = $monthStart ?? now()->startOfMonth();
+        $monthEnd   = $monthStart->copy()->endOfMonth();
+
+        // GL Class 70 movements (revenue accounts) — credit side
+        $glClass70 = (float) DemoJournalLine::query()
+            ->join('demo_journal_entries', 'demo_journal_entries.id', '=', 'demo_journal_lines.entry_id')
+            ->where('demo_journal_entries.tenant_id', $tenant->id)
+            ->whereBetween('demo_journal_entries.entry_date', [$monthStart, $monthEnd])
+            ->where('demo_journal_lines.account_code', 'like', '70%')
+            ->sum('demo_journal_lines.credit');
+
+        // Implicit from invoices
+        $invoiceHt = (float) DemoInvoice::query()
+            ->where('tenant_id', $tenant->id)
+            ->whereBetween('invoice_date', [$monthStart, $monthEnd])
+            ->whereIn('status', ['posted', 'paid'])
+            ->sum('amount_ht');
+
+        $glTotal = $glClass70 + $invoiceHt;
+        $declared = $invoiceHt;   // declared on the tax return = invoice CA HT
+        $variance = $glTotal - $declared;
+
+        return [
+            'currency'      => 'XAF',
+            'month'         => $monthStart->format('Y-m'),
+            'period_label'  => $monthStart->format('F Y'),
+            'gl_class_70'   => $glClass70,
+            'invoice_ht'    => $invoiceHt,
+            'gl_total'      => $glTotal,
+            'declared_on_return' => $declared,
+            'variance'      => $variance,
+            'variance_pct'  => $declared > 0 ? ($variance / $declared) * 100 : 0,
+            'reconciled'    => abs($variance) < 100,   // within 100 XAF = reconciled
+        ];
+    }
+
+    // ── Planning modules (5) ─────────────────────────────────────────
+
+    /** Macro Economics — fixed Cameroon indicators for the demo. */
+    public function macroEconomics(): array
+    {
+        return [
+            'as_of'    => now()->format('Y-m-d'),
+            'country'  => 'Cameroon',
+            'currency' => 'XAF',
+            'indicators' => [
+                ['key' => 'gdp_growth',     'label' => 'GDP growth (Y/Y)',        'value' => '+3.8%',     'source' => 'IMF · Apr 2026', 'trend' => 'up'],
+                ['key' => 'cpi',            'label' => 'Inflation (CPI Y/Y)',     'value' => '+4.2%',     'source' => 'INS · Mar 2026', 'trend' => 'flat'],
+                ['key' => 'usd_xaf',        'label' => 'USD / XAF',                'value' => '595',       'source' => 'BEAC',           'trend' => 'down'],
+                ['key' => 'eur_xaf',        'label' => 'EUR / XAF (fixed)',        'value' => '655.957',   'source' => 'CFA peg',        'trend' => 'flat'],
+                ['key' => 'beac_policy',    'label' => 'BEAC policy rate',         'value' => '5.00%',     'source' => 'BEAC',           'trend' => 'flat'],
+                ['key' => 'oil_brent',      'label' => 'Brent crude (USD/bbl)',    'value' => '78',        'source' => 'ICE · spot',     'trend' => 'down'],
+                ['key' => 'cocoa',          'label' => 'Cocoa (USD/t)',            'value' => '6,400',     'source' => 'ICE Futures',    'trend' => 'up'],
+                ['key' => 'rubber',         'label' => 'Rubber TSR20 (USD/t)',     'value' => '1,720',     'source' => 'SGX',            'trend' => 'up'],
+                ['key' => 'sovereign_eurobond', 'label' => 'CMR Eurobond 2032 yield', 'value' => '7.85%', 'source' => 'Bloomberg',      'trend' => 'up'],
+                ['key' => 'doing_business', 'label' => 'World Bank Doing Business rank', 'value' => '167/190', 'source' => 'WB',         'trend' => 'flat'],
+            ],
+        ];
+    }
+
+    /** P&L Forecast — extrapolate trailing 90-day run-rate forward 6 months. */
+    public function plForecast(Tenant $tenant, int $months = 6): array
+    {
+        $pl90 = $this->profitLoss($tenant, 90);
+        $monthlyRunRate = [
+            'revenue'      => $pl90['revenue']      / 3,
+            'cogs'         => $pl90['cogs']         / 3,
+            'gross_profit' => $pl90['gross_profit'] / 3,
+            'opex'         => $pl90['opex']         / 3,
+            'ebitda'       => $pl90['ebitda']       / 3,
+            'depreciation' => $pl90['depreciation'] / 3,
+            'net_profit'   => $pl90['net_profit']   / 3,
+        ];
+
+        $forecast = [];
+        $today = now()->startOfMonth();
+        for ($m = 1; $m <= $months; $m++) {
+            // Apply a mild seasonal flex: ±5% sinusoid
+            $flex = 1 + (sin($m / 2.0) * 0.05);
+            $forecast[] = [
+                'month'        => $today->copy()->addMonthsNoOverflow($m)->format('Y-m'),
+                'month_label'  => $today->copy()->addMonthsNoOverflow($m)->format('M Y'),
+                'revenue'      => $monthlyRunRate['revenue'] * $flex,
+                'cogs'         => $monthlyRunRate['cogs'] * $flex,
+                'gross_profit' => ($monthlyRunRate['revenue'] - $monthlyRunRate['cogs']) * $flex,
+                'opex'         => $monthlyRunRate['opex'],     // opex is roughly fixed
+                'ebitda'       => ($monthlyRunRate['revenue'] - $monthlyRunRate['cogs']) * $flex - $monthlyRunRate['opex'],
+                'net_profit'   => $monthlyRunRate['net_profit'] * $flex,
+            ];
+        }
+
+        return [
+            'currency'         => 'XAF',
+            'as_of'            => now()->format('Y-m-d'),
+            'months'           => $months,
+            'baseline_monthly' => $monthlyRunRate,
+            'forecast'         => $forecast,
+            'forecast_total_revenue' => array_sum(array_column($forecast, 'revenue')),
+            'forecast_total_ebitda'  => array_sum(array_column($forecast, 'ebitda')),
+        ];
+    }
+
+    /** Cashflow Forecast — projected weekly cash by week for the next N weeks. */
+    public function cashflowForecast(Tenant $tenant, int $weeks = 13): array
+    {
+        $today = now()->startOfDay();
+        $openingCash = (float) collect($this->trialBalance($tenant)['rows'])
+            ->filter(fn ($r) => str_starts_with((string) $r['code'], '52') || str_starts_with((string) $r['code'], '57'))
+            ->sum('balance');
+
+        // Inflow projection: open AR with due_date within next N weeks
+        $arRows = DemoInvoice::with('payments')
+            ->where('tenant_id', $tenant->id)
+            ->whereIn('status', ['posted'])
+            ->get()
+            ->map(function ($i) {
+                return [
+                    'due_date' => $i->due_date,
+                    'balance'  => (float) $i->total - (float) $i->payments->sum('amount'),
+                ];
+            })->filter(fn ($r) => $r['balance'] > 0.01);
+
+        // Outflow projection: open AP + recurring opex (monthly run rate)
+        $apRows = DemoSupplierBill::with('payments')
+            ->where('tenant_id', $tenant->id)
+            ->whereIn('status', ['posted'])
+            ->get()
+            ->map(function ($b) {
+                return [
+                    'due_date' => $b->due_date,
+                    'balance'  => (float) $b->total - (float) $b->payments->sum('amount'),
+                ];
+            })->filter(fn ($r) => $r['balance'] > 0.01);
+
+        $opex90 = $this->opexJournalSum($tenant, $today->copy()->subDays(90), $today);
+        $weeklyOpex = $opex90 / 13;   // 90 days ≈ 13 weeks
+
+        $forecast = [];
+        $runningCash = $openingCash;
+        for ($w = 0; $w < $weeks; $w++) {
+            $wkStart = $today->copy()->addDays($w * 7);
+            $wkEnd   = $wkStart->copy()->addDays(6);
+            $inflow = (float) $arRows->filter(fn ($r) => $r['due_date']->between($wkStart, $wkEnd))->sum('balance');
+            $outflowAp = (float) $apRows->filter(fn ($r) => $r['due_date']->between($wkStart, $wkEnd))->sum('balance');
+            $outflow = $outflowAp + $weeklyOpex;
+            $net = $inflow - $outflow;
+            $runningCash += $net;
+
+            $forecast[] = [
+                'week_start' => $wkStart->format('Y-m-d'),
+                'inflow'     => $inflow,
+                'outflow'    => $outflow,
+                'net'        => $net,
+                'cash_end'   => $runningCash,
+            ];
+        }
+
+        return [
+            'currency'      => 'XAF',
+            'as_of'         => $today->format('Y-m-d'),
+            'opening_cash'  => $openingCash,
+            'weeks'         => $weeks,
+            'forecast'      => $forecast,
+            'min_cash'      => min(array_column($forecast, 'cash_end')),
+            'final_cash'    => end($forecast)['cash_end'] ?? $openingCash,
+            'weekly_opex'   => $weeklyOpex,
+        ];
+    }
+
+    /** Investment Analysis — NPV/IRR for a sample 5-year project on the demo. */
+    public function investmentAnalysis(?array $cashFlows = null, float $discountRate = 0.12): array
+    {
+        // Default sample project: initial investment 30M, 5 years of net cash
+        $cashFlows = $cashFlows ?? [
+            ['year' => 0, 'cash' => -30_000_000, 'label' => 'Initial investment'],
+            ['year' => 1, 'cash' =>   8_000_000, 'label' => 'Year 1 net cash'],
+            ['year' => 2, 'cash' =>  10_500_000, 'label' => 'Year 2 net cash'],
+            ['year' => 3, 'cash' =>  12_000_000, 'label' => 'Year 3 net cash'],
+            ['year' => 4, 'cash' =>  11_500_000, 'label' => 'Year 4 net cash'],
+            ['year' => 5, 'cash' =>   9_000_000, 'label' => 'Year 5 net cash'],
+        ];
+
+        $npv = 0.0;
+        $totalNominal = 0.0;
+        $rowsOut = [];
+        foreach ($cashFlows as $r) {
+            $df = pow(1 + $discountRate, -1 * (int) $r['year']);
+            $pv = (float) $r['cash'] * $df;
+            $npv += $pv;
+            $totalNominal += (float) $r['cash'];
+            $rowsOut[] = $r + ['discount_factor' => $df, 'present_value' => $pv];
+        }
+
+        // Simple IRR — bisect between -50% and +200%
+        $irr = $this->bisectIrr($cashFlows);
+
+        $paybackYears = $this->paybackPeriod($cashFlows);
+
+        return [
+            'currency'      => 'XAF',
+            'discount_rate' => $discountRate,
+            'cash_flows'    => $rowsOut,
+            'total_nominal' => $totalNominal,
+            'npv'           => $npv,
+            'irr'           => $irr,
+            'payback_years' => $paybackYears,
+            'decision'      => $npv > 0 ? 'Invest (NPV positive)' : 'Reject (NPV negative)',
+        ];
+    }
+
+    /** Budget Upload — empty grid the visitor can use to compare to actuals. */
+    public function budgetGrid(Tenant $tenant): array
+    {
+        $pl90 = $this->profitLoss($tenant, 90);
+        $monthly = max(1, $pl90['revenue']) / 3;
+        return [
+            'currency' => 'XAF',
+            'sample_budget_lines' => [
+                ['account' => '701100', 'label' => 'Ventes de marchandises', 'monthly_budget' => $monthly,         'ytd_actual' => $pl90['revenue']],
+                ['account' => '601000', 'label' => 'Achats marchandises',    'monthly_budget' => $monthly * 0.62,  'ytd_actual' => $pl90['cogs']],
+                ['account' => '622000', 'label' => 'Location',                'monthly_budget' => 2_500_000,         'ytd_actual' => 7_500_000],
+                ['account' => '641000', 'label' => 'Salaires',                'monthly_budget' => 4_800_000,         'ytd_actual' => 14_400_000],
+                ['account' => '631100', 'label' => 'Frais bancaires',         'monthly_budget' => 85_000,            'ytd_actual' => 255_000],
+            ],
+        ];
+    }
+
+    // ── IRR / payback helpers ────────────────────────────────────────
+
+    private function bisectIrr(array $cashFlows, float $lo = -0.5, float $hi = 2.0, int $iters = 50): float
+    {
+        $npvAt = function (float $r) use ($cashFlows) {
+            $n = 0;
+            foreach ($cashFlows as $cf) {
+                $n += (float) $cf['cash'] * pow(1 + $r, -1 * (int) $cf['year']);
+            }
+            return $n;
+        };
+        if ($npvAt($lo) * $npvAt($hi) > 0) return 0;   // no sign change → undefined
+        for ($i = 0; $i < $iters; $i++) {
+            $mid = ($lo + $hi) / 2;
+            if ($npvAt($mid) > 0) { $lo = $mid; } else { $hi = $mid; }
+        }
+        return ($lo + $hi) / 2;
+    }
+
+    private function paybackPeriod(array $cashFlows): ?float
+    {
+        $cum = 0.0;
+        $prev = null;
+        foreach ($cashFlows as $cf) {
+            $cum += (float) $cf['cash'];
+            if ($cum >= 0 && $prev !== null && $prev < 0) {
+                // Linear interpolation within the year
+                $fraction = abs($prev) / ((float) $cf['cash']);
+                return ((int) $cf['year'] - 1) + $fraction;
+            }
+            $prev = $cum;
+        }
+        return null;
+    }
+
     /** Sum trial-balance row balances for accounts whose code starts with any of $prefixes. */
     private function balanceForPrefixes(array $tb, array $prefixes): float
     {

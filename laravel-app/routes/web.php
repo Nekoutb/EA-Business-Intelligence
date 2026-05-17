@@ -100,6 +100,36 @@ Route::prefix('demo/sandbox')->middleware('demo.session')->group(function () {
     Route::get('/procurement',     [\App\Http\Controllers\Demo\DemoSandboxController::class, 'procurement']);
     Route::get('/fixed-assets',    [\App\Http\Controllers\Demo\DemoSandboxController::class, 'fixedAssets']);
     Route::get('/inventory',       [\App\Http\Controllers\Demo\DemoSandboxController::class, 'inventory']);
+
+    // ── Financial Reporting modules (Tier 2) ──────────────────────
+    Route::get('/balance-sheet-review',     [\App\Http\Controllers\Demo\DemoSandboxController::class, 'balanceSheet']);
+    Route::get('/ohada-financial-statements',[\App\Http\Controllers\Demo\DemoSandboxController::class, 'ohadaStatements']);
+
+    // ── Tax Compliance modules (Tier 2) ──────────────────────────
+    Route::get('/tax-dashboard',          [\App\Http\Controllers\Demo\DemoSandboxController::class, 'taxDashboard']);
+    Route::get('/income-tax-compliance',  [\App\Http\Controllers\Demo\DemoSandboxController::class, 'incomeTaxCompliance']);
+    Route::get('/vat-compliance',         [\App\Http\Controllers\Demo\DemoSandboxController::class, 'vatCompliance']);
+    Route::get('/vat-invoice-compliance', [\App\Http\Controllers\Demo\DemoSandboxController::class, 'invoiceCompliance']);
+    Route::get('/return-reconciliation',  [\App\Http\Controllers\Demo\DemoSandboxController::class, 'returnReconciliation']);
+
+    // ── Financial Planning modules (Tier 2) ───────────────────────
+    Route::get('/macro-economics',        [\App\Http\Controllers\Demo\DemoSandboxController::class, 'macroEconomics']);
+    Route::get('/pl-forecast',            [\App\Http\Controllers\Demo\DemoSandboxController::class, 'plForecast']);
+    Route::get('/cashflow-forecast',      [\App\Http\Controllers\Demo\DemoSandboxController::class, 'cashflowForecast']);
+    Route::get('/investment-analysis',    [\App\Http\Controllers\Demo\DemoSandboxController::class, 'investmentAnalysis']);
+    Route::get('/budget-upload',          [\App\Http\Controllers\Demo\DemoSandboxController::class, 'budgetUpload']);
+
+    // ── Coming-soon placeholders (Tier 3) — generic handler with metadata per slug
+    Route::get('/cash-flow',                  fn () => app(\App\Http\Controllers\Demo\DemoSandboxController::class)->comingSoon(request(), 'cash_flow'));
+    Route::get('/post-retirement-benefits',   fn () => app(\App\Http\Controllers\Demo\DemoSandboxController::class)->comingSoon(request(), 'post_retirement_benefits'));
+    Route::get('/bank-reconciliation',        fn () => app(\App\Http\Controllers\Demo\DemoSandboxController::class)->comingSoon(request(), 'bank_reconciliation'));
+    Route::get('/budgeting',                  fn () => app(\App\Http\Controllers\Demo\DemoSandboxController::class)->comingSoon(request(), 'budgeting'));
+    Route::get('/forecasting',                fn () => app(\App\Http\Controllers\Demo\DemoSandboxController::class)->comingSoon(request(), 'forecasting'));
+    Route::get('/scenarios',                  fn () => app(\App\Http\Controllers\Demo\DemoSandboxController::class)->comingSoon(request(), 'scenario_modeling'));
+    Route::get('/payroll',                    fn () => app(\App\Http\Controllers\Demo\DemoSandboxController::class)->comingSoon(request(), 'payroll_processing'));
+    Route::get('/product-revenue-tsd',        fn () => app(\App\Http\Controllers\Demo\DemoSandboxController::class)->comingSoon(request(), 'product_revenue_tsd'));
+    Route::get('/operations',                 fn () => app(\App\Http\Controllers\Demo\DemoSandboxController::class)->comingSoon(request(), 'operations'));
+
     Route::post('/reset',          [\App\Http\Controllers\Demo\DemoSandboxController::class, 'reset']);
 
     // Data tables — view + canned-form writes
