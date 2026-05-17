@@ -16,28 +16,7 @@
 @endsection
 
 @section('content')
-<div class="grid grid-cols-1 md:grid-cols-4 gap-3 mb-5">
-    <div class="panel p-4">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">GL Class 70</div>
-        <div class="text-xl font-bold mono text-slate-900 mt-1">{{ number_format($data['gl_class_70'], 0) }}</div>
-        <div class="text-[10px] text-slate-500 mt-0.5">explicit revenue journals</div>
-    </div>
-    <div class="panel p-4">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Invoice CA HT</div>
-        <div class="text-xl font-bold mono text-slate-900 mt-1">{{ number_format($data['invoice_ht'], 0) }}</div>
-        <div class="text-[10px] text-slate-500 mt-0.5">implicit from posted invoices</div>
-    </div>
-    <div class="panel p-4 border-l-4 border-stone-300">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">GL total revenue</div>
-        <div class="text-xl font-bold mono text-slate-900 mt-1">{{ number_format($data['gl_total'], 0) }}</div>
-        <div class="text-[10px] text-slate-500 mt-0.5">class 70 + invoice HT</div>
-    </div>
-    <div class="panel p-4 border-l-4 {{ $data['reconciled'] ? 'border-emerald-400' : 'border-rose-400' }}">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Variance</div>
-        <div class="text-xl font-bold mono mt-1 {{ $data['reconciled'] ? 'text-emerald-700' : 'text-rose-700' }}">{{ ($data['variance'] >= 0 ? '+' : '') . number_format($data['variance'], 0) }}</div>
-        <div class="text-[10px] text-slate-500 mt-0.5">{{ $data['reconciled'] ? 'reconciled ✓' : number_format($data['variance_pct'], 2) . '% off' }}</div>
-    </div>
-</div>
+@include('demo.sandbox._kpi-strip', ['kpis' => $kpis])
 
 <div class="panel p-5">
     <h2 class="text-sm font-semibold text-slate-900 mb-3">Three-way reconciliation</h2>

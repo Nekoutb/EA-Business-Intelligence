@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Demo;
 
 use App\Http\Controllers\Controller;
 use App\Services\Demo\DemoFactsService;
+use App\Services\Demo\DemoKpiStripBuilder;
 use App\Services\Demo\DemoTenantSeeder;
 use Illuminate\Http\Request;
 
@@ -29,8 +30,10 @@ class DemoSandboxController extends Controller
     {
         $tenant = $request->attributes->get('demo_tenant');
         $days   = max(7, min(365, (int) $request->query('days', 30)));
+        $data   = $facts->revenueDetail($tenant, $days);
         return view('demo.sandbox.revenue', [
-            'data'   => $facts->revenueDetail($tenant, $days),
+            'data'   => $data,
+            'kpis'   => DemoKpiStripBuilder::forRevenue($data),
             'days'   => $days,
             'tenant' => $tenant,
             'active' => 'revenue',
@@ -40,8 +43,10 @@ class DemoSandboxController extends Controller
     public function receivables(Request $request, DemoFactsService $facts)
     {
         $tenant = $request->attributes->get('demo_tenant');
+        $data   = $facts->receivables($tenant);
         return view('demo.sandbox.receivables', [
-            'data'   => $facts->receivables($tenant),
+            'data'   => $data,
+            'kpis'   => DemoKpiStripBuilder::forReceivables($data),
             'tenant' => $tenant,
             'active' => 'receivables',
         ]);
@@ -51,8 +56,10 @@ class DemoSandboxController extends Controller
     {
         $tenant = $request->attributes->get('demo_tenant');
         $days   = max(30, min(365, (int) $request->query('days', 90)));
+        $data   = $facts->profitLoss($tenant, $days);
         return view('demo.sandbox.profit-loss', [
-            'data'   => $facts->profitLoss($tenant, $days),
+            'data'   => $data,
+            'kpis'   => DemoKpiStripBuilder::forProfitLoss($data),
             'days'   => $days,
             'tenant' => $tenant,
             'active' => 'profit_loss',
@@ -62,8 +69,10 @@ class DemoSandboxController extends Controller
     public function trialBalance(Request $request, DemoFactsService $facts)
     {
         $tenant = $request->attributes->get('demo_tenant');
+        $data   = $facts->trialBalance($tenant);
         return view('demo.sandbox.trial-balance', [
-            'data'   => $facts->trialBalance($tenant),
+            'data'   => $data,
+            'kpis'   => DemoKpiStripBuilder::forTrialBalance($data),
             'tenant' => $tenant,
             'active' => 'trial_balance',
         ]);
@@ -72,8 +81,10 @@ class DemoSandboxController extends Controller
     public function glQuality(Request $request, DemoFactsService $facts)
     {
         $tenant = $request->attributes->get('demo_tenant');
+        $data   = $facts->glQuality($tenant);
         return view('demo.sandbox.gl-quality', [
-            'data'   => $facts->glQuality($tenant),
+            'data'   => $data,
+            'kpis'   => DemoKpiStripBuilder::forGlQuality($data),
             'tenant' => $tenant,
             'active' => 'gl_quality',
         ]);
@@ -82,8 +93,10 @@ class DemoSandboxController extends Controller
     public function workingCapital(Request $request, DemoFactsService $facts)
     {
         $tenant = $request->attributes->get('demo_tenant');
+        $data   = $facts->workingCapital($tenant);
         return view('demo.sandbox.working-capital', [
-            'data'   => $facts->workingCapital($tenant),
+            'data'   => $data,
+            'kpis'   => DemoKpiStripBuilder::forWorkingCapital($data),
             'tenant' => $tenant,
             'active' => 'working_capital',
         ]);
@@ -93,8 +106,10 @@ class DemoSandboxController extends Controller
     {
         $tenant = $request->attributes->get('demo_tenant');
         $days   = max(7, min(365, (int) $request->query('days', 90)));
+        $data   = $facts->billing($tenant, $days);
         return view('demo.sandbox.billing', [
-            'data'   => $facts->billing($tenant, $days),
+            'data'   => $data,
+            'kpis'   => DemoKpiStripBuilder::forBilling($data),
             'days'   => $days,
             'tenant' => $tenant,
             'active' => 'billing',
@@ -104,8 +119,10 @@ class DemoSandboxController extends Controller
     public function customerInsights(Request $request, DemoFactsService $facts)
     {
         $tenant = $request->attributes->get('demo_tenant');
+        $data   = $facts->customerInsights($tenant);
         return view('demo.sandbox.customer-insights', [
-            'data'   => $facts->customerInsights($tenant),
+            'data'   => $data,
+            'kpis'   => DemoKpiStripBuilder::forCustomerInsights($data),
             'tenant' => $tenant,
             'active' => 'customer_insights',
         ]);
@@ -118,8 +135,10 @@ class DemoSandboxController extends Controller
         $monthStart = $month && preg_match('/^\d{4}-\d{2}$/', $month)
             ? \Carbon\Carbon::createFromFormat('Y-m', $month)->startOfMonth()
             : null;
+        $data = $facts->taxReturn($tenant, $monthStart);
         return view('demo.sandbox.tax-return', [
-            'data'   => $facts->taxReturn($tenant, $monthStart),
+            'data'   => $data,
+            'kpis'   => DemoKpiStripBuilder::forTaxReturn($data),
             'tenant' => $tenant,
             'active' => 'tax_return',
         ]);
@@ -129,8 +148,10 @@ class DemoSandboxController extends Controller
     {
         $tenant = $request->attributes->get('demo_tenant');
         $days   = max(7, min(365, (int) $request->query('days', 90)));
+        $data   = $facts->treasury($tenant, $days);
         return view('demo.sandbox.treasury', [
-            'data'   => $facts->treasury($tenant, $days),
+            'data'   => $data,
+            'kpis'   => DemoKpiStripBuilder::forTreasury($data),
             'days'   => $days,
             'tenant' => $tenant,
             'active' => 'treasury',
@@ -140,8 +161,10 @@ class DemoSandboxController extends Controller
     public function payables(Request $request, DemoFactsService $facts)
     {
         $tenant = $request->attributes->get('demo_tenant');
+        $data   = $facts->payables($tenant);
         return view('demo.sandbox.payables', [
-            'data'   => $facts->payables($tenant),
+            'data'   => $data,
+            'kpis'   => DemoKpiStripBuilder::forPayables($data),
             'tenant' => $tenant,
             'active' => 'payables',
         ]);
@@ -151,8 +174,10 @@ class DemoSandboxController extends Controller
     {
         $tenant = $request->attributes->get('demo_tenant');
         $days   = max(7, min(365, (int) $request->query('days', 90)));
+        $data   = $facts->procurement($tenant, $days);
         return view('demo.sandbox.procurement', [
-            'data'   => $facts->procurement($tenant, $days),
+            'data'   => $data,
+            'kpis'   => DemoKpiStripBuilder::forProcurement($data),
             'days'   => $days,
             'tenant' => $tenant,
             'active' => 'procurement',
@@ -162,8 +187,10 @@ class DemoSandboxController extends Controller
     public function fixedAssets(Request $request, DemoFactsService $facts)
     {
         $tenant = $request->attributes->get('demo_tenant');
+        $data   = $facts->fixedAssets($tenant);
         return view('demo.sandbox.fixed-assets', [
-            'data'   => $facts->fixedAssets($tenant),
+            'data'   => $data,
+            'kpis'   => DemoKpiStripBuilder::forFixedAssets($data),
             'tenant' => $tenant,
             'active' => 'fixed_assets',
         ]);
@@ -172,8 +199,10 @@ class DemoSandboxController extends Controller
     public function inventory(Request $request, DemoFactsService $facts)
     {
         $tenant = $request->attributes->get('demo_tenant');
+        $data   = $facts->inventory($tenant);
         return view('demo.sandbox.inventory', [
-            'data'   => $facts->inventory($tenant),
+            'data'   => $data,
+            'kpis'   => DemoKpiStripBuilder::forInventory($data),
             'tenant' => $tenant,
             'active' => 'inventory',
         ]);
@@ -209,8 +238,10 @@ class DemoSandboxController extends Controller
     public function balanceSheet(Request $request, DemoFactsService $facts)
     {
         $tenant = $request->attributes->get('demo_tenant');
+        $data   = $facts->balanceSheet($tenant);
         return view('demo.sandbox.balance-sheet', [
-            'data'   => $facts->balanceSheet($tenant),
+            'data'   => $data,
+            'kpis'   => DemoKpiStripBuilder::forBalanceSheet($data),
             'tenant' => $tenant,
             'active' => 'balance_sheet',
         ]);
@@ -219,8 +250,10 @@ class DemoSandboxController extends Controller
     public function ohadaStatements(Request $request, DemoFactsService $facts)
     {
         $tenant = $request->attributes->get('demo_tenant');
+        $data   = $facts->ohadaStatements($tenant);
         return view('demo.sandbox.ohada-statements', [
-            'data'   => $facts->ohadaStatements($tenant),
+            'data'   => $data,
+            'kpis'   => DemoKpiStripBuilder::forOhadaStatements($data),
             'tenant' => $tenant,
             'active' => 'ohada_statements',
         ]);
@@ -231,8 +264,10 @@ class DemoSandboxController extends Controller
     public function taxDashboard(Request $request, DemoFactsService $facts)
     {
         $tenant = $request->attributes->get('demo_tenant');
+        $data   = $facts->taxDashboard($tenant);
         return view('demo.sandbox.tax-dashboard', [
-            'data'   => $facts->taxDashboard($tenant),
+            'data'   => $data,
+            'kpis'   => DemoKpiStripBuilder::forTaxDashboard($data),
             'tenant' => $tenant,
             'active' => 'tax_dashboard',
         ]);
@@ -241,8 +276,10 @@ class DemoSandboxController extends Controller
     public function incomeTaxCompliance(Request $request, DemoFactsService $facts)
     {
         $tenant = $request->attributes->get('demo_tenant');
+        $data   = $facts->incomeTaxCompliance($tenant);
         return view('demo.sandbox.income-tax', [
-            'data'   => $facts->incomeTaxCompliance($tenant),
+            'data'   => $data,
+            'kpis'   => DemoKpiStripBuilder::forIncomeTax($data),
             'tenant' => $tenant,
             'active' => 'income_tax',
         ]);
@@ -251,8 +288,10 @@ class DemoSandboxController extends Controller
     public function vatCompliance(Request $request, DemoFactsService $facts)
     {
         $tenant = $request->attributes->get('demo_tenant');
+        $data   = $facts->vatCompliance($tenant);
         return view('demo.sandbox.vat-compliance', [
-            'data'   => $facts->vatCompliance($tenant),
+            'data'   => $data,
+            'kpis'   => DemoKpiStripBuilder::forVatCompliance($data),
             'tenant' => $tenant,
             'active' => 'vat_compliance',
         ]);
@@ -261,8 +300,10 @@ class DemoSandboxController extends Controller
     public function invoiceCompliance(Request $request, DemoFactsService $facts)
     {
         $tenant = $request->attributes->get('demo_tenant');
+        $data   = $facts->invoiceCompliance($tenant);
         return view('demo.sandbox.invoice-compliance', [
-            'data'   => $facts->invoiceCompliance($tenant),
+            'data'   => $data,
+            'kpis'   => DemoKpiStripBuilder::forInvoiceCompliance($data),
             'tenant' => $tenant,
             'active' => 'invoice_compliance',
         ]);
@@ -275,8 +316,10 @@ class DemoSandboxController extends Controller
         $monthStart = $month && preg_match('/^\d{4}-\d{2}$/', $month)
             ? \Carbon\Carbon::createFromFormat('Y-m', $month)->startOfMonth()
             : null;
+        $data = $facts->returnReconciliation($tenant, $monthStart);
         return view('demo.sandbox.return-reconciliation', [
-            'data'   => $facts->returnReconciliation($tenant, $monthStart),
+            'data'   => $data,
+            'kpis'   => DemoKpiStripBuilder::forReturnReconciliation($data),
             'tenant' => $tenant,
             'active' => 'return_reconciliation',
         ]);
@@ -287,8 +330,10 @@ class DemoSandboxController extends Controller
     public function macroEconomics(Request $request, DemoFactsService $facts)
     {
         $tenant = $request->attributes->get('demo_tenant');
+        $data   = $facts->macroEconomics();
         return view('demo.sandbox.macro-economics', [
-            'data'   => $facts->macroEconomics(),
+            'data'   => $data,
+            'kpis'   => DemoKpiStripBuilder::forMacroEconomics($data),
             'tenant' => $tenant,
             'active' => 'macro_economics',
         ]);
@@ -297,8 +342,10 @@ class DemoSandboxController extends Controller
     public function plForecast(Request $request, DemoFactsService $facts)
     {
         $tenant = $request->attributes->get('demo_tenant');
+        $data   = $facts->plForecast($tenant);
         return view('demo.sandbox.pl-forecast', [
-            'data'   => $facts->plForecast($tenant),
+            'data'   => $data,
+            'kpis'   => DemoKpiStripBuilder::forPlForecast($data),
             'tenant' => $tenant,
             'active' => 'pl_forecast',
         ]);
@@ -307,8 +354,10 @@ class DemoSandboxController extends Controller
     public function cashflowForecast(Request $request, DemoFactsService $facts)
     {
         $tenant = $request->attributes->get('demo_tenant');
+        $data   = $facts->cashflowForecast($tenant);
         return view('demo.sandbox.cashflow-forecast', [
-            'data'   => $facts->cashflowForecast($tenant),
+            'data'   => $data,
+            'kpis'   => DemoKpiStripBuilder::forCashflowForecast($data),
             'tenant' => $tenant,
             'active' => 'cashflow_forecast',
         ]);
@@ -317,8 +366,10 @@ class DemoSandboxController extends Controller
     public function investmentAnalysis(Request $request, DemoFactsService $facts)
     {
         $tenant = $request->attributes->get('demo_tenant');
+        $data   = $facts->investmentAnalysis();
         return view('demo.sandbox.investment-analysis', [
-            'data'   => $facts->investmentAnalysis(),
+            'data'   => $data,
+            'kpis'   => DemoKpiStripBuilder::forInvestmentAnalysis($data),
             'tenant' => $tenant,
             'active' => 'investment_analysis',
         ]);
@@ -327,8 +378,10 @@ class DemoSandboxController extends Controller
     public function budgetUpload(Request $request, DemoFactsService $facts)
     {
         $tenant = $request->attributes->get('demo_tenant');
+        $data   = $facts->budgetGrid($tenant);
         return view('demo.sandbox.budget-upload', [
-            'data'   => $facts->budgetGrid($tenant),
+            'data'   => $data,
+            'kpis'   => DemoKpiStripBuilder::forBudgetUpload($data),
             'tenant' => $tenant,
             'active' => 'budget_upload',
         ]);

@@ -10,21 +10,7 @@
 @endsection
 
 @section('content')
-<div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-5">
-    <div class="panel p-4">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Forecast revenue ({{ $data['months'] }}m)</div>
-        <div class="text-xl font-bold mono text-slate-900 mt-1">{{ number_format($data['forecast_total_revenue'], 0) }}</div>
-    </div>
-    <div class="panel p-4 border-l-4 {{ $data['forecast_total_ebitda'] >= 0 ? 'border-emerald-400' : 'border-rose-400' }}">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Forecast EBITDA ({{ $data['months'] }}m)</div>
-        <div class="text-xl font-bold mono mt-1 {{ $data['forecast_total_ebitda'] >= 0 ? 'text-emerald-700' : 'text-rose-700' }}">{{ ($data['forecast_total_ebitda'] >= 0 ? '+' : '') }}{{ number_format($data['forecast_total_ebitda'], 0) }}</div>
-    </div>
-    <div class="panel p-4">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Monthly baseline (90d)</div>
-        <div class="text-xl font-bold mono text-slate-900 mt-1">{{ number_format($data['baseline_monthly']['revenue'], 0) }}</div>
-        <div class="text-[10px] text-slate-500 mt-0.5">revenue per month</div>
-    </div>
-</div>
+@include('demo.sandbox._kpi-strip', ['kpis' => $kpis])
 
 <div class="panel overflow-hidden">
     <table class="w-full text-[12px]">

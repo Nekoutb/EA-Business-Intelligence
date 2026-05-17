@@ -10,26 +10,7 @@
 @endsection
 
 @section('content')
-@php
-    $pct = $data['compliance_pct'];
-    $scoreCls = $pct >= 95 ? 'border-emerald-400 text-emerald-700'
-              : ($pct >= 80 ? 'border-amber-400 text-amber-700' : 'border-rose-400 text-rose-700');
-@endphp
-
-<div class="grid grid-cols-2 md:grid-cols-3 gap-3 mb-5">
-    <div class="panel p-4 border-l-4 {{ $scoreCls }}">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Compliance score</div>
-        <div class="text-2xl font-bold mono mt-1 {{ $scoreCls }}">{{ number_format($pct, 1) }}%</div>
-    </div>
-    <div class="panel p-4">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Invoices checked</div>
-        <div class="text-xl font-bold mono text-slate-900 mt-1">{{ $data['total_checked'] }}</div>
-    </div>
-    <div class="panel p-4 {{ $data['issue_count'] > 0 ? 'border-l-4 border-rose-400' : '' }}">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Issues found</div>
-        <div class="text-xl font-bold mono {{ $data['issue_count'] > 0 ? 'text-rose-700' : 'text-emerald-700' }} mt-1">{{ $data['issue_count'] }}</div>
-    </div>
-</div>
+@include('demo.sandbox._kpi-strip', ['kpis' => $kpis])
 
 @if ($data['issue_count'] === 0)
     <div class="panel p-8 text-center bg-emerald-50/40 border border-emerald-200">

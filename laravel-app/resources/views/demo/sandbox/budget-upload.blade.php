@@ -10,6 +10,8 @@
 @endsection
 
 @section('content')
+@include('demo.sandbox._kpi-strip', ['kpis' => $kpis])
+
 <div class="panel p-5">
     <div class="flex items-center justify-between mb-3">
         <h2 class="text-sm font-semibold text-slate-900">Budget vs YTD actual · per account</h2>

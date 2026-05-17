@@ -10,25 +10,7 @@
 @endsection
 
 @section('content')
-<div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
-    <div class="panel p-4">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Stock on hand (units)</div>
-        <div class="text-xl font-bold mono text-slate-900 mt-1">{{ number_format($data['total_units_in_stock'], 0) }}</div>
-    </div>
-    <div class="panel p-4">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Stock value (COGS)</div>
-        <div class="text-xl font-bold mono text-slate-900 mt-1">{{ number_format($data['total_stock_value'], 0) }}</div>
-    </div>
-    <div class="panel p-4">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Units sold · 90d</div>
-        <div class="text-xl font-bold mono text-slate-900 mt-1">{{ number_format($data['total_units_sold_90d'], 0) }}</div>
-    </div>
-    <div class="panel p-4 {{ $data['avg_turnover'] >= 1.0 ? 'border-l-4 border-emerald-400' : ($data['avg_turnover'] >= 0.5 ? 'border-l-4 border-amber-400' : 'border-l-4 border-rose-400') }}">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Avg turnover (90d)</div>
-        <div class="text-xl font-bold mono text-slate-900 mt-1">{{ number_format($data['avg_turnover'], 2) }}x</div>
-        <div class="text-[10px] text-slate-500 mt-0.5">units sold / avg stock</div>
-    </div>
-</div>
+@include('demo.sandbox._kpi-strip', ['kpis' => $kpis])
 
 <div class="panel overflow-hidden">
     <table class="w-full text-[12px]">

@@ -20,26 +20,7 @@
 @endsection
 
 @section('content')
-<div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
-    <div class="panel p-4">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Total spend (HT)</div>
-        <div class="text-xl font-bold mono text-slate-900 mt-1">{{ number_format($data['total_spend'], 0) }}</div>
-    </div>
-    <div class="panel p-4">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Average bill</div>
-        <div class="text-xl font-bold mono text-slate-900 mt-1">{{ number_format($data['avg_bill'], 0) }}</div>
-    </div>
-    <div class="panel p-4 {{ $data['no_po_pct'] > 10 ? 'border-l-4 border-rose-400' : '' }}">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Maverick spend</div>
-        <div class="text-xl font-bold mono text-rose-700 mt-1">{{ number_format($data['no_po_spend'], 0) }}</div>
-        <div class="text-[10px] text-slate-500 mt-0.5">{{ $data['no_po_count'] }} bills ({{ number_format($data['no_po_pct'], 1) }}%) without PO</div>
-    </div>
-    <div class="panel p-4 {{ $data['top5_supplier_pct'] > 60 ? 'border-l-4 border-amber-400' : '' }}">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Top 5 concentration</div>
-        <div class="text-xl font-bold mono text-slate-900 mt-1">{{ number_format($data['top5_supplier_pct'], 1) }}%</div>
-        <div class="text-[10px] text-slate-500 mt-0.5">supplier diversification</div>
-    </div>
-</div>
+@include('demo.sandbox._kpi-strip', ['kpis' => $kpis])
 
 <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
     <div class="panel p-5">

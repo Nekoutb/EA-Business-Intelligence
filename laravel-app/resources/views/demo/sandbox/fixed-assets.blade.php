@@ -10,26 +10,7 @@
 @endsection
 
 @section('content')
-<div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
-    <div class="panel p-4">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Total acquisition cost</div>
-        <div class="text-xl font-bold mono text-slate-900 mt-1">{{ number_format($data['total_cost'], 0) }}</div>
-    </div>
-    <div class="panel p-4">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Accumulated depreciation</div>
-        <div class="text-xl font-bold mono text-rose-700 mt-1">−{{ number_format($data['total_acc_dep'], 0) }}</div>
-    </div>
-    <div class="panel p-4 border-l-4 border-emerald-400">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Net book value</div>
-        <div class="text-xl font-bold mono text-emerald-700 mt-1">{{ number_format($data['total_nbv'], 0) }}</div>
-        <div class="text-[10px] text-slate-500 mt-0.5">{{ number_format($data['total_cost'] > 0 ? ($data['total_nbv'] / $data['total_cost']) * 100 : 0, 1) }}% of cost remaining</div>
-    </div>
-    <div class="panel p-4">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Monthly depreciation</div>
-        <div class="text-xl font-bold mono text-slate-900 mt-1">{{ number_format($data['monthly_dep_run'], 0) }}</div>
-        <div class="text-[10px] text-slate-500 mt-0.5">recurring run-rate</div>
-    </div>
-</div>
+@include('demo.sandbox._kpi-strip', ['kpis' => $kpis])
 
 <div class="panel p-5 mb-4">
     <h2 class="text-sm font-semibold text-slate-900 mb-3">By category</h2>

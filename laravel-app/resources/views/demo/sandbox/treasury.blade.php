@@ -20,30 +20,7 @@
 @endsection
 
 @section('content')
-<div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
-    <div class="panel p-4 border-l-4 {{ $data['cash_total'] > 0 ? 'border-emerald-400' : 'border-rose-400' }}">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Cash position</div>
-        <div class="text-2xl font-bold mono text-slate-900 mt-1">{{ number_format($data['cash_total'], 0) }}</div>
-        <div class="text-[10px] text-slate-500 mt-0.5">XAF · all bank + cash accounts</div>
-    </div>
-    <div class="panel p-4 border-l-4 border-emerald-400">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Inflows · {{ $days }}d</div>
-        <div class="text-xl font-bold mono text-emerald-700 mt-1">+{{ number_format($data['inflow_total'], 0) }}</div>
-        <div class="text-[10px] text-slate-500 mt-0.5">customer payments</div>
-    </div>
-    <div class="panel p-4 border-l-4 border-rose-400">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Outflows · {{ $days }}d</div>
-        <div class="text-xl font-bold mono text-rose-700 mt-1">−{{ number_format($data['outflow_total'], 0) }}</div>
-        <div class="text-[10px] text-slate-500 mt-0.5">suppliers + opex</div>
-    </div>
-    <div class="panel p-4 border-l-4 {{ $data['net_movement'] >= 0 ? 'border-emerald-400' : 'border-rose-400' }}">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Net movement</div>
-        <div class="text-xl font-bold mono mt-1 {{ $data['net_movement'] >= 0 ? 'text-emerald-700' : 'text-rose-700' }}">
-            {{ $data['net_movement'] >= 0 ? '+' : '' }}{{ number_format($data['net_movement'], 0) }}
-        </div>
-        <div class="text-[10px] text-slate-500 mt-0.5">inflows − outflows</div>
-    </div>
-</div>
+@include('demo.sandbox._kpi-strip', ['kpis' => $kpis])
 
 <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
     <div class="panel p-5">

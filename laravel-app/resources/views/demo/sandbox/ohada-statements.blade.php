@@ -10,6 +10,8 @@
 @endsection
 
 @section('content')
+@include('demo.sandbox._kpi-strip', ['kpis' => $kpis])
+
 <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
     <div class="panel p-5">
         <h2 class="text-sm font-semibold text-slate-900 mb-1">BILAN · ACTIF</h2>

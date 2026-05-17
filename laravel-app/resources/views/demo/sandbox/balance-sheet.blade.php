@@ -10,20 +10,7 @@
 @endsection
 
 @section('content')
-<div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-5">
-    <div class="panel p-4 border-l-4 border-emerald-400">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Total assets</div>
-        <div class="text-xl font-bold mono text-emerald-700 mt-1">{{ number_format($data['total_assets'], 0) }}</div>
-    </div>
-    <div class="panel p-4 border-l-4 border-rose-400">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Total liabilities</div>
-        <div class="text-xl font-bold mono text-rose-700 mt-1">{{ number_format($data['total_liabilities'], 0) }}</div>
-    </div>
-    <div class="panel p-4 border-l-4 border-indigo-400">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Total equity</div>
-        <div class="text-xl font-bold mono text-indigo-700 mt-1">{{ number_format($data['total_equity'], 0) }}</div>
-    </div>
-</div>
+@include('demo.sandbox._kpi-strip', ['kpis' => $kpis])
 
 <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
     <div class="panel p-5">

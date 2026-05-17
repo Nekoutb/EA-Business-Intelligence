@@ -10,6 +10,13 @@
 @endsection
 
 @section('content')
+@include('demo.sandbox._kpi-strip', ['kpis' => $kpis])
+
+<div class="panel p-3 mb-3">
+    <h2 class="text-sm font-semibold text-slate-900">All macro indicators</h2>
+    <p class="text-[11px] text-slate-500 mt-0.5">Headline four shown above · full panel below</p>
+</div>
+
 <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
     @foreach ($data['indicators'] as $i)
         @php

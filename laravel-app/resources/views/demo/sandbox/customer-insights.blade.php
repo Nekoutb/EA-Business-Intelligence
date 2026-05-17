@@ -10,25 +10,7 @@
 @endsection
 
 @section('content')
-<div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
-    <div class="panel p-4">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Total customers</div>
-        <div class="text-xl font-bold mono text-slate-900 mt-1">{{ $data['customer_count'] }}</div>
-    </div>
-    <div class="panel p-4 border-l-4 border-emerald-400">
-        <div class="text-[10px] uppercase tracking-widest text-emerald-700 font-semibold">Paid up</div>
-        <div class="text-xl font-bold mono text-emerald-700 mt-1">{{ $data['paid_up_count'] }}</div>
-    </div>
-    <div class="panel p-4 border-l-4 border-amber-400">
-        <div class="text-[10px] uppercase tracking-widest text-amber-700 font-semibold">Healthy outstanding</div>
-        <div class="text-xl font-bold mono text-amber-700 mt-1">{{ $data['healthy_count'] }}</div>
-    </div>
-    <div class="panel p-4 border-l-4 border-rose-400">
-        <div class="text-[10px] uppercase tracking-widest text-rose-700 font-semibold">At risk</div>
-        <div class="text-xl font-bold mono text-rose-700 mt-1">{{ $data['at_risk_count'] }}</div>
-        <div class="text-[10px] text-slate-500 mt-0.5">overdue balance > 0</div>
-    </div>
-</div>
+@include('demo.sandbox._kpi-strip', ['kpis' => $kpis])
 
 <div class="panel p-5 mb-4">
     <h2 class="text-sm font-semibold text-slate-900 mb-3">By category</h2>

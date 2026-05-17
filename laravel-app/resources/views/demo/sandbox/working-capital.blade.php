@@ -10,31 +10,12 @@
 @endsection
 
 @section('content')
-@php
-    $currentRatioStatus = $data['current_ratio'] >= 1.5 ? 'green' : ($data['current_ratio'] >= 1.0 ? 'amber' : 'red');
-    $quickRatioStatus   = $data['quick_ratio']   >= 1.0 ? 'green' : ($data['quick_ratio']   >= 0.7 ? 'amber' : 'red');
-    $cccStatus          = $data['cash_conversion_cycle'] <= 30 ? 'green' : ($data['cash_conversion_cycle'] <= 60 ? 'amber' : 'red');
-    $statusBg = ['green' => 'border-emerald-400', 'amber' => 'border-amber-400', 'red' => 'border-rose-400'];
-    $statusText = ['green' => 'text-emerald-700', 'amber' => 'text-amber-700', 'red' => 'text-rose-700'];
-@endphp
+@include('demo.sandbox._kpi-strip', ['kpis' => $kpis])
 
-<div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-5">
-    <div class="panel p-4 border-l-4 {{ $statusBg[$currentRatioStatus] }}">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Current ratio</div>
-        <div class="text-2xl font-bold mono mt-1 {{ $statusText[$currentRatioStatus] }}">{{ number_format($data['current_ratio'], 2) }}<span class="text-[14px]">x</span></div>
-        <div class="text-[10px] text-slate-500 mt-0.5">Current assets / current liabilities · target ≥ 1.5</div>
-    </div>
-    <div class="panel p-4 border-l-4 {{ $statusBg[$quickRatioStatus] }}">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Quick ratio</div>
-        <div class="text-2xl font-bold mono mt-1 {{ $statusText[$quickRatioStatus] }}">{{ number_format($data['quick_ratio'], 2) }}<span class="text-[14px]">x</span></div>
-        <div class="text-[10px] text-slate-500 mt-0.5">(Cash + AR) / current liabilities · target ≥ 1.0</div>
-    </div>
-    <div class="panel p-4 border-l-4 {{ $statusBg[$cccStatus] }}">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Cash conversion cycle</div>
-        <div class="text-2xl font-bold mono mt-1 {{ $statusText[$cccStatus] }}">{{ number_format($data['cash_conversion_cycle'], 0) }}d</div>
-        <div class="text-[10px] text-slate-500 mt-0.5">DSO {{ number_format($data['dso'], 0) }}d − DPO {{ number_format($data['dpo'], 0) }}d</div>
-    </div>
-</div>
+@php
+    $cccStatus          = $data['cash_conversion_cycle'] <= 30 ? 'green' : ($data['cash_conversion_cycle'] <= 60 ? 'amber' : 'red');
+    $currentRatioStatus = $data['current_ratio'] >= 1.5 ? 'green' : ($data['current_ratio'] >= 1.0 ? 'amber' : 'red');
+@endphp
 
 <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
     <div class="panel p-5">

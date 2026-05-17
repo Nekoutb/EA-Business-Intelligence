@@ -10,37 +10,7 @@
 @endsection
 
 @section('content')
-@php
-    $overdueRate = $data['overdue_rate'];
-    $dso = $data['dso'];
-    $dsoStatus     = $dso <= 30 ? 'green' : ($dso <= 60 ? 'amber' : 'red');
-    $overdueStatus = $overdueRate <= 10 ? 'green' : ($overdueRate <= 30 ? 'amber' : 'red');
-    $top5Status    = $data['top5_pct'] <= 50 ? 'green' : ($data['top5_pct'] <= 60 ? 'amber' : 'red');
-    $bg = fn ($s) => ['green' => 'border-emerald-400','amber' => 'border-amber-400','red' => 'border-rose-400'][$s] ?? 'border-stone-200';
-@endphp
-
-<div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
-    <div class="panel p-4 border-l-4 border-stone-300">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Total AR</div>
-        <div class="text-xl font-bold text-slate-900 mt-1 mono">{{ number_format($data['total_ar'], 0) }}</div>
-        <div class="text-[10px] text-slate-500 mt-1">{{ $data['open_invoice_count'] }} open invoices</div>
-    </div>
-    <div class="panel p-4 border-l-4 {{ $bg($overdueStatus) }}">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Overdue</div>
-        <div class="text-xl font-bold text-slate-900 mt-1 mono">{{ number_format($data['overdue_ar'], 0) }}</div>
-        <div class="text-[10px] text-slate-500 mt-1">{{ number_format($overdueRate, 1) }}% of total</div>
-    </div>
-    <div class="panel p-4 border-l-4 {{ $bg($dsoStatus) }}">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">DSO</div>
-        <div class="text-xl font-bold text-slate-900 mt-1 mono">{{ number_format($dso, 0) }}d</div>
-        <div class="text-[10px] text-slate-500 mt-1">days sales outstanding</div>
-    </div>
-    <div class="panel p-4 border-l-4 {{ $bg($top5Status) }}">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Top 5 share</div>
-        <div class="text-xl font-bold text-slate-900 mt-1 mono">{{ number_format($data['top5_pct'], 1) }}%</div>
-        <div class="text-[10px] text-slate-500 mt-1">concentration risk</div>
-    </div>
-</div>
+@include('demo.sandbox._kpi-strip', ['kpis' => $kpis])
 
 <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
     <div class="panel p-5">

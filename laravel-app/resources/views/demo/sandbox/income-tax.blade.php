@@ -10,23 +10,7 @@
 @endsection
 
 @section('content')
-<div class="grid grid-cols-2 md:grid-cols-3 gap-3 mb-5">
-    <div class="panel p-4">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Annualised revenue</div>
-        <div class="text-xl font-bold mono text-slate-900 mt-1">{{ number_format($data['annualised_revenue'], 0) }}</div>
-        <div class="text-[10px] text-slate-500 mt-0.5">based on YTD {{ $data['days_ytd'] }} days</div>
-    </div>
-    <div class="panel p-4">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Annualised taxable profit</div>
-        <div class="text-xl font-bold mono text-slate-900 mt-1">{{ number_format($data['annualised_taxable'], 0) }}</div>
-        <div class="text-[10px] text-slate-500 mt-0.5">EBITDA {{ number_format($data['ebitda_margin_pct'], 1) }}% margin</div>
-    </div>
-    <div class="panel p-4 border-l-4 {{ $data['tax_basis'] === 'IS_calc' ? 'border-amber-400' : 'border-rose-400' }}">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">IS payable (effective)</div>
-        <div class="text-xl font-bold mono text-slate-900 mt-1">{{ number_format($data['effective_tax'], 0) }}</div>
-        <div class="text-[10px] text-slate-500 mt-0.5">basis: {{ $data['tax_basis'] === 'IS_calc' ? '33% × taxable' : '2% × revenue (minimum)' }}</div>
-    </div>
-</div>
+@include('demo.sandbox._kpi-strip', ['kpis' => $kpis])
 
 <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
     <div class="panel p-5">

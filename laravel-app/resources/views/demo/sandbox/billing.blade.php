@@ -20,25 +20,7 @@
 @endsection
 
 @section('content')
-<div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
-    <div class="panel p-4">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Invoices issued</div>
-        <div class="text-xl font-bold mono text-slate-900 mt-1">{{ $data['total_invoices'] }}</div>
-    </div>
-    <div class="panel p-4">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Total billed (HT)</div>
-        <div class="text-xl font-bold mono text-slate-900 mt-1">{{ number_format($data['total_billed_ht'], 0) }}</div>
-    </div>
-    <div class="panel p-4">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Average invoice</div>
-        <div class="text-xl font-bold mono text-slate-900 mt-1">{{ number_format($data['avg_invoice'], 0) }}</div>
-    </div>
-    <div class="panel p-4 {{ $data['total_collected'] / max(1, $data['total_billed_ttc']) >= 0.85 ? 'border-l-4 border-emerald-400' : 'border-l-4 border-amber-400' }}">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Collected</div>
-        <div class="text-xl font-bold mono text-slate-900 mt-1">{{ number_format($data['total_collected'], 0) }}</div>
-        <div class="text-[10px] text-slate-500 mt-0.5">{{ number_format($data['total_billed_ttc'] > 0 ? ($data['total_collected'] / $data['total_billed_ttc']) * 100 : 0, 1) }}% of billed TTC</div>
-    </div>
-</div>
+@include('demo.sandbox._kpi-strip', ['kpis' => $kpis])
 
 <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
     <div class="lg:col-span-2 panel p-5">
