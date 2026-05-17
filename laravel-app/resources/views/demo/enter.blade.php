@@ -66,6 +66,12 @@
                                placeholder="jane@yourcompany.com">
                     </div>
                     <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1.5 uppercase tracking-wider">Phone</label>
+                        <input name="phone" type="tel" value="{{ $oldPhone ?? '' }}"
+                               class="w-full border border-stone-300 rounded-lg px-3.5 py-2.5 text-sm focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-100"
+                               placeholder="+237 6XX XX XX XX">
+                    </div>
+                    <div>
                         <label class="block text-xs font-semibold text-slate-700 mb-1.5 uppercase tracking-wider">Company</label>
                         <input name="company" type="text" value="{{ $oldCompany ?? '' }}"
                                class="w-full border border-stone-300 rounded-lg px-3.5 py-2.5 text-sm focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-100"

@@ -14,10 +14,19 @@
 
   Renders a responsive grid that adapts column count to the number of
   KPIs (1-5+). Matches the Dashboard's traffic-light style.
+
+  Hardening notes:
+    - `$kpis ?? []` so an un-passed variable doesn't error (Laravel's
+      strict-variables flag would otherwise throw).
+    - `@if (!empty($kpis))` guard around the whole block — `return;`
+      inside a @php block inside an included view does NOT cleanly exit
+      the parent view's render function under some Blade compiles, so
+      we wrap with @if instead.
+    - Every $kpi['*'] access uses `?? ''` / `?? 'na'` so a malformed
+      builder row can't take down the whole strip.
 --}}
 @php
-    $kpis = $kpis ?? [];
-    if (empty($kpis)) return;
+    $kpis = (isset($kpis) && is_array($kpis)) ? $kpis : [];
     $cols = min(5, max(1, count($kpis)));
     $colsClass = match($cols) {
         1 => 'md:grid-cols-1',
@@ -27,9 +36,11 @@
         default => 'md:grid-cols-5',
     };
 @endphp
+@if (!empty($kpis))
 <div class="grid grid-cols-2 {{ $colsClass }} gap-3 mb-5">
     @foreach ($kpis as $kpi)
         @php
+            $kpi = is_array($kpi) ? $kpi : [];
             $status = (string) ($kpi['status'] ?? 'na');
             $shade = match($status) {
                 'red'   => 'bg-rose-50/60 border-rose-200',
@@ -52,10 +63,10 @@
         @endphp
         <div class="rounded-xl border {{ $shade }} p-4">
             <div class="flex items-center justify-between mb-1.5">
-                <span class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold leading-tight">{{ $kpi['label'] }}</span>
+                <span class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold leading-tight">{{ $kpi['label'] ?? '' }}</span>
                 <span class="w-2 h-2 rounded-full {{ $dot }} shrink-0" title="{{ ucfirst($status) }}"></span>
             </div>
-            <div class="text-xl font-bold {{ $valueColor }} mono">{{ $kpi['value_fmt'] }}</div>
+            <div class="text-xl font-bold {{ $valueColor }} mono">{{ $kpi['value_fmt'] ?? '—' }}</div>
             @if (!empty($kpi['subtitle']))
                 <div class="text-[10px] text-slate-500 mt-0.5 mono">{{ $kpi['subtitle'] }}</div>
             @endif
@@ -65,3 +76,4 @@
         </div>
     @endforeach
 </div>
+@endif

@@ -19,7 +19,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 class DemoSession extends Model
 {
     protected $fillable = [
-        'session_id', 'tenant_id', 'name', 'email', 'company', 'role',
+        'session_id', 'tenant_id', 'name', 'email', 'phone', 'company', 'role',
         'ip_address', 'user_agent', 'started_at', 'last_seen_at', 'expires_at',
     ];
 

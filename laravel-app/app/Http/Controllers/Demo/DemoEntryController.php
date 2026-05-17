@@ -48,6 +48,7 @@ class DemoEntryController extends Controller
         return view('demo.enter', [
             'oldName'    => old('name'),
             'oldEmail'   => old('email'),
+            'oldPhone'   => old('phone'),
             'oldCompany' => old('company'),
             'oldRole'    => old('role'),
         ]);
@@ -58,6 +59,12 @@ class DemoEntryController extends Controller
         $data = $request->validate([
             'name'    => ['required', 'string', 'max:120'],
             'email'   => ['required', 'email', 'max:191'],
+            // Phone is optional — lead-capture friendly. Limit to 32 chars
+            // so something like '+237 6XX XX XX XX' or international format
+            // fits, but don't validate the format too strictly: countries
+            // vary widely and a malformed-but-present number is still
+            // useful for sales follow-up.
+            'phone'   => ['nullable', 'string', 'max:32'],
             'company' => ['nullable', 'string', 'max:191'],
             'role'    => ['nullable', 'string', 'max:120'],
         ]);
@@ -100,6 +107,7 @@ class DemoEntryController extends Controller
             'tenant_id'    => $tenant->id,
             'name'         => $data['name'],
             'email'        => $data['email'],
+            'phone'        => $data['phone'] ?? null,
             'company'      => $data['company'] ?? null,
             'role'         => $data['role'] ?? null,
             'ip_address'   => $request->ip(),
