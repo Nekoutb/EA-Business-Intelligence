@@ -1500,6 +1500,16 @@ Route::prefix('t/{tenant}')
                     [BillingController::class, 'slowestBillingsExport'])->middleware('module:billing');
                 Route::get('/procurement',       [ProcurementController::class, 'index'])->middleware('module:procurement');
 
+                // ── Post-Retirement Benefits ──────────────────────────────────
+                // SYSCOHADA-compliant Projected Unit Credit valuation of
+                // end-of-career indemnity obligations. The landing page
+                // (Phase 1) shows KPI strip + assumptions + applicable CBA
+                // + participants snapshot. The calculation engine and
+                // valuation runner land in Phase 3.
+                Route::get('/post-retirement-benefits',
+                    [\App\Http\Controllers\PostRetirementBenefits\PostRetirementBenefitsController::class, 'index']
+                )->middleware('module:post_retirement_benefits');
+
                 // ── Financial Planning service ────────────────────────────────
                 Route::get('/macro-economics',   [MacroEconomicsController::class, 'index'])->middleware('module:macro_economics');
                 Route::get('/working-capital',   [WorkingCapitalController::class, 'index'])->middleware('module:working_capital');

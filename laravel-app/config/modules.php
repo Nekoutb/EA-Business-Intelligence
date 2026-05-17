@@ -423,21 +423,28 @@ return [
             'status'  => 'coming_soon',
         ],
         [
-            // Post-Retirement Benefits Calculator — IAS 19 / OHADA
-            // actuarial valuation of long-service awards, end-of-
-            // service indemnities, and post-retirement medical. Sits
-            // in Financial Reporting because the output feeds the
-            // employee-benefits provision on the balance sheet.
-            // Coming-soon placeholder until the calculator is built.
+            // Post-Retirement Benefits Calculator — SYSCOHADA-aligned
+            // actuarial valuation of end-of-career indemnities owed
+            // under the applicable Collective Bargaining Agreement.
+            // Uses the Projected Unit Credit method (same as IAS 19)
+            // to compute the present value of future indemnity
+            // payments per employee and aggregate to a tenant-level
+            // Provision pour engagements de retraite (account 197).
+            // Output mirrors a Mercer-style actuarial valuation
+            // report: roll-forward, components of net periodic
+            // benefit cost, assumptions, plan provisions, participant
+            // data, projected cash flows. Sits in Financial Reporting
+            // because the result feeds the employee-benefits
+            // provision on the balance sheet.
             'key'     => 'post_retirement_benefits',
             'service' => 'financial_reporting',
-            'label'   => 'Post-Retirement Benefits Calculator',
+            'label'   => 'Post-Retirement Benefits',
             'url'     => '/post-retirement-benefits',
             'active'  => 'post_retirement_benefits',
             'icon'    => 'M12 14l9-5-9-5-9 5 9 5zM12 14v7M5 13.18v3.82a8 8 0 0014 0v-3.82',
             'default' => false,
             'core'    => false,
-            'status'  => 'coming_soon',
+            'status'  => 'live',
         ],
         [
             // Bank Reconciliation Tool — pairs cleared bank-statement
