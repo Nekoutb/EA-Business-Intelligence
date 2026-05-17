@@ -5,11 +5,16 @@ namespace App\Services\Demo;
 
 use App\Models\Demo\DemoAccount;
 use App\Models\Demo\DemoCustomer;
+use App\Models\Demo\DemoFixedAsset;
 use App\Models\Demo\DemoInvoice;
 use App\Models\Demo\DemoInvoiceLine;
 use App\Models\Demo\DemoJournalEntry;
 use App\Models\Demo\DemoJournalLine;
 use App\Models\Demo\DemoPayment;
+use App\Models\Demo\DemoProduct;
+use App\Models\Demo\DemoSupplier;
+use App\Models\Demo\DemoSupplierBill;
+use App\Models\Demo\DemoSupplierPayment;
 use App\Models\Tenant;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
@@ -637,6 +642,333 @@ final class DemoFactsService
             'irpp_retenu'      => $irppRetenu,
             'total_due'        => $totalDue,
             'invoice_count'    => $invoicesInMonth->count(),
+        ];
+    }
+
+    // ── Treasury / Payables / Procurement / Fixed Assets / Inventory ──
+
+    /**
+     * Treasury view — cash + bank balances, weekly cash trend (inflows
+     * from customer payments minus outflows from supplier payments +
+     * opex journal lines that hit 521/571).
+     */
+    public function treasury(Tenant $tenant, int $days = 90): array
+    {
+        $now   = now();
+        $start = $now->copy()->subDays($days)->startOfDay();
+
+        // Current cash position from trial balance
+        $tb = $this->trialBalance($tenant);
+        $cashTotal = 0.0; $cashByAccount = [];
+        foreach ($tb['rows'] as $r) {
+            if (str_starts_with((string) $r['code'], '52') || str_starts_with((string) $r['code'], '57')) {
+                $cashTotal += (float) $r['balance'];
+                $cashByAccount[] = [
+                    'code'    => $r['code'],
+                    'name'    => $r['name'],
+                    'balance' => (float) $r['balance'],
+                ];
+            }
+        }
+
+        // Inflows in window (customer payments)
+        $inflows = DemoPayment::query()
+            ->where('tenant_id', $tenant->id)
+            ->whereBetween('payment_date', [$start, $now])
+            ->get();
+        $inflowTotal = (float) $inflows->sum('amount');
+
+        // Outflows in window (supplier payments + opex journal lines on 521/571)
+        $outflowSupplier = (float) DemoSupplierPayment::query()
+            ->where('tenant_id', $tenant->id)
+            ->whereBetween('payment_date', [$start, $now])
+            ->sum('amount');
+        $outflowJournal = (float) DemoJournalLine::query()
+            ->join('demo_journal_entries', 'demo_journal_entries.id', '=', 'demo_journal_lines.entry_id')
+            ->where('demo_journal_entries.tenant_id', $tenant->id)
+            ->where('demo_journal_entries.posted', true)
+            ->whereBetween('demo_journal_entries.entry_date', [$start, $now])
+            ->where(function ($q) {
+                $q->where('demo_journal_lines.account_code', 'like', '521%')
+                  ->orWhere('demo_journal_lines.account_code', 'like', '571%');
+            })
+            ->sum('demo_journal_lines.credit');
+        $outflowTotal = $outflowSupplier + $outflowJournal;
+
+        // Weekly trend — net cash movement per week
+        $weeks = [];
+        for ($w = 0; $w < (int) ceil($days / 7); $w++) {
+            $wkStart = $start->copy()->addDays($w * 7);
+            $wkEnd   = $wkStart->copy()->addDays(6);
+            if ($wkStart->gt($now)) break;
+            $inflowsW = (float) $inflows->filter(fn ($p) =>
+                $p->payment_date->between($wkStart, $wkEnd)
+            )->sum('amount');
+            $outflowsW = (float) DemoSupplierPayment::query()
+                ->where('tenant_id', $tenant->id)
+                ->whereBetween('payment_date', [$wkStart, $wkEnd])
+                ->sum('amount');
+            $weeks[] = [
+                'week_start' => $wkStart->format('Y-m-d'),
+                'inflows'    => $inflowsW,
+                'outflows'   => $outflowsW,
+                'net'        => $inflowsW - $outflowsW,
+            ];
+        }
+
+        return [
+            'currency'         => 'XAF',
+            'as_of'            => $now->format('Y-m-d'),
+            'period_label'     => $start->format('d M') . ' → ' . $now->format('d M Y'),
+            'days'             => $days,
+            'cash_total'       => $cashTotal,
+            'cash_by_account'  => $cashByAccount,
+            'inflow_total'     => $inflowTotal,
+            'outflow_total'    => $outflowTotal,
+            'outflow_supplier' => $outflowSupplier,
+            'outflow_journal'  => $outflowJournal,
+            'net_movement'     => $inflowTotal - $outflowTotal,
+            'weekly_trend'     => $weeks,
+        ];
+    }
+
+    /**
+     * Payables — open bills, aging buckets, DPO, top suppliers by balance.
+     * Mirror of receivables() on the buy side.
+     */
+    public function payables(Tenant $tenant): array
+    {
+        $today = now()->startOfDay();
+        $rows = DemoSupplierBill::with(['supplier', 'payments'])
+            ->where('tenant_id', $tenant->id)
+            ->whereIn('status', ['posted', 'paid'])
+            ->get()
+            ->map(function ($bill) use ($today) {
+                $balance = (float) $bill->total - (float) $bill->payments->sum('amount');
+                $daysOverdue = $balance > 0.01 ? max(0, $today->diffInDays($bill->due_date, false) * -1) : 0;
+                return [
+                    'bill'         => $bill,
+                    'balance'      => $balance,
+                    'days_overdue' => $daysOverdue,
+                    'is_open'      => $balance > 0.01,
+                ];
+            })
+            ->filter(fn ($r) => $r['is_open']);
+
+        $totalAp     = (float) $rows->sum('balance');
+        $overdueAp   = (float) $rows->filter(fn ($r) => $r['days_overdue'] > 0)->sum('balance');
+        $overdueRate = $totalAp > 0 ? ($overdueAp / $totalAp) * 100 : 0;
+
+        $buckets = ['current' => 0, '1-30' => 0, '31-60' => 0, '61-90' => 0, '90+' => 0];
+        foreach ($rows as $r) {
+            $d = $r['days_overdue']; $b = (float) $r['balance'];
+            if      ($d <= 0)  $buckets['current'] += $b;
+            elseif  ($d <= 30) $buckets['1-30']    += $b;
+            elseif  ($d <= 60) $buckets['31-60']   += $b;
+            elseif  ($d <= 90) $buckets['61-90']   += $b;
+            else               $buckets['90+']     += $b;
+        }
+
+        // DPO = (AP / total purchases last 90d) × 90
+        $now = now();
+        $purchases90 = (float) DemoSupplierBill::query()
+            ->where('tenant_id', $tenant->id)
+            ->whereBetween('bill_date', [$now->copy()->subDays(90), $now])
+            ->whereIn('status', ['posted', 'paid'])
+            ->sum('amount_ht');
+        $dpo = $purchases90 > 0 ? ($totalAp / $purchases90) * 90 : 0;
+
+        $bySupplier = $rows->groupBy(fn ($r) => $r['bill']->supplier->name ?? '—')
+            ->map(fn ($g, $name) => [
+                'supplier' => $name,
+                'balance'  => (float) $g->sum('balance'),
+                'bill_count' => $g->count(),
+            ])
+            ->sortByDesc('balance')
+            ->values()
+            ->toArray();
+
+        return [
+            'currency'       => 'XAF',
+            'as_of'          => $today->format('Y-m-d'),
+            'total_ap'       => $totalAp,
+            'overdue_ap'     => $overdueAp,
+            'overdue_rate'   => $overdueRate,
+            'dpo'            => round($dpo, 1),
+            'aging'          => $buckets,
+            'aging_pct'      => array_map(fn ($v) => $totalAp > 0 ? ($v / $totalAp) * 100 : 0, $buckets),
+            'open_bill_count'=> $rows->count(),
+            'by_supplier'    => $bySupplier,
+        ];
+    }
+
+    /**
+     * Procurement — purchase volume, supplier mix by spend, PO compliance.
+     */
+    public function procurement(Tenant $tenant, int $days = 90): array
+    {
+        $now = now(); $start = $now->copy()->subDays($days)->startOfDay();
+
+        $bills = DemoSupplierBill::with('supplier')
+            ->where('tenant_id', $tenant->id)
+            ->whereBetween('bill_date', [$start, $now])
+            ->whereIn('status', ['posted', 'paid'])
+            ->get();
+
+        $totalSpend = (float) $bills->sum('amount_ht');
+        $noPo       = $bills->where('has_po', false);
+
+        $bySupplier = $bills->groupBy(fn ($b) => $b->supplier->name ?? '—')
+            ->map(fn ($g, $name) => [
+                'supplier' => $name,
+                'spend'    => (float) $g->sum('amount_ht'),
+                'bills'    => $g->count(),
+                'share_pct'=> $totalSpend > 0 ? ((float) $g->sum('amount_ht') / $totalSpend) * 100 : 0,
+            ])
+            ->sortByDesc('spend')
+            ->values()
+            ->toArray();
+
+        $byCategory = $bills->groupBy('category')
+            ->map(fn ($g, $cat) => [
+                'category' => $cat ?? '—',
+                'spend'    => (float) $g->sum('amount_ht'),
+                'bills'    => $g->count(),
+            ])
+            ->sortByDesc('spend')
+            ->values()
+            ->toArray();
+
+        return [
+            'currency'         => 'XAF',
+            'days'             => $days,
+            'period_label'     => $start->format('d M') . ' → ' . $now->format('d M Y'),
+            'total_spend'      => $totalSpend,
+            'bill_count'       => $bills->count(),
+            'avg_bill'         => $bills->count() > 0 ? $totalSpend / $bills->count() : 0,
+            'no_po_count'      => $noPo->count(),
+            'no_po_spend'      => (float) $noPo->sum('amount_ht'),
+            'no_po_pct'        => $bills->count() > 0 ? ($noPo->count() / $bills->count()) * 100 : 0,
+            'by_supplier'      => $bySupplier,
+            'by_category'      => $byCategory,
+            'top5_supplier_pct'=> $totalSpend > 0 ? (collect($bySupplier)->take(5)->sum('spend') / $totalSpend) * 100 : 0,
+        ];
+    }
+
+    /** Fixed Assets register + accumulated depreciation + NBV at the as-of date. */
+    public function fixedAssets(Tenant $tenant): array
+    {
+        $today = now()->startOfDay();
+        $assets = DemoFixedAsset::where('tenant_id', $tenant->id)->orderBy('asset_code')->get();
+
+        $rows = $assets->map(function ($a) use ($today) {
+            return [
+                'asset_code'           => $a->asset_code,
+                'name'                 => $a->name,
+                'category'             => $a->category,
+                'account_code'         => $a->account_code,
+                'acquisition_date'     => $a->acquisition_date->format('Y-m-d'),
+                'acquisition_cost'     => (float) $a->acquisition_cost,
+                'useful_life_months'   => (int) $a->useful_life_months,
+                'monthly_dep'          => $a->monthlyDepreciation(),
+                'months_depreciated'   => $a->monthsDepreciated($today),
+                'accumulated_dep'      => $a->accumulatedDepreciation($today),
+                'net_book_value'       => $a->netBookValue($today),
+                'pct_depreciated'      => $a->useful_life_months > 0
+                    ? ($a->monthsDepreciated($today) / $a->useful_life_months) * 100
+                    : 0,
+            ];
+        })->toArray();
+
+        $totalCost   = array_sum(array_column($rows, 'acquisition_cost'));
+        $totalAccDep = array_sum(array_column($rows, 'accumulated_dep'));
+        $totalNbv    = array_sum(array_column($rows, 'net_book_value'));
+
+        $byCategory = collect($rows)->groupBy('category')->map(fn ($g, $cat) => [
+            'category'        => $cat,
+            'count'           => $g->count(),
+            'acquisition_cost'=> (float) $g->sum('acquisition_cost'),
+            'accumulated_dep' => (float) $g->sum('accumulated_dep'),
+            'net_book_value'  => (float) $g->sum('net_book_value'),
+        ])->values()->toArray();
+
+        return [
+            'currency'        => 'XAF',
+            'as_of'           => $today->format('Y-m-d'),
+            'rows'            => $rows,
+            'asset_count'     => count($rows),
+            'total_cost'      => $totalCost,
+            'total_acc_dep'   => $totalAccDep,
+            'total_nbv'       => $totalNbv,
+            'monthly_dep_run' => (float) collect($rows)->sum('monthly_dep'),
+            'by_category'     => $byCategory,
+        ];
+    }
+
+    /**
+     * Inventory — derived from product master + invoice lines (units sold)
+     * + an assumed opening stock per product. Synthesises: units sold, est.
+     * current stock, turnover (units sold / avg stock), stock value at cost.
+     */
+    public function inventory(Tenant $tenant): array
+    {
+        $now = now();
+        $start90 = $now->copy()->subDays(90);
+
+        $products = DemoProduct::where('tenant_id', $tenant->id)->orderBy('name')->get();
+
+        // Units sold per product in trailing 90 days
+        $unitsSold = DemoInvoiceLine::query()
+            ->join('demo_invoices', 'demo_invoices.id', '=', 'demo_invoice_lines.invoice_id')
+            ->where('demo_invoices.tenant_id', $tenant->id)
+            ->whereBetween('demo_invoices.invoice_date', [$start90, $now])
+            ->whereIn('demo_invoices.status', ['posted', 'paid'])
+            ->whereNotNull('demo_invoice_lines.product_id')
+            ->groupBy('demo_invoice_lines.product_id')
+            ->get([
+                'demo_invoice_lines.product_id',
+                \DB::raw('SUM(demo_invoice_lines.qty) as units_sold'),
+                \DB::raw('SUM(demo_invoice_lines.subtotal) as revenue'),
+                \DB::raw('SUM(demo_invoice_lines.cogs_amount) as cogs'),
+            ])
+            ->keyBy('product_id');
+
+        // Assume opening stock = 2.5× monthly sell-through (covers ~75 days)
+        $rows = $products->map(function ($p) use ($unitsSold) {
+            $sold = (float) ($unitsSold[$p->id]->units_sold ?? 0);
+            $monthly = $sold / 3.0;
+            $assumedOpening = $monthly * 2.5;
+            $currentStock = max(0, $assumedOpening - ($sold * 0.5));  // half consumed
+            $avgStock = ($assumedOpening + $currentStock) / 2 ?: 1;
+            $turnover = $avgStock > 0 ? $sold / $avgStock : 0;
+            return [
+                'product'        => $p->name,
+                'category'       => $p->category,
+                'unit_price'     => (float) $p->unit_price,
+                'default_cogs'   => (float) $p->default_cogs,
+                'units_sold_90d' => $sold,
+                'units_in_stock' => round($currentStock, 0),
+                'stock_value'    => round($currentStock * (float) $p->default_cogs, 0),
+                'turnover_ratio' => round($turnover, 2),
+                'days_of_cover'  => $sold > 0 ? round(($currentStock / $sold) * 90, 0) : 0,
+            ];
+        })->toArray();
+
+        $totalStockValue = array_sum(array_column($rows, 'stock_value'));
+        $totalUnitsInStock = array_sum(array_column($rows, 'units_in_stock'));
+        $totalUnitsSold = array_sum(array_column($rows, 'units_sold_90d'));
+
+        return [
+            'currency'             => 'XAF',
+            'as_of'                => $now->format('Y-m-d'),
+            'rows'                 => $rows,
+            'product_count'        => count($rows),
+            'total_units_in_stock' => $totalUnitsInStock,
+            'total_stock_value'    => $totalStockValue,
+            'total_units_sold_90d' => $totalUnitsSold,
+            'avg_turnover'         => count($rows) > 0
+                ? (float) collect($rows)->avg('turnover_ratio')
+                : 0,
         ];
     }
 

@@ -95,6 +95,11 @@ Route::prefix('demo/sandbox')->middleware('demo.session')->group(function () {
     Route::get('/trial-balance',   [\App\Http\Controllers\Demo\DemoSandboxController::class, 'trialBalance']);
     Route::get('/gl-quality',      [\App\Http\Controllers\Demo\DemoSandboxController::class, 'glQuality']);
     Route::get('/tax-return',      [\App\Http\Controllers\Demo\DemoSandboxController::class, 'taxReturn']);
+    Route::get('/treasury',        [\App\Http\Controllers\Demo\DemoSandboxController::class, 'treasury']);
+    Route::get('/payables',        [\App\Http\Controllers\Demo\DemoSandboxController::class, 'payables']);
+    Route::get('/procurement',     [\App\Http\Controllers\Demo\DemoSandboxController::class, 'procurement']);
+    Route::get('/fixed-assets',    [\App\Http\Controllers\Demo\DemoSandboxController::class, 'fixedAssets']);
+    Route::get('/inventory',       [\App\Http\Controllers\Demo\DemoSandboxController::class, 'inventory']);
     Route::post('/reset',          [\App\Http\Controllers\Demo\DemoSandboxController::class, 'reset']);
 
     // Data tables — view + canned-form writes
