@@ -1502,13 +1502,39 @@ Route::prefix('t/{tenant}')
 
                 // ── Post-Retirement Benefits ──────────────────────────────────
                 // SYSCOHADA-compliant Projected Unit Credit valuation of
-                // end-of-career indemnity obligations. The landing page
-                // (Phase 1) shows KPI strip + assumptions + applicable CBA
-                // + participants snapshot. The calculation engine and
-                // valuation runner land in Phase 3.
-                Route::get('/post-retirement-benefits',
-                    [\App\Http\Controllers\PostRetirementBenefits\PostRetirementBenefitsController::class, 'index']
-                )->middleware('module:post_retirement_benefits');
+                // end-of-career indemnity obligations. Landing page +
+                // employee roster CRUD + CSV import are live; the
+                // calculation engine and Mercer-style report ship in
+                // Phases 3-5.
+                Route::middleware('module:post_retirement_benefits')->group(function () {
+                    Route::get('/post-retirement-benefits',
+                        [\App\Http\Controllers\PostRetirementBenefits\PostRetirementBenefitsController::class, 'index']);
+
+                    // Employee CRUD
+                    Route::get ('/post-retirement-benefits/employees',
+                        [\App\Http\Controllers\PostRetirementBenefits\EmployeeController::class, 'index'])
+                        ->name('post-retirement-benefits.employees.index');
+                    Route::get ('/post-retirement-benefits/employees/create',
+                        [\App\Http\Controllers\PostRetirementBenefits\EmployeeController::class, 'create']);
+                    Route::post('/post-retirement-benefits/employees',
+                        [\App\Http\Controllers\PostRetirementBenefits\EmployeeController::class, 'store']);
+                    Route::get ('/post-retirement-benefits/employees/{id}/edit',
+                        [\App\Http\Controllers\PostRetirementBenefits\EmployeeController::class, 'edit'])->whereNumber('id');
+                    Route::post('/post-retirement-benefits/employees/{id}',
+                        [\App\Http\Controllers\PostRetirementBenefits\EmployeeController::class, 'update'])->whereNumber('id');
+                    Route::post('/post-retirement-benefits/employees/{id}/delete',
+                        [\App\Http\Controllers\PostRetirementBenefits\EmployeeController::class, 'destroy'])->whereNumber('id');
+
+                    // CSV import — separate from CRUD because it has its
+                    // own page + downloadable template + per-row error report.
+                    Route::get ('/post-retirement-benefits/employees/import',
+                        [\App\Http\Controllers\PostRetirementBenefits\EmployeeController::class, 'importForm'])
+                        ->name('post-retirement-benefits.employees.import');
+                    Route::post('/post-retirement-benefits/employees/import',
+                        [\App\Http\Controllers\PostRetirementBenefits\EmployeeController::class, 'importStore']);
+                    Route::get ('/post-retirement-benefits/employees/import/template',
+                        [\App\Http\Controllers\PostRetirementBenefits\EmployeeController::class, 'importTemplate']);
+                });
 
                 // ── Financial Planning service ────────────────────────────────
                 Route::get('/macro-economics',   [MacroEconomicsController::class, 'index'])->middleware('module:macro_economics');

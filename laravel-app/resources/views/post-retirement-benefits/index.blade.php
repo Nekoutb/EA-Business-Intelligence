@@ -195,10 +195,17 @@
 </div>
 
 {{-- ───── Participants snapshot ───── --}}
+@php $tenantSlug = request()->route('tenant'); @endphp
 <div class="panel p-5 mb-6">
     <div class="flex items-center justify-between mb-3">
         <h2 class="text-sm font-semibold text-slate-900">Participants</h2>
-        <span class="text-[11px] text-slate-500">{{ $totalHeadcount }} active employees · monthly payroll {{ number_format($totalPayroll, 0) }} XAF</span>
+        <div class="flex items-center gap-3">
+            <span class="text-[11px] text-slate-500">{{ $totalHeadcount }} active · monthly payroll {{ number_format($totalPayroll, 0) }} XAF</span>
+            <a href="/t/{{ $tenantSlug }}/post-retirement-benefits/employees"
+               class="text-[11px] font-semibold text-rose-700 hover:text-rose-900 border border-rose-300 hover:border-rose-500 rounded-lg px-3 py-1.5 inline-flex items-center gap-1.5">
+                Manage employees →
+            </a>
+        </div>
     </div>
     <table class="w-full text-[12.5px]">
         <thead class="text-[10px] uppercase tracking-widest text-slate-500 border-b border-stone-200">
