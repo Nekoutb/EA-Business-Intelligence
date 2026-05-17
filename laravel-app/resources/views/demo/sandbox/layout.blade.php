@@ -77,24 +77,84 @@
                 @endforeach
             </div>
 
-            {{-- Group 2: Accounting & Compliance --}}
+            {{-- Group 2: Financial Reporting --}}
             <div class="pt-3 mt-2 border-t border-stone-800">
-                <div class="px-3 pt-2 pb-1.5 text-[10px] uppercase tracking-widest text-stone-500 font-semibold">Accounting & Compliance</div>
+                <div class="px-3 pt-2 pb-1.5 text-[10px] uppercase tracking-widest text-stone-500 font-semibold">Financial Reporting</div>
                 @foreach ([
-                    ['trial_balance', '/demo/sandbox/trial-balance', 'Trial Balance', 'M3 12h18M9 6l-6 6 6 6M15 6l6 6-6 6'],
-                    ['gl_quality',    '/demo/sandbox/gl-quality',    'GL Quality',    'M9 12l2 2 4-4M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z'],
-                    ['tax_return',    '/demo/sandbox/tax-return',    'Tax Return',    'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6'],
+                    ['trial_balance',     '/demo/sandbox/trial-balance',            'Trial Balance',         'M3 12h18M9 6l-6 6 6 6M15 6l6 6-6 6',                                'live'],
+                    ['gl_quality',        '/demo/sandbox/gl-quality',               'GL Quality',            'M9 12l2 2 4-4M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z',                'live'],
+                    ['balance_sheet',     '/demo/sandbox/balance-sheet-review',     'Balance Sheet Review',  'M3 3h18v18H3zM3 12h18M12 3v18',                                     'live'],
+                    ['ohada_statements',  '/demo/sandbox/ohada-financial-statements','OHADA Statements',     'M9 2h6l5 5v15H4V2zM9 2v6h6',                                       'live'],
+                    ['cash_flow',         '/demo/sandbox/cash-flow',                'Cash Flow',             'M12 2v20M5 9l7-7 7 7M5 15l7 7 7-7',                                 'soon'],
+                    ['post_retirement_benefits','/demo/sandbox/post-retirement-benefits','Post-Retirement Benefits','M12 14l9-5-9-5-9 5 9 5zM12 14v7M5 13.18v3.82a8 8 0 0014 0v-3.82', 'soon'],
+                    ['bank_reconciliation','/demo/sandbox/bank-reconciliation',     'Bank Reconciliation',   'M3 21h18M3 10l9-7 9 7M5 10v11M19 10v11M9 14h6M9 18h6',              'soon'],
+                ] as [$slug, $url, $label, $path, $status])
+                  <a href="{{ $url }}"
+                     class="flex items-center gap-2.5 px-3 py-2 rounded-lg transition
+                            {{ $active === $slug ? 'bg-stone-800 text-white' : 'text-stone-400 hover:bg-stone-800/60 hover:text-white' }}">
+                      <svg class="w-[15px] h-[15px] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="{{ $path }}"/></svg>
+                      <span class="flex-1">{{ $label }}</span>
+                      @if ($status === 'soon')<span class="text-[8px] uppercase tracking-wider text-amber-400/70">soon</span>@endif
+                  </a>
+                @endforeach
+            </div>
+
+            {{-- Group 3: Financial Planning --}}
+            <div class="pt-3 mt-2 border-t border-stone-800">
+                <div class="px-3 pt-2 pb-1.5 text-[10px] uppercase tracking-widest text-stone-500 font-semibold">Financial Planning</div>
+                @foreach ([
+                    ['macro_economics',     '/demo/sandbox/macro-economics',     'Macro Economics',     'M2 12h2l2-7 4 14 3-10 4 8 3-5h4',           'live'],
+                    ['pl_forecast',         '/demo/sandbox/pl-forecast',         'P&L Forecast',        'M4 4v16h16M8 14l3-4 3 3 4-6',               'live'],
+                    ['cashflow_forecast',   '/demo/sandbox/cashflow-forecast',   'Cashflow Forecast',   'M3 10h18M3 14h18M7 6h10v12H7z',             'live'],
+                    ['investment_analysis', '/demo/sandbox/investment-analysis', 'Investment Analysis', 'M12 2v20M5 9l7-7 7 7M5 17h14',              'live'],
+                    ['budget_upload',       '/demo/sandbox/budget-upload',       'Budget Upload',       'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12', 'live'],
+                    ['budgeting',           '/demo/sandbox/budgeting',           'Budgeting',           'M3 3v18h18M7 14l4-4 3 3 5-5',               'soon'],
+                    ['forecasting',         '/demo/sandbox/forecasting',         'Forecasting',         'M3 17l6-6 4 4 8-8M14 7h7v7',                'soon'],
+                    ['scenario_modeling',   '/demo/sandbox/scenarios',           'Scenario Modeling',   'M4 6h16M4 12h10M4 18h7M14 14l3 3 5-5',      'soon'],
+                ] as [$slug, $url, $label, $path, $status])
+                  <a href="{{ $url }}"
+                     class="flex items-center gap-2.5 px-3 py-2 rounded-lg transition
+                            {{ $active === $slug ? 'bg-stone-800 text-white' : 'text-stone-400 hover:bg-stone-800/60 hover:text-white' }}">
+                      <svg class="w-[15px] h-[15px] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="{{ $path }}"/></svg>
+                      <span class="flex-1">{{ $label }}</span>
+                      @if ($status === 'soon')<span class="text-[8px] uppercase tracking-wider text-amber-400/70">soon</span>@endif
+                  </a>
+                @endforeach
+            </div>
+
+            {{-- Group 4: Tax Compliance --}}
+            <div class="pt-3 mt-2 border-t border-stone-800">
+                <div class="px-3 pt-2 pb-1.5 text-[10px] uppercase tracking-widest text-stone-500 font-semibold">Tax Compliance</div>
+                @foreach ([
+                    ['tax_dashboard',         '/demo/sandbox/tax-dashboard',          'Tax Dashboard',          'M3 3v18h18M7 14l4-4 3 3 5-5'],
+                    ['income_tax',            '/demo/sandbox/income-tax-compliance',  'Income Tax Compliance',  'M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z'],
+                    ['vat_compliance',        '/demo/sandbox/vat-compliance',         'VAT Compliance',         'M9 12l2 2 4-4M5 4h14a2 2 0 012 2v14l-4-2-3 2-3-2-4 2V6a2 2 0 012-2z'],
+                    ['invoice_compliance',    '/demo/sandbox/vat-invoice-compliance', 'Invoice Compliance',     'M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8zM14 2v6h6M9 13h6M9 17h6'],
+                    ['tax_return',            '/demo/sandbox/tax-return',             'Monthly Tax Return',     'M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z'],
+                    ['return_reconciliation', '/demo/sandbox/return-reconciliation',  'Return Reconciliation',  'M4 4v16h16M8 14l3-4 3 3 4-6M16 4h4v4'],
                 ] as [$slug, $url, $label, $path])
                   <a href="{{ $url }}"
                      class="flex items-center gap-2.5 px-3 py-2 rounded-lg transition
                             {{ $active === $slug ? 'bg-stone-800 text-white' : 'text-stone-400 hover:bg-stone-800/60 hover:text-white' }}">
                       <svg class="w-[15px] h-[15px] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="{{ $path }}"/></svg>
-                      <span>{{ $label }}</span>
+                      <span class="flex-1">{{ $label }}</span>
                   </a>
                 @endforeach
             </div>
 
-            {{-- Group 3: Sandbox controls (data editing) --}}
+            {{-- Group 5: Human Resources --}}
+            <div class="pt-3 mt-2 border-t border-stone-800">
+                <div class="px-3 pt-2 pb-1.5 text-[10px] uppercase tracking-widest text-stone-500 font-semibold">Human Resources</div>
+                <a href="/demo/sandbox/payroll"
+                   class="flex items-center gap-2.5 px-3 py-2 rounded-lg transition
+                          {{ $active === 'payroll_processing' ? 'bg-stone-800 text-white' : 'text-stone-400 hover:bg-stone-800/60 hover:text-white' }}">
+                    <svg class="w-[15px] h-[15px] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                    <span class="flex-1">Payroll Processing</span>
+                    <span class="text-[8px] uppercase tracking-wider text-amber-400/70">soon</span>
+                </a>
+            </div>
+
+            {{-- Group 6: Sandbox controls (data editing) --}}
             <div class="pt-3 mt-2 border-t border-stone-800">
                 <div class="px-3 pt-2 pb-1.5 text-[10px] uppercase tracking-widest text-amber-400 font-semibold">Sandbox controls</div>
                 @foreach ([
