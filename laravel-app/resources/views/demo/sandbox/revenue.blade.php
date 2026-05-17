@@ -42,28 +42,7 @@
     $varDot = fn ($s) => ['green'=>'bg-emerald-500','amber'=>'bg-amber-500','red'=>'bg-rose-500'][$s] ?? 'bg-slate-300';
 @endphp
 
-<div class="grid grid-cols-1 md:grid-cols-4 gap-3 mb-4">
-    <div class="panel p-4">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Revenue total</div>
-        <div class="text-xl font-bold text-slate-900 mt-1 mono">{{ number_format($cur['revenue_ht'], 0) }}</div>
-        <div class="text-[10px] text-slate-500 mt-1 mono">XAF · {{ $data['period_label'] }}</div>
-    </div>
-    <div class="panel p-4 {{ $yoy >= 0 ? 'border-l-4 border-emerald-400' : 'border-l-4 border-rose-400' }}">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">vs prior period</div>
-        <div class="text-xl font-bold {{ $yoy >= 0 ? 'text-emerald-700' : 'text-rose-700' }} mt-1 mono">{{ $yoy >= 0 ? '+' : '' }}{{ number_format($yoy, 1) }}%</div>
-        <div class="text-[10px] text-slate-500 mt-1 mono">prev {{ number_format($prv['revenue_ht'], 0) }}</div>
-    </div>
-    <div class="panel p-4">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Invoices</div>
-        <div class="text-xl font-bold text-slate-900 mt-1 mono">{{ $cur['invoice_count'] }}</div>
-        <div class="text-[10px] text-slate-500 mt-1 mono">prev {{ $prv['invoice_count'] }}</div>
-    </div>
-    <div class="panel p-4 {{ $cur['no_po_count'] > 0 ? 'border-l-4 border-rose-400' : '' }}">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Without PO</div>
-        <div class="text-xl font-bold text-rose-700 mt-1 mono">{{ $cur['no_po_count'] }}</div>
-        <div class="text-[10px] text-slate-500 mt-1 mono">GL-quality flag</div>
-    </div>
-</div>
+@include('demo.sandbox._kpi-strip', ['kpis' => $kpis])
 
 <div class="panel p-5 mb-4">
     <h2 class="text-sm font-semibold text-slate-900 mb-3">Variance analysis · current vs prior {{ $days }}d</h2>

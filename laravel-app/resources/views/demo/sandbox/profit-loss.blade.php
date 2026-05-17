@@ -20,6 +20,8 @@
 @endsection
 
 @section('content')
+@include('demo.sandbox._kpi-strip', ['kpis' => $kpis])
+
 @php
     $rows = [
         ['Revenue (HT)',         $data['revenue'],       '+'],

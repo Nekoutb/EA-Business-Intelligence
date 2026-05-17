@@ -10,32 +10,7 @@
 @endsection
 
 @section('content')
-@php
-    $score = $data['overall_score'];
-    $scoreColor = $score >= 80 ? 'text-emerald-700 border-emerald-400'
-                 : ($score >= 60 ? 'text-amber-700 border-amber-400'
-                 : 'text-rose-700 border-rose-400');
-@endphp
-
-<div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
-    <div class="panel p-4 border-l-4 {{ $scoreColor }}">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Quality score</div>
-        <div class="text-2xl font-bold mono mt-1 {{ $scoreColor }}">{{ $score }}<span class="text-[12px] text-slate-500">/100</span></div>
-    </div>
-    <div class="panel p-4 border-l-4 {{ $data['no_po_count'] > 0 ? 'border-rose-400' : 'border-emerald-400' }}">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Invoices without PO</div>
-        <div class="text-xl font-bold mono text-slate-900 mt-1">{{ $data['no_po_count'] }}</div>
-        <div class="text-[10px] text-slate-500 mt-0.5">{{ number_format($data['no_po_pct'], 1) }}% of total</div>
-    </div>
-    <div class="panel p-4 border-l-4 {{ $data['unbalanced_count'] > 0 ? 'border-rose-400' : 'border-emerald-400' }}">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Unbalanced journals</div>
-        <div class="text-xl font-bold mono text-slate-900 mt-1">{{ $data['unbalanced_count'] }}</div>
-    </div>
-    <div class="panel p-4 border-l-4 {{ $data['draft_count'] > 0 ? 'border-amber-400' : 'border-emerald-400' }}">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Draft invoices</div>
-        <div class="text-xl font-bold mono text-slate-900 mt-1">{{ $data['draft_count'] }}</div>
-    </div>
-</div>
+@include('demo.sandbox._kpi-strip', ['kpis' => $kpis])
 
 <div class="panel mb-4 overflow-hidden">
     <div class="px-4 py-3 border-b border-stone-200 bg-rose-50/40">

@@ -10,25 +10,7 @@
 @endsection
 
 @section('content')
-<div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
-    <div class="panel p-4 border-l-4 {{ $data['npv'] > 0 ? 'border-emerald-400' : 'border-rose-400' }}">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">NPV</div>
-        <div class="text-xl font-bold mono mt-1 {{ $data['npv'] > 0 ? 'text-emerald-700' : 'text-rose-700' }}">{{ ($data['npv'] >= 0 ? '+' : '') }}{{ number_format($data['npv'], 0) }}</div>
-        <div class="text-[10px] text-slate-500 mt-0.5">@ {{ number_format($data['discount_rate'] * 100, 1) }}%</div>
-    </div>
-    <div class="panel p-4 border-l-4 {{ $data['irr'] > $data['discount_rate'] ? 'border-emerald-400' : 'border-rose-400' }}">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">IRR</div>
-        <div class="text-xl font-bold mono mt-1 {{ $data['irr'] > $data['discount_rate'] ? 'text-emerald-700' : 'text-rose-700' }}">{{ number_format($data['irr'] * 100, 1) }}%</div>
-    </div>
-    <div class="panel p-4">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Payback</div>
-        <div class="text-xl font-bold mono text-slate-900 mt-1">{{ $data['payback_years'] !== null ? number_format($data['payback_years'], 1) . ' yr' : '—' }}</div>
-    </div>
-    <div class="panel p-4">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Verdict</div>
-        <div class="text-sm font-bold mono mt-1 {{ $data['npv'] > 0 ? 'text-emerald-700' : 'text-rose-700' }}">{{ $data['decision'] }}</div>
-    </div>
-</div>
+@include('demo.sandbox._kpi-strip', ['kpis' => $kpis])
 
 <div class="panel overflow-hidden">
     <table class="w-full text-[12px]">

@@ -10,33 +10,7 @@
 @endsection
 
 @section('content')
-@php
-    $overdueStatus = $data['overdue_rate'] <= 10 ? 'green' : ($data['overdue_rate'] <= 30 ? 'amber' : 'red');
-    $dpoStatus     = $data['dpo'] >= 30 ? 'green' : ($data['dpo'] >= 15 ? 'amber' : 'red');
-    $bg = fn ($s) => ['green' => 'border-emerald-400', 'amber' => 'border-amber-400', 'red' => 'border-rose-400'][$s] ?? 'border-stone-200';
-@endphp
-
-<div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
-    <div class="panel p-4 border-l-4 border-stone-300">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Total AP</div>
-        <div class="text-xl font-bold mono text-slate-900 mt-1">{{ number_format($data['total_ap'], 0) }}</div>
-        <div class="text-[10px] text-slate-500 mt-0.5">{{ $data['open_bill_count'] }} open bills</div>
-    </div>
-    <div class="panel p-4 border-l-4 {{ $bg($overdueStatus) }}">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Overdue</div>
-        <div class="text-xl font-bold mono text-slate-900 mt-1">{{ number_format($data['overdue_ap'], 0) }}</div>
-        <div class="text-[10px] text-slate-500 mt-0.5">{{ number_format($data['overdue_rate'], 1) }}% of total</div>
-    </div>
-    <div class="panel p-4 border-l-4 {{ $bg($dpoStatus) }}">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">DPO</div>
-        <div class="text-xl font-bold mono text-slate-900 mt-1">{{ number_format($data['dpo'], 0) }}d</div>
-        <div class="text-[10px] text-slate-500 mt-0.5">days payable outstanding</div>
-    </div>
-    <div class="panel p-4 border-l-4 border-stone-300">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Suppliers with balance</div>
-        <div class="text-xl font-bold mono text-slate-900 mt-1">{{ count($data['by_supplier']) }}</div>
-    </div>
-</div>
+@include('demo.sandbox._kpi-strip', ['kpis' => $kpis])
 
 <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
     <div class="panel p-5">

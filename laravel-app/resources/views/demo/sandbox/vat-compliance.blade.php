@@ -10,24 +10,7 @@
 @endsection
 
 @section('content')
-<div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
-    <div class="panel p-4">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Total VAT (6m)</div>
-        <div class="text-xl font-bold mono text-slate-900 mt-1">{{ number_format($data['total_vat_6m'], 0) }}</div>
-    </div>
-    <div class="panel p-4 border-l-4 border-emerald-400">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Filed</div>
-        <div class="text-xl font-bold mono text-emerald-700 mt-1">{{ $data['filed_count'] }}</div>
-    </div>
-    <div class="panel p-4 border-l-4 border-amber-400">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Pending</div>
-        <div class="text-xl font-bold mono text-amber-700 mt-1">{{ $data['pending_count'] }}</div>
-    </div>
-    <div class="panel p-4 border-l-4 {{ $data['overdue_count'] > 0 ? 'border-rose-400' : 'border-stone-300' }}">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Overdue</div>
-        <div class="text-xl font-bold mono {{ $data['overdue_count'] > 0 ? 'text-rose-700' : 'text-slate-900' }} mt-1">{{ $data['overdue_count'] }}</div>
-    </div>
-</div>
+@include('demo.sandbox._kpi-strip', ['kpis' => $kpis])
 
 <div class="panel overflow-hidden">
     <table class="w-full text-[12px]">

@@ -10,21 +10,7 @@
 @endsection
 
 @section('content')
-<div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
-    <div class="panel p-4">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Total debits</div>
-        <div class="text-xl font-bold mono text-slate-900 mt-1">{{ number_format($data['total_debit'], 0) }} <span class="text-[11px] text-slate-500">XAF</span></div>
-    </div>
-    <div class="panel p-4">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Total credits</div>
-        <div class="text-xl font-bold mono text-slate-900 mt-1">{{ number_format($data['total_credit'], 0) }} <span class="text-[11px] text-slate-500">XAF</span></div>
-    </div>
-    <div class="panel p-4 border-l-4 {{ $data['balanced'] ? 'border-emerald-400' : 'border-rose-400' }}">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Balance check</div>
-        <div class="text-xl font-bold mono mt-1 {{ $data['balanced'] ? 'text-emerald-700' : 'text-rose-700' }}">{{ $data['balanced'] ? 'Balanced ✓' : 'Out of balance' }}</div>
-        <div class="text-[10px] text-slate-500 mt-0.5 mono">Δ {{ number_format($data['total_debit'] - $data['total_credit'], 0) }}</div>
-    </div>
-</div>
+@include('demo.sandbox._kpi-strip', ['kpis' => $kpis])
 
 <div class="panel overflow-hidden">
     <table class="w-full text-[12px]">

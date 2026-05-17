@@ -16,28 +16,7 @@
 @endsection
 
 @section('content')
-<div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
-    <div class="panel p-4">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">CA HT (sales)</div>
-        <div class="text-xl font-bold mono text-slate-900 mt-1">{{ number_format($data['ca_ht'], 0) }}</div>
-        <div class="text-[10px] text-slate-500 mt-0.5">XAF · {{ $data['invoice_count'] }} invoices</div>
-    </div>
-    <div class="panel p-4 border-l-4 border-amber-400">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">VAT collected</div>
-        <div class="text-xl font-bold mono text-slate-900 mt-1">{{ number_format($data['vat_collected'], 0) }}</div>
-        <div class="text-[10px] text-slate-500 mt-0.5">19.25% on CA HT</div>
-    </div>
-    <div class="panel p-4 border-l-4 border-emerald-400">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">VAT deductible</div>
-        <div class="text-xl font-bold mono text-slate-900 mt-1">{{ number_format($data['vat_deductible'], 0) }}</div>
-        <div class="text-[10px] text-slate-500 mt-0.5">~19.25% on opex</div>
-    </div>
-    <div class="panel p-4 border-l-4 border-rose-400">
-        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">VAT payable</div>
-        <div class="text-xl font-bold mono text-rose-700 mt-1">{{ number_format($data['vat_payable'], 0) }}</div>
-        <div class="text-[10px] text-slate-500 mt-0.5">Collected − Deductible</div>
-    </div>
-</div>
+@include('demo.sandbox._kpi-strip', ['kpis' => $kpis])
 
 <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
     <div class="panel p-5">
