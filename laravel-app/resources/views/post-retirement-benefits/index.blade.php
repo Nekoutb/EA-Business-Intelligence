@@ -20,6 +20,33 @@
     ];
 @endphp
 
+@php $tenantSlug = request()->route('tenant'); @endphp
+
+{{-- ───── Action bar ───── --}}
+<div class="flex items-center justify-between mb-4">
+    <div class="text-[11px] text-slate-500">
+        Run a valuation to produce the {{ $totalHeadcount > 0 ? 'PBO + NPBC' : 'KPI' }} numbers and the Mercer-style report.
+    </div>
+    <div class="flex items-center gap-2">
+        @if ($valuation)
+            <a href="/t/{{ $tenantSlug }}/post-retirement-benefits/valuations"
+               class="text-[11px] font-medium text-slate-700 border border-stone-300 rounded-lg px-3 py-2 hover:bg-stone-50">
+                Valuation history
+            </a>
+        @endif
+        @if ($totalHeadcount > 0)
+            <form method="POST" action="/t/{{ $tenantSlug }}/post-retirement-benefits/valuations/run" class="inline">
+                @csrf
+                <button type="submit"
+                        class="text-[11px] font-semibold text-white bg-gradient-to-r from-rose-600 to-orange-600 hover:from-rose-700 hover:to-orange-700 rounded-lg px-4 py-2 shadow inline-flex items-center gap-1.5">
+                    <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                    Run valuation
+                </button>
+            </form>
+        @endif
+    </div>
+</div>
+
 {{-- ───── KPI strip (4 cards) ───── --}}
 <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
     @foreach ($kpis as $kpi)
