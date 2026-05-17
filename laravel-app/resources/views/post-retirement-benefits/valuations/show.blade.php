@@ -17,6 +17,17 @@
         Back to Post-Retirement Benefits
     </a>
     <div class="flex items-center gap-2">
+        <a href="/t/{{ $tenantSlug }}/post-retirement-benefits/valuations/{{ $valuation->id }}/report"
+           target="_blank"
+           class="text-[11px] font-semibold text-rose-700 border border-rose-300 hover:bg-rose-50 rounded-lg px-3 py-2 inline-flex items-center gap-1.5">
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z M14 2v6h6 M16 13H8 M16 17H8 M10 9H8"/></svg>
+            Open report (Print/PDF)
+        </a>
+        <a href="/t/{{ $tenantSlug }}/post-retirement-benefits/valuations/{{ $valuation->id }}/export/excel"
+           class="text-[11px] font-semibold text-emerald-700 border border-emerald-300 hover:bg-emerald-50 rounded-lg px-3 py-2 inline-flex items-center gap-1.5">
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+            Excel
+        </a>
         <span class="text-[10px] uppercase tracking-widest font-semibold {{ $valuation->isFinalized() ? 'text-emerald-700 bg-emerald-50 border-emerald-200' : 'text-amber-700 bg-amber-50 border-amber-200' }} px-2 py-1 rounded border">
             {{ $valuation->status }}
         </span>

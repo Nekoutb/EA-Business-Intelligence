@@ -1545,6 +1545,12 @@ Route::prefix('t/{tenant}')
                     Route::post('/post-retirement-benefits/valuations/{id}/finalize',
                         [\App\Http\Controllers\PostRetirementBenefits\ValuationController::class, 'finalize'])->whereNumber('id');
 
+                    // Mercer-style report exports
+                    Route::get('/post-retirement-benefits/valuations/{id}/report',
+                        [\App\Http\Controllers\PostRetirementBenefits\ValuationController::class, 'report'])->whereNumber('id');
+                    Route::get('/post-retirement-benefits/valuations/{id}/export/excel',
+                        [\App\Http\Controllers\PostRetirementBenefits\ValuationController::class, 'exportExcel'])->whereNumber('id');
+
                     // Assumption editor
                     Route::get ('/post-retirement-benefits/assumptions',
                         [\App\Http\Controllers\PostRetirementBenefits\AssumptionsController::class, 'edit']);

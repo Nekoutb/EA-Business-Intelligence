@@ -5,6 +5,7 @@ namespace App\Http\Controllers\PostRetirementBenefits;
 use App\Http\Controllers\Controller;
 use App\Models\PostRetirementBenefits\Employee;
 use App\Models\PostRetirementBenefits\Valuation;
+use App\Services\PostRetirementBenefits\ExcelReportExporter;
 use App\Services\PostRetirementBenefits\SensitivityAnalyzer;
 use App\Services\PostRetirementBenefits\ValuationRunner;
 use App\Tenancy\TenantContext;
@@ -136,6 +137,48 @@ class ValuationController extends Controller
             'valuations' => $valuations,
             'active'     => 'post_retirement_benefits',
         ]);
+    }
+
+    /**
+     * Mercer-style print-friendly HTML report. The user prints to
+     * PDF via the browser to produce the deliverable they sign
+     * externally. Matches Mercer's Globeleq report structure:
+     * Cover → Highlights → Basis → 6 appendices → Notices.
+     */
+    public function report(Request $request, SensitivityAnalyzer $sensitivity, $tenantSlug, int $id)
+    {
+        $tenant = app(TenantContext::class)->tenant();
+        $v = Valuation::where('tenant_id', $tenant->id)
+            ->with(['lines.employee', 'assumptionSet'])
+            ->findOrFail($id);
+        $lines = $v->lines->sortByDesc('pbo')->values();
+
+        // Always include sensitivity in the printable report
+        // (it's a required disclosure under IAS 19 paragraph 145).
+        $discountSensitivity = $v->pbo_closing > 0
+            ? $sensitivity->discountRateSensitivity($tenant, $v)
+            : null;
+        $salarySensitivity = $v->pbo_closing > 0
+            ? $sensitivity->salaryIncreaseSensitivity($tenant, $v)
+            : null;
+
+        return view('post-retirement-benefits.valuations.report', [
+            'valuation'           => $v,
+            'lines'               => $lines,
+            'assumptions'         => $v->assumptionSet,
+            'discountSensitivity' => $discountSensitivity,
+            'salarySensitivity'   => $salarySensitivity,
+        ]);
+    }
+
+    /** Excel workbook download — Mercer-style multi-sheet structure. */
+    public function exportExcel(Request $request, $tenantSlug, int $id)
+    {
+        $tenant = app(TenantContext::class)->tenant();
+        $v = Valuation::where('tenant_id', $tenant->id)
+            ->with(['lines.employee', 'assumptionSet', 'priorValuation'])
+            ->findOrFail($id);
+        return (new ExcelReportExporter($v))->streamDownload();
     }
 
     private function fmt(float $n): string
