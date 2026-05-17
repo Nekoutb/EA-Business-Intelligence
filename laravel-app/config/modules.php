@@ -442,7 +442,11 @@ return [
             'url'     => '/post-retirement-benefits',
             'active'  => 'post_retirement_benefits',
             'icon'    => 'M12 14l9-5-9-5-9 5 9 5zM12 14v7M5 13.18v3.82a8 8 0 0014 0v-3.82',
-            'default' => false,
+            // default=true so new tenants get it auto-enabled
+            // alongside the other Financial Reporting modules; a
+            // companion migration enables it for existing tenants
+            // that pre-date this row.
+            'default' => true,
             'core'    => false,
             'status'  => 'live',
         ],
