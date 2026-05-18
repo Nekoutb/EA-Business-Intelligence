@@ -367,9 +367,48 @@
     const label = btn?.querySelector('[data-label]');
     if (!btn || !out) return;
 
-    const csrf = document.querySelector('meta[name="csrf-token"]')?.content
-              || document.querySelector('input[name="_token"]')?.value
-              || '';
+    // Read the CSRF token from the meta tag (or the form's hidden _token
+    // if the meta isn't present). The page renders it at load time;
+    // long-idle pages may end up with a stale token after the Laravel
+    // session rotates, so we auto-refresh on 419 below.
+    function currentToken() {
+        return document.querySelector('meta[name="csrf-token"]')?.content
+            || document.querySelector('input[name="_token"]')?.value
+            || '';
+    }
+
+    // Fetch a fresh CSRF token from the server. Writes it back into
+    // the meta tag so any subsequent AJAX call on this page uses the
+    // refreshed value too.
+    async function refreshToken() {
+        const r = await fetch(@json(url('/csrf-refresh')), {
+            method: 'GET',
+            headers: { 'Accept': 'application/json' },
+            credentials: 'same-origin',
+            cache: 'no-store',
+        });
+        if (!r.ok) throw new Error('CSRF refresh failed (' + r.status + ')');
+        const data = await r.json();
+        const meta = document.querySelector('meta[name="csrf-token"]');
+        if (meta) meta.setAttribute('content', data.token);
+        const hidden = document.querySelector('input[name="_token"]');
+        if (hidden) hidden.value = data.token;
+        return data.token;
+    }
+
+    // POST the test request with a given token. Returns the raw Response.
+    async function postTestOdoo(token) {
+        return fetch(@json(tenant_url('/settings/test-odoo')), {
+            method:  'POST',
+            headers: {
+                'Accept':       'application/json',
+                'Content-Type': 'application/json',
+                'X-CSRF-TOKEN': token,
+                'X-Requested-With': 'XMLHttpRequest',
+            },
+            credentials: 'same-origin',
+        });
+    }
 
     btn.addEventListener('click', async () => {
         btn.disabled = true;
@@ -378,18 +417,19 @@
         out.textContent = 'Pinging Odoo…';
 
         try {
-            const r = await fetch(@json(tenant_url('/settings/test-odoo')), {
-                method:  'POST',
-                headers: {
-                    'Accept':       'application/json',
-                    'Content-Type': 'application/json',
-                    'X-CSRF-TOKEN': csrf,
-                    'X-Requested-With': 'XMLHttpRequest',
-                },
-                credentials: 'same-origin',
-            });
-            const data = await r.json();
+            // Attempt 1: use the token that was rendered into the page.
+            let r = await postTestOdoo(currentToken());
 
+            // 419 = CSRF token mismatch / page expired. Most commonly
+            // means the page was idle long enough for the session to
+            // rotate. We grab a fresh token + retry once.
+            if (r.status === 419) {
+                out.textContent = 'Session token expired — refreshing and retrying…';
+                const fresh = await refreshToken();
+                r = await postTestOdoo(fresh);
+            }
+
+            const data = await r.json();
             const ok = !!data.ok;
             out.className = 'mb-4 px-3 py-2.5 rounded-lg text-[12px] leading-relaxed border ' +
                 (ok
@@ -407,7 +447,8 @@
             out.textContent = lines.join('  ');
         } catch (err) {
             out.className = 'mb-4 px-3 py-2.5 rounded-lg text-[12px] leading-relaxed border bg-rose-50 border-rose-200 text-rose-700';
-            out.textContent = '✗ Browser-side error reaching BMS: ' + (err?.message || err);
+            out.textContent = '✗ Browser-side error reaching BMS: ' + (err?.message || err) +
+                '. Try reloading the page and clicking Test connection again.';
         } finally {
             btn.disabled = false;
             if (label) label.textContent = 'Test connection';
