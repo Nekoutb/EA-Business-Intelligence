@@ -72,6 +72,21 @@ Route::get('/login', function () {
    ────────────────────────────────────────────────────────────────────── */
 Route::view('/demo', 'demo')->name('demo');
 
+/* ── CSRF token refresh ────────────────────────────────────────────────
+   Lightweight GET endpoint that returns the current session's CSRF
+   token. Used by long-lived pages (Settings, anything with an AJAX
+   button) to recover from a stale token after the session has been
+   sitting idle past its rotation window — the page's JS calls this on
+   419 and retries the original request with the fresh token in the
+   X-CSRF-TOKEN header. No CSRF check needed since it's a GET.
+   ──────────────────────────────────────────────────────────────────── */
+Route::get('/csrf-refresh', function () {
+    return response()->json([
+        'token' => csrf_token(),
+        'meta'  => ['rotated_at' => now()->toIso8601String()],
+    ]);
+})->name('csrf.refresh');
+
 /* ── Interactive Demo Sandbox ──────────────────────────────────────────
    Each visitor enters via /demo/enter (email-gated), gets a freshly-
    spawned per-visitor demo Tenant + a seeded dataset, then navigates

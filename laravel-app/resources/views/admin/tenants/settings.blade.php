@@ -72,9 +72,45 @@
     const label = btn?.querySelector('[data-label]');
     if (!btn || !out) return;
 
-    const csrf = document.querySelector('meta[name="csrf-token"]')?.content
-              || document.querySelector('input[name="_token"]')?.value
-              || '';
+    // Read the CSRF token from the meta tag (or the form's hidden _token
+    // if the meta isn't present). Long-idle pages may end up with a
+    // stale token after the Laravel session rotates; the 419 retry
+    // below grabs a fresh one transparently so the operator never sees
+    // a "CSRF token mismatch" error after leaving the page open.
+    function currentToken() {
+        return document.querySelector('meta[name="csrf-token"]')?.content
+            || document.querySelector('input[name="_token"]')?.value
+            || '';
+    }
+
+    async function refreshToken() {
+        const r = await fetch('/csrf-refresh', {
+            method: 'GET',
+            headers: { 'Accept': 'application/json' },
+            credentials: 'same-origin',
+            cache: 'no-store',
+        });
+        if (!r.ok) throw new Error('CSRF refresh failed (' + r.status + ')');
+        const data = await r.json();
+        const meta = document.querySelector('meta[name="csrf-token"]');
+        if (meta) meta.setAttribute('content', data.token);
+        const hidden = document.querySelector('input[name="_token"]');
+        if (hidden) hidden.value = data.token;
+        return data.token;
+    }
+
+    async function postTest(token) {
+        return fetch('/admin/tenants/{{ $tenant->id }}/settings/test-odoo', {
+            method:  'POST',
+            headers: {
+                'Accept':       'application/json',
+                'Content-Type': 'application/json',
+                'X-CSRF-TOKEN': token,
+                'X-Requested-With': 'XMLHttpRequest',
+            },
+            credentials: 'same-origin',
+        });
+    }
 
     btn.addEventListener('click', async () => {
         btn.disabled = true;
@@ -83,18 +119,18 @@
         out.textContent = 'Pinging Odoo as this tenant…';
 
         try {
-            const r = await fetch('/admin/tenants/{{ $tenant->id }}/settings/test-odoo', {
-                method:  'POST',
-                headers: {
-                    'Accept':       'application/json',
-                    'Content-Type': 'application/json',
-                    'X-CSRF-TOKEN': csrf,
-                    'X-Requested-With': 'XMLHttpRequest',
-                },
-                credentials: 'same-origin',
-            });
-            const data = await r.json();
+            let r = await postTest(currentToken());
 
+            // 419 = CSRF token mismatch / page expired. The page was
+            // probably idle long enough for the session to rotate;
+            // grab a fresh token + retry once.
+            if (r.status === 419) {
+                out.textContent = 'Session token expired — refreshing and retrying…';
+                const fresh = await refreshToken();
+                r = await postTest(fresh);
+            }
+
+            const data = await r.json();
             const ok = !!data.ok;
             out.className = 'mb-4 px-3 py-2.5 rounded-lg text-[12px] leading-relaxed border ' +
                 (ok
@@ -112,7 +148,8 @@
             out.textContent = lines.join('  ');
         } catch (err) {
             out.className = 'mb-4 px-3 py-2.5 rounded-lg text-[12px] leading-relaxed border bg-rose-50 border-rose-200 text-rose-700';
-            out.textContent = '✗ Browser-side error reaching BMS: ' + (err?.message || err);
+            out.textContent = '✗ Browser-side error reaching BMS: ' + (err?.message || err) +
+                '. Try reloading the page and clicking Test connection again.';
         } finally {
             btn.disabled = false;
             if (label) label.textContent = 'Test connection';
