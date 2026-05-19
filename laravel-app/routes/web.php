@@ -203,6 +203,14 @@ Route::prefix('admin')->group(function () {
             'active' => 'methodology',
         ]));
 
+        // Module-diagnostic — explains exactly why a tenant's module
+        // page returns 404/403 (route registered? service enabled?
+        // module enabled? cache stale?). Browser-accessible so the
+        // super admin doesn't have to SSH into the box.
+        Route::get('/diagnostics/module/{moduleKey}/tenant/{tenantId}',
+            [\App\Http\Controllers\Admin\ModuleDiagnosticController::class, 'show']
+        )->whereNumber('tenantId')->where('moduleKey', '[a-z0-9_]+');
+
         // Industries (configuration)
         Route::get('/industries',                          [AdminIndustryController::class, 'index']);
         Route::get('/industries/create',                   [AdminIndustryController::class, 'create']);
