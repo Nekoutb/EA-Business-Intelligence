@@ -4,6 +4,14 @@
 @section('page-title', 'Cashflow Forecast')
 @section('content')
 
+{{-- Outer wrapper guarantees the page has enough vertical content
+     for the .ea-main scroll container to kick in, even if Odoo is
+     unreachable and the underlying analyses are sparse. Without
+     min-height the matrix can shrink below viewport height and
+     the user can't scroll because there's nothing TO scroll to —
+     they just don't see the rest of the page. --}}
+<div class="cf-page-wrap" style="min-height: 120vh;">
+
 {{-- ──────────────────────────────────────────────────────────────
      SECTION 1 — 16-Week Rolling Cash Flow Forecast (direct method)
      Operational surveillance tool — used daily by Treasury. Always
@@ -413,4 +421,6 @@
             </div>
         </div>
     @endif
+
+</div> {{-- /.cf-page-wrap --}}
 @endsection
