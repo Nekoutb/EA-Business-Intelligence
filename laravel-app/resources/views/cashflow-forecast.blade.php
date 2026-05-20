@@ -6,22 +6,27 @@
 
 {{-- ──────────────────────────────────────────────────────────────
      SECTION 1 — 16-Week Rolling Cash Flow Forecast (direct method)
-     Operational surveillance tool — used daily by Treasury. Sits
-     at the top of the page because that's where the live cash
-     position lives. The annual monthly view below is the strategic
-     / board roll-up.
+     Operational surveillance tool — used daily by Treasury. Always
+     renders, even on Odoo extraction failure (which surfaces as a
+     warning banner above the section but doesn't blank it).
      ────────────────────────────────────────────────────────────── --}}
 @php
-    $data16w = $data16w ?? null;
-    $err16w  = is_array($data16w) ? ($data16w['_error'] ?? null) : null;
-    $has16w  = $data16w && !$err16w && !empty($data16w['weeks']);
+    $data16w  = $data16w  ?? null;
+    $error16w = $error16w ?? null;
+    $has16w   = $data16w && !empty($data16w['weeks']);
 @endphp
 
-@if ($err16w)
+@if ($error16w)
     <div class="bg-coral-50 border border-coral-200 text-coral-800 rounded-xl p-4 text-sm mb-4">
-        <strong>16-week forecast unavailable:</strong> {{ $err16w }}
+        <strong>16-week forecast extraction failed:</strong> {{ $error16w }}
+        <div class="mt-1 text-[11px] text-coral-700">
+            The matrix below renders with zeros so you can see the page structure. Common causes: Odoo unreachable
+            (check Settings → Odoo Connection), wrong credentials, or the underlying tables haven't been populated.
+        </div>
     </div>
-@elseif ($has16w)
+@endif
+
+@if ($has16w)
     @php
         $ccy16   = $data16w['currency'] ?? 'XAF';
         $kpis16  = $data16w['kpis'] ?? [];
@@ -69,7 +74,12 @@
         ];
     @endphp
 
-    <div class="bg-white rounded-xl border border-stone-200 shadow-sm overflow-hidden mb-5">
+    {{-- KPI + chart card. Note: NO overflow-hidden on this outer
+         panel — ECharts needs an unclipped container to compute its
+         dimensions correctly on resize, and clipping here was causing
+         the chart to not render on some viewports. Rounded corners
+         still work because the children themselves don't overflow. --}}
+    <div class="bg-white rounded-xl border border-stone-200 shadow-sm mb-5">
         <div class="px-5 py-4 border-b border-stone-100 flex items-start justify-between gap-4">
             <div class="flex items-start gap-3">
                 <div class="bg-slate-900 text-white text-[10px] uppercase tracking-widest font-bold rounded px-2 py-1 shrink-0 mt-1">01</div>
@@ -254,10 +264,16 @@
     <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
     <script>
     (function () {
-        const el = document.getElementById('cf16w-chart');
-        if (!el) return;
-        const chart = echarts.init(el);
-        chart.setOption({
+        function initChart() {
+            const el = document.getElementById('cf16w-chart');
+            if (!el) return;
+            // Defensive: if the container has 0 width (Tailwind CDN
+            // still loading), wait a tick and retry. ECharts will
+            // render at 0x0 and never resize otherwise.
+            if (el.clientWidth === 0) { setTimeout(initChart, 100); return; }
+            if (typeof echarts === 'undefined') { setTimeout(initChart, 100); return; }
+            const chart = echarts.init(el);
+            chart.setOption({
             grid:    { top: 18, left: 70, right: 24, bottom: 32, containLabel: false },
             tooltip: { trigger: 'axis', axisPointer: { type: 'cross' },
                        valueFormatter: v => new Intl.NumberFormat('en-US').format(v) + ' XAF' },
@@ -288,8 +304,15 @@
                   lineStyle: { type: 'dashed', width: 1.5, color: '#d97706' },
                   itemStyle: { color: '#d97706' }, symbol: 'none', z: 3 },
             ],
-        });
-        window.addEventListener('resize', () => chart.resize());
+            });
+            window.addEventListener('resize', () => chart.resize());
+        }
+        // Wait for DOM ready, then init.
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initChart);
+        } else {
+            initChart();
+        }
     })();
     </script>
 @endif

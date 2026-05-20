@@ -356,18 +356,35 @@ final class CashFlow16WService
 
     private function bucketPosSales(Carbon $cutOff, array $weeks): array
     {
-        // 8-week trailing average of POS sales by weekday of week
+        // Primary: pos.order 8-week trailing average by weekday.
+        // Fallback: class 70 (Ventes) monthly average ÷ 4.33 weeks
+        // for tenants without POS installed — surfaces the existing
+        // revenue stream as an even-weekly contribution.
         $from = $cutOff->copy()->subWeeks(8)->format('Y-m-d');
-        $orders = $this->odoo->searchRead(
-            'pos.order',
-            [
-                ['date_order', '>=', $from],
-                ['state',      'in', ['paid', 'done', 'invoiced']],
-            ],
-            ['date_order', 'amount_total'],
-            ['limit' => 0]
-        );
-        if (!$orders) return $this->zeroBuckets();
+        $orders = [];
+        try {
+            $orders = $this->odoo->searchRead(
+                'pos.order',
+                [
+                    ['date_order', '>=', $from],
+                    ['state',      'in', ['paid', 'done', 'invoiced']],
+                ],
+                ['date_order', 'amount_total'],
+                ['limit' => 0]
+            );
+        } catch (\Throwable $e) {
+            // POS module not installed
+            $orders = [];
+        }
+        if (!$orders) {
+            // GL fallback: weekly equivalent of class 70 monthly avg.
+            // Halved to avoid double-counting against AR invoices line
+            // which already captures most invoice-driven revenue.
+            $weekly70 = $this->glClassMonthlyAverage('70', $cutOff, 3) / 4.33 * 0.5;
+            $buckets = $this->zeroBuckets();
+            foreach ($weeks as $w => $_) $buckets[$w] = $weekly70;
+            return $buckets;
+        }
 
         // Sum by weekday
         $byDow = array_fill(0, 7, 0.0);
@@ -455,21 +472,34 @@ final class CashFlow16WService
     private function bucketApOpenPos(Carbon $cutOff, array $weeks): array
     {
         $buckets = $this->zeroBuckets();
-        $pos = $this->odoo->searchRead(
-            'purchase.order',
-            [
-                ['state',          '=',     'purchase'],
-                ['invoice_status', '!=',    'invoiced'],
-            ],
-            ['amount_untaxed', 'date_planned', 'partner_id'],
-            ['limit' => 2000]
-        );
-        if (!$pos) return $buckets;
+        try {
+            $pos = $this->odoo->searchRead(
+                'purchase.order',
+                [
+                    ['state',          '=',     'purchase'],
+                    ['invoice_status', '!=',    'invoiced'],
+                ],
+                ['amount_untaxed', 'date_planned', 'partner_id'],
+                ['limit' => 2000]
+            );
+        } catch (\Throwable $e) {
+            $pos = [];
+        }
+        if (!$pos) {
+            // Fallback: estimate from trailing class 60 (purchases)
+            // not yet captured by AR/AP invoices. Conservative — we
+            // only allocate ~25% of class-60 monthly avg per week
+            // since most of it is already invoiced.
+            $monthly60 = $this->glClassMonthlyAverage('60', $cutOff, 3);
+            $weekly = $monthly60 / 4.33 * 0.25;
+            foreach ($weeks as $w => $_) $buckets[$w] = $weekly;
+            return $buckets;
+        }
 
         foreach ($pos as $p) {
             $amt = (float) ($p['amount_untaxed'] ?? 0);
             if ($amt < 1) continue;
-            $when = Carbon::parse($p['date_planned'] ?? $cutOff)->addDays(30); // assume +30d payment lag
+            $when = Carbon::parse($p['date_planned'] ?? $cutOff)->addDays(30);
             $w = $this->weekIndex($when, $weeks);
             if ($w !== null) $buckets[$w] += $amt;
         }
@@ -478,36 +508,21 @@ final class CashFlow16WService
 
     private function bucketPayroll(Carbon $cutOff, array $weeks): array
     {
-        // Approximate: pull the most recent month's gross payroll and
-        // schedule on the 25th of each future month.
-        $payslips = $this->odoo->searchRead(
-            'hr.payslip',
-            [['state', '=', 'done']],
-            ['date_to', 'line_ids'],
-            ['limit' => 200, 'order' => 'date_to desc']
-        );
-        if (!$payslips) return $this->zeroBuckets();
+        // Primary source: hr.payslip (when HR module installed).
+        // Fallback: class 66 (Charges de personnel) trailing 3-month
+        // average from the GL — per user request, so the line still
+        // populates when HR isn't on Odoo. Account 661 = wages,
+        // 662 = social benefits, 663 = social contributions etc.
+        // The user's accounting team typically posts payroll into
+        // class 66 even when HR is external.
 
-        // Group by month, take median
-        $byMonth = [];
-        foreach ($payslips as $s) {
-            $m = substr((string) ($s['date_to'] ?? ''), 0, 7);
-            if (!$m) continue;
-            $byMonth[$m] = ($byMonth[$m] ?? 0) + 0; // count only
-        }
-        if (empty($byMonth)) return $this->zeroBuckets();
-
-        // Per-slip net pay from line read — too costly; use approximation
-        // via hr.payslip line totals if available. Phase 1 uses the
-        // per-employee monthly default × headcount (a clean approximation).
-        $employees = $this->odoo->searchCount('hr.employee', [['active', '=', true]]);
-        $monthlyPayroll = $employees * 250_000; // placeholder default per employee — refined Phase 2
+        $monthlyPayroll = $this->resolveMonthlyPayroll($cutOff);
+        if ($monthlyPayroll <= 0) return $this->zeroBuckets();
 
         $buckets = $this->zeroBuckets();
         foreach ($weeks as $w => $weekRow) {
             $start = Carbon::parse($weekRow['start']);
             $end   = Carbon::parse($weekRow['end']);
-            // If the 25th of any month falls in this week, allocate one month's payroll
             for ($monthOffset = -1; $monthOffset <= 4; $monthOffset++) {
                 $payDate = $cutOff->copy()->startOfMonth()->addMonthsNoOverflow($monthOffset)->day(25);
                 if ($payDate->between($start, $end) && $payDate->gte($cutOff)) {
@@ -521,20 +536,133 @@ final class CashFlow16WService
 
     private function bucketCnps(Carbon $cutOff, array $weeks): array
     {
-        // CNPS = 16.2% employer + 4.2% employee + 1.75% accidents + 7% family allowances
-        // Computed on capped base of 750,000 XAF/month per employee.
-        // Approximate as ~30% of the monthly payroll, remitted on 15th of M+1.
-        $employees = $this->odoo->searchCount('hr.employee', [['active', '=', true]]);
-        $monthlyCnps = $employees * 750_000 * 0.30 * 0.85; // 0.85 = average actual base utilisation
+        // CNPS contribution = ~30% of monthly payroll (16.2% employer
+        // + 4.2% employee + 1.75% accidents + 7% family allowances on
+        // capped 750k base). Remitted 15th of M+1.
+        $monthlyPayroll = $this->resolveMonthlyPayroll($cutOff);
+        $monthlyCnps = $monthlyPayroll * 0.30;
         return $this->scheduleMonthly($cutOff, $weeks, $monthlyCnps, dayOfMonth: 15, offsetMonths: 1);
     }
 
     private function bucketIrpp(Carbon $cutOff, array $weeks): array
     {
-        // IRPP withheld varies widely; rough heuristic = 15% of net payroll
-        $employees = $this->odoo->searchCount('hr.employee', [['active', '=', true]]);
-        $monthlyIrpp = $employees * 250_000 * 0.15;
+        // IRPP withheld ~ 15% of monthly net payroll. Remitted 15th of M+1.
+        $monthlyPayroll = $this->resolveMonthlyPayroll($cutOff);
+        $monthlyIrpp = $monthlyPayroll * 0.15;
         return $this->scheduleMonthly($cutOff, $weeks, $monthlyIrpp, dayOfMonth: 15, offsetMonths: 1);
+    }
+
+    /**
+     * Resolve the tenant's monthly payroll expense, in priority:
+     *   1. hr.payslip trailing 3-month average of `total_amount`
+     *      (if HR module installed and payslips exist)
+     *   2. Class 66 GL trailing 3-month debit movements average
+     *      (SYSCOHADA "Charges de personnel" — 661/662/663/664/...
+     *      Works even when HR is external. Per user spec.)
+     *   3. Class 64 cash outflows trailing 3-month average (last-ditch)
+     *   4. 0 (nothing to forecast)
+     *
+     * Cached for the duration of one request — called by 3 lines.
+     */
+    private ?float $resolvedMonthlyPayroll = null;
+    private function resolveMonthlyPayroll(Carbon $cutOff): float
+    {
+        if ($this->resolvedMonthlyPayroll !== null) {
+            return $this->resolvedMonthlyPayroll;
+        }
+
+        // ── Primary: hr.payslip 3-month average of total_amount ──
+        try {
+            $payslips = $this->odoo->searchRead(
+                'hr.payslip',
+                [
+                    ['state',   '=',  'done'],
+                    ['date_to', '>=', $cutOff->copy()->subMonths(3)->format('Y-m-d')],
+                ],
+                ['date_to', 'total_amount'],
+                ['limit' => 500, 'order' => 'date_to desc']
+            );
+            if (!empty($payslips)) {
+                $byMonth = [];
+                foreach ($payslips as $p) {
+                    $m = substr((string) ($p['date_to'] ?? ''), 0, 7);
+                    if (!$m) continue;
+                    $byMonth[$m] = ($byMonth[$m] ?? 0) + abs((float) ($p['total_amount'] ?? 0));
+                }
+                if (!empty($byMonth)) {
+                    return $this->resolvedMonthlyPayroll = array_sum($byMonth) / count($byMonth);
+                }
+            }
+        } catch (\Throwable $e) {
+            // HR module not installed — fall through to GL fallback.
+        }
+
+        // ── Fallback 1: Class 66 trailing 3-month average ──
+        // SYSCOHADA "Charges de personnel" — total monthly debit
+        // movement on class 66 accounts approximates the gross
+        // payroll cost (wages + social + benefits posted as expense).
+        $gl66 = $this->glClassMonthlyAverage('66', $cutOff, monthsBack: 3);
+        if ($gl66 > 0) {
+            return $this->resolvedMonthlyPayroll = $gl66;
+        }
+
+        // ── Fallback 2: Class 64 (taxes incl. employer social
+        //    charges on payroll sometimes posted here). Conservative
+        //    lower-bound approximation.
+        $gl64 = $this->glClassMonthlyAverage('64', $cutOff, monthsBack: 3);
+        if ($gl64 > 0) {
+            return $this->resolvedMonthlyPayroll = $gl64 * 0.7; // back-of-envelope: 70% of 64 is payroll-related
+        }
+
+        return $this->resolvedMonthlyPayroll = 0.0;
+    }
+
+    /**
+     * Sum the trailing N months of debit movements on accounts whose
+     * code starts with the given SYSCOHADA prefix, divided by N for
+     * a monthly average. Used as the GL fallback when a specific
+     * Odoo module isn't installed.
+     *
+     * Class examples:
+     *   60 — Achats (purchases)
+     *   61 — Transports
+     *   62 — Services extérieurs A (rent, utils, comms, fuel)
+     *   63 — Impôts et taxes
+     *   64 — Charges et pertes diverses
+     *   65 — Autres charges
+     *   66 — Charges de personnel  ← payroll proxy
+     *   67 — Frais financiers
+     *   70 — Ventes (revenue — credit balance)
+     */
+    private function glClassMonthlyAverage(string $prefix, Carbon $cutOff, int $monthsBack = 3): float
+    {
+        $from = $cutOff->copy()->subMonths($monthsBack)->startOfMonth()->format('Y-m-d');
+        $to   = $cutOff->copy()->subDay()->format('Y-m-d');
+        try {
+            $lines = $this->odoo->searchRead(
+                'account.move.line',
+                [
+                    ['date', '>=', $from],
+                    ['date', '<=', $to],
+                    ['parent_state', '=', 'posted'],
+                    ['account_id.code', '=like', $prefix . '%'],
+                ],
+                ['balance', 'debit', 'credit'],
+                ['limit' => 0]
+            );
+        } catch (\Throwable $e) {
+            return 0.0;
+        }
+        if (empty($lines)) return 0.0;
+        // For expense classes (6x), use debit minus credit (net
+        // expense incurred). For revenue (70), the natural balance
+        // is credit so we flip sign.
+        $sum = 0.0;
+        foreach ($lines as $l) {
+            $sum += (float) ($l['debit'] ?? 0) - (float) ($l['credit'] ?? 0);
+        }
+        $sum = abs($sum);
+        return $sum / max(1, $monthsBack);
     }
 
     private function bucketVatRemittance(Carbon $cutOff, array $weeks): array
@@ -589,25 +717,16 @@ final class CashFlow16WService
 
     private function bucketRecurringOpex(Carbon $cutOff, array $weeks): array
     {
-        // Trailing 8-week average of class 6 (charges) cash outflows
-        $from = $cutOff->copy()->subWeeks(8)->format('Y-m-d');
-        try {
-            $lines = $this->odoo->searchRead(
-                'account.move.line',
-                [
-                    ['date', '>=', $from],
-                    ['date', '<=', $cutOff->format('Y-m-d')],
-                    ['parent_state', '=', 'posted'],
-                    ['account_id.code', '=like', '61%'], // rent / utilities / transport family
-                ],
-                ['balance'],
-                ['limit' => 0]
-            );
-            $total = (float) array_sum(array_map(fn ($l) => (float) ($l['balance'] ?? 0), $lines));
-            $weeklyAvg = $total / 8;
-        } catch (\Throwable $e) {
-            $weeklyAvg = 0.0;
-        }
+        // Trailing 3-month avg of recurring operating expense classes:
+        //   61 — Transports
+        //   62 — Services extérieurs A (rent, utilities, comms, fuel)
+        //   63 — Impôts et taxes
+        // Excludes 60 (purchases — already captured by AP invoices)
+        // and 66 (payroll — captured by separate line).
+        $monthly = $this->glClassMonthlyAverage('61', $cutOff, 3)
+                 + $this->glClassMonthlyAverage('62', $cutOff, 3)
+                 + $this->glClassMonthlyAverage('63', $cutOff, 3);
+        $weeklyAvg = abs($monthly) / 4.33;
         $buckets = $this->zeroBuckets();
         foreach ($weeks as $w => $_) $buckets[$w] = $weeklyAvg;
         return $buckets;
