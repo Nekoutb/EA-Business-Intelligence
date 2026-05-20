@@ -1507,6 +1507,10 @@ Route::prefix('t/{tenant}')
                 Route::get('/customer-insights', [CustomerInsightsController::class, 'index'])->middleware('module:customer_insights');
                 Route::get('/receivables',       [ReceivablesController::class, 'index'])->middleware('module:receivables');
                 Route::get('/treasury',          [TreasuryController::class, 'index'])->middleware('module:treasury');
+                // 16-Week Rolling Cash Flow Forecast — direct-method
+                // weekly liquidity surveillance. Lives alongside
+                // /treasury because it shares the same audience.
+                Route::get('/cash-flow-16w',     [\App\Http\Controllers\CashFlow16WController::class, 'index'])->middleware('module:cash_flow_16w');
                 Route::get('/profit-loss',       [ProfitLossController::class, 'index'])->middleware('module:profit_loss');
                 Route::get('/payables',          [PayablesController::class, 'index'])->middleware('module:payables');
                 Route::get('/fixed-assets',      [FixedAssetsController::class, 'index'])->middleware('module:fixed_assets');

@@ -531,6 +531,25 @@ return [
             'status'  => 'live',
         ],
         [
+            // 16-Week Rolling Cash Flow Forecast — direct method,
+            // band/line matrix following the treasury team's spec.
+            // Sits under Business Intelligence (Treasury group) rather
+            // than Financial Planning because it's an operational
+            // surveillance tool (weekly liquidity) not a strategic
+            // plan. Distinct from the monthly indirect Cashflow
+            // Forecast above which builds from historical class-5
+            // movements.
+            'key'     => 'cash_flow_16w',
+            'service' => 'business_intelligence',
+            'label'   => '16-Week Cash Flow Forecast',
+            'url'     => '/cash-flow-16w',
+            'active'  => 'cash_flow_16w',
+            'icon'    => 'M12 2v20M2 12h20M4 5h4M4 19h4M16 5h4M16 19h4',
+            'default' => true,
+            'core'    => false,
+            'status'  => 'live',
+        ],
+        [
             'key'     => 'investment_analysis',
             'service' => 'financial_planning',
             'label'   => 'Investment Analysis',
