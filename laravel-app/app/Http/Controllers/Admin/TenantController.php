@@ -51,6 +51,13 @@ class TenantController extends Controller
             $type = 'bms';
         }
 
+        // Resilience: the BMS/Demo split depends on the is_demo column
+        // added by 2026_05_15_000001. If that migration hasn't run on
+        // this environment yet, fall back to a single ungated list so
+        // the page never 500s. (This is what caused the production 500
+        // — the demo migration hadn't run.)
+        $hasDemoColumn = \Illuminate\Support\Facades\Schema::hasColumn('tenants', 'is_demo');
+
         $base = Tenant::query();
         if ($q !== '') {
             $base->where(fn ($w) => $w->where('slug', 'like', "%{$q}%")->orWhere('name', 'like', "%{$q}%"));
@@ -59,29 +66,40 @@ class TenantController extends Controller
             $base->where('status', $status);
         }
 
-        // Independent counts for each tab so the user sees the
-        // population sizes at a glance (with the active filter
-        // applied — so a search for "acme" updates both counts).
-        $bmsCount  = (clone $base)->where(fn ($w) => $w->where('is_demo', false)->orWhereNull('is_demo'))->count();
-        $demoCount = (clone $base)->where('is_demo', true)->count();
-        $allCount  = $bmsCount + $demoCount;
+        if ($hasDemoColumn) {
+            // Independent counts for each tab so the user sees the
+            // population sizes at a glance (with the active filter
+            // applied — so a search for "acme" updates both counts).
+            $bmsCount  = (clone $base)->where(fn ($w) => $w->where('is_demo', false)->orWhereNull('is_demo'))->count();
+            $demoCount = (clone $base)->where('is_demo', true)->count();
+            $allCount  = $bmsCount + $demoCount;
 
-        // Apply the active tab's filter.
-        $query = (clone $base)->withCount(['users', 'modules' => fn ($q) => $q->where('enabled', true)]);
-        if ($type === 'bms') {
-            $query->where(fn ($w) => $w->where('is_demo', false)->orWhereNull('is_demo'));
-        } elseif ($type === 'demo') {
-            $query->where('is_demo', true);
-        }
+            // Apply the active tab's filter.
+            $query = (clone $base)->withCount(['users', 'modules' => fn ($q) => $q->where('enabled', true)]);
+            if ($type === 'bms') {
+                $query->where(fn ($w) => $w->where('is_demo', false)->orWhereNull('is_demo'));
+            } elseif ($type === 'demo') {
+                $query->where('is_demo', true);
+            }
 
-        // Demo tenants are ordered by expiry (most recent first)
-        // so the live sandboxes float to the top; BMS tenants by
-        // creation date desc (most recent customer wins first).
-        if ($type === 'demo') {
-            $query->orderByRaw('CASE WHEN demo_expires_at IS NULL THEN 1 ELSE 0 END')
-                  ->orderByDesc('demo_expires_at');
+            // Demo tenants are ordered by expiry (most recent first)
+            // so the live sandboxes float to the top; BMS tenants by
+            // creation date desc (most recent customer wins first).
+            if ($type === 'demo') {
+                $query->orderByRaw('CASE WHEN demo_expires_at IS NULL THEN 1 ELSE 0 END')
+                      ->orderByDesc('demo_expires_at');
+            } else {
+                $query->orderBy('id', 'desc');
+            }
         } else {
-            $query->orderBy('id', 'desc');
+            // No is_demo column — degrade to a single list, all tenants.
+            $type      = 'all';
+            $allCount  = (clone $base)->count();
+            $bmsCount  = $allCount;
+            $demoCount = 0;
+            $query     = (clone $base)
+                ->withCount(['users', 'modules' => fn ($q) => $q->where('enabled', true)])
+                ->orderBy('id', 'desc');
         }
 
         $tenants = $query->paginate(25)->withQueryString();
@@ -270,21 +288,23 @@ class TenantController extends Controller
 
         $adminUserId = $request->attributes->get('admin_user')?->id;
 
-        // Apply industry defaults if industry is specified
-        if ($tenant->industry_id) {
-            $industry = $tenant->industry;
-
-            // Get industry's module bundle
+        // Apply industry defaults if industry is specified.
+        // Guard against a null industry relation: industry_id can be
+        // set to an id that no longer resolves (soft-deleted industry,
+        // or the industries table not seeded on this environment). In
+        // that case fall back to wizard-provided services rather than
+        // calling ->key on null (which was a 500 source).
+        $industry = $tenant->industry_id ? $tenant->industry : null;
+        if ($industry) {
             $bundle = config("industries.bundles.{$industry->key}", []);
-            $bundleModules = $bundle['modules'] ?? [];
-
-            // Get industry's service bundle
-            $bundleServices = $bundle['services'] ?? [];
+            $bundleModules       = $bundle['modules'] ?? [];
+            $bundleServices      = $bundle['services'] ?? [];
             $selectedServiceKeys = collect($bundleServices)->flip();
         } else {
-            // Fallback: use wizard-provided services (for backward compatibility)
+            // Fallback: use wizard-provided services (backward compat
+            // + the no-industry / unresolvable-industry case).
             $selectedServiceKeys = collect($services)->flip();
-            $bundleModules = [];
+            $bundleModules       = [];
         }
 
         // Handle services
@@ -335,8 +355,13 @@ class TenantController extends Controller
             'status'    => User::STATUS_ACTIVE,
         ]);
 
-        // Save integration settings if provided
-        if (!empty($integration) && !$integration['skip_integration'] ?? false) {
+        // Save integration settings if provided.
+        // NB: previous version had an operator-precedence bug —
+        //   `!empty($integration) && !$integration['skip_integration'] ?? false`
+        // parses as `(... && !$integration['skip_integration']) ?? false`
+        // and accesses a possibly-undefined key. Rewritten explicitly.
+        $skipIntegration = (bool) ($integration['skip_integration'] ?? false);
+        if (!empty($integration) && !$skipIntegration) {
             foreach (['ODOO_URL', 'ODOO_DB', 'ODOO_USERNAME', 'ODOO_API_KEY', 'ODOO_PROTOCOL'] as $key) {
                 if (!empty($integration[$key])) {
                     TenantSetting::create([
