@@ -70,7 +70,71 @@
                     <button class="text-xs font-medium bg-rose-600 hover:bg-rose-700 text-white px-3 py-2 rounded-lg">Suspend</button>
                 </form>
             @endif
+            {{-- Delete button — toggles the panel below. Kept visually
+                 distinct from Suspend / Reactivate so it isn't a muscle-
+                 memory misclick. --}}
+            <button type="button"
+                    onclick="document.getElementById('ea-delete-panel').classList.toggle('hidden')"
+                    class="text-xs font-medium text-rose-700 hover:text-rose-900 px-3 py-2 rounded-lg border border-rose-300">
+                Delete tenant…
+            </button>
         </div>
+    </div>
+
+    {{-- ─────────── Delete panel (toggled by the Delete button) ───────────
+         Requires the operator to TYPE the slug. Slug-typing makes
+         accidents dramatically harder than a single Confirm click —
+         copy/paste is the only fast path, which is deliberate.   --}}
+    <div id="ea-delete-panel" class="hidden mt-4 bg-rose-50 border-2 border-rose-300 rounded-xl p-5 shadow-sm">
+        <div class="flex items-start gap-3 mb-3">
+            <svg class="w-5 h-5 text-rose-600 shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+            <div>
+                <h3 class="text-sm font-bold text-rose-900">Delete tenant</h3>
+                <p class="text-[12px] text-rose-800 mt-1 leading-relaxed">
+                    <strong>Suspend</strong> is usually what you want — it locks users out without losing data.
+                    Use <strong>Delete</strong> when the tenant is gone for good (off-boarded, demo cleanup,
+                    test workspace). Soft-deleted tenants disappear from queries but are recoverable via a DB UPDATE.
+                    <strong>Force delete</strong> purges users, modules, services, settings, business insights and audit
+                    logs — irreversible.
+                </p>
+            </div>
+        </div>
+
+        @if ($errors->any())
+            <div class="mb-3 p-3 rounded border border-rose-300 bg-rose-100 text-rose-900 text-[11.5px]">
+                @foreach ($errors->all() as $e)<div>{{ $e }}</div>@endforeach
+            </div>
+        @endif
+
+        <form method="POST" action="/admin/tenants/{{ $tenant->id }}/delete" class="space-y-3">
+            @csrf
+            <div>
+                <label class="block text-[10px] uppercase tracking-widest text-rose-800 font-semibold mb-1">
+                    Type the slug <code class="bg-white px-1.5 py-0.5 rounded border border-rose-200 mono text-[11px]">{{ $tenant->slug }}</code> to confirm *
+                </label>
+                <input type="text" name="confirm_slug" required autocomplete="off"
+                       placeholder="{{ $tenant->slug }}"
+                       class="w-full md:w-80 border border-rose-300 rounded-lg px-3 py-2 text-sm mono bg-white focus:border-rose-600 focus:outline-none">
+            </div>
+
+            <label class="flex items-start gap-2 text-[12px] text-rose-900 cursor-pointer">
+                <input type="checkbox" name="force" value="1" class="mt-0.5 rounded border-rose-400 text-rose-700 focus:ring-rose-500">
+                <span>
+                    <strong>Force delete</strong> — permanently purge all data (irreversible).
+                    <span class="block text-[10.5px] text-rose-700">If unchecked, the tenant is soft-deleted (recoverable).</span>
+                </span>
+            </label>
+
+            <div class="flex items-center gap-2 pt-2">
+                <button type="button" onclick="document.getElementById('ea-delete-panel').classList.add('hidden')"
+                        class="text-[12px] text-rose-700 hover:text-rose-900 px-3 py-2">Cancel</button>
+                <button type="submit"
+                        onclick="return confirm('Delete tenant {{ $tenant->slug }}? Confirm slug above must match exactly.')"
+                        class="text-[12px] font-semibold text-white bg-rose-600 hover:bg-rose-700 rounded-lg px-4 py-2 shadow">
+                    Delete tenant
+                </button>
+            </div>
+        </form>
     </div>
 
     {{-- ─────────── Rename panel (toggled by the Rename button) ─────────── --}}

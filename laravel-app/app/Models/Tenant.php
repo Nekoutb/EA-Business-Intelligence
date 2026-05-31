@@ -66,6 +66,30 @@ class Tenant extends Model
         return in_array($this->status, [self::STATUS_ACTIVE, self::STATUS_TRIAL], true);
     }
 
+    /**
+     * Scope: real (non-demo) production tenants only.
+     *
+     * Demo sandboxes spawn via /demo/enter and pile up dozens per day
+     * during prospecting. Most admin surfaces (Business Insights,
+     * fleet-wide analyses, scheduled cron jobs) want to ignore them
+     * entirely. Use:
+     *
+     *   Tenant::real()->get()
+     *
+     * Resilient to the case where the is_demo column doesn't exist
+     * (e.g. fresh install pre-2026_05_15 migration): if the column
+     * isn't there, all rows are returned (nothing to filter on).
+     */
+    public function scopeReal($query)
+    {
+        if (!\Illuminate\Support\Facades\Schema::hasColumn('tenants', 'is_demo')) {
+            return $query;
+        }
+        return $query->where(function ($w) {
+            $w->where('is_demo', false)->orWhereNull('is_demo');
+        });
+    }
+
     /** Get a setting value (decrypted automatically), or default. */
     public function setting(string $key, $default = null)
     {
