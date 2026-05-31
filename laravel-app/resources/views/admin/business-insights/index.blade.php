@@ -109,7 +109,13 @@
           $urgentRisks = collect($cardRisks)->where('severity', 'urgent')->count();
           $watchRisks  = collect($cardRisks)->where('severity', 'watch')->count();
       @endphp
-      <a href="/admin/business-insights/{{ $t->id }}" class="panel p-4 hover:shadow-md transition group block">
+      {{-- Card is a <div> not an <a> so the Inventory link below
+           can be a real anchor without nesting. The whole card is
+           clickable via JS onclick handler — the show link is the
+           default, the explicit Inventory link in the footer
+           stops propagation to override. --}}
+      <div onclick="window.location='/admin/business-insights/{{ $t->id }}';"
+           class="panel p-4 hover:shadow-md transition group block cursor-pointer relative">
           <div class="flex items-start justify-between gap-2 mb-2">
               <div class="min-w-0">
                   <div class="font-semibold text-slate-900 truncate">{{ $t->brand ?: $t->name }}</div>
@@ -183,18 +189,18 @@
             <div class="text-[10px] text-slate-400">Will run at next 06:00 schedule, or click <b>Regenerate all now</b> above.</div>
           @endif
 
-          {{-- Data Inventory link — surfaces the per-tenant audit of
-               what financial data is actually available + which
-               management reports we can generate from it.        --}}
+          {{-- Data Inventory link — real <a> with stopPropagation so
+               clicking it goes to /inventory, not to the parent
+               card's show route. --}}
           <div class="mt-3 pt-3 border-t border-stone-200 flex items-center justify-between">
               <span class="text-[10px] text-slate-500 uppercase tracking-widest font-semibold">Reports</span>
-              <span
-                onclick="event.preventDefault(); event.stopPropagation(); window.location='/admin/business-insights/{{ $t->id }}/inventory';"
-                class="text-[10px] font-semibold text-rose-700 hover:text-rose-900 underline cursor-pointer">
+              <a href="/admin/business-insights/{{ $t->id }}/inventory"
+                 onclick="event.stopPropagation();"
+                 class="text-[10px] font-semibold text-rose-700 hover:text-rose-900 underline">
                 Data inventory →
-              </span>
+              </a>
           </div>
-      </a>
+      </div>
     @endforeach
 </div>
 @endsection
