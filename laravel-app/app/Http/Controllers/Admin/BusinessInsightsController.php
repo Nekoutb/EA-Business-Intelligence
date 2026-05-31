@@ -22,8 +22,10 @@ class BusinessInsightsController extends Controller
 {
     public function index()
     {
-        // Pull every tenant + their latest insight (one round trip).
-        $tenants = Tenant::orderBy('name')->get();
+        // Real (non-demo) tenants only — visitor demo sandboxes pile
+        // up dozens/day during prospecting and would otherwise drown
+        // out the actual customers in this view.
+        $tenants = Tenant::real()->orderBy('name')->get();
         $latestByTenant = BusinessInsight::query()
             ->whereIn('tenant_id', $tenants->pluck('id'))
             ->orderByDesc('generated_at')
@@ -40,7 +42,10 @@ class BusinessInsightsController extends Controller
 
     public function show(int $tenantId)
     {
-        $tenant = Tenant::findOrFail($tenantId);
+        // Block direct navigation to demo tenants — they shouldn't
+        // surface here at all. If someone bookmarks an old URL or
+        // pastes one in, treat it as "not in this view".
+        $tenant = Tenant::real()->where('id', $tenantId)->firstOrFail();
         $latest = BusinessInsight::latestForTenant($tenant->id);
         $history = BusinessInsight::where('tenant_id', $tenant->id)
             ->orderByDesc('generated_at')
@@ -57,7 +62,9 @@ class BusinessInsightsController extends Controller
 
     public function refresh(Request $request, int $tenantId, BusinessInsightsService $svc)
     {
-        $tenant = Tenant::findOrFail($tenantId);
+        // Same demo block as show() — don't waste an LLM call on
+        // throwaway demo data even if someone clicks the button.
+        $tenant = Tenant::real()->where('id', $tenantId)->firstOrFail();
         try {
             $row = $svc->generate($tenant, true);
             return redirect("/admin/business-insights/{$tenant->id}")->with('flash', [
@@ -74,7 +81,10 @@ class BusinessInsightsController extends Controller
 
     public function runAll(Request $request, BusinessInsightsService $svc)
     {
-        $tenants = Tenant::orderBy('id')->get();
+        // Real tenants only — same reasoning as index(). Generating
+        // insights for visitor demo sandboxes burns LLM tokens for
+        // throwaway analyses on synthetic data.
+        $tenants = Tenant::real()->orderBy('id')->get();
         $ok = 0; $partial = 0; $failed = 0; $skipped = 0;
         foreach ($tenants as $t) {
             try {

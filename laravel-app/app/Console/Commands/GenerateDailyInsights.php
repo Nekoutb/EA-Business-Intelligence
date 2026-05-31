@@ -31,7 +31,11 @@ class GenerateDailyInsights extends Command
         $force  = (bool) $this->option('force');
         $only   = (string) $this->option('tenant');
 
-        $query = Tenant::query();
+        // Real (non-demo) production tenants only. Daily insight
+        // generation should never hit visitor demo sandboxes — they
+        // expire in 2 hours, their data is synthetic, and burning
+        // LLM tokens on them is just waste.
+        $query = Tenant::real();
         if (defined(\App\Models\Tenant::class . '::STATUS_SUSPENDED')) {
             $query->where('status', '!=', Tenant::STATUS_SUSPENDED);
         }

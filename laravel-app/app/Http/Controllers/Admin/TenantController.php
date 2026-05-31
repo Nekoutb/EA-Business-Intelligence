@@ -672,4 +672,91 @@ class TenantController extends Controller
         AuditLog::record('tenant.activate', ['tenant_id' => $tenant->id, 'target' => $tenant->slug]);
         return back()->with('flash', ['type' => 'success', 'msg' => "Tenant '{$tenant->slug}' reactivated."]);
     }
+
+    /**
+     * Delete a tenant. Two modes:
+     *   - default (soft delete): sets deleted_at, tenant disappears
+     *     from queries but everything is preserved. Reversible by
+     *     a DB-level UPDATE if needed.
+     *   - force=1: hard delete, cascades to users/modules/services/
+     *     settings/business_insights/audit_logs. IRREVERSIBLE.
+     *
+     * Both modes require the operator to TYPE the tenant slug in
+     * the confirmation field — prevents accidental clicks. The
+     * Suspend button stays the recommended path for "we want to
+     * stop them using the BMS but keep the data"; Delete is for
+     * "this tenant is gone, purge it".
+     */
+    public function destroy(Request $request, Tenant $tenant)
+    {
+        $request->validate([
+            // Operator must type the slug character-for-character.
+            'confirm_slug' => ['required', 'string', 'in:' . $tenant->slug],
+            'force'        => ['nullable', 'boolean'],
+        ], [
+            'confirm_slug.in' => 'The slug you typed does not match. Type exactly "' . $tenant->slug . '" to confirm.',
+        ]);
+
+        $force      = $request->boolean('force');
+        $slug       = $tenant->slug;
+        $name       = $tenant->name;
+        $tenantId   = $tenant->id;
+        $adminId    = $request->attributes->get('admin_user')?->id;
+
+        try {
+            if ($force) {
+                // Hard delete — cascading FK constraints clean up
+                // tenant_modules, tenant_services, tenant_settings,
+                // tenant_dashboard_kpis, demo_sessions automatically.
+                // Users have nullOnDelete (their tenant_id goes null
+                // — orphan supers / dual-tenant edge case) so we
+                // explicitly delete tenant-scoped users first.
+                \DB::transaction(function () use ($tenant) {
+                    // Tenant-scoped users first
+                    \App\Models\User::where('tenant_id', $tenant->id)->delete();
+                    // BusinessInsight (no FK cascade in some envs)
+                    \App\Models\BusinessInsight::where('tenant_id', $tenant->id)->delete();
+                    // Audit logs scoped to the tenant (keep platform-
+                    // wide audit logs untouched).
+                    AuditLog::where('tenant_id', $tenant->id)->delete();
+                    // The tenant itself, force-delete past soft-delete
+                    $tenant->forceDelete();
+                });
+                $action = 'tenant.force_delete';
+                $msg    = "Tenant '{$slug}' permanently deleted. All related data purged.";
+            } else {
+                $tenant->delete();
+                $action = 'tenant.soft_delete';
+                $msg    = "Tenant '{$slug}' soft-deleted. Data preserved; reverse via DB if needed.";
+            }
+        } catch (\Throwable $e) {
+            return back()->with('flash', [
+                'type' => 'error',
+                'msg'  => "Delete failed: " . $e->getMessage(),
+            ]);
+        }
+
+        // Audit log (platform-wide — tenant_id null since the tenant
+        // is gone). Use a direct DB insert because the AuditLog
+        // helper may try to relate to the deleted tenant.
+        \DB::table('audit_logs')->insert([
+            'tenant_id'  => null,
+            'user_id'    => $adminId,
+            'action'     => $action,
+            'target'     => "tenant:{$slug}",
+            'payload'    => json_encode([
+                'tenant_id' => $tenantId,
+                'slug'      => $slug,
+                'name'      => $name,
+                'force'     => $force,
+            ]),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        return redirect('/admin/tenants')->with('flash', [
+            'type' => 'success',
+            'msg'  => $msg,
+        ]);
+    }
 }

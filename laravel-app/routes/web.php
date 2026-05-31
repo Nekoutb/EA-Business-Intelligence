@@ -238,6 +238,10 @@ Route::prefix('admin')->group(function () {
         Route::post('/tenants/{tenant}/rename',      [AdminTenantController::class, 'rename']);
         Route::post('/tenants/{tenant}/suspend',     [AdminTenantController::class, 'suspend']);
         Route::post('/tenants/{tenant}/activate',    [AdminTenantController::class, 'activate']);
+        // Delete tenant — requires slug-typing confirmation in the
+        // form payload. Supports both soft delete (default) and
+        // force delete (purges all related data, irreversible).
+        Route::post('/tenants/{tenant}/delete',      [AdminTenantController::class, 'destroy']);
 
         /*
          * ── DIAGNOSTIC: Odoo Logistics schema probe ───────────────────────
