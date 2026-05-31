@@ -196,6 +196,13 @@ Route::prefix('admin')->group(function () {
         // already gated by admin.auth above).
         Route::get ('/business-insights',                  [AdminBusinessInsightsController::class, 'index']);
         Route::post('/business-insights/run-all',          [AdminBusinessInsightsController::class, 'runAll']);
+        // Data inventory + on-demand reports MUST be registered
+        // BEFORE the catch-all /{tenantId} route below, otherwise
+        // Laravel matches '/inventory' as a tenantId.
+        Route::get ('/business-insights/{tenantId}/inventory',
+            [AdminBusinessInsightsController::class, 'inventory'])->whereNumber('tenantId');
+        Route::get ('/business-insights/{tenantId}/reports/revenue',
+            [AdminBusinessInsightsController::class, 'revenueReport'])->whereNumber('tenantId');
         Route::get ('/business-insights/{tenantId}',       [AdminBusinessInsightsController::class, 'show'])->whereNumber('tenantId');
         Route::post('/business-insights/{tenantId}/refresh',[AdminBusinessInsightsController::class, 'refresh'])->whereNumber('tenantId');
 
