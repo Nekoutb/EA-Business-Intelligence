@@ -182,6 +182,18 @@
             <p class="text-[12px] text-slate-500 italic mb-3">No insight generated yet for this tenant.</p>
             <div class="text-[10px] text-slate-400">Will run at next 06:00 schedule, or click <b>Regenerate all now</b> above.</div>
           @endif
+
+          {{-- Data Inventory link — surfaces the per-tenant audit of
+               what financial data is actually available + which
+               management reports we can generate from it.        --}}
+          <div class="mt-3 pt-3 border-t border-stone-200 flex items-center justify-between">
+              <span class="text-[10px] text-slate-500 uppercase tracking-widest font-semibold">Reports</span>
+              <span
+                onclick="event.preventDefault(); event.stopPropagation(); window.location='/admin/business-insights/{{ $t->id }}/inventory';"
+                class="text-[10px] font-semibold text-rose-700 hover:text-rose-900 underline cursor-pointer">
+                Data inventory →
+              </span>
+          </div>
       </a>
     @endforeach
 </div>

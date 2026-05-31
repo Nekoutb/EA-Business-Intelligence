@@ -5,7 +5,11 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\BusinessInsight;
 use App\Models\Tenant;
+use App\Odoo\OdooFactory;
 use App\Services\BusinessInsightsService;
+use App\Services\DataInventoryService;
+use App\Services\RevenueAnalysisService;
+use App\Tenancy\TenantContext;
 use Illuminate\Http\Request;
 
 /**
@@ -77,6 +81,74 @@ class BusinessInsightsController extends Controller
                 'msg'  => 'Generation failed: ' . $e->getMessage(),
             ]);
         }
+    }
+
+    /**
+     * Data inventory — what financial data does this tenant have in
+     * Odoo, broken down by domain (revenue, AR, AP, treasury, …).
+     * Foundation for the on-demand reports: shows the operator
+     * exactly which domains have enough data to support each report
+     * type.
+     */
+    public function inventory(int $tenantId, DataInventoryService $svc = null)
+    {
+        $tenant = Tenant::real()->where('id', $tenantId)->firstOrFail();
+
+        // Bind the tenant context so OdooFactory pulls the tenant's
+        // credentials, then invoke the service.
+        app(TenantContext::class)->set($tenant);
+        $inventory = null;
+        $error = null;
+        try {
+            $client = OdooFactory::fromConfig();
+            $service = new DataInventoryService($client);
+            $inventory = ea_cached(
+                "data_inventory_{$tenant->id}_" . now()->format('Y-m-d_H'),
+                fn () => $service->inventory()
+            );
+        } catch (\Throwable $e) {
+            $error = $e->getMessage();
+        }
+
+        return view('admin.business-insights.inventory', [
+            'tenant'    => $tenant,
+            'inventory' => $inventory,
+            'error'     => $error,
+            'active'    => 'business_insights',
+        ]);
+    }
+
+    /**
+     * Revenue analysis — the first on-demand management report.
+     * Deterministic + reproducible: same input data → same numbers.
+     * No LLM in the loop, so auditable.
+     */
+    public function revenueReport(Request $request, int $tenantId)
+    {
+        $tenant = Tenant::real()->where('id', $tenantId)->firstOrFail();
+        $year   = (int) $request->query('year', date('Y'));
+
+        app(TenantContext::class)->set($tenant);
+        $report = null;
+        $error  = null;
+        try {
+            $client = OdooFactory::fromConfig();
+            $service = new RevenueAnalysisService($client);
+            $report = ea_cached(
+                "revenue_report_{$tenant->id}_{$year}_" . now()->format('Y-m-d_H'),
+                fn () => $service->analyze($year)
+            );
+        } catch (\Throwable $e) {
+            $error = $e->getMessage();
+        }
+
+        return view('admin.business-insights.revenue-report', [
+            'tenant' => $tenant,
+            'report' => $report,
+            'error'  => $error,
+            'year'   => $year,
+            'active' => 'business_insights',
+        ]);
     }
 
     public function runAll(Request $request, BusinessInsightsService $svc)
