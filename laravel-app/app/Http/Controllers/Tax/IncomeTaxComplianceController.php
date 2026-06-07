@@ -45,7 +45,7 @@ class IncomeTaxComplianceController extends Controller
                 });
             }
         } catch (\Throwable $e) {
-            $error = $e->getMessage();
+            $error = ea_safe_error($e, 'income_tax_compliance', 'Could not load income-tax compliance data. Check the Odoo connection in Settings.');
         }
 
         return view('tax.income-tax-compliance', [

@@ -96,7 +96,9 @@ Route::get('/csrf-refresh', function () {
    demo tenant to TenantContext on every sandbox request.
    ────────────────────────────────────────────────────────────────────── */
 Route::get('/demo/enter',  [\App\Http\Controllers\Demo\DemoEntryController::class, 'showEnterForm']);
-Route::post('/demo/start', [\App\Http\Controllers\Demo\DemoEntryController::class, 'start']);
+// Rate-limit demo provisioning: 10/min per IP — stops sandbox-spam that
+// would spawn dozens of throwaway tenants + seed datasets.
+Route::post('/demo/start', [\App\Http\Controllers\Demo\DemoEntryController::class, 'start'])->middleware('throttle:10,1');
 Route::get('/demo/exit',   [\App\Http\Controllers\Demo\DemoEntryController::class, 'exit']);
 
 Route::prefix('demo/sandbox')->middleware('demo.session')->group(function () {
@@ -160,13 +162,16 @@ Route::prefix('demo/sandbox')->middleware('demo.session')->group(function () {
 
     // NL console
     Route::get('/console',  [\App\Http\Controllers\Demo\DemoConsoleController::class, 'index']);
-    Route::post('/console', [\App\Http\Controllers\Demo\DemoConsoleController::class, 'run']);
+    // Rate-limit the NL console: 15/min per IP — it makes an LLM call per
+    // run, so this caps both abuse and runaway token cost.
+    Route::post('/console', [\App\Http\Controllers\Demo\DemoConsoleController::class, 'run'])->middleware('throttle:15,1');
 });
 
 /* ── Super Admin backend ─────────────────────────────────────────────── */
 Route::prefix('admin')->group(function () {
     Route::get('/login',  [AdminAuthController::class, 'showLogin']);
-    Route::post('/login', [AdminAuthController::class, 'login']);
+    // Rate-limit admin login: 6 attempts/min per IP. Blocks brute force.
+    Route::post('/login', [AdminAuthController::class, 'login'])->middleware('throttle:6,1');
     Route::get('/logout', [AdminAuthController::class, 'logout']);
 
     Route::middleware('admin.auth')->group(function () {
@@ -1492,7 +1497,8 @@ Route::prefix('t/{tenant}')
 
         // Public (within a tenant): login/logout
         Route::get('/login',  [AuthController::class, 'showLogin'])->name('login');
-        Route::post('/login', [AuthController::class, 'login']);
+        // Rate-limit tenant login: 6 attempts/min per IP. Blocks brute force.
+        Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:6,1');
         Route::get('/logout', [AuthController::class, 'logout']);
 
         // Authenticated tenant area
@@ -1644,9 +1650,17 @@ Route::prefix('t/{tenant}')
                 // Backward-compat redirects (old URLs from prior to 2026-04-27 reshuffle)
                 Route::get('/tax-calendar', fn () => redirect()->to(tenant_url('/tax-dashboard')));
 
+                // Settings: the read-only view is open to any signed-in
+                // tenant user, but the WRITE paths (save + test-odoo) are
+                // gated to tenant admins. Previously any viewer/analyst
+                // could rewrite the workspace's Odoo credentials, revenue
+                // source, brand and tax-declarant fields — a privilege
+                // escalation + credential-capture risk.
                 Route::get ('/settings',                    [SettingsController::class, 'show']);
-                Route::post('/settings',                    [SettingsController::class, 'save']);
-                Route::post('/settings/test-odoo',          [SettingsController::class, 'testOdoo']);
+                Route::middleware('tenant.admin')->group(function () {
+                    Route::post('/settings',                [SettingsController::class, 'save']);
+                    Route::post('/settings/test-odoo',      [SettingsController::class, 'testOdoo']);
+                });
 
                 // Tenant user management — gated to tenant admins (and
                 // platform super admins). The list view is open to any

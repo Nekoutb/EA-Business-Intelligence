@@ -222,6 +222,44 @@ if (!function_exists('ea_money')) {
     }
 }
 
+if (!function_exists('ea_safe_error')) {
+    /**
+     * Convert a caught exception into a SAFE, user-facing message while
+     * logging the full detail server-side.
+     *
+     * Why: several controllers historically passed `$e->getMessage()`
+     * straight to a Blade `$error` variable shown to end users. Raw
+     * exception text can leak Odoo hostnames, SQL fragments, file paths,
+     * and connection strings. This helper logs the real message + trace
+     * (so debugging isn't lost) and returns a generic sentence the user
+     * can act on.
+     *
+     * In local/debug environments it still returns the real message so
+     * developers see what broke.
+     *
+     * @param  \Throwable $e
+     * @param  string     $context  short label for the log line (e.g. 'revenue_report')
+     * @param  string     $userMsg  the generic message shown to the user
+     */
+    function ea_safe_error(\Throwable $e, string $context = 'operation', string $userMsg = ''): string
+    {
+        \Illuminate\Support\Facades\Log::error("[{$context}] " . $e->getMessage(), [
+            'exception' => get_class($e),
+            'file'      => $e->getFile() . ':' . $e->getLine(),
+        ]);
+
+        // Developers in local/debug get the real message; everyone else
+        // gets the generic one.
+        if (config('app.debug')) {
+            return $e->getMessage();
+        }
+
+        return $userMsg !== ''
+            ? $userMsg
+            : 'Something went wrong while completing this request. The issue has been logged — please try again, and contact support if it persists.';
+    }
+}
+
 if (!function_exists('ea_money_short')) {
     function ea_money_short(float $v, string $currency = 'USD'): string
     {

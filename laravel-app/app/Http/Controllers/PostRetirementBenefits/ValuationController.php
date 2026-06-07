@@ -52,7 +52,7 @@ class ValuationController extends Controller
         } catch (\Throwable $e) {
             return back()->with('flash', [
                 'type' => 'error',
-                'msg'  => 'Valuation failed: ' . $e->getMessage(),
+                'msg'  => ea_safe_error($e, 'prb_valuation_run', 'Valuation could not be completed. The error has been logged — check the Odoo connection in Settings and try again.'),
             ]);
         }
 
