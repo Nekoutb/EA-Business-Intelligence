@@ -80,4 +80,12 @@ return [
     'dso_sales_prefix' => env('DSO_SALES_PREFIX', '70'),
 
     'cache_ttl' => 300, // 5 minutes
+
+    /**
+     * Global cache schema version. Bump this string (v1 → v2 → …) whenever
+     * the SHAPE of any ea_cached() payload changes, so a deploy invalidates
+     * every stale-shaped entry across the whole app at once. Replaces the
+     * old per-controller manual version strings (e.g. monthly_tax_return_v6).
+     */
+    'cache_schema_version' => env('BI_CACHE_SCHEMA_VERSION', 'v1'),
 ];
