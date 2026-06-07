@@ -95,15 +95,26 @@ class AuthController extends Controller
             return $dbUser;
         }
 
-        // Path 2 — config-shared-password fallback. Keeps the legacy
-        // single-password-per-workspace flow alive during rollout.
-        $expectedUser = (string) config('bi.auth.user');
-        $expectedPass = (string) config('bi.auth.password');
-        if ($expectedUser !== '' && $expectedPass !== ''
-            && hash_equals($expectedUser, $u)
-            && hash_equals($expectedPass, $p)
-        ) {
-            return $this->getOrCreateSyntheticAdmin($tenant, $u);
+        // Path 2 — config-shared-password fallback. DISABLED by default
+        // (universal-account-takeover risk: one credential logged into
+        // any tenant as tenant_admin). Only honoured when explicitly
+        // re-enabled AND configured with non-default, non-empty creds.
+        if (config('bi.auth.fallback_enabled', false)) {
+            $expectedUser = (string) config('bi.auth.user');
+            $expectedPass = (string) config('bi.auth.password');
+
+            // Refuse the shipped defaults / empties even if the flag is
+            // on — these are public knowledge and must never authenticate.
+            $insecureDefaults = ['', 'admin', 'changeme', 'password'];
+            $configIsSafe = $expectedUser !== '' && $expectedPass !== ''
+                && !in_array(strtolower($expectedPass), $insecureDefaults, true);
+
+            if ($configIsSafe
+                && hash_equals($expectedUser, $u)
+                && hash_equals($expectedPass, $p)
+            ) {
+                return $this->getOrCreateSyntheticAdmin($tenant, $u);
+            }
         }
 
         return null;

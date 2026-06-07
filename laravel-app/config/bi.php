@@ -14,8 +14,25 @@ return [
     'logo'  => env('APP_LOGO', ''),
 
     'auth' => [
-        'user'     => env('APP_USER', 'admin'),
-        'password' => env('APP_PASSWORD', 'changeme'),
+        // ── SECURITY ──────────────────────────────────────────────
+        // The shared-password fallback (one credential that logs into
+        // ANY tenant as tenant_admin) is DISABLED by default. It was a
+        // rollout convenience while tenants set up real DB users; now
+        // that real users exist it's a universal-account-takeover risk.
+        //
+        // Path 1 (real DB users) is unaffected — everyone with a real
+        // account keeps logging in normally. This only governs the
+        // legacy Path 2 fallback.
+        //
+        // To re-enable it (NOT recommended), you must BOTH:
+        //   1. set BI_AUTH_FALLBACK_ENABLED=true, and
+        //   2. set APP_USER + APP_PASSWORD to non-default, non-empty
+        //      values (the shipped 'admin'/'changeme' are rejected even
+        //      when the flag is on — see AuthController::resolveUser).
+        'fallback_enabled' => (bool) env('BI_AUTH_FALLBACK_ENABLED', false),
+        // No insecure defaults — empty means "no fallback credential".
+        'user'     => env('APP_USER', ''),
+        'password' => env('APP_PASSWORD', ''),
     ],
 
     'odoo' => [

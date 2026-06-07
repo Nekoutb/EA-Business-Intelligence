@@ -107,7 +107,7 @@ class BusinessInsightsController extends Controller
                 fn () => $service->inventory()
             );
         } catch (\Throwable $e) {
-            $error = $e->getMessage();
+            $error = ea_safe_error($e, 'bi_data_inventory', 'Could not build the data inventory. Check the tenant\'s Odoo connection in Settings.');
         }
 
         return view('admin.business-insights.inventory', [
@@ -139,7 +139,7 @@ class BusinessInsightsController extends Controller
                 fn () => $service->analyze($year)
             );
         } catch (\Throwable $e) {
-            $error = $e->getMessage();
+            $error = ea_safe_error($e, 'bi_revenue_report', 'Could not generate the revenue report. Check the tenant\'s Odoo connection in Settings.');
         }
 
         return view('admin.business-insights.revenue-report', [
