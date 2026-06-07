@@ -39,6 +39,25 @@ final class MonthlyTaxReturnService
             default            => 'past_due',
         };
 
+        // Connectivity probe — distinguish a real Odoo outage from a
+        // month with genuinely no activity. Every extraction helper below
+        // (sumBalanceWindow's read_group, splitSalesByVat, …) catches its
+        // own errors and returns 0, so without this probe a dead Odoo
+        // connection yields a fully-zeroed return ("total à payer = 0")
+        // that reads like a filing-ready nil declaration. A failed probe
+        // aborts with a clear error the controller surfaces instead of a
+        // dangerously misleading zero.
+        try {
+            $this->odoo->searchCount('res.company', []);
+        } catch (\Throwable $e) {
+            throw new \RuntimeException(
+                'Odoo connection failed — cannot build the tax return. '
+                . 'Check the Odoo connection in Settings: ' . $e->getMessage(),
+                0,
+                $e
+            );
+        }
+
         $idsByPrefix = $this->resolveAccountIdsByPrefix();
         $auto        = $this->autoExtract($idsByPrefix, $from, $to);
         $sections    = $this->buildSections($auto);

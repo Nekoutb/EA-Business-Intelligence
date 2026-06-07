@@ -63,6 +63,27 @@ final class DataInventoryService
         $errors = [];
         $domains = [];
 
+        // ── Connectivity probe ─────────────────────────────────────────
+        // Without this, a dead Odoo connection makes every safeCount()
+        // below swallow its exception and return 0, so the whole
+        // inventory reads as "all domains empty" — indistinguishable
+        // from a tenant that genuinely has no data. We probe a model
+        // that ALWAYS exists (res.company); if that throws, Odoo is
+        // unreachable, so we abort with a clear error the controller
+        // surfaces as "check the Odoo connection" instead of silently
+        // reporting empty data. After a successful probe, a per-model
+        // safeCount() failure legitimately means that model isn't
+        // installed → 0 / empty is the correct reading.
+        try {
+            $this->odoo->searchCount('res.company', []);
+        } catch (\Throwable $e) {
+            throw new \RuntimeException(
+                'Odoo connection failed — cannot build the data inventory: ' . $e->getMessage(),
+                0,
+                $e
+            );
+        }
+
         // Order matters — the page shows domains in this order
         // (revenue first because it's the first management report
         // we're delivering on-demand).
@@ -479,7 +500,12 @@ final class DataInventoryService
         try {
             $f = \Carbon\Carbon::parse($first);
             $l = \Carbon\Carbon::parse($last);
-            return round($l->diffInDays($f) / 30.44, 1);
+            // Carbon 3 returns a SIGNED day difference: $l->diffInDays($f)
+            // is negative when $f (the earlier date) is passed as the
+            // argument. Without abs() this returns a negative span, which
+            // makes classify() see `$months < 1.5` as always true and
+            // downgrade EVERY date-spanned domain to 'sparse' forever.
+            return round(abs($f->diffInDays($l)) / 30.44, 1);
         } catch (\Throwable $e) {
             return 0.0;
         }

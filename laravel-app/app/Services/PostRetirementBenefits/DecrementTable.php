@@ -46,10 +46,27 @@ final class DecrementTable
         return 0.0;
     }
 
-    /** Probability of dying in the year from age `$age` to age+1. */
-    public function deathAt(int $age): float
+    /**
+     * Resolve the mortality table for an employee's gender, falling
+     * back to the assumption-set default when gender is unknown
+     * ('U' / null). Sex-distinct mortality (CIMA H men / CIMA F women)
+     * is standard actuarial practice — men have materially higher qx at
+     * every age, so a single table for everyone misstates the death
+     * decrement and therefore the PBO.
+     */
+    public function tableForGender(?string $gender): string
     {
-        return MortalityTable::qx($age, $this->mortalityTable);
+        return match (strtoupper(trim((string) $gender))) {
+            'M', 'H' => 'cima_h',
+            'F'      => 'cima_f',
+            default  => $this->mortalityTable,
+        };
+    }
+
+    /** Probability of dying in the year from age `$age` to age+1. */
+    public function deathAt(int $age, ?string $gender = null): float
+    {
+        return MortalityTable::qx($age, $this->tableForGender($gender));
     }
 
     /**
@@ -58,12 +75,12 @@ final class DecrementTable
      * leave voluntarily). Once you hit the retirement age, you
      * leave by definition → survival probability becomes 0.
      */
-    public function activeSurvivalAt(int $age): float
+    public function activeSurvivalAt(int $age, ?string $gender = null): float
     {
         if ($age >= $this->retirementAge) {
             return 0.0;
         }
-        return (1.0 - $this->deathAt($age)) * (1.0 - $this->turnoverAt($age));
+        return (1.0 - $this->deathAt($age, $gender)) * (1.0 - $this->turnoverAt($age));
     }
 
     /**
@@ -71,12 +88,12 @@ final class DecrementTable
      * up to (but not including) age `$to`. Compounding of the
      * annual active-survival probabilities.
      */
-    public function activeSurvivalBetween(int $from, int $to): float
+    public function activeSurvivalBetween(int $from, int $to, ?string $gender = null): float
     {
         if ($to <= $from) return 1.0;
         $p = 1.0;
         for ($age = $from; $age < $to; $age++) {
-            $p *= $this->activeSurvivalAt($age);
+            $p *= $this->activeSurvivalAt($age, $gender);
         }
         return $p;
     }
@@ -91,7 +108,7 @@ final class DecrementTable
      *
      * @return array{retirement:float, death:float, turnover:float}
      */
-    public function decrementSharesAt(int $age): array
+    public function decrementSharesAt(int $age, ?string $gender = null): array
     {
         // At the exact retirement age we treat the entire annual
         // decrement as retirement — death and turnover happen during
@@ -99,7 +116,7 @@ final class DecrementTable
         if ($age >= $this->retirementAge) {
             return ['retirement' => 1.0, 'death' => 0.0, 'turnover' => 0.0];
         }
-        $qd = $this->deathAt($age);
+        $qd = $this->deathAt($age, $gender);
         $qt = $this->turnoverAt($age);
         // Total prob of leaving = 1 - prob of surviving both decrements.
         $total = 1.0 - (1.0 - $qd) * (1.0 - $qt);
