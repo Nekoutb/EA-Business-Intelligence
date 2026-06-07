@@ -156,48 +156,79 @@ if (!function_exists('ea_resolve_period')) {
     }
 }
 
+if (!function_exists('ea_cache_prefix')) {
+    /**
+     * Build the cache-key prefix for the active tenant.
+     *
+     * Shape: ea:{schema}:{scope}:cv{N}:
+     *   - schema : global schema version from config (bi.cache_schema_version).
+     *              Bump it in code whenever a cached payload's SHAPE changes
+     *              so a deploy automatically invalidates every stale-shaped
+     *              entry across the whole app — no per-controller version
+     *              strings needed.
+     *   - scope  : t{tenantId} (or 'g' when no tenant in context). Guarantees
+     *              one workspace's cache can never bleed into another's.
+     *   - cv{N}  : per-(tenant|global) cache VERSION counter, stored in the
+     *              cache itself. ea_cache_clear() increments it, which makes
+     *              every prior key for that scope unreachable in O(1) without
+     *              needing cache tags (tags aren't supported on the database/
+     *              file drivers this app uses).
+     */
+    function ea_cache_prefix(): string
+    {
+        $schema = (string) config('bi.cache_schema_version', 'v1');
+        $tid    = optional(tenant())->id;
+        $scope  = $tid ? 't' . $tid : 'g';
+        $cv     = (int) \Illuminate\Support\Facades\Cache::get("ea:cachever:{$scope}", 1);
+        return "ea:{$schema}:{$scope}:cv{$cv}:";
+    }
+}
+
 if (!function_exists('ea_cached')) {
     /**
-     * Session-scoped cache used by services. Keys are namespaced by the active
-     * tenant id so caches never bleed across workspaces. First caller within
-     * TTL wins, subsequent callers reuse.
+     * Tenant-scoped cache used by services, backed by the SHARED cache store
+     * (database/redis), not the session.
+     *
+     * Why shared, not session (the old behaviour):
+     *   - Two users on the same tenant now share one cached result instead of
+     *     each re-paying the full Odoo round-trip cost.
+     *   - Large analysis payloads no longer bloat the per-request session blob
+     *     (which was read+written on EVERY request, slowing the whole app).
+     *   - The schema-version prefix busts stale-shaped payloads automatically
+     *     on deploy, fixing the "blank section for 5 min after deploy" class
+     *     of bug.
+     *
+     * Keys are namespaced by tenant id (see ea_cache_prefix) so caches never
+     * bleed across workspaces. First caller within TTL wins; the rest reuse.
      */
     function ea_cached(string $key, callable $producer)
     {
-        $ttl    = (int) config('bi.cache_ttl', 300);
-        $tid    = optional(tenant())->id;
-        $scoped = ($tid ? 't' . $tid . ':' : 'g:') . $key;
-        $bucket = session('bi_cache', []);
-        if (isset($bucket[$scoped]) && (time() - (int) $bucket[$scoped]['at']) < $ttl) {
-            return $bucket[$scoped]['data'];
-        }
-        $data            = $producer();
-        $bucket[$scoped] = ['at' => time(), 'data' => $data];
-        session(['bi_cache' => $bucket, 'bi_last_sync' => time()]);
-        return $data;
+        $ttl  = (int) config('bi.cache_ttl', 300);
+        $full = ea_cache_prefix() . $key;
+
+        // Keep the per-session "last synced" label working for the UI.
+        session(['bi_last_sync' => time()]);
+
+        return \Illuminate\Support\Facades\Cache::remember($full, $ttl, $producer);
     }
 }
 
 if (!function_exists('ea_cache_clear')) {
     /**
-     * Clear cache. When a tenant is in context only that tenant's keys are
-     * dropped; otherwise the entire bucket is wiped.
+     * Invalidate cache for the active tenant (or the global scope when no
+     * tenant is in context) by bumping that scope's version counter. All
+     * prior keys become unreachable immediately and expire on their own TTL.
+     * O(1), no tags required.
      */
     function ea_cache_clear(): void
     {
-        $tid = optional(tenant())->id;
-        if (!$tid) {
-            session()->forget('bi_cache');
-        } else {
-            $bucket = session('bi_cache', []);
-            $prefix = 't' . $tid . ':';
-            foreach (array_keys($bucket) as $k) {
-                if (str_starts_with((string) $k, $prefix)) {
-                    unset($bucket[$k]);
-                }
-            }
-            session(['bi_cache' => $bucket]);
-        }
+        $tid    = optional(tenant())->id;
+        $scope  = $tid ? 't' . $tid : 'g';
+        $cvKey  = "ea:cachever:{$scope}";
+        $cur    = (int) \Illuminate\Support\Facades\Cache::get($cvKey, 1);
+        // forever() so the counter itself never expires and reset-collides
+        // with still-live keys from a prior version.
+        \Illuminate\Support\Facades\Cache::forever($cvKey, $cur + 1);
         session(['bi_last_sync' => time()]);
     }
 }
