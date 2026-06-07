@@ -55,10 +55,24 @@
           animation-duration: .001ms !important; transition-duration: .001ms !important;
         }
       }
+
+      /* Top navigation progress bar — perceived-performance feedback on
+         the slow Odoo-backed admin pages (Run-all insights, etc.). */
+      .adm-progress {
+        position: fixed; top: 0; left: 0; height: 3px; width: 0;
+        background: linear-gradient(90deg, #f43f5e, #fb923c);
+        box-shadow: 0 0 8px rgba(244,63,94,.5);
+        z-index: 200; opacity: 0; pointer-events: none;
+        transition: width .2s ease, opacity .3s ease;
+      }
+      .adm-progress.is-active { opacity: 1; }
+      /* Busy state blocks accidental double-submit (e.g. Run-all, delete). */
+      .is-busy { opacity: .65; cursor: progress !important; pointer-events: none; }
     </style>
 </head>
 <body class="h-full antialiased text-slate-200">
 <a href="#admMain" class="adm-skip">Skip to main content</a>
+<div id="admProgress" class="adm-progress" role="presentation" aria-hidden="true"></div>
 <div class="min-h-full flex adm-shell">
     {{-- Mobile-only drawer toggle + backdrop (hidden ≥1024px via CSS). --}}
     <button type="button" id="admBurger"
@@ -144,6 +158,45 @@
       a.addEventListener('click', function () { setOpen(false); });
     });
     document.addEventListener('keydown', function (e) { if (e.key === 'Escape') setOpen(false); });
+  })();
+</script>
+
+{{-- Nav progress bar + double-submit guard. --}}
+<script>
+  (function () {
+    var bar = document.getElementById('admProgress');
+    var timer = null;
+    function startProgress() {
+      if (!bar) return;
+      bar.classList.add('is-active');
+      var w = 8; bar.style.width = w + '%';
+      clearInterval(timer);
+      timer = setInterval(function () {
+        w += Math.max(0.4, (92 - w) * 0.08);
+        if (w >= 92) { w = 92; clearInterval(timer); }
+        bar.style.width = w + '%';
+      }, 220);
+    }
+    document.addEventListener('click', function (e) {
+      if (e.defaultPrevented) return;
+      var a = e.target.closest ? e.target.closest('a[href]') : null;
+      if (!a) return;
+      var href = a.getAttribute('href') || '';
+      if (a.target === '_blank' || a.hasAttribute('download')) return;
+      if (href === '' || href.charAt(0) === '#' || href.toLowerCase().indexOf('javascript:') === 0) return;
+      if (a.origin && a.origin !== window.location.origin) return;
+      if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      startProgress();
+    });
+    document.addEventListener('submit', function (e) {
+      if (e.defaultPrevented) return;   // confirm() cancelled / Livewire AJAX
+      startProgress();
+      var btn = e.target.querySelector('button[type="submit"], button:not([type]), input[type="submit"]');
+      if (btn) setTimeout(function () { btn.classList.add('is-busy'); btn.setAttribute('aria-busy', 'true'); }, 0);
+    });
+    window.addEventListener('pageshow', function (e) {
+      if (e.persisted && bar) { clearInterval(timer); bar.classList.remove('is-active'); bar.style.width = '0'; }
+    });
   })();
 </script>
 </body>
