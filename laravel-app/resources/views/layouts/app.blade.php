@@ -356,6 +356,49 @@
           scroll-behavior: auto !important;
         }
       }
+
+      /* ── Perceived performance: top navigation progress bar ──────────
+         Pages are server-rendered against a slow Odoo backend, so a click
+         can sit with no feedback for seconds. This thin bar animates the
+         moment a nav link or form is triggered, so the user knows their
+         action registered. */
+      .ea-progress {
+        position: fixed; top: 0; left: 0; height: 3px; width: 0;
+        background: linear-gradient(90deg, var(--ea-primary), #38bdf8);
+        box-shadow: 0 0 8px rgba(13, 110, 110, .5);
+        z-index: 200; opacity: 0;
+        transition: width .2s ease, opacity .3s ease;
+        pointer-events: none;
+      }
+      .ea-progress.is-active { opacity: 1; }
+
+      /* Busy state applied to a submit button while its request is in
+         flight — visual feedback + blocks accidental double-submits
+         (double refresh / double period change hammering Odoo). */
+      .is-busy { opacity: .65; cursor: progress !important; pointer-events: none; }
+
+      /* ── Back-to-top — long pages (16-week cash flow, tax return,
+         valuation detail) are tall; this floats in after scrolling. ── */
+      .ea-totop {
+        position: fixed; bottom: 18px; right: 18px; z-index: 70;
+        width: 40px; height: 40px; border-radius: 50%;
+        background: var(--ea-primary); color: #fff; border: 0;
+        display: flex; align-items: center; justify-content: center;
+        box-shadow: 0 4px 14px rgba(13, 110, 110, .35); cursor: pointer;
+        opacity: 0; pointer-events: none; transform: translateY(8px);
+        transition: opacity .2s ease, transform .2s ease;
+      }
+      .ea-totop.is-shown { opacity: 1; pointer-events: auto; transform: translateY(0); }
+      .ea-totop:hover { background: var(--ea-primary-dark); }
+      .ea-totop svg { width: 18px; height: 18px; }
+      @media (max-width: 900px) { .ea-totop { bottom: 70px; right: 14px; } }
+
+      /* ── Wide financial tables: never let a table force horizontal
+         page scroll / clip columns. Wrapping a table in .ea-tablewrap
+         gives it its own scroll region with a soft edge cue. ── */
+      .ea-tablewrap { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+      .ea-tablewrap::-webkit-scrollbar { height: 7px; }
+      .ea-tablewrap::-webkit-scrollbar-thumb { background: rgba(148,163,184,.4); border-radius: 4px; }
     </style>
 
     @stack('styles')
@@ -364,6 +407,9 @@
 
 {{-- Keyboard users can jump straight past the nav to the page body. --}}
 <a href="#eaMain" class="ea-skip">Skip to main content</a>
+
+{{-- Navigation progress bar — animates on any nav/submit (see script). --}}
+<div id="eaProgress" class="ea-progress" role="presentation" aria-hidden="true"></div>
 
 <div class="ea-app">
 
@@ -606,6 +652,12 @@
     </main>
 </div>
 
+{{-- Back-to-top — appears after scrolling; works for both the desktop
+     in-main scroll container and the mobile window scroll. --}}
+<button type="button" id="eaToTop" class="ea-totop" aria-label="Back to top" title="Back to top">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M18 15l-6-6-6 6"/></svg>
+</button>
+
 {{-- ── Mobile drawer toggle ──────────────────────────────────────────
      Opens/closes the off-canvas sidebar on phones (≤900px). No-op on
      desktop where the burger + backdrop are display:none. Vanilla JS,
@@ -638,6 +690,95 @@
     document.addEventListener('keydown', function (e) {
       if (e.key === 'Escape') setOpen(false);
     });
+  })();
+</script>
+
+{{-- ── Perceived performance: nav progress + double-submit guard +
+     back-to-top. Pure vanilla JS; degrades gracefully if elements
+     are absent. --}}
+<script>
+  (function () {
+    // ---- Top progress bar ----------------------------------------
+    var bar = document.getElementById('eaProgress');
+    var timer = null;
+    function startProgress() {
+      if (!bar) return;
+      bar.classList.add('is-active');
+      var w = 8;
+      bar.style.width = w + '%';
+      clearInterval(timer);
+      timer = setInterval(function () {
+        w += Math.max(0.4, (92 - w) * 0.08);   // ease toward ~92%
+        if (w >= 92) { w = 92; clearInterval(timer); }
+        bar.style.width = w + '%';
+      }, 220);
+    }
+    function finishProgress() {
+      if (!bar) return;
+      clearInterval(timer);
+      bar.style.width = '100%';
+      setTimeout(function () {
+        bar.classList.remove('is-active');
+        bar.style.width = '0';
+      }, 300);
+    }
+
+    // Start on same-document, same-origin link navigations. Bubble phase
+    // + defaultPrevented guard so we skip clicks another handler cancelled
+    // (coming-soon links, JS-handled buttons).
+    document.addEventListener('click', function (e) {
+      if (e.defaultPrevented) return;
+      var a = e.target.closest ? e.target.closest('a[href]') : null;
+      if (!a) return;
+      var href = a.getAttribute('href') || '';
+      if (a.target === '_blank' || a.hasAttribute('download')) return;
+      if (href === '' || href.charAt(0) === '#' || href.toLowerCase().indexOf('javascript:') === 0) return;
+      if (a.classList.contains('is-soon')) return;                 // coming-soon, no nav
+      if (a.origin && a.origin !== window.location.origin) return; // external
+      if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return; // open-in-new-tab
+      startProgress();
+    });
+
+    // Start on form submit + block double-submit by busying the button.
+    // defaultPrevented guard skips confirm()-cancelled and Livewire AJAX
+    // submits (no page navigation → bar would otherwise stick).
+    document.addEventListener('submit', function (e) {
+      if (e.defaultPrevented) return;
+      var form = e.target;
+      startProgress();
+      var btn = form.querySelector('button[type="submit"], button:not([type]), input[type="submit"]');
+      if (btn) {
+        // Defer so the button's name/value still posts with the form.
+        setTimeout(function () {
+          btn.classList.add('is-busy');
+          btn.setAttribute('aria-busy', 'true');
+        }, 0);
+      }
+    });
+
+    // The period-filter selects auto-submit via this.form.submit(), which
+    // does NOT fire the submit event — start progress on their change too.
+    document.querySelectorAll('.ea-mfilter__sel').forEach(function (sel) {
+      sel.addEventListener('change', startProgress);
+    });
+
+    // Reset on bfcache restore (back/forward) so the bar isn't stuck.
+    window.addEventListener('pageshow', function (e) {
+      if (e.persisted) finishProgress();
+    });
+
+    // ---- Back-to-top ---------------------------------------------
+    var toTop = document.getElementById('eaToTop');
+    var main  = document.getElementById('eaMain');
+    function scrolledY() { return Math.max(window.scrollY || 0, main ? main.scrollTop : 0); }
+    function onScroll() { if (toTop) toTop.classList.toggle('is-shown', scrolledY() > 400); }
+    window.addEventListener('scroll', onScroll, { passive: true });
+    if (main) main.addEventListener('scroll', onScroll, { passive: true });
+    if (toTop) toTop.addEventListener('click', function () {
+      try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch (_) { window.scrollTo(0, 0); }
+      if (main) { try { main.scrollTo({ top: 0, behavior: 'smooth' }); } catch (_) { main.scrollTop = 0; } }
+    });
+    onScroll();
   })();
 </script>
 
