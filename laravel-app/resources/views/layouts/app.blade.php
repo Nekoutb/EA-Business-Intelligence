@@ -259,10 +259,102 @@
       .ea-refresh-btn:hover { background: var(--ea-primary-dark); }
       .ea-refresh-btn svg { width: 12px; height: 12px; }
 
-      /* When pages > viewport on smaller screens, allow body scroll */
+      /* When pages > viewport on smaller screens, allow body scroll.
+         Tablets (901–1100px) keep the in-flow 220px sidebar but let the
+         page scroll; phones (≤900px) get the off-canvas drawer below. */
       @media (max-width: 1100px) {
         body { overflow: auto; }
         .ea-app { height: auto; min-height: 100vh; }
+      }
+
+      /* ── Mobile (≤900px): off-canvas drawer sidebar + scrollable shell ──
+         Below the tablet breakpoint the fixed 220px sidebar would eat a
+         quarter of a phone screen, so it collapses into a slide-in drawer
+         toggled by a floating hamburger. Every rule here is additive — the
+         desktop flex frame defined above is untouched at ≥901px. */
+      .ea-burger { display: none; }       /* shown only inside the mobile query */
+      .ea-sb__backdrop { display: none; } /* inert on desktop */
+
+      @media (max-width: 900px) {
+        body { overflow: auto; }
+        .ea-app { display: block; height: auto; min-height: 100vh; overflow: visible; }
+
+        /* Sidebar → off-canvas drawer (hidden until toggled). */
+        .ea-sb {
+          position: fixed; top: 0; left: 0; bottom: 0; z-index: 60;
+          width: 250px; max-width: 82vw;
+          transform: translateX(-100%);
+          transition: transform .22s ease;
+        }
+        .ea-app.is-nav-open .ea-sb {
+          transform: translateX(0);
+          box-shadow: 2px 0 28px rgba(17, 24, 39, .22);
+        }
+
+        /* Dimmed backdrop behind an open drawer — tap to close. */
+        .ea-sb__backdrop {
+          display: block;
+          position: fixed; inset: 0; z-index: 55;
+          background: rgba(17, 24, 39, .45);
+          opacity: 0; pointer-events: none;
+          transition: opacity .22s ease;
+        }
+        .ea-app.is-nav-open .ea-sb__backdrop { opacity: 1; pointer-events: auto; }
+
+        /* Main spans the full width and scrolls with the page. The extra
+           top padding clears the floating hamburger. is-fit pages drop
+           their single-screen clamp here — fitting charts to a phone
+           viewport is unusable, so scrolling wins. */
+        .ea-main,
+        .ea-main.is-fit { overflow: visible; height: auto; padding: 56px 14px 28px; }
+
+        /* Floating hamburger — fixed top-left, doubles as the drawer trigger. */
+        .ea-burger {
+          display: inline-flex; align-items: center; justify-content: center;
+          position: fixed; top: 10px; left: 10px; z-index: 65;
+          width: 40px; height: 40px;
+          background: var(--surface); color: var(--text);
+          border: 1px solid var(--border); border-radius: var(--r);
+          box-shadow: 0 2px 8px rgba(17, 24, 39, .10);
+          cursor: pointer;
+        }
+        .ea-burger svg { width: 20px; height: 20px; }
+        .ea-app.is-nav-open .ea-burger { left: auto; right: 14px; }
+
+        /* Topbar reflows to a stack so title + controls never overflow. */
+        .ea-topbar { align-items: flex-start; }
+        .ea-topbar__h { font-size: 18px; }
+      }
+
+      /* ── Accessibility baseline ─────────────────────────────────────── */
+      /* Visible keyboard focus on every interactive control (was missing,
+         so keyboard users had no idea where focus was). */
+      a:focus-visible,
+      button:focus-visible,
+      select:focus-visible,
+      input:focus-visible,
+      [tabindex]:focus-visible {
+        outline: 2px solid var(--ea-primary);
+        outline-offset: 2px;
+        border-radius: var(--r-sm);
+      }
+      /* Skip-to-content link: off-screen until focused, then pinned. */
+      .ea-skip {
+        position: fixed; top: -60px; left: 8px; z-index: 100;
+        background: var(--ea-primary); color: #fff;
+        padding: 8px 14px; border-radius: var(--r);
+        font: 600 12px var(--font);
+        transition: top .15s ease;
+      }
+      .ea-skip:focus { top: 8px; }
+      /* Respect users who request reduced motion. */
+      @media (prefers-reduced-motion: reduce) {
+        *, *::before, *::after {
+          animation-duration: .001ms !important;
+          animation-iteration-count: 1 !important;
+          transition-duration: .001ms !important;
+          scroll-behavior: auto !important;
+        }
       }
     </style>
 
@@ -270,7 +362,19 @@
 </head>
 <body>
 
+{{-- Keyboard users can jump straight past the nav to the page body. --}}
+<a href="#eaMain" class="ea-skip">Skip to main content</a>
+
 <div class="ea-app">
+
+    {{-- Mobile-only drawer toggle + backdrop (hidden ≥901px via CSS).
+         The hamburger floats top-left on phones; tapping the backdrop
+         or any nav link closes the drawer (see script at end of body). --}}
+    <button type="button" id="eaBurger" class="ea-burger"
+            aria-label="Open navigation menu" aria-controls="eaSidebar" aria-expanded="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+    </button>
+    <div id="eaBackdrop" class="ea-sb__backdrop"></div>
 
     {{-- ── Sidebar ─────────────────────────────────────────────────────
          Driven by config/modules.php. Group order = service.order;
@@ -278,7 +382,7 @@
          comes from the page's $active variable (eg 'dashboard',
          'revenue'). This keeps a single source of truth across the
          sidebar, route guard, admin toggles and per-tenant flags.   --}}
-    <aside class="ea-sb">
+    <aside class="ea-sb" id="eaSidebar" aria-label="Primary navigation">
         {{-- Brand block — sidebar identity. Falls through to tenant.brand,
              tenant.name, then config('bi.brand'). Logo (if uploaded)
              replaces the letter avatar. --}}
@@ -318,9 +422,9 @@
           // the user understands the constraint applies here.
           $mfDisplayType = $mfIsFrozen($mfType) ? 'ytd' : $mfType;
         @endphp
-        <form method="GET" class="ea-mfilter">
+        <form method="GET" class="ea-mfilter" role="group" aria-label="Master period filter">
             <div class="ea-mfilter__l">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 3H2l8 9.5V19l4 2v-8.5L22 3z"/></svg>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M22 3H2l8 9.5V19l4 2v-8.5L22 3z"/></svg>
                 Period · Master Filter
             </div>
             <div class="ea-mfilter__row">
@@ -336,12 +440,12 @@
                 @endforeach
             </div>
             <div class="ea-mfilter__row">
-                <select name="year" onchange="this.form.submit()" class="ea-mfilter__sel" title="Year">
+                <select name="year" onchange="this.form.submit()" class="ea-mfilter__sel" title="Year" aria-label="Filter by year">
                     @for ($y = (int) date('Y'); $y >= (int) date('Y') - 4; $y--)
                       <option value="{{ $y }}" {{ $mfYear == $y ? 'selected' : '' }}>{{ $y }}</option>
                     @endfor
                 </select>
-                <select name="month" onchange="this.form.submit()" class="ea-mfilter__sel" title="Month (only used when Month is active)" @if($mfIsFrozen('month')) disabled @endif>
+                <select name="month" onchange="this.form.submit()" class="ea-mfilter__sel" title="Month (only used when Month is active)" aria-label="Filter by month" @if($mfIsFrozen('month')) disabled @endif>
                     @foreach (range(1,12) as $m)
                       <option value="{{ $m }}" {{ $mfMonth == $m ? 'selected' : '' }}>{{ date('M', mktime(0,0,0,$m,1)) }}</option>
                     @endforeach
@@ -387,7 +491,7 @@
           };
         @endphp
 
-        <nav class="ea-nav">
+        <nav class="ea-nav" aria-label="Service modules">
             @foreach ($services as $service)
               @php
                 $sModules = $allModules
@@ -400,7 +504,7 @@
 
               <div class="ea-nav__group">
                   <div class="ea-nav__h">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="{{ $service['icon'] }}"/></svg>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="{{ $service['icon'] }}"/></svg>
                       <span class="ea-nav__h-l">{{ $service['label'] }}</span>
                       @if ($serviceComingSoon)
                         <span class="ea-nav__b">Soon</span>
@@ -409,9 +513,10 @@
                   @foreach ($sModules as $module)
                     @php $moduleSoon = ($module['status'] ?? 'live') === 'coming_soon'; @endphp
                     <a href="{{ $moduleSoon ? '#' : tenant_url($module['url']) }}"
-                       @if($moduleSoon) onclick="return false" @endif
+                       @if($moduleSoon) onclick="return false" aria-disabled="true" @endif
+                       @if($active === $module['active']) aria-current="page" @endif
                        class="ea-nav__i {{ $active === $module['active'] ? 'is-active' : '' }} {{ $moduleSoon ? 'is-soon' : '' }}">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="{{ $module['icon'] }}"/></svg>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="{{ $module['icon'] }}"/></svg>
                         <span class="ea-nav__i-l">{{ $module['label'] }}</span>
                         @if ($moduleSoon)<span class="ea-nav__b">Soon</span>@endif
                     </a>
@@ -421,12 +526,12 @@
         </nav>
 
         <div class="ea-sb__foot">
-            <a href="{{ tenant_url('/settings') }}" class="ea-nav__i {{ $active === 'settings' ? 'is-active' : '' }}" style="margin:0;">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            <a href="{{ tenant_url('/settings') }}" class="ea-nav__i {{ $active === 'settings' ? 'is-active' : '' }}" style="margin:0;" @if($active === 'settings') aria-current="page" @endif>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
                 <span class="ea-nav__i-l">Settings</span>
             </a>
             <a href="{{ tenant_url('/logout') }}" class="ea-nav__i" style="margin:0;">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
                 <span class="ea-nav__i-l">Logout</span>
             </a>
         </div>
@@ -438,7 +543,7 @@
          viewport without the page scrolling). All other pages get
          padding + auto-scroll inside main, and the sidebar stays
          sticky-visible regardless.                                   --}}
-    <main class="ea-main @yield('main-class')">
+    <main class="ea-main @yield('main-class')" id="eaMain" tabindex="-1">
 
         {{-- ── Standardised topbar ─────────────────────────────────────
              Pages can either:
@@ -466,8 +571,8 @@
                   <span class="ea-topbar__meta">Updated <b>{{ now()->format('H:i') }}</b> · {{ ea_last_sync_label() }}</span>
                   <form method="POST" action="{{ tenant_url('/sync') }}" style="margin:0;">
                       @csrf
-                      <button type="submit" class="ea-refresh-btn" title="Force refresh">
-                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+                      <button type="submit" class="ea-refresh-btn" title="Force refresh" aria-label="Force data refresh">
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
                           Refresh
                       </button>
                   </form>
@@ -500,6 +605,41 @@
         @yield('content')
     </main>
 </div>
+
+{{-- ── Mobile drawer toggle ──────────────────────────────────────────
+     Opens/closes the off-canvas sidebar on phones (≤900px). No-op on
+     desktop where the burger + backdrop are display:none. Vanilla JS,
+     no dependency on Tailwind/Livewire load order. --}}
+<script>
+  (function () {
+    var app      = document.querySelector('.ea-app');
+    var burger   = document.getElementById('eaBurger');
+    var backdrop = document.getElementById('eaBackdrop');
+    if (!app || !burger) return;
+
+    function setOpen(open) {
+      app.classList.toggle('is-nav-open', open);
+      burger.setAttribute('aria-expanded', open ? 'true' : 'false');
+      burger.setAttribute('aria-label', open ? 'Close navigation menu' : 'Open navigation menu');
+    }
+
+    burger.addEventListener('click', function () {
+      setOpen(!app.classList.contains('is-nav-open'));
+    });
+    if (backdrop) backdrop.addEventListener('click', function () { setOpen(false); });
+
+    // Tapping a nav link closes the drawer so it doesn't linger over the
+    // next page while it loads.
+    document.querySelectorAll('#eaSidebar .ea-nav__i, #eaSidebar .ea-sb__brand').forEach(function (el) {
+      el.addEventListener('click', function () { setOpen(false); });
+    });
+
+    // Esc closes the drawer.
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') setOpen(false);
+    });
+  })();
+</script>
 
 @livewireScripts
 @stack('scripts')
