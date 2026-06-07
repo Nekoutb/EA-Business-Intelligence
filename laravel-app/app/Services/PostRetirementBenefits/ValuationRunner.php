@@ -95,13 +95,17 @@ final class ValuationRunner
 
             $totalPbo = 0.0;
             $totalServiceCost = 0.0;
-            $totalInterestCost = 0.0;
             $totalRet = 0.0;
             $totalTerm = 0.0;
             $totalDeath = 0.0;
             $totalPayByYear = [];
             $headcount = ['blue_collar' => 0, 'supervisor' => 0, 'manager' => 0];
 
+            // First pass — run the engine for every employee and
+            // accumulate portfolio totals. Lines are persisted in a
+            // second pass once the (opening-based) interest cost is known,
+            // so the per-employee interest rows reconcile to the header.
+            $results = [];
             foreach ($employees as $e) {
                 $cba = CbaRegistry::forEmployee($e, $tenant);
                 if (!$cba) {
@@ -111,6 +115,40 @@ final class ValuationRunner
                 }
 
                 $r = $engine->valueEmployee($e, $cba, $valuationDate);
+                $results[] = ['e' => $e, 'r' => $r];
+
+                $totalPbo         += $r['pbo'];
+                $totalServiceCost += $r['service_cost'];
+                $totalRet         += $r['pbo_retirement'];
+                $totalTerm        += $r['pbo_termination'];
+                $totalDeath       += $r['pbo_death'];
+                foreach ($r['expected_payments_by_year'] as $year => $amount) {
+                    $totalPayByYear[$year] = ($totalPayByYear[$year] ?? 0) + $amount;
+                }
+                $headcount[$e->category] = ($headcount[$e->category] ?? 0) + 1;
+            }
+
+            // Interest cost = discount rate × OPENING PBO (the prior
+            // period's closing liability), per the IAS 19 unwind. This is
+            // a portfolio roll-forward figure the engine can't produce — a
+            // single employee has no cross-period "opening" — so we
+            // compute it here. On a first valuation there's no prior
+            // liability to unwind → 0. (Previously this summed the engine's
+            // closing-PBO × rate per employee, which overstated interest
+            // cost and NPBC and distorted the actuarial gain/loss.)
+            $discountRate       = (float) $assumptions->discount_rate;
+            $openingForInterest = $prior ? (float) $prior->pbo_closing : 0.0;
+            $totalInterestCost  = $openingForInterest * $discountRate;
+
+            // Second pass — persist per-employee lines, prorating the
+            // opening-based interest across employees by their share of
+            // the closing PBO so the detail rows tie back to the header.
+            foreach ($results as $row) {
+                $e = $row['e'];
+                $r = $row['r'];
+                $lineInterest = $totalPbo > 0
+                    ? $totalInterestCost * ($r['pbo'] / $totalPbo)
+                    : 0.0;
 
                 ValuationLine::create([
                     'valuation_id'                 => $valuation->id,
@@ -121,23 +159,12 @@ final class ValuationRunner
                     'monthly_salary_at_valuation'  => $r['monthly_salary_at_valuation'],
                     'pbo'                          => $r['pbo'],
                     'service_cost'                 => $r['service_cost'],
-                    'interest_cost'                => $r['interest_cost'],
+                    'interest_cost'                => round($lineInterest, 2),
                     'pbo_retirement'               => $r['pbo_retirement'],
                     'pbo_termination'              => $r['pbo_termination'],
                     'pbo_death'                    => $r['pbo_death'],
                     'expected_payments_by_year'    => $r['expected_payments_by_year'],
                 ]);
-
-                $totalPbo          += $r['pbo'];
-                $totalServiceCost  += $r['service_cost'];
-                $totalInterestCost += $r['interest_cost'];
-                $totalRet          += $r['pbo_retirement'];
-                $totalTerm         += $r['pbo_termination'];
-                $totalDeath        += $r['pbo_death'];
-                foreach ($r['expected_payments_by_year'] as $year => $amount) {
-                    $totalPayByYear[$year] = ($totalPayByYear[$year] ?? 0) + $amount;
-                }
-                $headcount[$e->category] = ($headcount[$e->category] ?? 0) + 1;
             }
 
             // 7. Compute headline numbers.
@@ -207,8 +234,12 @@ final class ValuationRunner
 
     /**
      * Macaulay-style duration approximation.
-     * Σ (t × CF_t) / PBO. Years past 30 are clipped to 30 to
-     * avoid duration runaways for very young populations.
+     * Σ (t × CF_t) / PBO. Years past 50 are clipped to 50 to avoid
+     * runaways from bad data, while no longer truncating the genuine
+     * maturity of a young workforce (a 25-year-old retiring at 60 is
+     * 35 years out — the old 30y clip understated their disclosed
+     * duration). 50y comfortably exceeds the longest real horizon
+     * (retirementAge − minimum hire age).
      */
     private function approximateDuration(array $payByYear, Carbon $valuationDate, float $pbo): float
     {
@@ -217,7 +248,7 @@ final class ValuationRunner
         $weightedSum = 0.0;
         $sum = 0.0;
         foreach ($payByYear as $year => $amount) {
-            $t = max(0, min(30, $year - $baseYear));
+            $t = max(0, min(50, $year - $baseYear));
             $weightedSum += $t * (float) $amount;
             $sum += (float) $amount;
         }

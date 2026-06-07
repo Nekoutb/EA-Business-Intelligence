@@ -57,6 +57,26 @@ final class CashFlow16WService
      * `treasury_min_buffer_xaf` setting. */
     private const DEFAULT_MIN_BUFFER_XAF = 8_000_000.0;
 
+    /**
+     * ── Payroll statutory split (planning rates) ───────────────────
+     * The resolved monthly payroll (P) is GROSS remuneration. Gross
+     * already CONTAINS the amounts later remitted as IRPP and the
+     * employee CNPS share — they are withheld from pay, not paid on top
+     * of it. So the cash actually leaving the business is:
+     *
+     *   • payday (25th)   : NET salary = P − IRPP − employee-CNPS
+     *   • 15th of M+1     : CNPS (employer + employee) + IRPP remittance
+     *
+     * Total = P + employer-CNPS. Booking the FULL gross on payday AND
+     * adding CNPS + IRPP again on the 15th double-counts the withheld
+     * portions (~1.45× the true personnel cash). These rates decompose
+     * P so the three lines (3.3 net / 3.4 CNPS / 3.5 IRPP) sum correctly
+     * instead of inflating. Override-able later via per-tenant settings.
+     */
+    private const PAYROLL_IRPP_RATE          = 0.15;  // IRPP withheld from gross
+    private const PAYROLL_CNPS_TOTAL_RATE    = 0.30;  // total CNPS remittance (employer + employee)
+    private const PAYROLL_CNPS_EMPLOYEE_RATE = 0.042; // employee CNPS share withheld from gross
+
     public function __construct(
         private readonly OdooClient $odoo,
     ) {}
@@ -152,7 +172,7 @@ final class CashFlow16WService
             // Band 3 (disbursements)
             $this->line(3, '3.1', 'AP payments · confirmed invoices',    'B', 'High',   array_sum($disApInv),      $disApInv,     -1, 'account.move in_invoice (DPO overlay)'),
             $this->line(3, '3.2', 'AP payments · PO-driven',             'C', 'Medium', array_sum($disApPo),       $disApPo,      -1, 'purchase.order date_planned + terms'),
-            $this->line(3, '3.3', 'Payroll · gross salaries',            'C', 'High',   array_sum($disPayroll),    $disPayroll,   -1, 'hr.payslip projected · 25th of month'),
+            $this->line(3, '3.3', 'Payroll · net salaries (take-home)',  'C', 'High',   array_sum($disPayroll),    $disPayroll,   -1, 'gross − IRPP − employee CNPS · 25th (statutory remittances on 3.4/3.5)'),
             $this->line(3, '3.4', 'CNPS contributions',                  'C', 'High',   array_sum($disCnps),       $disCnps,      -1, 'payslip contribution lines · 15th M+1'),
             $this->line(3, '3.5', 'IRPP withheld remittance',            'C', 'High',   array_sum($disIrpp),       $disIrpp,      -1, 'payslip IRPP lines · 15th M+1'),
             $this->line(3, '3.6', 'TVA collectée nette',                 'C', 'High',   array_sum($disVat),        $disVat,       -1, 'account.tax movements · 15th M+1'),
@@ -519,6 +539,14 @@ final class CashFlow16WService
         $monthlyPayroll = $this->resolveMonthlyPayroll($cutOff);
         if ($monthlyPayroll <= 0) return $this->zeroBuckets();
 
+        // Book NET take-home pay on payday, NOT gross: the IRPP and the
+        // employee CNPS share are withheld from gross and leave the
+        // business later (15th of M+1) via the CNPS (3.4) and IRPP (3.5)
+        // remittance lines. Booking gross here AND those lines there
+        // would double-count the withheld portions.
+        $netRate = 1.0 - self::PAYROLL_IRPP_RATE - self::PAYROLL_CNPS_EMPLOYEE_RATE;
+        $netPay  = $monthlyPayroll * $netRate;
+
         $buckets = $this->zeroBuckets();
         foreach ($weeks as $w => $weekRow) {
             $start = Carbon::parse($weekRow['start']);
@@ -526,7 +554,7 @@ final class CashFlow16WService
             for ($monthOffset = -1; $monthOffset <= 4; $monthOffset++) {
                 $payDate = $cutOff->copy()->startOfMonth()->addMonthsNoOverflow($monthOffset)->day(25);
                 if ($payDate->between($start, $end) && $payDate->gte($cutOff)) {
-                    $buckets[$w] += $monthlyPayroll;
+                    $buckets[$w] += $netPay;
                     break;
                 }
             }
@@ -536,19 +564,24 @@ final class CashFlow16WService
 
     private function bucketCnps(Carbon $cutOff, array $weeks): array
     {
-        // CNPS contribution = ~30% of monthly payroll (16.2% employer
+        // CNPS contribution = ~30% of GROSS payroll (16.2% employer
         // + 4.2% employee + 1.75% accidents + 7% family allowances on
-        // capped 750k base). Remitted 15th of M+1.
+        // capped 750k base). Remitted 15th of M+1. This is the FULL
+        // remittance (employer + the employee share already withheld in
+        // bucketPayroll's net-pay calc), so it is correct to schedule the
+        // whole amount here without double-counting net pay.
         $monthlyPayroll = $this->resolveMonthlyPayroll($cutOff);
-        $monthlyCnps = $monthlyPayroll * 0.30;
+        $monthlyCnps = $monthlyPayroll * self::PAYROLL_CNPS_TOTAL_RATE;
         return $this->scheduleMonthly($cutOff, $weeks, $monthlyCnps, dayOfMonth: 15, offsetMonths: 1);
     }
 
     private function bucketIrpp(Carbon $cutOff, array $weeks): array
     {
-        // IRPP withheld ~ 15% of monthly net payroll. Remitted 15th of M+1.
+        // IRPP withheld from gross, remitted 15th of M+1. Withheld (not
+        // paid on top), so it is carved out of net pay in bucketPayroll
+        // and reappears here as the remittance — no double count.
         $monthlyPayroll = $this->resolveMonthlyPayroll($cutOff);
-        $monthlyIrpp = $monthlyPayroll * 0.15;
+        $monthlyIrpp = $monthlyPayroll * self::PAYROLL_IRPP_RATE;
         return $this->scheduleMonthly($cutOff, $weeks, $monthlyIrpp, dayOfMonth: 15, offsetMonths: 1);
     }
 
