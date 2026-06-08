@@ -127,11 +127,15 @@
             @endif
 
             @if (session('flash'))
-              <div class="mb-4 text-sm rounded-lg border px-4 py-2.5
-                {{ session('flash.type') === 'success'
-                    ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
-                    : 'bg-rose-50 border-rose-200 text-rose-800' }}">
-                  {{ session('flash.msg') }}
+              @php $admFlashOk = session('flash.type') === 'success'; @endphp
+              <div class="adm-flash mb-4 text-sm rounded-lg border px-4 py-2.5 flex items-start gap-2
+                {{ $admFlashOk ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-rose-50 border-rose-200 text-rose-800' }}"
+                   role="status" aria-live="polite" data-autohide="{{ $admFlashOk ? '6000' : '0' }}">
+                  <svg class="w-4 h-4 shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+                      @if ($admFlashOk) <path d="M20 6 9 17l-5-5"/> @else <circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/> @endif
+                  </svg>
+                  <span class="flex-1 min-w-0">{{ session('flash.msg') }}</span>
+                  <button type="button" class="shrink-0 opacity-60 hover:opacity-100 font-bold text-base leading-none" aria-label="Dismiss message" onclick="this.closest('.adm-flash').remove()">&times;</button>
               </div>
             @endif
 
@@ -196,6 +200,15 @@
     });
     window.addEventListener('pageshow', function (e) {
       if (e.persisted && bar) { clearInterval(timer); bar.classList.remove('is-active'); bar.style.width = '0'; }
+    });
+    // Auto-hide success flash messages (errors persist).
+    document.querySelectorAll('.adm-flash[data-autohide]').forEach(function (el) {
+      var ms = parseInt(el.getAttribute('data-autohide'), 10);
+      if (!ms || ms <= 0) return;
+      setTimeout(function () {
+        el.style.transition = 'opacity .3s ease'; el.style.opacity = '0';
+        setTimeout(function () { if (el.parentNode) el.parentNode.removeChild(el); }, 320);
+      }, ms);
     });
   })();
 </script>
