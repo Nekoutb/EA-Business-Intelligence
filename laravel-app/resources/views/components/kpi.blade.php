@@ -3,6 +3,7 @@
     'value'    => '—',
     'delta'    => null,     // legacy badge (unused now but kept for compatibility)
     'sub'      => null,     // optional subtext (e.g. previous value)
+    'hint'     => null,     // optional plain-language tooltip for jargon (DSO, DPO, …)
     'color'    => 'brand',  // brand|sage|warm|coral|slate
     'icon'     => null,     // optional SVG <path d="…"/> string
     'vsPy'     => null,
@@ -52,7 +53,13 @@
     <div class="flex-1 min-w-0 p-4">
         <div class="flex items-start justify-between gap-2">
             <div class="min-w-0 flex-1">
-                <div class="text-[11px] uppercase tracking-wider text-[#8a8578] font-medium truncate">{{ $title }}</div>
+                <div class="text-[11px] uppercase tracking-wider text-[#8a8578] font-medium flex items-center gap-1 min-w-0">
+                    <span class="truncate">{{ $title }}</span>
+                    @if ($hint)
+                      <span class="shrink-0 w-3.5 h-3.5 rounded-full bg-[#e8e4de] text-[#6b6457] text-[9px] font-bold leading-none flex items-center justify-center cursor-help"
+                            title="{{ $hint }}" aria-label="{{ $title }} — {{ $hint }}" role="img">?</span>
+                    @endif
+                </div>
                 <div class="text-xl font-bold text-[#2d3748] mt-1 tabular-nums truncate">{{ $value }}</div>
                 @if ($sub)
                   <div class="text-[11px] text-[#a09d95] mt-0.5 truncate">{{ $sub }}</div>
