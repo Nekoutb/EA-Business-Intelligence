@@ -426,6 +426,26 @@
         * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
         @page { margin: 14mm; }
       }
+
+      /* ── Flash messages — dismissible, with an icon; success auto-hides,
+         errors persist so the user can read/act on them. ── */
+      .ea-flash {
+        display: flex; align-items: flex-start; gap: 8px;
+        margin-bottom: 12px; padding: 9px 12px;
+        border-radius: var(--r); border: 1px solid; font-size: 12px;
+        flex-shrink: 0; animation: eaFlashIn .2s ease-out;
+      }
+      .ea-flash--success { background: #ecfdf5; border-color: #a7f3d0; color: #065f46; }
+      .ea-flash--error   { background: #fef2f2; border-color: #fecaca; color: #991b1b; }
+      .ea-flash__i { width: 15px; height: 15px; flex-shrink: 0; margin-top: 1px; }
+      .ea-flash__m { flex: 1; min-width: 0; line-height: 1.45; }
+      .ea-flash__x {
+        border: 0; background: transparent; color: inherit; cursor: pointer;
+        font: 700 16px/1 var(--font); opacity: .55; padding: 0 2px; flex-shrink: 0;
+      }
+      .ea-flash__x:hover { opacity: 1; }
+      .ea-flash.is-leaving { opacity: 0; transition: opacity .3s ease; }
+      @keyframes eaFlashIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
     </style>
 
     @stack('styles')
@@ -667,11 +687,20 @@
         @endif
 
         @if (session('flash'))
-          <div style="margin-bottom: 12px; padding: 8px 12px; border-radius: var(--r); border: 1px solid; font-size: 12px; flex-shrink: 0;
-                {{ session('flash.type') === 'success'
-                    ? 'background:#ecfdf5; border-color:#a7f3d0; color:#065f46;'
-                    : 'background:#fef2f2; border-color:#fecaca; color:#991b1b;' }}">
-              {{ session('flash.msg') }}
+          @php $eaFlashOk = session('flash.type') === 'success'; @endphp
+          <div class="ea-flash ea-flash--{{ $eaFlashOk ? 'success' : 'error' }}"
+               role="status" aria-live="polite"
+               data-autohide="{{ $eaFlashOk ? '6000' : '0' }}">
+              <svg class="ea-flash__i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+                  @if ($eaFlashOk)
+                    <path d="M20 6 9 17l-5-5"/>
+                  @else
+                    <circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/>
+                  @endif
+              </svg>
+              <span class="ea-flash__m">{{ session('flash.msg') }}</span>
+              <button type="button" class="ea-flash__x" aria-label="Dismiss message"
+                      onclick="this.closest('.ea-flash').remove()">&times;</button>
           </div>
         @endif
 
@@ -806,6 +835,16 @@
       if (main) { try { main.scrollTo({ top: 0, behavior: 'smooth' }); } catch (_) { main.scrollTop = 0; } }
     });
     onScroll();
+
+    // ---- Auto-hide success flash messages (errors persist) -------
+    document.querySelectorAll('.ea-flash[data-autohide]').forEach(function (el) {
+      var ms = parseInt(el.getAttribute('data-autohide'), 10);
+      if (!ms || ms <= 0) return;
+      setTimeout(function () {
+        el.classList.add('is-leaving');
+        setTimeout(function () { if (el.parentNode) el.parentNode.removeChild(el); }, 320);
+      }, ms);
+    });
   })();
 </script>
 
