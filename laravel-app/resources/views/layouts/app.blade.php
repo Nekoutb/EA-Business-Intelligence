@@ -399,6 +399,33 @@
       .ea-tablewrap { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
       .ea-tablewrap::-webkit-scrollbar { height: 7px; }
       .ea-tablewrap::-webkit-scrollbar-thumb { background: rgba(148,163,184,.4); border-radius: 4px; }
+
+      /* ── Print: strip the app chrome so ANY page prints / saves-to-PDF
+         cleanly. Financial users routinely Ctrl-P a dashboard or ledger;
+         without this the fixed sidebar + buttons print and the content is
+         clipped to one viewport. Dedicated print views (tax return,
+         actuarial report) ship their own bare layouts and are untouched. */
+      @media print {
+        .ea-sb, .ea-burger, .ea-sb__backdrop, .ea-progress, .ea-totop,
+        .ea-skip, .ea-refresh-btn, .ea-topbar__meta { display: none !important; }
+
+        html, body { height: auto !important; overflow: visible !important; background: #fff !important; }
+        body { font-size: 11px; }
+        .ea-app { display: block !important; height: auto !important; overflow: visible !important; }
+        .ea-main, .ea-main.is-fit {
+          overflow: visible !important; height: auto !important;
+          padding: 0 !important; display: block !important;
+        }
+
+        /* Keep cards + KPIs whole across page breaks; repeat table headers. */
+        .ea-card, .kpi-card, .section-card { break-inside: avoid; }
+        thead { display: table-header-group; }
+        tr, img { break-inside: avoid; }
+
+        a { text-decoration: none !important; color: inherit !important; }
+        * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+        @page { margin: 14mm; }
+      }
     </style>
 
     @stack('styles')

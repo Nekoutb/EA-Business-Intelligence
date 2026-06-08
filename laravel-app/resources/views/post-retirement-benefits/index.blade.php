@@ -54,10 +54,30 @@
             $statusColor = match($kpi['status']) {
                 'green' => 'sage', 'amber' => 'warm', 'red' => 'coral', default => 'slate',
             };
+            // Plain-language tooltips for actuarial jargon — matched loosely
+            // on the label so it works regardless of exact wording, and
+            // falls back to no hint if nothing matches.
+            $lbl = strtolower($kpi['label'] ?? '');
+            $kpiHint = match (true) {
+                str_contains($lbl, 'pbo') || str_contains($lbl, 'obligation')
+                    => 'Projected Benefit Obligation — the value today of the end-of-service indemnities the company is expected to owe its current staff.',
+                str_contains($lbl, 'funded') || str_contains($lbl, 'funding')
+                    => 'Funded status — assets set aside for the plan minus the obligation. Negative means the liability is unfunded.',
+                str_contains($lbl, 'service cost')
+                    => 'Service cost — the additional obligation employees earn from one more year of service.',
+                str_contains($lbl, 'interest')
+                    => 'Interest cost — the rise in the obligation as one year passes and the discount unwinds.',
+                str_contains($lbl, 'duration')
+                    => 'Duration — the average number of years until benefits fall due. Higher means more sensitive to the discount rate.',
+                str_contains($lbl, 'employee') || str_contains($lbl, 'headcount')
+                    => 'Number of active employees included in this valuation.',
+                default => null,
+            };
         @endphp
         <x-kpi :title="$kpi['label']"
                :value="$kpi['value_fmt']"
                :sub="$kpi['subtitle'] ?? ''"
+               :hint="$kpiHint"
                :color="$statusColor" />
     @endforeach
 </div>

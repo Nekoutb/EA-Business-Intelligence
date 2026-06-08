@@ -8,10 +8,14 @@
     @elseif ($data)
         @php $ccy = $data['currency'] ?? 'USD'; @endphp
         <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4 mb-6">
-            <x-kpi title="Total AP"  :value="ea_money_short((float)($data['total_ap'] ?? 0), $ccy)" color="indigo"/>
-            <x-kpi title="Overdue AP" :value="ea_money_short((float)($data['overdue_ap'] ?? 0), $ccy)" color="rose"/>
-            <x-kpi title="DPO"        :value="number_format((float)($data['dpo'] ?? 0), 0).' d'" color="amber"/>
-            <x-kpi title="Top Vendor %" :value="number_format((float)($data['top5_pct'] ?? 0), 1).'%'" color="slate"/>
+            <x-kpi title="Total AP"  :value="ea_money_short((float)($data['total_ap'] ?? 0), $ccy)" color="indigo"
+                   hint="Accounts Payable — the total you currently owe your suppliers."/>
+            <x-kpi title="Overdue AP" :value="ea_money_short((float)($data['overdue_ap'] ?? 0), $ccy)" color="rose"
+                   hint="Supplier bills that are already past their due date."/>
+            <x-kpi title="DPO"        :value="number_format((float)($data['dpo'] ?? 0), 0).' d'" color="amber"
+                   hint="Days Payable Outstanding — the average number of days you take to pay suppliers. Higher means you hold onto cash longer."/>
+            <x-kpi title="Top Vendor %" :value="number_format((float)($data['top5_pct'] ?? 0), 1).'%'" color="slate"
+                   hint="Share of total payables owed to your single largest supplier — a supplier-concentration risk gauge."/>
         </div>
 
         @if (!empty($data['top_partners']))
