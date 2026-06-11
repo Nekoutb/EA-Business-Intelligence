@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Odoo\OdooFactory;
 use App\Services\InventoryService;
+use App\Services\StockOperationsService;
 use Illuminate\Http\Request;
 
 class InventoryController extends Controller
@@ -22,14 +23,30 @@ class InventoryController extends Controller
                 return $svc->analyze($today);
             });
         } catch (\Throwable $e) {
-            $error = $e->getMessage();
+            $error = ea_safe_error($e, 'inventory_gl', 'Could not load inventory data from Odoo. Check the connection in Settings.');
+        }
+
+        // Stock operations (warehouse-level view) — cached and error-isolated
+        // separately so the GL boxes above still render if the stock models
+        // are unavailable or the section fails.
+        $stock      = null;
+        $stockError = null;
+        try {
+            $stock = ea_cached('inventory_stock_ops', function () use ($today) {
+                $svc = new StockOperationsService(OdooFactory::fromConfig());
+                return $svc->analyze($today);
+            });
+        } catch (\Throwable $e) {
+            $stockError = ea_safe_error($e, 'inventory_stock_ops', 'Stock-level data could not be loaded from Odoo right now.');
         }
 
         return view('inventory', [
-            'data'   => $data,
-            'error'  => $error,
-            'active' => 'inventory',
-            'aiPage' => 'inventory',
+            'data'       => $data,
+            'error'      => $error,
+            'stock'      => $stock,
+            'stockError' => $stockError,
+            'active'     => 'inventory',
+            'aiPage'     => 'inventory',
         ]);
     }
 }
