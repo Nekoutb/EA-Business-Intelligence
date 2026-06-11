@@ -208,6 +208,10 @@ Route::prefix('admin')->group(function () {
             [AdminBusinessInsightsController::class, 'inventory'])->whereNumber('tenantId');
         Route::get ('/business-insights/{tenantId}/reports/revenue',
             [AdminBusinessInsightsController::class, 'revenueReport'])->whereNumber('tenantId');
+        Route::get ('/business-insights/{tenantId}/reports/stock-value',
+            [AdminBusinessInsightsController::class, 'stockValueReport'])->whereNumber('tenantId');
+        Route::get ('/business-insights/{tenantId}/reports/slow-movers',
+            [AdminBusinessInsightsController::class, 'slowMoversReport'])->whereNumber('tenantId');
         Route::get ('/business-insights/{tenantId}',       [AdminBusinessInsightsController::class, 'show'])->whereNumber('tenantId');
         Route::post('/business-insights/{tenantId}/refresh',[AdminBusinessInsightsController::class, 'refresh'])->whereNumber('tenantId');
 

@@ -341,19 +341,43 @@ final class DataInventoryService
     private function auditInventory(): array
     {
         $products = $this->safeCount('product.product', [['active', '=', true]]);
-        $stockable = $this->safeCount('product.product', [['active', '=', true], ['type', '=', 'product']]);
+
+        // Stockable count — Odoo 18 renamed the flag: is_storable=true
+        // replaces type='product' (the 'product' value was removed from
+        // the type selection). Try the new field first, fall back to the
+        // legacy domain. safeCount() can't be used for the first probe —
+        // it would swallow the "field does not exist" error into a silent
+        // 0 and we'd never try the fallback.
+        try {
+            $stockable = (int) $this->odoo->searchCount('product.product', [['active', '=', true], ['is_storable', '=', true]]);
+        } catch (\Throwable $e) {
+            $stockable = $this->safeCount('product.product', [['active', '=', true], ['type', '=', 'product']]);
+        }
+
+        // Probe actual stock-level data: products alone don't prove the
+        // warehouse is used. quants > 0 is what makes the stock_value /
+        // slow_movers reports meaningful.
+        $quants = $this->safeCount('stock.quant', [['quantity', '!=', 0]]);
+
         $sources = [];
         if ($products > 0)  $sources[] = "product.product active: " . number_format($products);
         if ($stockable > 0) $sources[] = "stockable: " . number_format($stockable);
+        if ($quants > 0)    $sources[] = "stock.quant non-zero: " . number_format($quants);
+
         $status = $this->classify($stockable, 0);
         $reports = $status === 'empty' || $status === 'unavailable' ? [] : [
             ['key' => 'stock_value',     'label' => 'Stock value snapshot'],
             ['key' => 'slow_movers',     'label' => 'Slow-moving stock (no sale 90d+)'],
         ];
+        $notes = "{$stockable} stockable product(s)";
+        $notes .= $quants > 0
+            ? " · warehouse in use ({$quants} stock line(s))"
+            : ' · no stock quantities — Inventory module may not be in use';
+
         return [
             'status' => $status, 'record_count' => $stockable,
             'first_date' => null, 'last_date' => null, 'months_span' => 0,
-            'sources' => $sources, 'notes' => "{$stockable} stockable product(s)",
+            'sources' => $sources, 'notes' => $notes,
             'reports' => $reports,
         ];
     }

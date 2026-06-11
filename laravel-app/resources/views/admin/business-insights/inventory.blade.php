@@ -124,8 +124,17 @@
                                     @foreach ($d['reports'] as $r)
                                         <div class="flex items-center gap-2 text-[11px]">
                                             <span class="text-slate-700">• {{ $r['label'] }}</span>
-                                            @if ($d['key'] === 'revenue' && $r['key'] === 'monthly_trend')
-                                                <a href="/admin/business-insights/{{ $tenant->id }}/reports/revenue"
+                                            @php
+                                                // Report keys with a live generator. Maps domain+key → URL.
+                                                $reportUrl = match (true) {
+                                                    $d['key'] === 'revenue'   && $r['key'] === 'monthly_trend' => "/admin/business-insights/{$tenant->id}/reports/revenue",
+                                                    $d['key'] === 'inventory' && $r['key'] === 'stock_value'   => "/admin/business-insights/{$tenant->id}/reports/stock-value",
+                                                    $d['key'] === 'inventory' && $r['key'] === 'slow_movers'   => "/admin/business-insights/{$tenant->id}/reports/slow-movers",
+                                                    default => null,
+                                                };
+                                            @endphp
+                                            @if ($reportUrl)
+                                                <a href="{{ $reportUrl }}"
                                                    class="text-[10px] font-semibold text-white bg-rose-600 hover:bg-rose-700 rounded px-2 py-0.5 ml-auto">
                                                     Generate →
                                                 </a>

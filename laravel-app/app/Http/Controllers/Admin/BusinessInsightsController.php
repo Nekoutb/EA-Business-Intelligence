@@ -9,6 +9,7 @@ use App\Odoo\OdooFactory;
 use App\Services\BusinessInsightsService;
 use App\Services\DataInventoryService;
 use App\Services\RevenueAnalysisService;
+use App\Services\StockOperationsService;
 use App\Tenancy\TenantContext;
 use Illuminate\Http\Request;
 
@@ -149,6 +150,64 @@ class BusinessInsightsController extends Controller
             'year'   => $year,
             'active' => 'business_insights',
         ]);
+    }
+
+    /**
+     * Stock value snapshot — the per-SKU stock ledger the Data Inventory
+     * page has advertised since PR #170. On-hand / reserved / incoming
+     * per product, valued at cost (valuation layers when automated
+     * valuation is on, quant × standard_price otherwise).
+     */
+    public function stockValueReport(Request $request, int $tenantId)
+    {
+        [$tenant, $stock, $error] = $this->runStockOps($tenantId);
+        return view('admin.business-insights.stock-value-report', [
+            'tenant' => $tenant,
+            'stock'  => $stock,
+            'error'  => $error,
+            'active' => 'business_insights',
+        ]);
+    }
+
+    /**
+     * Slow movers — stock with no warehouse movement for 90+ days,
+     * aged into buckets with an indicative OHADA 39X provision figure.
+     */
+    public function slowMoversReport(Request $request, int $tenantId)
+    {
+        [$tenant, $stock, $error] = $this->runStockOps($tenantId);
+        return view('admin.business-insights.slow-movers-report', [
+            'tenant' => $tenant,
+            'stock'  => $stock,
+            'error'  => $error,
+            'active' => 'business_insights',
+        ]);
+    }
+
+    /**
+     * Shared plumbing for the two stock reports: bind tenant context,
+     * run StockOperationsService once per hour per tenant (both reports
+     * read the same cached analysis).
+     *
+     * @return array{0: Tenant, 1: ?array, 2: ?string}
+     */
+    private function runStockOps(int $tenantId): array
+    {
+        $tenant = Tenant::real()->where('id', $tenantId)->firstOrFail();
+        app(TenantContext::class)->set($tenant);
+        $stock = null;
+        $error = null;
+        try {
+            $client = OdooFactory::fromConfig();
+            $service = new StockOperationsService($client);
+            $stock = ea_cached(
+                "stock_ops_{$tenant->id}_" . now()->format('Y-m-d_H'),
+                fn () => $service->analyze()
+            );
+        } catch (\Throwable $e) {
+            $error = ea_safe_error($e, 'bi_stock_report', 'Could not read stock data. Check the tenant\'s Odoo connection in Settings.');
+        }
+        return [$tenant, $stock, $error];
     }
 
     public function runAll(Request $request, BusinessInsightsService $svc)
