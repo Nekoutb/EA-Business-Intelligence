@@ -497,7 +497,7 @@
                         <span class="text-[10px] uppercase tracking-wider text-[#a09d95] font-medium ml-1">{{ $recon['granularity'] === 'month' ? 'Monthly' : 'Weekly' }} · FCFA HT</span>
                     </h4>
                     <div class="flex items-center gap-3 text-[10.5px] text-[#7c7466]">
-                        <span class="inline-flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-sm bg-sage-500"></span>Expected</span>
+                        <span class="inline-flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-sm bg-sage-500"></span>Expected (scanned)</span>
                         <span class="inline-flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-sm bg-brand-500"></span>Billed</span>
                         <span class="inline-flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-sm bg-warm-500"></span>Collected</span>
                     </div>
@@ -546,7 +546,9 @@
                     svg += `<line x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}" stroke="#e8e4de" stroke-width="1" stroke-dasharray="2,3"/>`;
                     svg += `<text x="${padL - 6}" y="${y + 3}" text-anchor="end" font-size="9" fill="#8a8578">${fmtAxis(v)}</text>`;
                 }
-                // Bars
+                // Bars — each carries its bucket index + series key so the
+                // hover tooltip below can show the full reconciliation for
+                // that bucket (scanned → billed), not just the bar's own value.
                 labels.forEach((label, i) => {
                     const xBase = padL + i * groupW + 4;
                     series.forEach((s, j) => {
@@ -554,7 +556,7 @@
                         const h = (v / niceMax) * innerH;
                         const x = xBase + j * (barW + 1);
                         const y = padT + innerH - h;
-                        svg += `<rect x="${x}" y="${y}" width="${barW}" height="${h}" fill="${s.color}" rx="1"><title>${s.label}: ${fmtFull(v)} XAF (${label})</title></rect>`;
+                        svg += `<rect x="${x}" y="${y}" width="${barW}" height="${h}" fill="${s.color}" rx="1" data-i="${i}" data-key="${s.key}" style="cursor:pointer"/>`;
                     });
                     // X-axis label
                     const cx = padL + (i + 0.5) * groupW;
@@ -565,6 +567,71 @@
                 svg += `<line x1="${padL}" y1="${padT + innerH}" x2="${W - padR}" y2="${padT + innerH}" stroke="#cbc7be" stroke-width="1"/>`;
                 svg += '</svg>';
                 root.innerHTML = svg;
+
+                // ── Hover tooltip ────────────────────────────────────────
+                // Replaces the native <title> (slow to appear, single line).
+                // Hovering the SCANNED (Expected) bar reveals the scanned
+                // revenue alongside the billed figure for the same bucket —
+                // the scanned → billed reconciliation with realisation %
+                // and gap. Billed/Collected bars get the matching view.
+                root.style.position = 'relative';
+                const tipEl = document.createElement('div');
+                tipEl.style.cssText =
+                    'position:absolute;display:none;pointer-events:none;z-index:30;' +
+                    'background:#1e3d44;color:#fff;border-radius:6px;padding:8px 10px;' +
+                    'font-size:11px;line-height:1.5;box-shadow:0 4px 14px rgba(30,61,68,.3);' +
+                    'max-width:240px;white-space:nowrap;';
+                root.appendChild(tipEl);
+
+                const pct = (num, den) => den > 0 ? (100 * num / den).toFixed(1) + '%' : '—';
+                const row = (label, val, strong) =>
+                    `<div style="display:flex;justify-content:space-between;gap:14px;${strong ? 'font-weight:700;' : ''}">` +
+                    `<span style="opacity:.8">${label}</span><span style="font-variant-numeric:tabular-nums">${val}</span></div>`;
+
+                function tipHtml(i, key) {
+                    const scanned   = series[0].values[i] || 0;
+                    const billed    = series[1].values[i] || 0;
+                    const collected = series[2].values[i] || 0;
+                    const gap = scanned - billed;
+                    const gapStr = (gap >= 0 ? '−' : '+') + fmtFull(Math.abs(gap)) + ' XAF';
+                    const head = h => `<div style="font-weight:700;margin-bottom:4px;border-bottom:1px solid rgba(255,255,255,.25);padding-bottom:3px;">${h} · ${labels[i]}</div>`;
+                    if (key === 'expected') {
+                        return head('Scanned revenue')
+                            + row('Scanned (expected)', fmtFull(scanned) + ' XAF', true)
+                            + row('Billed', fmtFull(billed) + ' XAF')
+                            + row('Scanned → Billed', pct(billed, scanned), true)
+                            + row('Billing gap', gapStr);
+                    }
+                    if (key === 'billed') {
+                        return head('Billed revenue')
+                            + row('Billed', fmtFull(billed) + ' XAF', true)
+                            + row('Scanned (expected)', fmtFull(scanned) + ' XAF')
+                            + row('Scanned → Billed', pct(billed, scanned), true)
+                            + row('Billing gap', gapStr);
+                    }
+                    return head('Collected revenue')
+                        + row('Collected', fmtFull(collected) + ' XAF', true)
+                        + row('Billed', fmtFull(billed) + ' XAF')
+                        + row('Billed → Collected', pct(collected, billed), true);
+                }
+
+                root.addEventListener('mousemove', function (e) {
+                    const bar = e.target.closest ? e.target.closest('rect[data-key]') : null;
+                    if (!bar) { tipEl.style.display = 'none'; return; }
+                    tipEl.innerHTML = tipHtml(parseInt(bar.dataset.i, 10), bar.dataset.key);
+                    tipEl.style.display = 'block';
+                    const rootBox = root.getBoundingClientRect();
+                    let tx = e.clientX - rootBox.left + 14;
+                    let ty = e.clientY - rootBox.top - 10;
+                    // Keep the tooltip inside the container.
+                    const tw = tipEl.offsetWidth, th = tipEl.offsetHeight;
+                    if (tx + tw > rootBox.width - 4) tx = e.clientX - rootBox.left - tw - 14;
+                    if (ty + th > rootBox.height - 4) ty = rootBox.height - th - 4;
+                    if (ty < 4) ty = 4;
+                    tipEl.style.left = tx + 'px';
+                    tipEl.style.top  = ty + 'px';
+                });
+                root.addEventListener('mouseleave', function () { tipEl.style.display = 'none'; });
             })();
             </script>
           @endif
