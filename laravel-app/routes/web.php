@@ -37,6 +37,7 @@ use App\Http\Controllers\Admin\AdminAuthController;
 use App\Http\Controllers\Admin\AdminDashboardController;
 use App\Http\Controllers\Admin\BusinessInsightsController as AdminBusinessInsightsController;
 use App\Http\Controllers\Admin\MailDiagnosticController as AdminMailDiagnosticController;
+use App\Http\Controllers\Admin\MaintenanceController as AdminMaintenanceController;
 use App\Http\Controllers\Admin\UsersController as AdminUsersController;
 use App\Http\Controllers\Admin\AiSettingsController as AdminAiSettingsController;
 use App\Http\Controllers\Admin\IndustryController as AdminIndustryController;
@@ -196,6 +197,12 @@ Route::prefix('admin')->group(function () {
         // a working welcome-email flow on /admin/users/create.
         Route::get ('/mail-diagnostic', [AdminMailDiagnosticController::class, 'index']);
         Route::post('/mail-diagnostic', [AdminMailDiagnosticController::class, 'send']);
+
+        // Deploy helper — shows the deployed commit and clears every
+        // Laravel cache from the browser, so a hPanel Git pull never
+        // needs an SSH session to take effect.
+        Route::get ('/maintenance',              [AdminMaintenanceController::class, 'index']);
+        Route::post('/maintenance/clear-caches', [AdminMaintenanceController::class, 'clearCaches']);
 
         // Daily Claude-generated business insights (super-admin only —
         // already gated by admin.auth above).
