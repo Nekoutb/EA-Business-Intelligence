@@ -109,6 +109,15 @@ class PLForecastController extends Controller
      */
     public function saveCommentary(Request $request)
     {
+        // The Forecast Assumptions editor posts here too: its dedicated
+        // /pl-forecast/assumptions route 404s behind a stale route cache on
+        // this host, so it reuses this already-cached route and we delegate
+        // on the intent marker. Must run before this method's own validation
+        // (which requires a mtd/ytd `view` the assumptions form doesn't send).
+        if ($request->input('_intent') === 'assumptions' || $request->has('revenue_method')) {
+            return $this->saveAssumptions($request);
+        }
+
         $ctx = app(TenantContext::class);
         if (!$ctx->has()) abort(404);
         $tenantId = $ctx->tenant()->id;

@@ -119,8 +119,12 @@
                     Assumptions are temporarily unavailable — the forecast is using the statistical fallback (same-month-last-year). Reload once the Odoo connection settles.
                 </div>
             @else
-            <form method="POST" action="{{ tenant_url('/pl-forecast/assumptions') }}" class="border-t border-[#f1ede5] px-4 py-4">
+            {{-- Posts to the already-live /pl-forecast/commentary route (the dedicated
+                 /assumptions route 404s behind a stale route cache on this host); the
+                 controller delegates on the _intent marker below. --}}
+            <form method="POST" action="{{ tenant_url('/pl-forecast/commentary') }}" class="border-t border-[#f1ede5] px-4 py-4">
                 @csrf
+                <input type="hidden" name="_intent" value="assumptions">
                 <input type="hidden" name="year" value="{{ $data['year'] }}">
                 <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 text-[12px]">
 
