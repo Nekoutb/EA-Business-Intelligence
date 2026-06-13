@@ -1060,17 +1060,22 @@
 
   function renderTotal() {
     if (!total) return;
-    const trackedKeys = productKeys.filter(k => !D[k].pending);
-
     // Total actual = class 70 monthly (= Dashboard HT)
     const sumActual = months.map((_, idx) => {
       const m = idx + 1;
       if (m > TODAY_M) return null;
       return CLASS70[m] ?? CLASS70[String(m)] ?? 0;
     });
+    // Budget line = the FULL monthly plan across EVERY budgeted product
+    // (tracked vehicles/wood + pending Other Cargo), so it reconciles to
+    // the headline strip, the footer total (annual ÷ 12 × N) and the
+    // tenant's planning document — not just the tracked-with-actuals
+    // subset, which understated the line. Products with no budget add 0.
     const sumBudget = months.map((_, m) => {
       let sum = 0;
-      trackedKeys.forEach(key => { sum += D[key].budget_qty[m] * D[key].budget_price; });
+      productKeys.forEach(key => {
+        sum += (D[key].budget_qty[m] || 0) * (D[key].budget_price || 0);
+      });
       return sum;
     });
     const sumPY = months.map((_, m) => 0);  // no PY Year 1
@@ -1101,11 +1106,9 @@
       series,
     }, true);
 
-    // Headline reading uses the FULL budget (tracked + pending) and
-    // the class-70 GL grand total — same numbers the headline strip
-    // and the footer total row show. The chart line itself still
-    // visualises the per-month tracked budget (sumBudget) since pending
-    // products have null per-month buckets in the per-product series.
+    // Headline reading, the chart's Budget line and the footer total row
+    // now ALL use the full budget (tracked + pending) against the class-70
+    // GL grand total — one consistent "did we earn what we planned?" view.
     const periodAct = sumActual.slice(START_M - 1, END_M).reduce((a,v) => a + (v||0), 0);
     const gap = periodAct - ALL_BUDGET_REV;
     const pct = ALL_BUDGET_REV > 0 ? 100 * gap / ALL_BUDGET_REV : 0;
