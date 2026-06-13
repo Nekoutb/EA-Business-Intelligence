@@ -943,17 +943,25 @@
     const arOutstand = Math.max(0, billed   - collected); // Recon 2 gap
 
     if (expected > 0 || billed > 0) {
+      // Conversion context — framed against scanned (the operational baseline).
+      const scanToBill = expected > 0 ? (100 * billed    / expected) : null;
+      const scanToCash = expected > 0 ? (100 * collected / expected) : null;
+      const billToCash = billed   > 0 ? (100 * collected / billed)   : null;
+      const pct = v => (v == null ? '—' : v.toFixed(1) + '%');
+      const dim = '#6b7280';
+
       echarts.init(sankeyEl).setOption({
         textStyle: { fontFamily: FF, color: '#374151' },
         series: [{
           type: 'sankey',
           left: 6, right: 92, top: 4, bottom: 4,
+          // Node values feed the tooltip and let hover highlight the path.
           data: [
-            { name: 'Scanned',     itemStyle: { color: t.warnLt } },
-            { name: 'Billed',      itemStyle: { color: t.pri } },
-            { name: 'Leakage',     itemStyle: { color: t.warn, opacity: 0.85 } },
-            { name: 'Collected',   itemStyle: { color: t.pos } },
-            { name: 'Receivables', itemStyle: { color: t.neg } },
+            { name: 'Scanned',     value: expected,   itemStyle: { color: t.warnLt } },
+            { name: 'Billed',      value: billed,     itemStyle: { color: t.pri } },
+            { name: 'Leakage',     value: billLeak,   itemStyle: { color: t.warn, opacity: 0.85 } },
+            { name: 'Collected',   value: collected,  itemStyle: { color: t.pos } },
+            { name: 'Receivables', value: arOutstand, itemStyle: { color: t.neg } },
           ],
           links: [
             // Reconciliation 1 · Scanned → (Billed + Leakage)
@@ -972,11 +980,38 @@
           orient: 'horizontal', nodeAlign: 'justify', nodeWidth: 14, nodeGap: 12,
           label: { fontSize: 10, fontWeight: 600, color: '#111827', fontFamily: FF },
           lineStyle: { curveness: 0.5 },
+          // Hover a node (e.g. the yellow Scanned) → dim everything else and
+          // light up the full path it feeds, so the scanned-revenue flow pops.
+          emphasis: {
+            focus: 'adjacency',
+            itemStyle: { borderColor: '#111827', borderWidth: 1.5 },
+            lineStyle: { opacity: 0.85 },
+          },
+          blur: { itemStyle: { opacity: 0.25 }, lineStyle: { opacity: 0.07 } },
         }],
-        tooltip: { ...tip, trigger: 'item',
-          formatter: p => p.dataType === 'edge'
-              ? `<b>${p.data.source}→${p.data.target}</b>: ${fmt(p.data.value)}`
-              : `<b>${p.name}</b>` },
+        tooltip: { ...tip, trigger: 'item', confine: true,
+          formatter: function (p) {
+            if (p.dataType === 'edge') {
+              return '<b>' + p.data.source + ' → ' + p.data.target + '</b>: ' + fmt(p.data.value);
+            }
+            const v = fmt(p.value);
+            switch (p.name) {
+              case 'Scanned':
+                return '<b>Scanned revenue</b>: ' + v
+                  + '<br/>→ Billed ' + fmt(billed) + ' <span style="color:' + dim + '">(' + pct(scanToBill) + ')</span>'
+                  + '<br/>→ Collected ' + fmt(collected) + ' <span style="color:' + dim + '">(' + pct(scanToCash) + ' scan→cash)</span>';
+              case 'Billed':
+                return '<b>Billed</b>: ' + v + '<br/><span style="color:' + dim + '">' + pct(scanToBill) + ' of scanned · ' + pct(billToCash) + ' collected</span>';
+              case 'Collected':
+                return '<b>Collected</b>: ' + v + '<br/><span style="color:' + dim + '">' + pct(scanToCash) + ' of scanned revenue</span>';
+              case 'Leakage':
+                return '<b>Bill leakage</b>: ' + v + '<br/><span style="color:' + dim + '">scanned but never billed</span>';
+              case 'Receivables':
+                return '<b>Receivables</b>: ' + v + '<br/><span style="color:' + dim + '">billed but not yet collected</span>';
+              default:
+                return '<b>' + p.name + '</b>: ' + v;
+            }
+          } },
       });
     }
   }
