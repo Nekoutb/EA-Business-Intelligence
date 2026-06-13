@@ -1,0 +1,297 @@
+<?php
+declare(strict_types=1);
+
+namespace App\Services;
+
+use App\Odoo\OdooClient;
+
+/**
+ * Profitability — unit economics + profit-growth analytics for a logistics
+ * (scan-based) operation.
+ *
+ * Brings three things onto one page:
+ *
+ *   1. Unit economics (per scan), over the actual period (YTD for the current
+ *      year, full year for past years), so numerator and denominator cover the
+ *      same window:
+ *        - Revenue per scan      = Total revenue            ÷ total scans
+ *        - Cost per scan         = Total operating cost     ÷ total scans
+ *                                  (COGS + OpEx + D&A = Revenue − EBIT)
+ *        - Employee cost per scan = SYSCOHADA class-66 cost ÷ total scans
+ *
+ *   2. Profit growth — Revenue, EBITDA, EBIT vs the prior-year same window
+ *      (delegated to ProfitLossService, which already computes YoY deltas),
+ *      plus a monthly Revenue/EBITDA/EBIT trend for the selected year.
+ *
+ *   3. Revenue per day — monthly revenue ÷ calendar days in the month.
+ *
+ * "Total scans" is a true COUNT, summed across the customer's three AW Cargo
+ * scan models (same source as the Operations page):
+ *      containers (aw_cargo.equipment) + vehicles (aw_vehicule.vehicule)
+ *      + wood truckloads (distinct cargo on aw_bois.bois),
+ * all filtered by `scanned = true` and `scanned_date` in the window.
+ *
+ * Every sub-computation is fail-safe: if a scan model is absent (non-logistics
+ * tenant) or a query throws, that piece degrades to 0/null and the rest of the
+ * page still renders. `notes` records what could not be computed.
+ */
+final class ProfitabilityService
+{
+    /** AW Cargo scan models (same as OperationsService). */
+    private const MODEL_CONTAINER = 'aw_cargo.equipment';
+    private const MODEL_VEHICLE   = 'aw_vehicule.vehicule';
+    private const MODEL_WOOD      = 'aw_bois.bois';
+
+    /** SYSCOHADA "Charges de personnel" — employee/FTE cost. */
+    private const PERSONNEL_PREFIX = '66';
+
+    private const MONTH_LABELS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+    private OdooClient $odoo;
+
+    public function __construct(OdooClient $odoo)
+    {
+        $this->odoo = $odoo;
+    }
+
+    /**
+     * @param int        $year         Fiscal year to analyse.
+     * @param ?array     $assumptions  Forecast assumptions (threaded to the monthly trend).
+     * @param ?\DateTimeImmutable $today
+     */
+    public function analyze(int $year, ?array $assumptions = null, ?\DateTimeImmutable $today = null): array
+    {
+        $today = $today ?? new \DateTimeImmutable('today');
+        $notes = [];
+
+        // Actual reporting window: YTD for the current year, full year for past.
+        [$from, $to, $periodLabel] = ea_resolve_period($today, ['type' => 'ytd', 'year' => $year]);
+        $pyFrom = $from->modify('-1 year');
+        $pyTo   = $to->modify('-1 year');
+
+        // ── 1. P&L totals + YoY growth (current vs prior-year same window) ──
+        $pl = ['current' => [], 'previous' => [], 'delta' => [], 'currency' => 'XAF'];
+        try {
+            $pl = (new ProfitLossService($this->odoo))->analyze($today, ['type' => 'ytd', 'year' => $year]);
+        } catch (\Throwable $e) {
+            $notes[] = 'P&L figures unavailable.';
+        }
+        $cur      = $pl['current']  ?? [];
+        $prev     = $pl['previous'] ?? [];
+        $delta    = $pl['delta']    ?? [];
+        $currency = $pl['currency'] ?? 'XAF';
+
+        $revenue   = (float) ($cur['revenue'] ?? 0);
+        $totalCost = (float) ($cur['cogs'] ?? 0) + (float) ($cur['opex'] ?? 0) + (float) ($cur['d_and_a'] ?? 0);
+        $ebitda    = (float) ($cur['ebitda'] ?? 0);
+        $ebit      = (float) ($cur['ebit'] ?? 0);
+
+        $pyRevenue   = (float) ($prev['revenue'] ?? 0);
+        $pyTotalCost = (float) ($prev['cogs'] ?? 0) + (float) ($prev['opex'] ?? 0) + (float) ($prev['d_and_a'] ?? 0);
+
+        // ── 2. Employee / personnel cost (SYSCOHADA class 66) ──
+        $employeeCost   = $this->personnelCost($from, $to, $notes);
+        $pyEmployeeCost = $this->personnelCost($pyFrom, $pyTo, $notes);
+
+        // ── 3. Total scans (count) for the same window ──
+        $scans   = $this->totalScans($from, $to, $notes);
+        $pyScans = $this->totalScans($pyFrom, $pyTo, $notes);
+        $n   = (int) $scans['total'];
+        $pyN = (int) $pyScans['total'];
+
+        // ── 4. Unit economics ──
+        $revPerScan  = $n > 0 ? $revenue   / $n : null;
+        $costPerScan = $n > 0 ? $totalCost / $n : null;
+        $ftePerScan  = $n > 0 ? $employeeCost / $n : null;
+
+        $pyRevPerScan  = $pyN > 0 ? $pyRevenue     / $pyN : null;
+        $pyCostPerScan = $pyN > 0 ? $pyTotalCost   / $pyN : null;
+        $pyFtePerScan  = $pyN > 0 ? $pyEmployeeCost / $pyN : null;
+
+        // ── 5. Monthly Revenue / EBITDA / EBIT trend (selected year) ──
+        $trend = $this->monthlyTrend($year, $assumptions, $notes);
+
+        // ── 6. Revenue per (calendar) day, monthly ──
+        $revPerDay = [];
+        foreach (range(1, 12) as $m) {
+            $days = (int) (new \DateTimeImmutable(sprintf('%04d-%02d-01', $year, $m)))->format('t');
+            $rev  = (float) ($trend['revenue'][$m - 1] ?? 0);
+            $revPerDay[] = $days > 0 ? $rev / $days : 0.0;
+        }
+
+        return [
+            'currency' => $currency,
+            'year'     => $year,
+            'period'   => ['from' => $from->format('Y-m-d'), 'to' => $to->format('Y-m-d'), 'label' => $periodLabel],
+            'totals'   => [
+                'revenue'       => $revenue,
+                'total_cost'    => $totalCost,
+                'employee_cost' => $employeeCost,
+                'ebitda'        => $ebitda,
+                'ebit'          => $ebit,
+            ],
+            'scans'    => $scans,
+            'per_scan' => [
+                'revenue'        => $revPerScan,
+                'cost'           => $costPerScan,
+                'fte'            => $ftePerScan,
+                'revenue_vs_py'  => $this->pct($revPerScan,  $pyRevPerScan),
+                'cost_vs_py'     => $this->pct($costPerScan, $pyCostPerScan),
+                'fte_vs_py'      => $this->pct($ftePerScan,  $pyFtePerScan),
+            ],
+            'growth'   => [
+                'revenue_pct' => $delta['revenue_pct'] ?? null,
+                'ebitda_pct'  => $delta['ebitda_pct']  ?? null,
+                'ebit_pct'    => $delta['ebit_pct']    ?? null,
+            ],
+            'trend'       => $trend,
+            'rev_per_day' => ['labels' => self::MONTH_LABELS, 'values' => $revPerDay, 'thru_month' => $trend['thru_month']],
+            'notes'       => array_values(array_unique($notes)),
+            'fetched_at'  => $today->format('c'),
+        ];
+    }
+
+    /**
+     * Sum SYSCOHADA class-66 (Charges de personnel) move-line balances for a
+     * window. Class 66 is a debit-positive expense, so the balance sum is the
+     * positive personnel cost. Mirrors ProfitLossService's account/read_group
+     * pattern (groupby account_id, sum, total it up).
+     */
+    private function personnelCost(\DateTimeImmutable $from, \DateTimeImmutable $to, array &$notes): float
+    {
+        try {
+            $accounts = $this->odoo->searchRead('account.account',
+                [['code', '=like', self::PERSONNEL_PREFIX . '%']],
+                ['id'], []);
+            $ids = array_map(static fn ($a) => (int) $a['id'], $accounts);
+            if ($ids === []) {
+                return 0.0;
+            }
+            $rows = $this->odoo->callModel('account.move.line', 'read_group', [
+                'domain'  => [
+                    ['parent_state', '=', 'posted'],
+                    ['date', '>=', $from->format('Y-m-d')],
+                    ['date', '<=', $to->format('Y-m-d')],
+                    ['account_id', 'in', $ids],
+                ],
+                'fields'  => ['account_id', 'balance:sum'],
+                'groupby' => ['account_id'],
+                'lazy'    => false,
+            ]);
+            $sum = 0.0;
+            foreach ((array) $rows as $r) {
+                $sum += (float) ($r['balance'] ?? 0);
+            }
+            // Net debit = cost. Clamp tiny negatives (reversals) to 0.
+            return max(0.0, $sum);
+        } catch (\Throwable $e) {
+            $notes[] = 'Employee (class 66) cost unavailable.';
+            return 0.0;
+        }
+    }
+
+    /**
+     * Total number of scans in a window = containers + vehicles + wood
+     * truckloads, each filtered by scanned=true + scanned_date. Each model is
+     * queried independently and fails soft to 0 (absent on non-logistics
+     * tenants).
+     */
+    private function totalScans(\DateTimeImmutable $from, \DateTimeImmutable $to, array &$notes): array
+    {
+        $f = $from->format('Y-m-d 00:00:00');
+        $t = $to->format('Y-m-d 23:59:59');
+        $scanWindow = [
+            ['scanned', '=', true],
+            ['scanned_date', '>=', $f],
+            ['scanned_date', '<=', $t],
+        ];
+
+        $containers = $this->safeCount(self::MODEL_CONTAINER, $scanWindow);
+        $vehicles   = $this->safeCount(self::MODEL_VEHICLE, $scanWindow);
+
+        // Wood: tariff is per truckload, so count DISTINCT cargo_id with at
+        // least one scanned bois record in the window (matches OperationsService).
+        $wood = 0;
+        try {
+            $groups = $this->odoo->callModel(self::MODEL_WOOD, 'read_group', [
+                'domain'  => $scanWindow,
+                'fields'  => [],
+                'groupby' => ['cargo_id'],
+                'lazy'    => false,
+            ]);
+            $wood = count(array_filter((array) $groups, static fn ($r) => !empty($r['cargo_id']) && $r['cargo_id'] !== false));
+        } catch (\Throwable $e) {
+            // model absent — leave wood at 0
+        }
+
+        $available = ($containers !== null) || ($vehicles !== null);
+        if (!$available) {
+            $notes[] = 'Scan counts unavailable (no scan models for this workspace).';
+        }
+
+        return [
+            'containers' => (int) ($containers ?? 0),
+            'vehicles'   => (int) ($vehicles ?? 0),
+            'wood'       => (int) $wood,
+            'total'      => (int) ($containers ?? 0) + (int) ($vehicles ?? 0) + (int) $wood,
+            'available'  => $available,
+        ];
+    }
+
+    /** searchCount that returns null (not 0) when the model is unreachable. */
+    private function safeCount(string $model, array $domain): ?int
+    {
+        try {
+            return $this->odoo->searchCount($model, $domain);
+        } catch (\Throwable $e) {
+            return null;
+        }
+    }
+
+    /**
+     * Monthly Revenue / EBITDA / EBIT vectors for the year, from
+     * PLForecastService (actuals on closed months, forecast on the rest).
+     */
+    private function monthlyTrend(int $year, ?array $assumptions, array &$notes): array
+    {
+        $empty = [
+            'labels'     => self::MONTH_LABELS,
+            'revenue'    => array_fill(0, 12, 0.0),
+            'ebitda'     => array_fill(0, 12, 0.0),
+            'ebit'       => array_fill(0, 12, 0.0),
+            'thru_month' => 0,
+        ];
+        try {
+            $data  = (new PLForecastService($this->odoo))->analyze($year, null, $assumptions);
+            $byKey = [];
+            foreach (($data['lines'] ?? []) as $line) {
+                $byKey[$line['key'] ?? ''] = $line;
+            }
+            $vec = function (string $key) use ($byKey): array {
+                $monthly = $byKey[$key]['monthly'] ?? [];
+                $out = [];
+                foreach (range(1, 12) as $m) {
+                    $out[] = (float) ($monthly[$m] ?? 0);
+                }
+                return $out;
+            };
+            return [
+                'labels'     => self::MONTH_LABELS,
+                'revenue'    => $vec('revenue'),
+                'ebitda'     => $vec('ebitda'),
+                'ebit'       => $vec('ebit'),
+                'thru_month' => (int) ($data['thru_month'] ?? 0),
+            ];
+        } catch (\Throwable $e) {
+            $notes[] = 'Monthly trend unavailable.';
+            return $empty;
+        }
+    }
+
+    private function pct(?float $cur, ?float $prev): ?float
+    {
+        if ($cur === null || $prev === null) return null;
+        if ($prev == 0.0) return $cur == 0.0 ? 0.0 : null;
+        return (($cur - $prev) / abs($prev)) * 100.0;
+    }
+}

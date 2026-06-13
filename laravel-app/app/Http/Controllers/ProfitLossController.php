@@ -10,6 +10,13 @@ class ProfitLossController extends Controller
 {
     public function index(Request $request)
     {
+        // Profitability shares this already-cached route (its own
+        // /profitability route 404s behind the host's stale route cache).
+        // The ?view=profitability switch delegates to ProfitabilityController.
+        if (strtolower((string) $request->query('view')) === 'profitability') {
+            return app(ProfitabilityController::class)->index($request);
+        }
+
         $today  = new \DateTimeImmutable();
         $period = [
             'type'  => $request->query('period', 'ytd'),
