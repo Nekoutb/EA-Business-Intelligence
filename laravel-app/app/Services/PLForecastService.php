@@ -417,7 +417,6 @@ final class PLForecastService
         // Forecast month list — guard against PHP range() auto-reversing
         // when thru >= 12 (range(13,12) would yield [13,12], not []).
         $fc = $thruMonth >= 12 ? [] : range($thruMonth + 1, 12);
-        $nf = max(1, count($fc));
 
         // ── Line actuals (Jan..thru), signed, from the base vectors ──
         $lineActual = ['revenue'=>0.0,'direct_costs'=>0.0,'opex'=>0.0,'depreciation'=>0.0,'net_financial'=>0.0,'income_tax'=>0.0];
@@ -478,9 +477,22 @@ final class PLForecastService
                 break;
             case 'annual_target':
             default:
-                $remaining = max(0.0, (float) $A['revenue']['annual_target'] - $lineActual['revenue']);
-                $wsum = 0.0; foreach ($fc as $m) $wsum += $pyRev[$m];
-                foreach ($fc as $m) $tRev[$m] = $wsum > 0 ? $remaining * ($pyRev[$m] / $wsum) : $remaining / $nf;
+                // Spread the annual target across the forecast months at the
+                // target's own seasonal pace — each forecast month gets
+                // target × (last-year share of that month). This matches the
+                // label ("spread by last-year seasonality") and the intuitive
+                // "annual ÷ 12 ≈ monthly" when seasonality is flat.
+                //
+                // NOTE: deliberately NOT "target − booked actuals". That
+                // fill-to-target logic collapsed every forecast month to zero
+                // whenever year-to-date actuals already exceeded the target,
+                // which read as a broken/empty forecast.
+                $annual = max(0.0, (float) $A['revenue']['annual_target']);
+                foreach ($fc as $m) {
+                    $tRev[$m] = $pyAnnualRev > 0
+                        ? $annual * ($pyRev[$m] / $pyAnnualRev)
+                        : $annual / 12.0;
+                }
                 break;
         }
 
