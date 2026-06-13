@@ -171,6 +171,23 @@ return [
             'status'  => 'live',
         ],
         [
+            // Profitability — unit economics (revenue / cost / employee cost
+            // per scan) + profit growth. Scan-specific (logistics), so
+            // default=false like Operations; super admin enables per tenant.
+            // Served via the already-cached /profit-loss route
+            // (?view=profitability) because a dedicated /profitability route
+            // 404s behind this host's stale route cache.
+            'key'     => 'profitability',
+            'service' => 'business_intelligence',
+            'label'   => 'Profitability',
+            'url'     => '/profit-loss?view=profitability',
+            'active'  => 'profitability',
+            'icon'    => 'M12 1v22M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6',
+            'default' => false,
+            'core'    => false,
+            'status'  => 'live',
+        ],
+        [
             'key'     => 'payables',
             'service' => 'business_intelligence',
             'label'   => 'Payables',

@@ -6,6 +6,7 @@ use App\Http\Controllers\OnboardingController;
 use App\Http\Controllers\RevenueController;
 use App\Http\Controllers\ReceivablesController;
 use App\Http\Controllers\ProfitLossController;
+use App\Http\Controllers\ProfitabilityController;
 use App\Http\Controllers\PayablesController;
 use App\Http\Controllers\TreasuryController;
 use App\Http\Controllers\BalanceSheetReviewController;
@@ -1536,6 +1537,7 @@ Route::prefix('t/{tenant}')
                 Route::get('/receivables',       [ReceivablesController::class, 'index'])->middleware('module:receivables');
                 Route::get('/treasury',          [TreasuryController::class, 'index'])->middleware('module:treasury');
                 Route::get('/profit-loss',       [ProfitLossController::class, 'index'])->middleware('module:profit_loss');
+                Route::get('/profitability',     [ProfitabilityController::class, 'index'])->middleware('module:profitability');
                 Route::get('/payables',          [PayablesController::class, 'index'])->middleware('module:payables');
                 Route::get('/fixed-assets',      [FixedAssetsController::class, 'index'])->middleware('module:fixed_assets');
                 Route::get('/inventory',         [InventoryController::class, 'index'])->middleware('module:inventory');
