@@ -90,7 +90,112 @@
             $lines     = $data['lines'];
             $thruMonth = (int) $data['thru_month'];
             $ccy       = $data['currency'] ?? 'XAF';
+
+            // ── Forecast Assumptions section state ──
+            $A   = $data['assumptions'] ?? null;
+            $def = $data['assumption_defaults'] ?? null;
+            $monthNames = ['', 'Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+            $fcFrom  = min(12, $thruMonth + 1);
+            $fcLabel = $thruMonth >= 12 ? 'no future months (year closed)' : ($monthNames[$fcFrom] . '–Dec ' . $data['year']);
+            $actualsLabel = $thruMonth >= 1 ? ('Jan–' . ($monthNames[$thruMonth] ?? '')) : 'no closed months';
+            $mfmt = fn ($v) => $v === null ? '—' : number_format(((float) $v) / 1e6, 1) . 'M';
         @endphp
+
+        {{-- ── Forecast Assumptions — drives the future (Forecast) months ── --}}
+        <details class="bg-white border border-[#e8e4de] rounded-xl shadow-sm mb-4 group" open>
+            <summary class="cursor-pointer list-none flex items-center justify-between gap-3 px-4 py-3 [&::-webkit-details-marker]:hidden">
+                <div class="flex items-center gap-2 flex-wrap">
+                    <svg class="w-4 h-4 text-[#7c7466] transition-transform group-open:rotate-90 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" d="M9 6l6 6-6 6"/></svg>
+                    <span class="text-[13px] font-semibold text-[#1e3d44]">Forecast Assumptions</span>
+                    <span class="text-[10.5px] text-[#a09d95]">drives the Forecast months ({{ $fcLabel }})</span>
+                </div>
+                @if ($A)
+                    <span class="text-[10px] text-[#7c7466] flex-shrink-0">defaults seeded from {{ $actualsLabel }} actuals</span>
+                @endif
+            </summary>
+
+            @if (!$A)
+                <div class="border-t border-warm-200 bg-warm-50 px-4 py-3 text-[12px] text-warm-800">
+                    Assumptions are temporarily unavailable — the forecast is using the statistical fallback (same-month-last-year). Reload once the Odoo connection settles.
+                </div>
+            @else
+            <form method="POST" action="{{ tenant_url('/pl-forecast/assumptions') }}" class="border-t border-[#f1ede5] px-4 py-4">
+                @csrf
+                <input type="hidden" name="year" value="{{ $data['year'] }}">
+                <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 text-[12px]">
+
+                    {{-- Revenue --}}
+                    <div class="border border-[#e8e4de] rounded-lg p-3">
+                        <div class="font-semibold text-[#1e3d44] mb-2">Revenue</div>
+                        <label class="block text-[10.5px] text-[#7c7466] mb-1">Method</label>
+                        <select name="revenue_method" class="w-full border border-[#d9d4ca] rounded px-2 py-1 text-[12px] mb-2 bg-white">
+                            <option value="annual_target" {{ $A['revenue']['method']==='annual_target'?'selected':'' }}>Annual target · spread by last-year seasonality</option>
+                            <option value="growth_pct"    {{ $A['revenue']['method']==='growth_pct'?'selected':'' }}>YoY growth % vs last year</option>
+                            <option value="run_rate"      {{ $A['revenue']['method']==='run_rate'?'selected':'' }}>Flat monthly run-rate</option>
+                        </select>
+                        <label class="block text-[10.5px] text-[#7c7466] mb-1">Annual revenue target (XAF)</label>
+                        <input type="number" step="1000000" name="revenue_annual_target" value="{{ (int) $A['revenue']['annual_target'] }}" class="w-full border border-[#d9d4ca] rounded px-2 py-1 mb-0.5 tabular-nums">
+                        <div class="text-[10px] text-[#a09d95] mb-2">≈ {{ $mfmt($A['revenue']['annual_target']) }}/yr · default {{ $mfmt($def['revenue']['annual_target'] ?? null) }}</div>
+                        <label class="block text-[10.5px] text-[#7c7466] mb-1">YoY growth % <span class="text-[#bcb6ab]">(growth method)</span></label>
+                        <input type="number" step="0.1" name="revenue_growth_pct" value="{{ $A['revenue']['growth_pct'] }}" class="w-full border border-[#d9d4ca] rounded px-2 py-1 tabular-nums">
+                    </div>
+
+                    {{-- Margin & OpEx --}}
+                    <div class="border border-[#e8e4de] rounded-lg p-3">
+                        <div class="font-semibold text-[#1e3d44] mb-2">Margin &amp; operating expenses</div>
+                        <label class="block text-[10.5px] text-[#7c7466] mb-1">Gross margin %</label>
+                        <input type="number" step="0.1" name="gross_margin_pct" value="{{ $A['gross_margin_pct'] }}" class="w-full border border-[#d9d4ca] rounded px-2 py-1 mb-0.5 tabular-nums">
+                        <div class="text-[10px] text-[#a09d95] mb-2">default {{ number_format((float) ($def['gross_margin_pct'] ?? 0), 1) }}% (trailing actual)</div>
+                        <label class="block text-[10.5px] text-[#7c7466] mb-1">OpEx method</label>
+                        <select name="opex_method" class="w-full border border-[#d9d4ca] rounded px-2 py-1 text-[12px] mb-2 bg-white">
+                            <option value="fixed"          {{ $A['opex']['method']==='fixed'?'selected':'' }}>Fixed XAF / month (+ inflation)</option>
+                            <option value="pct_of_revenue" {{ $A['opex']['method']==='pct_of_revenue'?'selected':'' }}>% of revenue</option>
+                        </select>
+                        <div class="grid grid-cols-3 gap-2">
+                            <div><label class="block text-[10.5px] text-[#7c7466] mb-1">XAF/mo</label>
+                                <input type="number" step="100000" name="opex_monthly" value="{{ (int) $A['opex']['monthly'] }}" class="w-full border border-[#d9d4ca] rounded px-2 py-1 tabular-nums"></div>
+                            <div><label class="block text-[10.5px] text-[#7c7466] mb-1">Infl %</label>
+                                <input type="number" step="0.1" name="opex_inflation_pct" value="{{ $A['opex']['inflation_pct'] }}" class="w-full border border-[#d9d4ca] rounded px-2 py-1 tabular-nums"></div>
+                            <div><label class="block text-[10.5px] text-[#7c7466] mb-1">% of rev</label>
+                                <input type="number" step="0.1" name="opex_pct_of_revenue" value="{{ $A['opex']['pct_of_revenue'] }}" class="w-full border border-[#d9d4ca] rounded px-2 py-1 tabular-nums"></div>
+                        </div>
+                        <div class="text-[10px] text-[#a09d95] mt-1">default {{ $mfmt($def['opex']['monthly'] ?? null) }}/mo</div>
+                    </div>
+
+                    {{-- D&A · Financial · Tax --}}
+                    <div class="border border-[#e8e4de] rounded-lg p-3">
+                        <div class="font-semibold text-[#1e3d44] mb-2">D&amp;A · Financial · Tax</div>
+                        <label class="block text-[10.5px] text-[#7c7466] mb-1">Depreciation &amp; amortisation / month (XAF)</label>
+                        <input type="number" step="100000" name="da_monthly" value="{{ (int) $A['da_monthly'] }}" class="w-full border border-[#d9d4ca] rounded px-2 py-1 mb-2 tabular-nums">
+                        <label class="block text-[10.5px] text-[#7c7466] mb-1">Net financial result / month (XAF · − if a cost)</label>
+                        <input type="number" step="100000" name="net_financial_monthly" value="{{ (int) $A['net_financial_monthly'] }}" class="w-full border border-[#d9d4ca] rounded px-2 py-1 mb-2 tabular-nums">
+                        <label class="block text-[10.5px] text-[#7c7466] mb-1">Income tax</label>
+                        <select name="tax_method" class="w-full border border-[#d9d4ca] rounded px-2 py-1 text-[12px] mb-2 bg-white">
+                            <option value="rate"  {{ $A['tax']['method']==='rate'?'selected':'' }}>Effective rate % on profit</option>
+                            <option value="fixed" {{ $A['tax']['method']==='fixed'?'selected':'' }}>Fixed XAF / month</option>
+                            <option value="none"  {{ $A['tax']['method']==='none'?'selected':'' }}>None</option>
+                        </select>
+                        <div class="grid grid-cols-2 gap-2">
+                            <div><label class="block text-[10.5px] text-[#7c7466] mb-1">Rate %</label>
+                                <input type="number" step="0.5" name="tax_rate_pct" value="{{ $A['tax']['rate_pct'] }}" class="w-full border border-[#d9d4ca] rounded px-2 py-1 tabular-nums"></div>
+                            <div><label class="block text-[10.5px] text-[#7c7466] mb-1">Or fixed/mo</label>
+                                <input type="number" step="100000" name="tax_monthly" value="{{ (int) $A['tax']['monthly'] }}" class="w-full border border-[#d9d4ca] rounded px-2 py-1 tabular-nums"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flex items-center justify-between gap-3 mt-3 flex-wrap">
+                    <p class="text-[10.5px] text-[#7c7466] max-w-2xl leading-relaxed">
+                        Saving recomputes the <strong>Forecast</strong> months ({{ $fcLabel }}) from these drivers and cascades them down the statement.
+                        Closed months stay as <strong>Actuals</strong> and roll forward automatically as each month ends.
+                    </p>
+                    <button type="submit" class="inline-flex items-center gap-1.5 text-[12px] font-semibold text-white bg-brand-600 hover:bg-brand-700 rounded-lg px-4 py-2 shadow-sm flex-shrink-0">
+                        Save assumptions &amp; re-forecast
+                    </button>
+                </div>
+            </form>
+            @endif
+        </details>
 
         <div class="bg-white border border-[#e8e4de] rounded-xl overflow-hidden">
 
@@ -104,8 +209,8 @@
                     <span class="text-[#cbc7be]">·</span>
                     <span class="inline-flex items-center gap-1.5">
                         <span class="inline-block w-3 h-3 rounded-sm bg-[#f4e2e3] border border-[#e0c5c7]"></span>
-                        <span class="font-semibold {{ $budgetText }}">Budget</span>
-                        <span class="text-[#a09d95]">— forecast (SMLY w/ trailing-3 fallback)</span>
+                        <span class="font-semibold {{ $budgetText }}">Forecast</span>
+                        <span class="text-[#a09d95]">— future months, driven by the assumptions below</span>
                     </span>
                 </div>
                 <div class="text-[10.5px] text-[#7c7466]">
@@ -124,7 +229,7 @@
                                 @php $isActual = !$m['is_forecast']; @endphp
                                 <th class="py-1.5 px-2 text-center">
                                     <span class="inline-flex text-[9px] uppercase tracking-wider rounded px-1.5 py-0.5 border font-semibold {{ $isActual ? $actualBadge : $budgetBadge }}">
-                                        {{ $isActual ? 'Actual' : 'Budget' }}
+                                        {{ $isActual ? 'Actual' : 'Forecast' }}
                                     </span>
                                 </th>
                             @endforeach

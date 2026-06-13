@@ -203,6 +203,45 @@ final class BudgetService
     }
 
     /**
+     * Load the saved P&L forecast assumptions for a (tenant, year).
+     * Stored alongside the budget inside tenant_budgets.data under the
+     * 'forecast_assumptions' key — no separate table/migration. Returns
+     * null when the tenant hasn't saved any (the service then derives
+     * sensible defaults from actuals).
+     *
+     * @return ?array<string, mixed>
+     */
+    public function loadAssumptions(int $tenantId, int $year): ?array
+    {
+        $row = TenantBudget::where('tenant_id', $tenantId)
+            ->where('year', $year)
+            ->first();
+        if (!$row) return null;
+        $a = $row->data['forecast_assumptions'] ?? null;
+        return is_array($a) ? $a : null;
+    }
+
+    /**
+     * Persist P&L forecast assumptions without disturbing the line
+     * budget or the per-product budget that live in the same data JSON.
+     *
+     * @param array<string, mixed> $assumptions  already-normalised driver map
+     */
+    public function saveAssumptions(Tenant $tenant, int $year, array $assumptions, ?int $userId = null): TenantBudget
+    {
+        $row = TenantBudget::firstOrNew([
+            'tenant_id' => $tenant->id,
+            'year'      => $year,
+        ]);
+        $existing = (array) ($row->data ?? []);
+        $existing['forecast_assumptions'] = $assumptions;
+        $row->data = $existing;
+        if ($userId) $row->uploaded_by = $userId;
+        $row->save();
+        return $row;
+    }
+
+    /**
      * Summary metadata for the upload page (year, source filename,
      * uploader, when, monthly totals per line).
      */

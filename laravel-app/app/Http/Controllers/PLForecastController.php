@@ -38,6 +38,10 @@ class PLForecastController extends Controller
         $uploadedBudget = $tenantId
             ? app(BudgetService::class)->load($tenantId, $year)
             : null;
+        // Forecast assumptions drive the future months on the full-year view.
+        $forecastAssumptions = $tenantId
+            ? app(BudgetService::class)->loadAssumptions($tenantId, $year)
+            : null;
 
         $data  = null;
         $error = null;
@@ -45,12 +49,12 @@ class PLForecastController extends Controller
         try {
             $client = OdooFactory::fromConfig();
             $cacheKey = "pl_forecast_{$view}_{$year}_{$month}";
-            $data = ea_cached($cacheKey, function () use ($client, $year, $month, $view, $budgetGrowth, $uploadedBudget) {
+            $data = ea_cached($cacheKey, function () use ($client, $year, $month, $view, $budgetGrowth, $uploadedBudget, $forecastAssumptions) {
                 $svc = new PLForecastService($client);
                 return match ($view) {
                     'mtd' => $svc->analyzeMtd($year, $month, $budgetGrowth, $uploadedBudget),
                     'ytd' => $svc->analyzeYtd($year, $budgetGrowth, $uploadedBudget),
-                    default => $svc->analyze($year),
+                    default => $svc->analyze($year, null, $forecastAssumptions),
                 };
             });
         } catch (\Throwable $e) {
@@ -143,6 +147,70 @@ class PLForecastController extends Controller
         return redirect()->to($back)->with('flash', [
             'type' => 'success',
             'msg'  => 'Commentaries saved.',
+        ]);
+    }
+
+    /**
+     * POST /pl-forecast/assumptions — save the forecast drivers for a
+     * (tenant, year). Normalises into the shape PLForecastService expects,
+     * persists via BudgetService (tenant_budgets.data.forecast_assumptions),
+     * then busts the P&L cache so the forecast recomputes immediately.
+     */
+    public function saveAssumptions(Request $request)
+    {
+        $ctx = app(TenantContext::class);
+        if (!$ctx->has()) abort(404);
+        $tenant = $ctx->tenant();
+
+        $v = $request->validate([
+            'year'                   => ['required', 'integer'],
+            'revenue_method'         => ['nullable', 'in:annual_target,growth_pct,run_rate'],
+            'revenue_annual_target'  => ['nullable', 'numeric'],
+            'revenue_growth_pct'     => ['nullable', 'numeric'],
+            'gross_margin_pct'       => ['nullable', 'numeric'],
+            'opex_method'            => ['nullable', 'in:fixed,pct_of_revenue'],
+            'opex_monthly'           => ['nullable', 'numeric'],
+            'opex_inflation_pct'     => ['nullable', 'numeric'],
+            'opex_pct_of_revenue'    => ['nullable', 'numeric'],
+            'da_monthly'             => ['nullable', 'numeric'],
+            'net_financial_monthly'  => ['nullable', 'numeric'],
+            'tax_method'             => ['nullable', 'in:rate,fixed,none'],
+            'tax_rate_pct'           => ['nullable', 'numeric'],
+            'tax_monthly'            => ['nullable', 'numeric'],
+        ]);
+
+        $year = max(2018, min((int) (new \DateTimeImmutable())->format('Y') + 2, (int) $v['year']));
+        $num  = fn ($k, $d = 0.0) => isset($v[$k]) && is_numeric($v[$k]) ? (float) $v[$k] : (float) $d;
+
+        $assumptions = [
+            'revenue' => [
+                'method'        => $v['revenue_method'] ?? 'annual_target',
+                'annual_target' => max(0.0, $num('revenue_annual_target')),
+                'growth_pct'    => $num('revenue_growth_pct'),
+            ],
+            'gross_margin_pct'      => max(-100.0, min(100.0, $num('gross_margin_pct'))),
+            'opex' => [
+                'method'         => $v['opex_method'] ?? 'fixed',
+                'monthly'        => max(0.0, $num('opex_monthly')),
+                'inflation_pct'  => $num('opex_inflation_pct'),
+                'pct_of_revenue' => max(0.0, $num('opex_pct_of_revenue')),
+            ],
+            'da_monthly'            => max(0.0, $num('da_monthly')),
+            'net_financial_monthly' => $num('net_financial_monthly'),
+            'tax' => [
+                'method'   => $v['tax_method'] ?? 'rate',
+                'rate_pct' => max(0.0, min(100.0, $num('tax_rate_pct', 33.0))),
+                'monthly'  => max(0.0, $num('tax_monthly')),
+            ],
+        ];
+
+        app(BudgetService::class)->saveAssumptions($tenant, $year, $assumptions, optional($request->user())->id);
+        // Bust the per-tenant P&L cache so the forecast recomputes now.
+        if (function_exists('ea_cache_clear')) ea_cache_clear();
+
+        return redirect()->to(tenant_url('/pl-forecast?view=full_year&year=' . $year))->with('flash', [
+            'type' => 'success',
+            'msg'  => 'Forecast assumptions saved — Jun–Dec recomputed.',
         ]);
     }
 }
