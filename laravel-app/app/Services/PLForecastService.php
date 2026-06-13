@@ -92,7 +92,7 @@ final class PLForecastService
      * @param int      $year         Fiscal year (default: current calendar year)
      * @param ?int     $thruMonth    Last actual month (1-12). Default: today's month - 1.
      */
-    public function analyze(?int $year = null, ?int $thruMonth = null): array
+    public function analyze(?int $year = null, ?int $thruMonth = null, ?array $assumptions = null): array
     {
         $today  = new \DateTimeImmutable('today');
         $year   = $year   ?? (int) $today->format('Y');
@@ -144,19 +144,38 @@ final class PLForecastService
             ];
         }
 
+        // 5b) Assumption-driven forecast. Rescales the SMLY base in the
+        //     FUTURE months so each P&L line lands on a target derived
+        //     from the saved/forecast assumptions, while preserving each
+        //     account's seasonal shape + sign (drill-down still ties out).
+        //     FAIL-SAFE: any error leaves the SMLY base untouched, so the
+        //     page renders exactly as before instead of erroring.
+        $effectiveAssumptions = null;
+        $assumptionDefaults   = null;
+        try {
+            [$effectiveAssumptions, $assumptionDefaults] = $this->applyAssumptionForecast(
+                $accountVectors, $monthlyPy, $bucketByAccount, $thruMonth, $assumptions
+            );
+        } catch (\Throwable $e) {
+            // Keep the statistical (SMLY) forecast on any failure.
+        }
+
         // 6) Aggregate accounts into the P&L lines, then compute the
         //    derived (subtotal / margin) lines.
         $linesData = $this->buildLines($accountVectors, $isService, $thruMonth);
 
         return [
-            'currency'      => 'XAF',
-            'year'          => $year,
-            'thru_month'    => $thruMonth,
-            'is_service'    => $isService,
-            'cogs_basis'    => $isService ? 'Class 60+61+62' : 'Class 60',
-            'months'        => $this->buildMonthsHeader($year, $thruMonth),
-            'lines'         => $linesData,
-            'fetched_at'    => now()->toIso8601String(),
+            'currency'             => 'XAF',
+            'year'                 => $year,
+            'thru_month'           => $thruMonth,
+            'is_service'           => $isService,
+            'cogs_basis'           => $isService ? 'Class 60+61+62' : 'Class 60',
+            'months'               => $this->buildMonthsHeader($year, $thruMonth),
+            'lines'                => $linesData,
+            'assumptions'          => $effectiveAssumptions,
+            'assumption_defaults'  => $assumptionDefaults,
+            'assumptions_driven'   => $effectiveAssumptions !== null,
+            'fetched_at'           => now()->toIso8601String(),
         ];
     }
 
@@ -365,6 +384,176 @@ final class PLForecastService
             $smly = isset($py[$m]) ? (float) $py[$m] : null;
             $val  = ($smly !== null && $smly !== 0.0) ? $smly : $tailMean;
             $out[$m] = $val * $sign;
+        }
+        return $out;
+    }
+
+    /* ── assumption-driven forecast ───────────────────────────────── */
+
+    /**
+     * Rescale the FUTURE months (thru+1..12) of the SMLY base vectors so
+     * each P&L line hits a target derived from the forecast assumptions.
+     * Scaling (not overwriting) keeps each account's shape + sign and the
+     * drill-down reconciling to the line total.
+     *
+     * Cascade (line level, then scaled down to accounts):
+     *   Revenue   → annual-target spread by PY seasonality | YoY growth | run-rate
+     *   Direct    → −Revenue × (1 − gross-margin%)
+     *   OpEx      → −fixed monthly (× inflation) | −Revenue × %
+     *   D&A       → −fixed monthly
+     *   Net fin.  → fixed monthly (signed)
+     *   Tax       → −rate% × max(0, PBT) | −fixed monthly | 0
+     *
+     * @param array<int,array> $accountVectors  mutated in place
+     * @param array<int,array> $monthlyPy        account_id → [m => balance] last year
+     * @param array<int,array> $bucketByAccount  account_id → bucket meta
+     * @return array{0:array,1:array}  [effectiveAssumptions, defaults]
+     */
+    private function applyAssumptionForecast(array &$accountVectors, array $monthlyPy, array $bucketByAccount, int $thruMonth, ?array $saved): array
+    {
+        $netFinLines = ['fin_revenue', 'fin_expense'];
+        $groupOf = fn (string $line) => in_array($line, $netFinLines, true) ? 'net_financial' : $line;
+
+        // Forecast month list — guard against PHP range() auto-reversing
+        // when thru >= 12 (range(13,12) would yield [13,12], not []).
+        $fc = $thruMonth >= 12 ? [] : range($thruMonth + 1, 12);
+        $nf = max(1, count($fc));
+
+        // ── Line actuals (Jan..thru), signed, from the base vectors ──
+        $lineActual = ['revenue'=>0.0,'direct_costs'=>0.0,'opex'=>0.0,'depreciation'=>0.0,'net_financial'=>0.0,'income_tax'=>0.0];
+        foreach ($accountVectors as $av) {
+            $grp = $groupOf($av['line']);
+            if (!array_key_exists($grp, $lineActual)) continue;
+            for ($m = 1; $m <= $thruMonth; $m++) {
+                $lineActual[$grp] += (float) ($av['monthly'][$m] ?? 0);
+            }
+        }
+
+        // ── PY revenue per month (positive) for seasonality + growth ──
+        $pyRev = array_fill(1, 12, 0.0);
+        $pyAnnualRev = 0.0;
+        foreach ($bucketByAccount as $aid => $b) {
+            if (($b['line'] ?? '') !== 'revenue') continue;
+            $pm = $monthlyPy[$aid] ?? [];
+            for ($m = 1; $m <= 12; $m++) {
+                $v = ((float) ($pm[$m] ?? 0)) * (float) $b['sign'];   // sign=-1 → positive
+                $pyRev[$m]   += $v;
+                $pyAnnualRev += $v;
+            }
+        }
+
+        // ── Defaults derived from actuals (fallbacks when no actuals) ──
+        $revRun = $thruMonth >= 1 ? $lineActual['revenue'] / $thruMonth : ($pyAnnualRev / 12);
+        $gmDef  = $lineActual['revenue'] > 0
+            ? 100.0 * ($lineActual['revenue'] + $lineActual['direct_costs']) / $lineActual['revenue']
+            : 40.0;
+        $opexMonthlyDef   = abs($thruMonth >= 1 ? $lineActual['opex'] / $thruMonth : 0.0);
+        $opexPctDef       = $lineActual['revenue'] > 0 ? 100.0 * abs($lineActual['opex']) / $lineActual['revenue'] : 0.0;
+        $daMonthlyDef     = abs($thruMonth >= 1 ? $lineActual['depreciation'] / $thruMonth : 0.0);
+        $netFinMonthlyDef = $thruMonth >= 1 ? $lineActual['net_financial'] / $thruMonth : 0.0;
+
+        $defaults = [
+            'revenue'               => ['method' => 'annual_target', 'annual_target' => round($revRun * 12, 0), 'growth_pct' => 0.0],
+            'gross_margin_pct'      => round($gmDef, 1),
+            'opex'                  => ['method' => 'fixed', 'monthly' => round($opexMonthlyDef, 0), 'inflation_pct' => 0.0, 'pct_of_revenue' => round($opexPctDef, 1)],
+            'da_monthly'            => round($daMonthlyDef, 0),
+            'net_financial_monthly' => round($netFinMonthlyDef, 0),
+            'tax'                   => ['method' => 'rate', 'rate_pct' => 33.0, 'monthly' => 0.0],
+        ];
+
+        $A = $this->mergeAssumptions($defaults, is_array($saved) ? $saved : []);
+
+        // Nothing to forecast (all months closed) — still return for the editor.
+        if (empty($fc)) return [$A, $defaults];
+
+        // ── Revenue targets per forecast month (positive) ──
+        $tRev = [];
+        switch ($A['revenue']['method']) {
+            case 'growth_pct':
+                $g = (float) $A['revenue']['growth_pct'] / 100.0;
+                foreach ($fc as $m) $tRev[$m] = $pyRev[$m] > 0 ? $pyRev[$m] * (1 + $g) : $revRun;
+                break;
+            case 'run_rate':
+                foreach ($fc as $m) $tRev[$m] = $revRun;
+                break;
+            case 'annual_target':
+            default:
+                $remaining = max(0.0, (float) $A['revenue']['annual_target'] - $lineActual['revenue']);
+                $wsum = 0.0; foreach ($fc as $m) $wsum += $pyRev[$m];
+                foreach ($fc as $m) $tRev[$m] = $wsum > 0 ? $remaining * ($pyRev[$m] / $wsum) : $remaining / $nf;
+                break;
+        }
+
+        // ── Cascade the remaining lines off revenue + the cost drivers ──
+        $gm        = (float) $A['gross_margin_pct'] / 100.0;
+        $opexFixed = (float) $A['opex']['monthly'] * (1 + (float) $A['opex']['inflation_pct'] / 100.0);
+        $opexPct   = (float) $A['opex']['pct_of_revenue'] / 100.0;
+        $daM       = (float) $A['da_monthly'];
+        $nfM       = (float) $A['net_financial_monthly'];
+
+        $target = ['revenue'=>[], 'direct_costs'=>[], 'opex'=>[], 'depreciation'=>[], 'net_financial'=>[], 'income_tax'=>[]];
+        foreach ($fc as $m) {
+            $rev = (float) $tRev[$m];
+            $dir = -1.0 * $rev * (1 - $gm);
+            $opx = $A['opex']['method'] === 'pct_of_revenue' ? (-1.0 * $rev * $opexPct) : (-1.0 * $opexFixed);
+            $da  = -1.0 * $daM;
+            $nfn = $nfM;
+            $pbt = $rev + $dir + $opx + $da + $nfn;
+            $tax = match ($A['tax']['method']) {
+                'fixed' => -1.0 * (float) $A['tax']['monthly'],
+                'none'  => 0.0,
+                default => -1.0 * max(0.0, $pbt) * ((float) $A['tax']['rate_pct'] / 100.0),
+            };
+            $target['revenue'][$m]       = $rev;
+            $target['direct_costs'][$m]  = $dir;
+            $target['opex'][$m]          = $opx;
+            $target['depreciation'][$m]  = $da;
+            $target['net_financial'][$m] = $nfn;
+            $target['income_tax'][$m]    = $tax;
+        }
+
+        // ── Group account ids, then scale base forecast months to target ──
+        $groupAccts = ['revenue'=>[], 'direct_costs'=>[], 'opex'=>[], 'depreciation'=>[], 'net_financial'=>[], 'income_tax'=>[]];
+        foreach ($accountVectors as $aid => $av) {
+            $grp = $groupOf($av['line']);
+            if (isset($groupAccts[$grp])) $groupAccts[$grp][] = $aid;
+        }
+
+        foreach ($target as $grp => $monthsTarget) {
+            $aids = $groupAccts[$grp];
+            foreach ($fc as $m) {
+                $tv   = (float) ($monthsTarget[$m] ?? 0);
+                $base = 0.0;
+                foreach ($aids as $aid) $base += (float) ($accountVectors[$aid]['monthly'][$m] ?? 0);
+                if (abs($base) > 1.0) {
+                    $scale = $tv / $base;
+                    foreach ($aids as $aid) $accountVectors[$aid]['monthly'][$m] *= $scale;
+                } elseif (count($aids) > 0 && $grp !== 'net_financial') {
+                    // Base ~0 for a single-sign line — split equally so the
+                    // target still shows. (Net financial is mixed-sign, so we
+                    // leave its SMLY base rather than risk flipping a sign.)
+                    $each = $tv / count($aids);
+                    foreach ($aids as $aid) $accountVectors[$aid]['monthly'][$m] = $each;
+                }
+            }
+        }
+
+        return [$A, $defaults];
+    }
+
+    /** Merge saved assumption overrides onto the actuals-derived defaults. */
+    private function mergeAssumptions(array $defaults, array $saved): array
+    {
+        $out = $defaults;
+        foreach (['revenue', 'opex', 'tax'] as $k) {
+            if (isset($saved[$k]) && is_array($saved[$k])) {
+                $out[$k] = array_merge($defaults[$k], $saved[$k]);
+            }
+        }
+        foreach (['gross_margin_pct', 'da_monthly', 'net_financial_monthly'] as $k) {
+            if (array_key_exists($k, $saved) && is_numeric($saved[$k])) {
+                $out[$k] = (float) $saved[$k];
+            }
         }
         return $out;
     }

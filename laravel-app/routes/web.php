@@ -1614,6 +1614,7 @@ Route::prefix('t/{tenant}')
                 Route::get('/working-capital',   [WorkingCapitalController::class, 'index'])->middleware('module:working_capital');
                 Route::get('/pl-forecast',             [PLForecastController::class, 'index'])->middleware('module:pl_forecast');
                 Route::post('/pl-forecast/commentary', [PLForecastController::class, 'saveCommentary'])->middleware('module:pl_forecast');
+                Route::post('/pl-forecast/assumptions', [PLForecastController::class, 'saveAssumptions'])->middleware('module:pl_forecast');
                 Route::get('/cashflow-forecast',   [CashflowForecastController::class,   'index'])->middleware('module:cashflow_forecast');
                 Route::get('/investment-analysis', [InvestmentAnalysisController::class, 'index'])->middleware('module:investment_analysis');
                 // Budget Upload — gated by its own module key now that the
