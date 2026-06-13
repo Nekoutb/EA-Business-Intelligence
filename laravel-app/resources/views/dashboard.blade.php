@@ -348,10 +348,6 @@
                 Refresh
             </button>
         </form>
-        @include('partials.pptx-export', [
-            'title'    => 'Executive Overview',
-            'subtitle' => ($periodLabel ?? 'YTD') . ' · ' . ($ccy ?? 'XAF'),
-        ])
         <div class="ea-cobadge" title="{{ tenant_brand_name() }}">
             <div class="ea-cobadge__logo">
                 @if (tenant_logo_url())
