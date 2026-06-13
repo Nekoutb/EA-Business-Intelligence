@@ -1,18 +1,13 @@
 <?php
 /**
- * ONE-TIME maintenance utility — clears stale compiled caches that survive
- * git auto-deploys on this host (the deploy pulls code but never runs
- * `php artisan optimize:clear`, so an old bootstrap/cache/routes-v7.php keeps
- * freezing the route table and every NEW route 404s).
- *
- * Runs as a PLAIN PHP file in public/ — Apache serves it directly (see
- * .htaccess `!-f`), so it bypasses Laravel's router and works even when the
- * route cache is stale. Token-guarded. REMOVE this file after use.
+ * ONE-TIME maintenance utility — clears the stale compiled route cache that
+ * survives git auto-deploys on this host. Plain PHP in public/ so Apache
+ * serves it directly (.htaccess `!-f`), bypassing Laravel's stale router.
+ * Token-guarded. REMOVE this file after use.
  */
 
 header('Content-Type: application/json');
 
-// Opaque guard so this can't be triggered by random traffic.
 $TOKEN = 'k7Qz9_R2mVtX4pLs8wNcB3hJ6yD0fAeU';
 if (!hash_equals($TOKEN, (string) ($_GET['t'] ?? ''))) {
     http_response_code(403);
@@ -20,48 +15,63 @@ if (!hash_equals($TOKEN, (string) ($_GET['t'] ?? ''))) {
     exit;
 }
 
-$base     = dirname(__DIR__);                 // resolves to the REAL served app dir
+$base     = dirname(__DIR__);
 $cacheDir = $base . '/bootstrap/cache';
 
+function describe(string $path): array
+{
+    if (!file_exists($path)) return ['exists' => false];
+    $s = @stat($path);
+    return [
+        'exists'     => true,
+        'is_dir'     => is_dir($path),
+        'writable'   => is_writable($path),
+        'perms'      => $s ? substr(sprintf('%o', $s['mode']), -4) : null,
+        'owner_uid'  => $s['uid'] ?? null,
+        'owner_name' => (function_exists('posix_getpwuid') && isset($s['uid']))
+                        ? (posix_getpwuid($s['uid'])['name'] ?? null) : null,
+        'size'       => $s['size'] ?? null,
+    ];
+}
+
 $out = [
-    'served_public'    => __DIR__,
-    'served_base'      => $base,
-    'served_base_real' => realpath($base) ?: null,
-    'cache_dir'        => $cacheDir,
-    'cache_dir_real'   => realpath($cacheDir) ?: null,
-    'php_version'      => PHP_VERSION,
-    'before'           => [],
-    'deleted'          => [],
-    'after'            => [],
-    'opcache'          => null,
+    'served_base'    => $base,
+    'cache_dir'      => $cacheDir,
+    'php_version'    => PHP_VERSION,
+    'process_user'   => function_exists('posix_geteuid')
+                        ? (posix_getpwuid(posix_geteuid())['name'] ?? posix_geteuid())
+                        : (getenv('USER') ?: 'unknown'),
+    'cache_dir_info' => describe($cacheDir),
+    'attempts'       => [],
+    'deleted'        => [],
+    'opcache'        => null,
 ];
 
-// Snapshot what's actually in the live copy's bootstrap/cache.
-foreach ((array) (@scandir($cacheDir) ?: []) as $f) {
-    if ($f === '.' || $f === '..') continue;
-    $out['before'][$f] = @filesize($cacheDir . '/' . $f);
-}
+// Is the cache dir itself writable by the web process? (unlink needs dir-write)
+$probe = $cacheDir . '/.__wtest';
+$out['cache_dir_writable_test'] = (@file_put_contents($probe, 'x') !== false) ? 'writable' : 'not_writable';
+@unlink($probe);
 
-// Delete every compiled *.php cache (route/config/services/packages/events).
-// All of these regenerate automatically on the next request — no data loss.
-foreach ((array) (glob($cacheDir . '/*.php') ?: []) as $file) {
-    if (@unlink($file)) {
-        $out['deleted'][] = basename($file);
+// Try to remove each compiled cache. Report exactly why if it fails.
+foreach (['routes-v7.php', 'config.php', 'packages.php', 'services.php', 'events.scanned.php'] as $name) {
+    $path = $cacheDir . '/' . $name;
+    if (!file_exists($path)) continue;
+    $rec = ['file' => $name, 'info' => describe($path)];
+    error_clear_last();
+    if (@unlink($path)) {
+        $rec['unlink'] = 'ok';
+        $out['deleted'][] = $name;
+    } else {
+        $e = error_get_last();
+        $rec['unlink'] = 'FAILED: ' . ($e['message'] ?? 'unknown');
     }
+    $out['attempts'][] = $rec;
 }
 
-// Reset the in-memory opcode cache from inside the ACTUAL serving process —
-// this clears any bytecode/stat for a routes-v7.php that was already deleted
-// on disk but still held in memory.
 if (function_exists('opcache_reset')) {
     $out['opcache'] = @opcache_reset() ? 'reset' : 'reset_failed_or_disabled';
 } else {
     $out['opcache'] = 'not_available';
-}
-
-foreach ((array) (@scandir($cacheDir) ?: []) as $f) {
-    if ($f === '.' || $f === '..') continue;
-    $out['after'][] = $f;
 }
 
 echo json_encode($out, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
