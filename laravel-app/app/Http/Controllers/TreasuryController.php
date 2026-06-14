@@ -166,28 +166,6 @@ class TreasuryController extends Controller
                     // Ratios fall back to null/—; shouldn't sink the page.
                 }
 
-                // ── Trade payables (AP) — DPO, totals, overdue, top vendors ──
-                // Reuses PayablesService (same as the /payables page) for the
-                // KPIs/aging/top-30, and the liquidity-trend series (already
-                // computed above) for the monthly DPO evolution.
-                $payables = null;
-                $dpoTrend = [];
-                try {
-                    $pl       = (new \App\Services\ProfitLossService($client))->analyze();
-                    $totalExp = (float) ($pl['current']['cogs'] ?? 0)
-                              + (float) ($pl['current']['opex'] ?? 0)
-                              + (float) ($pl['current']['d_and_a'] ?? 0);
-                    $payables = (new \App\Services\PayablesService($client))
-                        ->analyze(max(1.0, $totalExp), 365, $this->detectCurrency($client));
-                    foreach (($liquidityTrend['series'] ?? []) as $p) {
-                        if (($p['dpo'] ?? null) !== null) {
-                            $dpoTrend[] = ['label' => (string) ($p['label'] ?? ''), 'dpo' => (float) $p['dpo']];
-                        }
-                    }
-                } catch (\Throwable $e) {
-                    // payables optional — page still renders without it
-                }
-
                 // ── Next 30-day disbursements ────────────────────────────
                 // Forward-looking projection of cash outflows for the next
                 // 30 days, computed from YTD-monthly-average history per
@@ -321,9 +299,6 @@ class TreasuryController extends Controller
 
                     'liquidity'         => $wcRatios,
                     'liquidity_trend'   => $liquidityTrend,
-
-                    'payables'           => $payables,
-                    'payables_dpo_trend' => $dpoTrend,
                 ];
             };
 
@@ -331,7 +306,7 @@ class TreasuryController extends Controller
             // current GL state (not a stale cache) is what's being shown.
             $treasury = $request->boolean('fresh')
                 ? $producer()
-                : ea_cached('treasury_asof_v11', $producer);
+                : ea_cached('treasury_asof_v12', $producer);
 
             // Log the disbursements payload on every render so any
             // future zero-result report is one log-line away from a

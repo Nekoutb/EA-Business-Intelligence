@@ -382,84 +382,6 @@
   </div>
   @endif
 
-  {{-- ── Trade payables (AP) ──────────────────────────────────────
-       DPO, total/overdue AP, monthly DPO trend, and the top-30 vendors
-       by outstanding balance. Data from PayablesService; DPO trend reuses
-       the liquidity-trend series. --}}
-  @php $pay = $treasury['payables'] ?? null; @endphp
-  @if ($pay && !empty($pay['kpis']))
-    @php $pk = $pay['kpis']; @endphp
-    <div class="v5-card" style="grid-column: 1 / -1; margin-top: 16px;">
-      <div class="v5-card__h">
-        <div>
-          <div class="v5-card__t">Trade payables</div>
-          <div class="v5-card__sub">Outstanding vendor bills — as of now</div>
-        </div>
-      </div>
-      <div class="v5-card__b">
-        <div style="display:grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap:14px; margin-bottom:14px;">
-          <div>
-            <div style="font-size:10px; text-transform:uppercase; letter-spacing:.04em; color:var(--text-subtle);">Total AP</div>
-            <div style="font-size:18px; font-weight:700; color:var(--text);">{{ ea_money_short((float)($pk['total_ap'] ?? 0), $ccy) }}</div>
-          </div>
-          <div>
-            <div style="font-size:10px; text-transform:uppercase; letter-spacing:.04em; color:var(--text-subtle);">Overdue AP</div>
-            <div style="font-size:18px; font-weight:700; color:var(--neg);">{{ ea_money_short((float)($pk['overdue_ap'] ?? 0), $ccy) }}</div>
-            <div style="font-size:10px; color:var(--text-subtle);">{{ number_format((float)($pk['overdue_rate_pct'] ?? 0), 1) }}% of AP</div>
-          </div>
-          <div>
-            <div style="font-size:10px; text-transform:uppercase; letter-spacing:.04em; color:var(--text-subtle);">DPO (days)</div>
-            <div style="font-size:18px; font-weight:700; color:var(--text);">{{ number_format((float)($pk['dpo_days'] ?? 0), 0) }}</div>
-            <div style="font-size:10px; color:var(--text-subtle);">avg age {{ number_format((float)($pk['avg_age_days'] ?? 0), 0) }}d</div>
-          </div>
-          <div>
-            <div style="font-size:10px; text-transform:uppercase; letter-spacing:.04em; color:var(--text-subtle);">Open bills</div>
-            <div style="font-size:18px; font-weight:700; color:var(--text);">{{ number_format((int)($pay['open_bill_count'] ?? 0)) }}</div>
-          </div>
-        </div>
-        <div style="font-size:11px; font-weight:600; color:var(--text); margin-bottom:2px;">DPO evolution · monthly</div>
-        <div id="ec-dpo-trend" style="min-height: 180px;"></div>
-      </div>
-    </div>
-
-    @if (!empty($pay['top_creditors']))
-    <div class="v5-card" style="grid-column: 1 / -1; margin-top: 12px;">
-      <div class="v5-card__h">
-        <div>
-          <div class="v5-card__t">Top 30 vendors · unpaid invoices</div>
-          <div class="v5-card__sub">By outstanding balance</div>
-        </div>
-      </div>
-      <div class="v5-card__b" style="overflow-x:auto;">
-        <table style="width:100%; font-size:11.5px; border-collapse:collapse;">
-          <thead>
-            <tr style="border-bottom:1px solid var(--border); color:var(--text-subtle);">
-              <th style="padding:6px 8px; text-align:left;">#</th>
-              <th style="padding:6px 8px; text-align:left;">Vendor</th>
-              <th style="padding:6px 8px; text-align:right;">Outstanding</th>
-              <th style="padding:6px 8px; text-align:right;">Overdue</th>
-              <th style="padding:6px 8px; text-align:right;">Invoices</th>
-              <th style="padding:6px 8px; text-align:right;">Max days late</th>
-            </tr>
-          </thead>
-          <tbody>
-            @foreach ($pay['top_creditors'] as $i => $v)
-            <tr style="border-bottom:1px solid var(--border);">
-              <td style="padding:5px 8px; color:var(--text-subtle);">{{ $i + 1 }}</td>
-              <td style="padding:5px 8px; color:var(--text);">{{ $v['name'] ?? '—' }}</td>
-              <td style="padding:5px 8px; text-align:right; font-weight:600; color:var(--text);">{{ ea_money_short((float)($v['residual'] ?? 0), $ccy) }}</td>
-              <td style="padding:5px 8px; text-align:right; color:{{ (float)($v['overdue'] ?? 0) > 0 ? 'var(--neg)' : 'var(--text-subtle)' }};">{{ (float)($v['overdue'] ?? 0) > 0 ? ea_money_short((float)$v['overdue'], $ccy) : '—' }}</td>
-              <td style="padding:5px 8px; text-align:right; color:var(--text-subtle);">{{ number_format((int)($v['invoices'] ?? 0)) }}</td>
-              <td style="padding:5px 8px; text-align:right; color:var(--text-subtle);">{{ (int)($v['max_days_overdue'] ?? 0) }}</td>
-            </tr>
-            @endforeach
-          </tbody>
-        </table>
-      </div>
-    </div>
-    @endif
-  @endif
-
 </div>
 
 {{-- ── Methodology footer (single block, all four KPIs) ──────── --}}
@@ -700,29 +622,6 @@
                 },
             },
         ],
-    });
-    window.addEventListener('resize', () => chart.resize());
-})();
-
-// ── Trade payables · DPO evolution (monthly) ──────────────────────
-(function () {
-    const el = document.getElementById('ec-dpo-trend');
-    if (!el || typeof echarts === 'undefined') return;
-    const tr = @json($treasury['payables_dpo_trend'] ?? []);
-    if (!tr.length) { el.innerHTML = '<div class="empty-state">No DPO history yet.</div>'; return; }
-    const chart = echarts.init(el);
-    chart.setOption({
-        grid: { left: 40, right: 14, top: 12, bottom: 26 },
-        tooltip: { trigger: 'axis', backgroundColor: '#1e3d44', borderColor: '#1e3d44',
-                   textStyle: { color: '#fff', fontSize: 11 },
-                   formatter: p => p[0].axisValue + '<br/>DPO ' + Math.round(p[0].data) + ' days' },
-        xAxis: { type: 'category', data: tr.map(p => p.label), axisLabel: { fontSize: 10 },
-                 axisLine: { lineStyle: { color: '#cbc7be' } } },
-        yAxis: { type: 'value', axisLabel: { fontSize: 10, formatter: '{value}d' },
-                 splitLine: { lineStyle: { color: '#f1ede5' } } },
-        series: [{ type: 'line', data: tr.map(p => p.dpo), smooth: true, symbolSize: 5,
-                   lineStyle: { color: '#b45309', width: 2 }, itemStyle: { color: '#b45309' },
-                   areaStyle: { color: 'rgba(180,83,9,0.08)' } }],
     });
     window.addEventListener('resize', () => chart.resize());
 })();
