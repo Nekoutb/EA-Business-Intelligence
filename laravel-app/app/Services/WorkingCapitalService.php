@@ -847,11 +847,17 @@ final class WorkingCapitalService
      */
     private function extractMonthKey(array $row): ?string
     {
-        if (isset($row['__range']['date:month']['from'])) {
-            return substr((string) $row['__range']['date:month']['from'], 0, 7);
+        // Odoo read_group with groupby 'date:month' returns the period window
+        // under the FIELD name ('date'), not the granularity key ('date:month').
+        // The label itself ('date:month') is locale-formatted ("septembre 2025"
+        // on a French Odoo) which DateTime can't parse — so __range is the only
+        // reliable source. Check both key spellings to be safe across versions.
+        foreach (['date', 'date:month'] as $rk) {
+            if (isset($row['__range'][$rk]['from'])) {
+                return substr((string) $row['__range'][$rk]['from'], 0, 7);
+            }
         }
-        // Locale-dependent label. Parse via DateTime — handles "March 2026",
-        // "Mar 2026", "mars 2026" (French), etc.
+        // Last-resort label parse (English month names only).
         $label = (string) ($row['date:month'] ?? $row['date_month'] ?? '');
         if ($label === '') return null;
         try {
