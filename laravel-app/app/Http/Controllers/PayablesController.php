@@ -15,7 +15,7 @@ class PayablesController extends Controller
             // Cache key bumped to ap_v3: the DPO trend is now the RUNNING
             // cumulative DPO (reconciles to the headline dpo_days), not the
             // monthly point-in-time figure.
-            $data = ea_cached('ap_v3', function () {
+            $data = ea_cached('ap_v4', function () {
                 $c  = OdooFactory::fromConfig();
                 $pl = (new ProfitLossService($c))->analyze();
                 $exp = max(1.0,
