@@ -95,8 +95,14 @@
 
         <div class="bg-white rounded-xl border border-[#e8e4de] p-5 shadow-sm mb-6">
             <h2 class="text-sm font-semibold text-[#1e3d44] mb-1">Revenue · EBITDA · EBIT — monthly trend</h2>
-            <p class="text-[11px] text-[#7c7466] mb-3">Solid = actuals, dashed = forecast. Figures in {{ $ccy }}.</p>
+            <p class="text-[11px] text-[#7c7466] mb-3">Solid = actuals · dashed = forecast, read directly from the P&amp;L Forecast for months not yet closed. Figures in {{ $ccy }}.</p>
             <div class="h-80"><canvas id="profTrend"></canvas></div>
+        </div>
+
+        <div class="bg-white rounded-xl border border-[#e8e4de] p-5 shadow-sm mb-6">
+            <h2 class="text-sm font-semibold text-[#1e3d44] mb-1">Unit economics per scan — monthly</h2>
+            <p class="text-[11px] text-[#7c7466] mb-3">Revenue per scan and cost per scan, by month since January (closed months only — actual revenue/cost ÷ actual scans). Figures in {{ $ccy }}.</p>
+            <div class="h-72"><canvas id="profUnitMonthly"></canvas></div>
         </div>
 
         <div class="bg-white rounded-xl border border-[#e8e4de] p-5 shadow-sm mb-6">
@@ -149,6 +155,16 @@
                     Object.assign(line('Revenue / day', rpd.values, '#2f6f76'), { fill:true, backgroundColor:'rgba(47,111,118,0.08)' }),
                 ]},
                 options: Object.assign({}, baseOpts, { plugins: Object.assign({}, baseOpts.plugins, { legend:{display:false} }) }),
+            });
+
+            const ups = @json($data['monthly_per_scan']);
+            new Chart(document.getElementById('profUnitMonthly'), {
+                type:'line',
+                data:{ labels: ups.labels, datasets:[
+                    { label:'Revenue / scan', data: ups.revenue, borderColor:'#2f6f76', backgroundColor:'#2f6f76', tension:0.3, borderWidth:2, pointRadius:3, pointHoverRadius:5, spanGaps:false, fill:false },
+                    { label:'Cost / scan',    data: ups.cost,    borderColor:'#d98c3f', backgroundColor:'#d98c3f', tension:0.3, borderWidth:2, pointRadius:3, pointHoverRadius:5, spanGaps:false, fill:false },
+                ]},
+                options: baseOpts,
             });
         })();
         </script>
