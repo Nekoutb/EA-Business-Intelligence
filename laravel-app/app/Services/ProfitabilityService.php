@@ -119,6 +119,34 @@ final class ProfitabilityService
             $revPerDay[] = $days > 0 ? $rev / $days : 0.0;
         }
 
+        // ── 7. Monthly unit economics — CLOSED months only. We use actual
+        //       revenue and actual cost ÷ actual scans. Forecast/partial months
+        //       are left null: their revenue is forecast while scans are partial
+        //       (current month) or absent (future), which would distort per-scan.
+        $thru   = (int) ($trend['thru_month'] ?? 0);
+        $psRev  = array_fill(0, 12, null);
+        $psCost = array_fill(0, 12, null);
+        $mScans = array_fill(0, 12, null);
+        for ($m = 1; $m <= min(12, $thru); $m++) {
+            $mFrom = new \DateTimeImmutable(sprintf('%04d-%02d-01', $year, $m));
+            $mTo   = $mFrom->modify('last day of this month')->setTime(23, 59, 59);
+            $sc    = (int) $this->scanCounts($mFrom, $mTo)['total'];
+            $mScans[$m - 1] = $sc;
+            if ($sc > 0) {
+                $rev  = (float) ($trend['revenue'][$m - 1] ?? 0);
+                $cost = $rev - (float) ($trend['ebit'][$m - 1] ?? 0);   // total cost = revenue − EBIT
+                $psRev[$m - 1]  = $rev / $sc;
+                $psCost[$m - 1] = $cost / $sc;
+            }
+        }
+        $monthlyPerScan = [
+            'labels'     => self::MONTH_LABELS,
+            'revenue'    => $psRev,
+            'cost'       => $psCost,
+            'scans'      => $mScans,
+            'thru_month' => $thru,
+        ];
+
         return [
             'currency' => $currency,
             'year'     => $year,
@@ -144,9 +172,10 @@ final class ProfitabilityService
                 'ebitda_pct'  => $delta['ebitda_pct']  ?? null,
                 'ebit_pct'    => $delta['ebit_pct']    ?? null,
             ],
-            'trend'       => $trend,
-            'rev_per_day' => ['labels' => self::MONTH_LABELS, 'values' => $revPerDay, 'thru_month' => $trend['thru_month']],
-            'notes'       => array_values(array_unique($notes)),
+            'trend'           => $trend,
+            'rev_per_day'     => ['labels' => self::MONTH_LABELS, 'values' => $revPerDay, 'thru_month' => $trend['thru_month']],
+            'monthly_per_scan'=> $monthlyPerScan,
+            'notes'           => array_values(array_unique($notes)),
             'fetched_at'  => $today->format('c'),
         ];
     }
@@ -198,19 +227,30 @@ final class ProfitabilityService
      */
     private function totalScans(\DateTimeImmutable $from, \DateTimeImmutable $to, array &$notes): array
     {
-        $f = $from->format('Y-m-d 00:00:00');
-        $t = $to->format('Y-m-d 23:59:59');
+        $counts = $this->scanCounts($from, $to);
+        if (!$counts['available']) {
+            $notes[] = 'Scan counts unavailable (no scan models for this workspace).';
+        }
+        return $counts;
+    }
+
+    /**
+     * Container + vehicle + wood-truckload scan counts for a window
+     * (scanned=true by scanned_date). No side effects — reused for both the
+     * period total and the per-month series. Wood = DISTINCT cargo_id with at
+     * least one scanned bois record (one cargo ≈ one truckload).
+     */
+    private function scanCounts(\DateTimeImmutable $from, \DateTimeImmutable $to): array
+    {
         $scanWindow = [
             ['scanned', '=', true],
-            ['scanned_date', '>=', $f],
-            ['scanned_date', '<=', $t],
+            ['scanned_date', '>=', $from->format('Y-m-d 00:00:00')],
+            ['scanned_date', '<=', $to->format('Y-m-d 23:59:59')],
         ];
 
         $containers = $this->safeCount(self::MODEL_CONTAINER, $scanWindow);
         $vehicles   = $this->safeCount(self::MODEL_VEHICLE, $scanWindow);
 
-        // Wood: tariff is per truckload, so count DISTINCT cargo_id with at
-        // least one scanned bois record in the window (matches OperationsService).
         $wood = 0;
         try {
             $groups = $this->odoo->callModel(self::MODEL_WOOD, 'read_group', [
@@ -224,17 +264,12 @@ final class ProfitabilityService
             // model absent — leave wood at 0
         }
 
-        $available = ($containers !== null) || ($vehicles !== null);
-        if (!$available) {
-            $notes[] = 'Scan counts unavailable (no scan models for this workspace).';
-        }
-
         return [
             'containers' => (int) ($containers ?? 0),
             'vehicles'   => (int) ($vehicles ?? 0),
             'wood'       => (int) $wood,
             'total'      => (int) ($containers ?? 0) + (int) ($vehicles ?? 0) + (int) $wood,
-            'available'  => $available,
+            'available'  => ($containers !== null) || ($vehicles !== null),
         ];
     }
 
