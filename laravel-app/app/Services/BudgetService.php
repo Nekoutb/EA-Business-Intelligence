@@ -251,7 +251,7 @@ final class BudgetService
         'rev_per_scan',
         'cost_per_scan',
         'ebitda_margin',
-        'ebit_margin',
+        'net_margin',
         'dso',
         'dpo',
     ];

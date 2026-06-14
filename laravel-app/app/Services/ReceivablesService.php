@@ -411,4 +411,101 @@ final class ReceivablesService
         }
         return ['label' => 'Critical', 'level' => 'critical', 'reason' => 'Severe delinquency, immediate action required'];
     }
+
+    /**
+     * Running (cumulative, YTD) DSO by month — the receivables twin of
+     * PayablesService::dpoRunningSeries. For each month m of the year:
+     *
+     *     DSO(m) = AR(end of m) ÷ cumulative-revenue(Jan→m) × $daysInYtd
+     *
+     * The GL month-end AR balance (class 41 ex 419) and cumulative class-7
+     * (ex 77/79) revenue are each anchored to the headline figures
+     * ($totalAr / $totalRevenueYtd), so the LATEST month equals the headline
+     * cumulative DSO exactly while earlier months show the running build-up.
+     *
+     * @return array<int,array{label:string,dso:?float}>
+     */
+    public function dsoRunningSeries(float $totalAr, float $totalRevenueYtd, int $daysInYtd, ?int $year = null, ?\DateTimeImmutable $today = null): array
+    {
+        $today = $today ?? new \DateTimeImmutable('today');
+        $year  = $year  ?? (int) $today->format('Y');
+        try {
+            $accounts = $this->odoo->searchRead('account.account', ['|', ['code', '=like', '41%'], ['code', '=like', '7%']], ['id', 'code'], []);
+            $arIds = []; $revIds = [];
+            foreach ($accounts as $a) {
+                $id = (int) ($a['id'] ?? 0); $code = (string) ($a['code'] ?? '');
+                if ($id <= 0 || $code === '') continue;
+                // AR = client receivables (41x) EXCEPT 419 (client credit
+                // balances / advances received, which net the wrong way).
+                if (str_starts_with($code, '41') && !str_starts_with($code, '419')) { $arIds[] = $id; }
+                // Revenue = operating income (class 7) EXCEPT financial income
+                // (77) and reversals (79), mirroring the P&L revenue line.
+                elseif (str_starts_with($code, '7') && !str_starts_with($code, '77') && !str_starts_with($code, '79')) { $revIds[] = $id; }
+            }
+            if (empty($revIds)) return [];
+
+            $thisYear = (int) $today->format('Y');
+            $curMonth = $year < $thisYear ? 12 : ($year > $thisYear ? 0 : (int) $today->format('n'));
+            if ($curMonth < 1) return [];
+            $endDate = $year < $thisYear ? sprintf('%04d-12-31', $year) : $today->format('Y-m-d');
+
+            $arByMonth  = $this->monthlyBalanceByMonth($arIds, null, $endDate);                          // all-time → balance
+            $revByMonth = $this->monthlyBalanceByMonth($revIds, sprintf('%04d-01-01', $year), $endDate); // this year
+
+            // Cumulative AR balance at end of each month (AR is debit-normal,
+            // so the GL balance is already a positive asset → no sign flip).
+            ksort($arByMonth);
+            $running = 0.0; $arCum = [];
+            foreach ($arByMonth as $mk => $delta) { $running += $delta; $arCum[$mk] = $running; }
+            $arAtEnd = function (string $mk) use ($arCum): float {
+                $bal = 0.0;
+                foreach ($arCum as $k => $v) { if ($k <= $mk) { $bal = $v; } else { break; } }
+                return $bal;
+            };
+
+            $rawAr = []; $rawCumRev = []; $labels = []; $cumRev = 0.0;
+            for ($m = 1; $m <= $curMonth; $m++) {
+                $mk = sprintf('%04d-%02d', $year, $m);
+                // Revenue (class 7) is credit-normal → GL balance negative; flip.
+                $cumRev       += -1.0 * (float) ($revByMonth[$mk] ?? 0);
+                $rawAr[$m]     = max(0.0, $arAtEnd($mk));
+                $rawCumRev[$m] = $cumRev;
+                $labels[$m]    = (new \DateTimeImmutable($mk . '-01'))->format('M y');
+            }
+
+            $revScale = ($rawCumRev[$curMonth] ?? 0) > 0 ? $totalRevenueYtd / $rawCumRev[$curMonth] : 1.0;
+            $useShape = ($rawAr[$curMonth] ?? 0) > 0;
+            $arScale  = $useShape ? $totalAr / $rawAr[$curMonth] : 1.0;
+
+            $series = [];
+            foreach ($labels as $m => $label) {
+                $ar = $useShape ? ($rawAr[$m] * $arScale) : $totalAr;
+                $cr = $rawCumRev[$m] * $revScale;
+                $series[] = ['label' => $label, 'dso' => ($ar > 0 && $cr > 0) ? round($ar / $cr * $daysInYtd, 1) : null];
+            }
+            return $series;
+        } catch (\Throwable $e) {
+            return [];
+        }
+    }
+
+    /** read_group balance:sum by month → [Y-m => balance]; uses __range['date']. */
+    private function monthlyBalanceByMonth(array $accountIds, ?string $from, string $to): array
+    {
+        if (empty($accountIds)) return [];
+        $domain = [['parent_state', '=', 'posted'], ['date', '<=', $to], ['account_id', 'in', $accountIds]];
+        if ($from !== null) $domain[] = ['date', '>=', $from];
+        $rows = $this->odoo->callModel('account.move.line', 'read_group', [
+            'domain' => $domain, 'fields' => ['balance:sum'], 'groupby' => ['date:month'], 'lazy' => false,
+        ]);
+        $out = [];
+        foreach ((array) $rows as $r) {
+            $mk = null;
+            foreach (['date', 'date:month'] as $rk) {
+                if (isset($r['__range'][$rk]['from'])) { $mk = substr((string) $r['__range'][$rk]['from'], 0, 7); break; }
+            }
+            if ($mk !== null) $out[$mk] = (float) ($r['balance'] ?? 0);
+        }
+        return $out;
+    }
 }

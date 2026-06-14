@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Odoo\OdooFactory;
 use App\Services\BillingService;
 use App\Services\BudgetService;
+use App\Services\PayablesService;
 use App\Services\PLForecastService;
 use App\Services\ProfitLossService;
 use App\Services\WorkingCapitalService;
@@ -99,12 +100,11 @@ class DashboardController extends Controller
                 }
             }
 
-            // ── Month-over-month efficiency KPIs (DSO, DPO, Cost/scan,
-            // Revenue/scan, EBITDA margin, EBIT margin). Each carries its
-            // latest value + the prior month so the view can draw the
-            // better/worse arrow. These are monthly figures that don't move
-            // intra-day, so cache for 30 min (vs the 5-min default) to keep
-            // the dashboard fast — the underlying Odoo work is non-trivial.
+            // ── Efficiency KPIs (DSO, DPO, Cost/scan, Revenue/scan, EBITDA
+            // margin, Net profit margin) with a 12-month actual series + the
+            // latest value & prior month for the better/worse arrow. Monthly
+            // figures that don't move intra-day, so cache 30 min (vs the 5-min
+            // default) — the underlying Odoo work is non-trivial.
             try {
                 $extraKpis = \Illuminate\Support\Facades\Cache::remember(
                     ea_cache_prefix() . "dash_kpis_v3_{$year}", 1800,
@@ -112,6 +112,49 @@ class DashboardController extends Controller
                 );
             } catch (\Throwable $e) {
                 $extraKpis = [];
+            }
+
+            // Replace the DSO/DPO actuals with the RUNNING CUMULATIVE (YTD)
+            // series — the same anchored figures the Payables page discloses
+            // (DPO reconciles to the headline ~92d), not the point-in-time
+            // monthly ratios. Reuses the headline AR/AP/revenue/expense totals
+            // already computed above, plus one Payables pass for total AP.
+            try {
+                if (!empty($extraKpis) && $data && $pl && $receivables
+                    && isset($extraKpis['dso'], $extraKpis['dpo'])) {
+                    $running = ea_cached("dash_kpi_running_v1_{$cacheTag}", function () use ($client, $year, $data, $pl, $receivables) {
+                        $days = 365;   // mirror the Payables DPO convention (annualised)
+                        $ccy  = (string) ($data['currency'] ?? 'XAF');
+                        $totalRev = (float) ($data['current']['total'] ?? 0);
+                        $totalExp = max(1.0,
+                              (float) ($pl['current']['cogs'] ?? 0)
+                            + (float) ($pl['current']['opex'] ?? 0)
+                            + (float) ($pl['current']['d_and_a'] ?? 0));
+                        $totalAr = (float) ($receivables['kpis']['total_ar'] ?? $receivables['total_ar'] ?? 0);
+                        $ap      = (new PayablesService($client))->analyze($totalExp, $days, $ccy);
+                        $totalAp = (float) ($ap['kpis']['total_ap'] ?? 0);
+                        return [
+                            'dso' => (new ReceivablesService($client))->dsoRunningSeries($totalAr, $totalRev, $days, $year),
+                            'dpo' => (new PayablesService($client))->dpoRunningSeries($totalAp, $totalExp, $days, $year),
+                        ];
+                    });
+
+                    foreach (['dso', 'dpo'] as $kk) {
+                        $ser = $running[$kk] ?? [];
+                        if (empty($ser)) continue;
+                        $vec = array_fill(0, 12, null);
+                        foreach (array_values($ser) as $i => $p) {
+                            if ($i < 12) $vec[$i] = $p[$kk] ?? null;   // series[0]=Jan …
+                        }
+                        $nn = array_values(array_filter($vec, fn ($x) => $x !== null));
+                        $n  = count($nn);
+                        $extraKpis[$kk]['series'] = $vec;
+                        $extraKpis[$kk]['value']  = $n >= 1 ? $nn[$n - 1] : null;
+                        $extraKpis[$kk]['prev']   = $n >= 2 ? $nn[$n - 2] : null;
+                    }
+                }
+            } catch (\Throwable $e) {
+                // Keep the buildExtraKpis (monthly) DSO/DPO as a fallback.
             }
         } catch (\Throwable $e) {
             $error = $e->getMessage();
@@ -185,7 +228,7 @@ class DashboardController extends Controller
     {
         $ccy  = 'XAF';
         $thru = 0;
-        $rev  = $eb = $ei = [];
+        $rev  = $eb = $ei = $ne = [];
 
         // Monthly P&L — actuals on closed months, forecast after. One call.
         try {
@@ -195,6 +238,7 @@ class DashboardController extends Controller
             $by   = [];
             foreach (($pl['lines'] ?? []) as $line) { $by[$line['key'] ?? ''] = $line['monthly'] ?? []; }
             $rev = $by['revenue'] ?? []; $eb = $by['ebitda'] ?? []; $ei = $by['ebit'] ?? [];
+            $ne  = $by['net_result'] ?? [];
         } catch (\Throwable $e) { /* series stay empty */ }
 
         // Monthly scan counts for the whole year (3 read_group calls total).
@@ -224,12 +268,12 @@ class DashboardController extends Controller
         $revScan = array_fill(1, 12, null);
         $costScan = array_fill(1, 12, null);
         $ebitdaM = array_fill(1, 12, null);
-        $ebitM   = array_fill(1, 12, null);
+        $netM    = array_fill(1, 12, null);
         for ($m = 1; $m <= 12; $m++) {
             $r = (float) ($rev[$m] ?? 0);
             if ($m <= $maxM && $r != 0.0) {
                 $ebitdaM[$m] = (float) ($eb[$m] ?? 0) / $r * 100.0;
-                $ebitM[$m]   = (float) ($ei[$m] ?? 0) / $r * 100.0;
+                $netM[$m]    = (float) ($ne[$m] ?? 0) / $r * 100.0;
             }
             $s = (int) ($scans[$m] ?? 0);
             if ($m <= $maxM && $s > 0) {
@@ -252,7 +296,7 @@ class DashboardController extends Controller
             'cost_per_scan' => ['Cost / scan',    'money', false, $costScan],
             'rev_per_scan'  => ['Revenue / scan', 'money', true,  $revScan],
             'ebitda_margin' => ['EBITDA margin',  'pct',   true,  $ebitdaM],
-            'ebit_margin'   => ['EBIT margin',    'pct',   true,  $ebitM],
+            'net_margin'    => ['Net profit margin', 'pct', true,  $netM],
         ];
 
         $out = [];
