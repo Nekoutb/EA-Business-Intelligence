@@ -164,7 +164,7 @@ final class PayablesService
         $top5ConcentrationPct = $totalAp > 0 ? ($top5Sum / $totalAp) * 100.0 : 0.0;
 
         uasort($creditors, fn($a, $b) => $b['residual'] <=> $a['residual']);
-        $topCreditors = array_values(array_slice($creditors, 0, 10));
+        $topCreditors = array_values(array_slice($creditors, 0, 30));
 
         return [
             'currency' => $currency,
