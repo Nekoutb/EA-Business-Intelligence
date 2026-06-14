@@ -42,6 +42,7 @@ class DashboardController extends Controller
         $pl           = null;
         $receivables  = null;
         $reconciliation = null;
+        $extraKpis    = [];
         $error        = null;
 
         try {
@@ -94,6 +95,16 @@ class DashboardController extends Controller
                     $reconciliation = null;
                 }
             }
+
+            // ── Month-over-month efficiency KPIs (DSO, DPO, Cost/scan,
+            // Revenue/scan, EBITDA margin, EBIT margin). Each carries its
+            // latest value + the prior month so the view can draw the
+            // better/worse arrow. Cached on its own key (own Odoo work).
+            try {
+                $extraKpis = ea_cached("dash_kpis_v1_{$year}", fn () => $this->buildExtraKpis($client, $year));
+            } catch (\Throwable $e) {
+                $extraKpis = [];
+            }
         } catch (\Throwable $e) {
             $error = $e->getMessage();
         }
@@ -132,11 +143,60 @@ class DashboardController extends Controller
             'receivables'    => $receivables,
             'uploadedBudgetMonthly' => $uploadedBudgetMonthly,
             'reconciliation' => $reconciliation,
+            'extraKpis'      => $extraKpis,
             'error'          => $error,
             'active'         => 'dashboard',
             'period'         => $period,
             'periodLabel'    => $periodLabel,
         ]);
+    }
+
+    /**
+     * Build the six month-over-month efficiency KPIs for the dashboard strip.
+     * Each entry: ['label', 'value', 'prev', 'fmt'('days'|'pct'|'money'),
+     * 'ccy', 'higher_better']. Returned in the user's requested order.
+     */
+    private function buildExtraKpis($client, int $year): array
+    {
+        $k = [];
+
+        // EBITDA/EBIT margin + Revenue/Cost-per-scan — from ProfitabilityService.
+        try {
+            $prof = (new \App\Services\ProfitabilityService($client))->analyze($year);
+            $ccy  = (string) ($prof['currency'] ?? 'XAF');
+            $t    = $prof['trend'] ?? [];
+            $mps  = $prof['monthly_per_scan'] ?? [];
+            $thru = (int) ($t['thru_month'] ?? 0);
+            if ($thru >= 2) {
+                $i = $thru - 1; $j = $thru - 2;                 // 0-indexed latest closed + prior
+                $ri = (float) ($t['revenue'][$i] ?? 0); $rj = (float) ($t['revenue'][$j] ?? 0);
+                $marg = fn ($num, $rev) => $rev != 0.0 ? (float) $num / $rev * 100.0 : null;
+                $k['cost_per_scan'] = ['label' => 'Cost / scan',    'value' => $mps['cost'][$i] ?? null,    'prev' => $mps['cost'][$j] ?? null,    'fmt' => 'money', 'ccy' => $ccy, 'higher_better' => false];
+                $k['rev_per_scan']  = ['label' => 'Revenue / scan', 'value' => $mps['revenue'][$i] ?? null, 'prev' => $mps['revenue'][$j] ?? null, 'fmt' => 'money', 'ccy' => $ccy, 'higher_better' => true];
+                $k['ebitda_margin'] = ['label' => 'EBITDA margin',  'value' => $marg($t['ebitda'][$i] ?? 0, $ri), 'prev' => $marg($t['ebitda'][$j] ?? 0, $rj), 'fmt' => 'pct', 'higher_better' => true];
+                $k['ebit_margin']   = ['label' => 'EBIT margin',    'value' => $marg($t['ebit'][$i] ?? 0, $ri),   'prev' => $marg($t['ebit'][$j] ?? 0, $rj),   'fmt' => 'pct', 'higher_better' => true];
+            }
+        } catch (\Throwable $e) { /* leave those KPIs absent */ }
+
+        // DSO + DPO — last two non-null points of the liquidity trend.
+        try {
+            $series = (new \App\Services\WorkingCapitalService($client))->liquidityTrend(12)['series'] ?? [];
+            foreach (['dso' => ['DSO', false], 'dpo' => ['DPO', true]] as $key => [$label, $higherBetter]) {
+                $pts = [];
+                foreach ($series as $p) { if (($p[$key] ?? null) !== null) $pts[] = (float) $p[$key]; }
+                $n = count($pts);
+                if ($n >= 1) {
+                    $k[$key] = ['label' => $label, 'value' => $pts[$n - 1], 'prev' => $n >= 2 ? $pts[$n - 2] : null, 'fmt' => 'days', 'higher_better' => $higherBetter];
+                }
+            }
+        } catch (\Throwable $e) { /* leave DSO/DPO absent */ }
+
+        // Return in the user's requested order.
+        $out = [];
+        foreach (['dso', 'dpo', 'cost_per_scan', 'rev_per_scan', 'ebitda_margin', 'ebit_margin'] as $key) {
+            if (isset($k[$key])) $out[$key] = $k[$key];
+        }
+        return $out;
     }
 
     public function sync()

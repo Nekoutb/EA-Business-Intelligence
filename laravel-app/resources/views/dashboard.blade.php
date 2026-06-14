@@ -688,6 +688,45 @@
     @endif {{-- /ar_outstanding strip --}}
 </div>
 
+{{-- ── Efficiency KPI strip — DSO · DPO · Cost/scan · Revenue/scan · EBITDA% ·
+       EBIT%. Each shows the latest month value with a month-over-month arrow:
+       green ▲ if better than last month, red ▼ if worse. --}}
+@if (!empty($extraKpis))
+@php
+    $fmtKpi = function ($v, $kpi) use ($ccy) {
+        if (!is_numeric($v)) return '—';
+        return match ($kpi['fmt'] ?? 'pct') {
+            'days'  => number_format((float) $v, 0) . ' d',
+            'money' => ea_money_short((float) $v, $kpi['ccy'] ?? $ccy),
+            default => number_format((float) $v, 1) . '%',
+        };
+    };
+@endphp
+<div class="strip" style="margin-top: 6px;">
+    @foreach ($extraKpis as $kpi)
+        @php
+            $val = $kpi['value']; $prev = $kpi['prev']; $hb = (bool) ($kpi['higher_better'] ?? true);
+            $better = null; $deltaPct = null;
+            if (is_numeric($val) && is_numeric($prev)) {
+                $better = ((float) $val === (float) $prev) ? null : ($hb ? ($val > $prev) : ($val < $prev));
+                if ((float) $prev != 0.0) $deltaPct = (($val - $prev) / abs((float) $prev)) * 100.0;
+            }
+        @endphp
+        <div class="strip__c">
+            <div class="strip__l">{{ $kpi['label'] }}</div>
+            <div class="strip__v">{{ $fmtKpi($val, $kpi) }}</div>
+            <div class="strip__m">
+                @if ($better === null)
+                    <span style="color: var(--text-faint);">— vs last mo</span>
+                @else
+                    <span style="color: {{ $better ? 'var(--pos)' : 'var(--neg)' }}; font-weight: 700;">{{ $better ? '▲' : '▼' }}@if ($deltaPct !== null) {{ number_format(abs($deltaPct), 1) }}%@endif</span><span style="color: var(--text-faint);"> vs last mo</span>
+                @endif
+            </div>
+        </div>
+    @endforeach
+</div>
+@endif
+
 @push('scripts')
 <script>
 (function () {
