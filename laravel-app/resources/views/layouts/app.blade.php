@@ -92,6 +92,12 @@
       .ea-app  { display: flex; height: 100vh; overflow: hidden; }
       .ea-main { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: auto; }
       .ea-main:not(.is-fit) { padding: 16px 20px; }
+      /* Content blocks must not be shrunk by the flex column — a flex child
+         with overflow:hidden (e.g. a table card) loses its automatic min
+         height and gets compressed, clipping its lower rows and making the
+         page only scroll part-way. Pinning flex-shrink:0 keeps each block at
+         its natural height so the whole page scrolls to the bottom. */
+      .ea-main:not(.is-fit) > * { flex-shrink: 0; }
       .ea-main.is-fit       { overflow: hidden; padding: 10px 16px; }
 
       /* ── Sidebar (220px, light cream) ──────────────────────────── */

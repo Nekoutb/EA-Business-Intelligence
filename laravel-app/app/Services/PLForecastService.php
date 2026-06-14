@@ -477,21 +477,15 @@ final class PLForecastService
                 break;
             case 'annual_target':
             default:
-                // Spread the annual target across the forecast months at the
-                // target's own seasonal pace — each forecast month gets
-                // target × (last-year share of that month). This matches the
-                // label ("spread by last-year seasonality") and the intuitive
-                // "annual ÷ 12 ≈ monthly" when seasonality is flat.
-                //
-                // NOTE: deliberately NOT "target − booked actuals". That
-                // fill-to-target logic collapsed every forecast month to zero
-                // whenever year-to-date actuals already exceeded the target,
-                // which read as a broken/empty forecast.
-                $annual = max(0.0, (float) $A['revenue']['annual_target']);
+                // Split the target EVENLY across the remaining (forecast)
+                // months: the entered target is the total to place into the
+                // forecast period (e.g. Jun–Dec), divided equally. So each
+                // forecast month = target ÷ (number of forecast months), and
+                // the forecast-period total equals the target exactly.
+                $annual   = max(0.0, (float) $A['revenue']['annual_target']);
+                $perMonth = count($fc) > 0 ? $annual / count($fc) : 0.0;
                 foreach ($fc as $m) {
-                    $tRev[$m] = $pyAnnualRev > 0
-                        ? $annual * ($pyRev[$m] / $pyAnnualRev)
-                        : $annual / 12.0;
+                    $tRev[$m] = $perMonth;
                 }
                 break;
         }
