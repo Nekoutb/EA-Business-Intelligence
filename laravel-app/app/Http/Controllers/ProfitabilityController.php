@@ -33,7 +33,7 @@ class ProfitabilityController extends Controller
 
         try {
             $client = OdooFactory::fromConfig();
-            $data = ea_cached("profitability_v2_{$year}", function () use ($client, $year, $assumptions) {
+            $data = ea_cached("profitability_v3_{$year}", function () use ($client, $year, $assumptions) {
                 return (new ProfitabilityService($client))->analyze($year, $assumptions);
             });
         } catch (\Throwable $e) {

@@ -48,7 +48,7 @@ class PLForecastController extends Controller
 
         try {
             $client = OdooFactory::fromConfig();
-            $cacheKey = "pl_forecast_{$view}_{$year}_{$month}";
+            $cacheKey = "pl_forecast_v2_{$view}_{$year}_{$month}";
             $data = ea_cached($cacheKey, function () use ($client, $year, $month, $view, $budgetGrowth, $uploadedBudget, $forecastAssumptions) {
                 $svc = new PLForecastService($client);
                 return match ($view) {
@@ -176,7 +176,11 @@ class PLForecastController extends Controller
             'revenue_method'         => ['nullable', 'in:annual_target,growth_pct,run_rate'],
             'revenue_annual_target'  => ['nullable', 'numeric'],
             'revenue_growth_pct'     => ['nullable', 'numeric'],
+            'revenue_lower'          => ['nullable', 'numeric'],
+            'revenue_upper'          => ['nullable', 'numeric'],
             'gross_margin_pct'       => ['nullable', 'numeric'],
+            'gross_margin_lower_pct' => ['nullable', 'numeric'],
+            'gross_margin_upper_pct' => ['nullable', 'numeric'],
             'opex_method'            => ['nullable', 'in:fixed,pct_of_revenue'],
             'opex_monthly'           => ['nullable', 'numeric'],
             'opex_inflation_pct'     => ['nullable', 'numeric'],
@@ -196,8 +200,12 @@ class PLForecastController extends Controller
                 'method'        => $v['revenue_method'] ?? 'annual_target',
                 'annual_target' => max(0.0, $num('revenue_annual_target')),
                 'growth_pct'    => $num('revenue_growth_pct'),
+                'lower'         => max(0.0, $num('revenue_lower')),
+                'upper'         => max(0.0, $num('revenue_upper')),
             ],
-            'gross_margin_pct'      => max(-100.0, min(100.0, $num('gross_margin_pct'))),
+            'gross_margin_pct'       => max(-100.0, min(100.0, $num('gross_margin_pct'))),
+            'gross_margin_lower_pct' => max(0.0, min(100.0, $num('gross_margin_lower_pct'))),
+            'gross_margin_upper_pct' => max(0.0, min(100.0, $num('gross_margin_upper_pct'))),
             'opex' => [
                 'method'         => $v['opex_method'] ?? 'fixed',
                 'monthly'        => max(0.0, $num('opex_monthly')),
