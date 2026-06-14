@@ -242,6 +242,71 @@ final class BudgetService
     }
 
     /**
+     * Dashboard efficiency-KPI budget targets the user types in on the
+     * dashboard's "KPI Targets & Trends" panel. Stored as flat annual
+     * targets (one number each) so the dashboard can draw a horizontal
+     * budget line across the monthly actual on each KPI trend chart.
+     */
+    public const KPI_BUDGET_KEYS = [
+        'rev_per_scan',
+        'cost_per_scan',
+        'ebitda_margin',
+        'ebit_margin',
+        'dso',
+        'dpo',
+    ];
+
+    /**
+     * Load the KPI budget targets for a (tenant, year). Always returns a
+     * complete map keyed by KPI; an unset target is null (no budget line).
+     *
+     * @return array<string, ?float>
+     */
+    public function loadKpiBudgets(int $tenantId, int $year): array
+    {
+        $row = TenantBudget::where('tenant_id', $tenantId)
+            ->where('year', $year)
+            ->first();
+        $raw = $row ? (array) ($row->data['kpi_budgets'] ?? []) : [];
+
+        $out = [];
+        foreach (self::KPI_BUDGET_KEYS as $k) {
+            $out[$k] = isset($raw[$k]) && is_numeric($raw[$k]) ? (float) $raw[$k] : null;
+        }
+        return $out;
+    }
+
+    /**
+     * Persist KPI budget targets without disturbing the line budget,
+     * per-product budget, or forecast assumptions that share the data JSON.
+     * Only known keys with a numeric value are stored; a blank field
+     * clears that target.
+     *
+     * @param array<string, mixed> $budgets  key => numeric|blank
+     */
+    public function saveKpiBudgets(Tenant $tenant, int $year, array $budgets, ?int $userId = null): TenantBudget
+    {
+        $row = TenantBudget::firstOrNew([
+            'tenant_id' => $tenant->id,
+            'year'      => $year,
+        ]);
+        $existing = (array) ($row->data ?? []);
+
+        $clean = [];
+        foreach (self::KPI_BUDGET_KEYS as $k) {
+            if (isset($budgets[$k]) && is_numeric($budgets[$k])) {
+                $clean[$k] = (float) $budgets[$k];
+            }
+        }
+
+        $existing['kpi_budgets'] = $clean;
+        $row->data = $existing;
+        if ($userId) $row->uploaded_by = $userId;
+        $row->save();
+        return $row;
+    }
+
+    /**
      * Summary metadata for the upload page (year, source filename,
      * uploader, when, monthly totals per line).
      */

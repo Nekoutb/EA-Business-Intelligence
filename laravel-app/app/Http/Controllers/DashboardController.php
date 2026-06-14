@@ -5,7 +5,9 @@ namespace App\Http\Controllers;
 use App\Odoo\OdooFactory;
 use App\Services\BillingService;
 use App\Services\BudgetService;
+use App\Services\PLForecastService;
 use App\Services\ProfitLossService;
+use App\Services\WorkingCapitalService;
 use App\Services\RevenueService;
 use App\Services\ReceivablesService;
 use App\Tenancy\TenantContext;
@@ -43,6 +45,7 @@ class DashboardController extends Controller
         $receivables  = null;
         $reconciliation = null;
         $extraKpis    = [];
+        $kpiBudgets   = [];
         $error        = null;
 
         try {
@@ -104,7 +107,7 @@ class DashboardController extends Controller
             // the dashboard fast — the underlying Odoo work is non-trivial.
             try {
                 $extraKpis = \Illuminate\Support\Facades\Cache::remember(
-                    ea_cache_prefix() . "dash_kpis_v2_{$year}", 1800,
+                    ea_cache_prefix() . "dash_kpis_v3_{$year}", 1800,
                     fn () => $this->buildExtraKpis($client, $year)
                 );
             } catch (\Throwable $e) {
@@ -142,6 +145,18 @@ class DashboardController extends Controller
             // and the dashboard renders without the budget overlay.
         }
 
+        // ── KPI budget targets (flat annual lines on the trend charts).
+        // A cheap uncached DB read, kept OUT of the 30-min KPI cache so a
+        // freshly-saved target shows on the very next load without a recompute.
+        try {
+            $ctx = app(TenantContext::class);
+            if ($ctx->has()) {
+                $kpiBudgets = (new BudgetService())->loadKpiBudgets($ctx->tenant()->id, $year);
+            }
+        } catch (\Throwable $e) {
+            $kpiBudgets = [];
+        }
+
         return view('dashboard', [
             'data'           => $data,
             'pl'             => $pl,
@@ -149,6 +164,7 @@ class DashboardController extends Controller
             'uploadedBudgetMonthly' => $uploadedBudgetMonthly,
             'reconciliation' => $reconciliation,
             'extraKpis'      => $extraKpis,
+            'kpiBudgets'     => $kpiBudgets,
             'error'          => $error,
             'active'         => 'dashboard',
             'period'         => $period,
@@ -157,76 +173,201 @@ class DashboardController extends Controller
     }
 
     /**
-     * Build the six month-over-month efficiency KPIs for the dashboard strip.
-     * Each entry: ['label', 'value', 'prev', 'fmt'('days'|'pct'|'money'),
-     * 'ccy', 'higher_better']. Returned in the user's requested order.
+     * Build the six efficiency KPIs for the dashboard, each with its full
+     * 12-month actual series (for the trend charts) plus the latest value
+     * and prior month (for the strip's better/worse arrow).
+     *
+     * Order: DSO, DPO, Cost/scan, Revenue/scan, EBITDA margin, EBIT margin.
+     * Each entry: ['label','value','prev','fmt'('days'|'pct'|'money'),'ccy',
+     * 'higher_better','series'(0-indexed Jan..Dec, null where no actual)].
      */
     private function buildExtraKpis($client, int $year): array
     {
-        $k = [];
+        $ccy  = 'XAF';
+        $thru = 0;
+        $rev  = $eb = $ei = [];
 
-        // EBITDA/EBIT margin + Revenue/Cost-per-scan. Monthly P&L from
-        // PLForecastService (much lighter than the full ProfitabilityService);
-        // per-scan denominators are the scan counts for ONLY the last two
-        // closed months (not the whole year).
+        // Monthly P&L — actuals on closed months, forecast after. One call.
         try {
-            $pl   = (new \App\Services\PLForecastService($client))->analyze($year);
+            $pl   = (new PLForecastService($client))->analyze($year);
             $ccy  = (string) ($pl['currency'] ?? 'XAF');
             $thru = (int) ($pl['thru_month'] ?? 0);
             $by   = [];
             foreach (($pl['lines'] ?? []) as $line) { $by[$line['key'] ?? ''] = $line['monthly'] ?? []; }
             $rev = $by['revenue'] ?? []; $eb = $by['ebitda'] ?? []; $ei = $by['ebit'] ?? [];
-            if ($thru >= 2) {
-                $a = $thru; $b = $thru - 1;                       // 1-indexed latest closed + prior
-                $ra = (float) ($rev[$a] ?? 0); $rb = (float) ($rev[$b] ?? 0);
-                $marg = fn ($num, $r) => $r != 0.0 ? (float) $num / $r * 100.0 : null;
-                $k['ebitda_margin'] = ['label' => 'EBITDA margin', 'value' => $marg($eb[$a] ?? 0, $ra), 'prev' => $marg($eb[$b] ?? 0, $rb), 'fmt' => 'pct', 'higher_better' => true];
-                $k['ebit_margin']   = ['label' => 'EBIT margin',   'value' => $marg($ei[$a] ?? 0, $ra), 'prev' => $marg($ei[$b] ?? 0, $rb), 'fmt' => 'pct', 'higher_better' => true];
+        } catch (\Throwable $e) { /* series stay empty */ }
 
-                $scanForMonth = function (int $m) use ($client, $year): int {
-                    $from = sprintf('%04d-%02d-01 00:00:00', $year, $m);
-                    $to   = (new \DateTimeImmutable(sprintf('%04d-%02d-01', $year, $m)))->modify('last day of this month')->format('Y-m-d 23:59:59');
-                    $w = [['scanned', '=', true], ['scanned_date', '>=', $from], ['scanned_date', '<=', $to]];
-                    $t = 0;
-                    try { $t += (int) $client->searchCount('aw_cargo.equipment', $w); } catch (\Throwable $e) {}
-                    try { $t += (int) $client->searchCount('aw_vehicule.vehicule', $w); } catch (\Throwable $e) {}
-                    try {
-                        $g = $client->callModel('aw_bois.bois', 'read_group', ['domain' => $w, 'fields' => [], 'groupby' => ['cargo_id'], 'lazy' => false]);
-                        $t += count(array_filter((array) $g, fn ($r) => !empty($r['cargo_id']) && $r['cargo_id'] !== false));
-                    } catch (\Throwable $e) {}
-                    return $t;
-                };
-                $sa = $scanForMonth($a); $sb = $scanForMonth($b);
-                $costA = $ra - (float) ($ei[$a] ?? 0); $costB = $rb - (float) ($ei[$b] ?? 0);
-                $k['cost_per_scan'] = ['label' => 'Cost / scan',    'value' => $sa > 0 ? $costA / $sa : null, 'prev' => $sb > 0 ? $costB / $sb : null, 'fmt' => 'money', 'ccy' => $ccy, 'higher_better' => false];
-                $k['rev_per_scan']  = ['label' => 'Revenue / scan', 'value' => $sa > 0 ? $ra / $sa : null,    'prev' => $sb > 0 ? $rb / $sb : null,    'fmt' => 'money', 'ccy' => $ccy, 'higher_better' => true];
-            }
-        } catch (\Throwable $e) { /* leave those KPIs absent */ }
+        // Monthly scan counts for the whole year (3 read_group calls total).
+        $scans = $this->scansByMonth($client, $year);
 
-        // DSO + DPO — last two non-null points of the liquidity trend.
+        // Monthly DSO/DPO from the liquidity trend, mapped onto month numbers.
+        $dsoM = array_fill(1, 12, null);
+        $dpoM = array_fill(1, 12, null);
         try {
-            $series = (new \App\Services\WorkingCapitalService($client))->liquidityTrend(12)['series'] ?? [];
-            foreach (['dso' => ['DSO', false], 'dpo' => ['DPO', true]] as $key => [$label, $higherBetter]) {
-                $pts = [];
-                foreach ($series as $p) { if (($p[$key] ?? null) !== null) $pts[] = (float) $p[$key]; }
-                $n = count($pts);
-                if ($n >= 1) {
-                    $k[$key] = ['label' => $label, 'value' => $pts[$n - 1], 'prev' => $n >= 2 ? $pts[$n - 2] : null, 'fmt' => 'days', 'higher_better' => $higherBetter];
+            $series = (new WorkingCapitalService($client))->liquidityTrend(12)['series'] ?? [];
+            foreach ($series as $p) {
+                $d = (string) ($p['date'] ?? '');
+                if (strlen($d) >= 7 && (int) substr($d, 0, 4) === $year) {
+                    $mm = (int) substr($d, 5, 2);
+                    if ($mm >= 1 && $mm <= 12) {
+                        if (($p['dso'] ?? null) !== null) $dsoM[$mm] = (float) $p['dso'];
+                        if (($p['dpo'] ?? null) !== null) $dpoM[$mm] = (float) $p['dpo'];
+                    }
                 }
             }
-        } catch (\Throwable $e) { /* leave DSO/DPO absent */ }
+        } catch (\Throwable $e) { /* DSO/DPO stay null */ }
 
-        // Return in the user's requested order.
+        // Per-scan + margin monthly series. Only closed months (<= thru)
+        // carry an actual; forecast months stay null so the charts never
+        // present projections as actuals.
+        $maxM    = max(0, min(12, $thru));
+        $revScan = array_fill(1, 12, null);
+        $costScan = array_fill(1, 12, null);
+        $ebitdaM = array_fill(1, 12, null);
+        $ebitM   = array_fill(1, 12, null);
+        for ($m = 1; $m <= 12; $m++) {
+            $r = (float) ($rev[$m] ?? 0);
+            if ($m <= $maxM && $r != 0.0) {
+                $ebitdaM[$m] = (float) ($eb[$m] ?? 0) / $r * 100.0;
+                $ebitM[$m]   = (float) ($ei[$m] ?? 0) / $r * 100.0;
+            }
+            $s = (int) ($scans[$m] ?? 0);
+            if ($m <= $maxM && $s > 0) {
+                $revScan[$m]  = $r / $s;
+                $costScan[$m] = ($r - (float) ($ei[$m] ?? 0)) / $s;   // cost ≈ revenue − EBIT
+            }
+        }
+
+        // Latest value + prior non-null point, for the strip's arrow.
+        $lastTwo = function (array $byMonth): array {
+            $vals = [];
+            foreach ($byMonth as $v) { if ($v !== null) $vals[] = (float) $v; }
+            $n = count($vals);
+            return [$n >= 1 ? $vals[$n - 1] : null, $n >= 2 ? $vals[$n - 2] : null];
+        };
+
+        $defs = [
+            'dso'           => ['DSO',            'days',  false, $dsoM],
+            'dpo'           => ['DPO',            'days',  true,  $dpoM],
+            'cost_per_scan' => ['Cost / scan',    'money', false, $costScan],
+            'rev_per_scan'  => ['Revenue / scan', 'money', true,  $revScan],
+            'ebitda_margin' => ['EBITDA margin',  'pct',   true,  $ebitdaM],
+            'ebit_margin'   => ['EBIT margin',    'pct',   true,  $ebitM],
+        ];
+
         $out = [];
-        foreach (['dso', 'dpo', 'cost_per_scan', 'rev_per_scan', 'ebitda_margin', 'ebit_margin'] as $key) {
-            if (isset($k[$key])) $out[$key] = $k[$key];
+        foreach ($defs as $key => [$label, $fmt, $hb, $byMonth]) {
+            [$val, $prev] = $lastTwo($byMonth);
+            $out[$key] = [
+                'label'         => $label,
+                'value'         => $val,
+                'prev'          => $prev,
+                'fmt'           => $fmt,
+                'ccy'           => $ccy,
+                'higher_better' => $hb,
+                'series'        => array_values($byMonth),   // 0-indexed Jan..Dec
+            ];
         }
         return $out;
     }
 
-    public function sync()
+    /**
+     * Scan counts per calendar month for a year — containers + vehicles +
+     * distinct wood truckloads (cargo_id), filtered scanned=true. Three
+     * read_group-by-month calls cover the whole year (vs one call per month),
+     * keeping the dashboard's cold build cheap. Returns [1..12 => int].
+     *
+     * Odoo keys the month window under __range[FIELD] ('scanned_date'), NOT
+     * __range['scanned_date:month']; the French month labels in the value
+     * field can't be reparsed, so we read the range's `from`.
+     */
+    private function scansByMonth($client, int $year): array
     {
+        $out = array_fill(1, 12, 0);
+        $win = [
+            ['scanned', '=', true],
+            ['scanned_date', '>=', sprintf('%04d-01-01 00:00:00', $year)],
+            ['scanned_date', '<=', sprintf('%04d-12-31 23:59:59', $year)],
+        ];
+        $monthOf = function (array $row): ?int {
+            foreach (['scanned_date', 'scanned_date:month'] as $rk) {
+                if (isset($row['__range'][$rk]['from'])) {
+                    $f = (string) $row['__range'][$rk]['from'];
+                    if (strlen($f) >= 7) return (int) substr($f, 5, 2);
+                }
+            }
+            return null;
+        };
+
+        // Containers + vehicles: one group per month, __count = scans.
+        foreach (['aw_cargo.equipment', 'aw_vehicule.vehicule'] as $model) {
+            try {
+                $g = $client->callModel($model, 'read_group', [
+                    'domain' => $win, 'fields' => [], 'groupby' => ['scanned_date:month'], 'lazy' => false,
+                ]);
+                foreach ((array) $g as $row) {
+                    $m = $monthOf($row);
+                    if ($m !== null && isset($out[$m])) $out[$m] += (int) ($row['__count'] ?? 0);
+                }
+            } catch (\Throwable $e) { /* model absent → skip */ }
+        }
+
+        // Wood: distinct cargo_id per month ≈ one truckload. With two groupby
+        // keys + lazy=false Odoo emits one row per (month, cargo), so each
+        // non-empty cargo_id row counts as one truckload that month.
+        try {
+            $g = $client->callModel('aw_bois.bois', 'read_group', [
+                'domain' => $win, 'fields' => [], 'groupby' => ['scanned_date:month', 'cargo_id'], 'lazy' => false,
+            ]);
+            foreach ((array) $g as $row) {
+                if (empty($row['cargo_id']) || $row['cargo_id'] === false) continue;
+                $m = $monthOf($row);
+                if ($m !== null && isset($out[$m])) $out[$m] += 1;
+            }
+        } catch (\Throwable $e) { /* model absent → skip */ }
+
+        return $out;
+    }
+
+    public function sync(Request $request)
+    {
+        // The dashboard "KPI Targets" form reuses this already-cached POST
+        // route (a dedicated /dashboard/kpi-targets route would 404 behind the
+        // stale route cache on this host). Delegate on the intent marker
+        // before the default cache-refresh behaviour.
+        if ($request->input('_intent') === 'kpi_budget') {
+            return $this->saveKpiBudget($request);
+        }
+
         ea_cache_clear();
         return back()->with('flash', ['type' => 'success', 'msg' => 'Data refreshed — next load will hit Odoo live.']);
+    }
+
+    /**
+     * Persist the dashboard KPI budget targets (rev/scan, cost/scan, EBITDA%,
+     * EBIT%, DSO, DPO) for the active tenant + year. Stored outside the KPI
+     * cache, so the new budget line shows on the next dashboard load.
+     */
+    private function saveKpiBudget(Request $request)
+    {
+        $ctx = app(TenantContext::class);
+        if (!$ctx->has()) abort(404);
+        $tenant = $ctx->tenant();
+
+        $v = $request->validate([
+            'year'     => ['required', 'integer'],
+            'budget'   => ['nullable', 'array'],
+            'budget.*' => ['nullable', 'numeric'],
+        ]);
+        $year = max(2018, min((int) (new \DateTimeImmutable())->format('Y') + 2, (int) $v['year']));
+
+        app(BudgetService::class)->saveKpiBudgets(
+            $tenant, $year, (array) ($v['budget'] ?? []), optional($request->user())->id
+        );
+
+        return redirect()->to(tenant_url('/'))->with('flash', [
+            'type' => 'success',
+            'msg'  => 'KPI targets saved.',
+        ]);
     }
 }

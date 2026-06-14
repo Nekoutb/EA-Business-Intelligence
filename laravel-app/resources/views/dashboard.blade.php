@@ -93,6 +93,33 @@
   .strip__v .u { font: 500 10px var(--font); color: var(--text-subtle); margin-left: 1px; }
   .strip__m { font: 500 9px var(--font); color: var(--text-subtle); margin-top: 2px; }
 
+  /* ── KPI Targets & Trends — scrolls below the single-screen board.
+     Override is-fit's overflow so the page can scroll to this section while
+     the board above still fills the first screen. Page-scoped (this <style>
+     only loads on the dashboard), so other is-fit pages are untouched. */
+  .ea-main.is-fit { overflow-y: auto; }
+  .ea-main.is-fit > * { flex-shrink: 0; }
+  .grid { min-height: calc(100vh - 200px); }
+
+  .kpanel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); margin-top: 10px; padding: 10px 14px 14px; }
+  .kpanel__h { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+  .kpanel__t { font: 700 13px var(--font); color: var(--text); }
+  .kpanel__t span { font: 500 11px var(--font); color: var(--text-subtle); margin-left: 6px; }
+  .kform { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px 10px; align-items: end; margin-bottom: 14px; }
+  .kform__c { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+  .kform__l { font: 600 9px var(--font); color: var(--text-subtle); text-transform: uppercase; letter-spacing: .04em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .kform__i { width: 100%; box-sizing: border-box; padding: 5px 7px; font: 600 12px var(--font); color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-sm); }
+  .kform__i:focus { outline: none; border-color: var(--ea-primary); }
+  .kform__save { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .kform__hint { font: 500 10px var(--font); color: var(--text-subtle); margin-right: auto; }
+  .kform__btn { padding: 6px 16px; font: 700 11px var(--font); color: #fff; background: var(--ea-primary); border: 0; border-radius: var(--r-sm); cursor: pointer; }
+  .kgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .kgrid__c { border: 1px solid var(--border-faint); border-radius: var(--r); padding: 8px 10px 4px; }
+  .kgrid__t { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font: 700 11px var(--font); color: var(--text); margin-bottom: 2px; }
+  .kgrid__u { font: 500 9px var(--font); color: var(--text-subtle); text-transform: uppercase; letter-spacing: .04em; }
+  .kchart { width: 100%; height: 168px; }
+  @media (max-width: 900px) { .kform { grid-template-columns: repeat(2, 1fr); } .kgrid { grid-template-columns: 1fr; } }
+
   /* Empty / error states */
   .empty-state { display: flex; align-items: center; justify-content: center; height: 100%; color: var(--text-faint); font: 500 11px var(--font); text-align: center; padding: 8px; }
   .error-card { padding: 12px 16px; background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; border-radius: var(--r); font-size: 12px; margin-bottom: 8px; }
@@ -727,6 +754,64 @@
 </div>
 @endif
 
+{{-- ── KPI Targets & Trends ───────────────────────────────────────────
+     Input budgeted targets for each efficiency KPI, then see the monthly
+     actual plotted against that target line across the year. Sits below the
+     single-screen board (the page scrolls to reach it). The form reuses the
+     cached POST /sync route via an `_intent` marker (a dedicated route would
+     404 behind this host's stale route cache). --}}
+@if (!empty($extraKpis))
+@php
+    $kyear = (int) ($period['year'] ?? now()->format('Y'));
+    // Single JSON blob for the charts (Blade @json wants one variable):
+    // per KPI → label, fmt, currency, 12-month actual series, budget target.
+    $kpiGraphData = [];
+    foreach ($extraKpis as $kkey => $kkpi) {
+        $kpiGraphData[$kkey] = [
+            'label'  => $kkpi['label'] ?? $kkey,
+            'fmt'    => $kkpi['fmt'] ?? 'pct',
+            'ccy'    => $kkpi['ccy'] ?? ($ccy ?? 'XAF'),
+            'series' => $kkpi['series'] ?? [],
+            'budget' => $kpiBudgets[$kkey] ?? null,
+        ];
+    }
+    $unitOf = fn ($kpi) => ($kpi['fmt'] ?? '') === 'days' ? 'days'
+        : (($kpi['fmt'] ?? '') === 'money' ? (($kpi['ccy'] ?? ($ccy ?? 'XAF')) . '/scan') : '%');
+@endphp
+<section class="kpanel">
+    <div class="kpanel__h">
+        <div class="kpanel__t">KPI Targets &amp; Trends <span>{{ $kyear }} · monthly actual vs your budget</span></div>
+    </div>
+
+    <form method="POST" action="{{ tenant_url('/sync') }}" class="kform">
+        @csrf
+        <input type="hidden" name="_intent" value="kpi_budget">
+        <input type="hidden" name="year" value="{{ $kyear }}">
+        @foreach ($extraKpis as $kkey => $kkpi)
+            <div class="kform__c">
+                <label class="kform__l" for="kb-{{ $kkey }}" title="{{ $kkpi['label'] }} target">{{ $kkpi['label'] }} ({{ $unitOf($kkpi) }})</label>
+                <input class="kform__i" type="number" step="any" id="kb-{{ $kkey }}" name="budget[{{ $kkey }}]"
+                       value="{{ ($kpiBudgets[$kkey] ?? null) !== null ? rtrim(rtrim(number_format((float) $kpiBudgets[$kkey], 4, '.', ''), '0'), '.') : '' }}"
+                       placeholder="—">
+            </div>
+        @endforeach
+        <div class="kform__save">
+            <span class="kform__hint">Set a target per KPI; leave a field blank to remove its line. Saving refreshes the charts.</span>
+            <button type="submit" class="kform__btn">Save targets</button>
+        </div>
+    </form>
+
+    <div class="kgrid">
+        @foreach ($extraKpis as $kkey => $kkpi)
+            <div class="kgrid__c">
+                <div class="kgrid__t"><span>{{ $kkpi['label'] }}</span><span class="kgrid__u">{{ $unitOf($kkpi) }}</span></div>
+                <div class="kchart" id="kg-{{ $kkey }}"></div>
+            </div>
+        @endforeach
+    </div>
+</section>
+@endif
+
 @push('scripts')
 <script>
 (function () {
@@ -1064,6 +1149,83 @@
   window.addEventListener('resize', resizeAll);
   /* ECharts may need a second tick to settle after Blade injection. */
   setTimeout(resizeAll, 100);
+})();
+</script>
+@endpush
+
+@push('scripts')
+<script>
+/* ── KPI Targets & Trends: one line chart per efficiency KPI — monthly
+   actual vs the flat budget target the user saved. */
+(function () {
+  if (typeof echarts === 'undefined') return;
+  const data = @json($kpiGraphData ?? []);
+  const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const PRI = '#0d6e6e', BUD = '#d97706', GRID = '#f3f4f6', TEXT = '#6b7280';
+  const FF = "'Segoe UI',-apple-system,BlinkMacSystemFont,system-ui,sans-serif";
+
+  function fmtVal(v, fmt) {
+    if (v === null || v === undefined || isNaN(v)) return '—';
+    if (fmt === 'pct')  return (Math.round(v * 10) / 10) + '%';
+    if (fmt === 'days') return Math.round(v) + ' d';
+    const a = Math.abs(v);                       // money → compact
+    if (a >= 1e9) return (v / 1e9).toFixed(2) + 'B';
+    if (a >= 1e6) return (v / 1e6).toFixed(2) + 'M';
+    if (a >= 1e3) return (v / 1e3).toFixed(1) + 'k';
+    return Math.round(v).toString();
+  }
+
+  const instances = [];
+  Object.keys(data).forEach(function (key) {
+    const el = document.getElementById('kg-' + key);
+    if (!el) return;
+    const d = data[key] || {};
+    const fmt = d.fmt || 'pct';
+    const series = (d.series || []).map(x => (x === null || x === undefined || x === '') ? null : +x);
+    const budget = (d.budget === null || d.budget === undefined || d.budget === '') ? null : +d.budget;
+
+    const ser = [{
+      name: 'Actual', type: 'line', data: series, connectNulls: false,
+      smooth: true, showSymbol: true, symbolSize: 5,
+      lineStyle: { color: PRI, width: 2 }, itemStyle: { color: PRI },
+      areaStyle: { color: 'rgba(13,110,110,0.07)' },
+    }];
+    if (budget !== null && !isNaN(budget)) {
+      ser.push({
+        name: 'Target', type: 'line', data: MONTHS.map(() => budget),
+        showSymbol: false, smooth: false,
+        lineStyle: { color: BUD, width: 1.5, type: 'dashed' }, itemStyle: { color: BUD },
+      });
+    }
+
+    const inst = echarts.init(el);
+    inst.setOption({
+      grid: { left: 6, right: 12, top: 22, bottom: 2, containLabel: true },
+      legend: { show: budget !== null, right: 0, top: 0, itemWidth: 12, itemHeight: 8,
+        textStyle: { fontSize: 9, color: TEXT, fontFamily: FF } },
+      tooltip: {
+        trigger: 'axis', backgroundColor: '#fff', borderColor: '#e5e7eb', borderWidth: 1,
+        padding: [6, 10], textStyle: { color: '#111827', fontSize: 11, fontFamily: FF },
+        formatter: function (ps) {
+          let s = '<b>' + ps[0].axisValue + '</b>';
+          ps.forEach(p => { if (p.value !== null && p.value !== undefined) s += '<br/>' + p.marker + p.seriesName + ': ' + fmtVal(p.value, fmt); });
+          return s;
+        },
+      },
+      xAxis: { type: 'category', data: MONTHS, boundaryGap: false,
+        axisLine: { lineStyle: { color: '#e5e7eb' } }, axisTick: { show: false },
+        axisLabel: { fontSize: 9, color: TEXT, fontFamily: FF } },
+      yAxis: { type: 'value', scale: true,
+        splitLine: { lineStyle: { color: GRID } },
+        axisLabel: { fontSize: 9, color: TEXT, fontFamily: FF, formatter: (v) => fmtVal(v, fmt) } },
+      series: ser,
+    });
+    instances.push(inst);
+  });
+
+  function resizeK() { instances.forEach(i => { try { i.resize(); } catch (e) {} }); }
+  window.addEventListener('resize', resizeK);
+  setTimeout(resizeK, 140);
 })();
 </script>
 @endpush
