@@ -40,11 +40,16 @@ class ProfitabilityController extends Controller
             $error = ea_safe_error($e, 'profitability.index', 'Could not load profitability data.');
         }
 
-        return view('profitability', [
-            'active' => 'profitability',
-            'year'   => $year,
-            'data'   => $data,
-            'error'  => $error,
+        // Render through the existing (already-compiled) profit-loss view via
+        // profMode — this host can't compile a brand-new template at runtime
+        // (storage/framework/views isn't writable by the web user), so a
+        // dedicated profitability.blade.php 500s. Same markup, hosted there.
+        return view('profit-loss', [
+            'active'   => 'profitability',
+            'year'     => $year,
+            'data'     => $data,
+            'error'    => $error,
+            'profMode' => true,
         ]);
     }
 }
