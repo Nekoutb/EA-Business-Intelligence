@@ -188,4 +188,98 @@ final class PayablesService
             'days_in_ytd'   => $daysInYtd,
         ];
     }
+
+    /**
+     * Running (cumulative, YTD) DPO by month — the version that reconciles to
+     * the headline dpo_days. For each month m of the year:
+     *
+     *     DPO(m) = AP(end of m) ÷ cumulative-expenses(Jan→m) × $daysInYtd
+     *
+     * The GL month-end AP balance (class 40) and the cumulative class-6 (ex 69)
+     * expense are each anchored to the headline figures ($totalAp /
+     * $totalExpensesYtd), so the LATEST month equals the headline DPO exactly
+     * while the earlier months show how that running figure built up.
+     *
+     * Returns [] (chart hides) on any failure or missing data.
+     *
+     * @return array<int,array{label:string,dpo:?float}>
+     */
+    public function dpoRunningSeries(float $totalAp, float $totalExpensesYtd, int $daysInYtd, ?int $year = null, ?\DateTimeImmutable $today = null): array
+    {
+        $today = $today ?? new \DateTimeImmutable('today');
+        $year  = $year  ?? (int) $today->format('Y');
+        try {
+            $accounts = $this->odoo->searchRead('account.account', ['|', ['code', '=like', '40%'], ['code', '=like', '6%']], ['id', 'code'], []);
+            $apIds = []; $expIds = [];
+            foreach ($accounts as $a) {
+                $id = (int) ($a['id'] ?? 0); $code = (string) ($a['code'] ?? '');
+                if ($id <= 0 || $code === '') continue;
+                if (str_starts_with($code, '40')) { $apIds[] = $id; }
+                elseif (str_starts_with($code, '6') && !str_starts_with($code, '69')) { $expIds[] = $id; }
+            }
+            if (empty($apIds)) return [];
+
+            $thisYear = (int) $today->format('Y');
+            $curMonth = $year < $thisYear ? 12 : ($year > $thisYear ? 0 : (int) $today->format('n'));
+            if ($curMonth < 1) return [];
+            $endDate = $year < $thisYear ? sprintf('%04d-12-31', $year) : $today->format('Y-m-d');
+
+            $apByMonth  = $this->monthlyBalanceByMonth($apIds, null, $endDate);                       // all-time → balance
+            $expByMonth = $this->monthlyBalanceByMonth($expIds, sprintf('%04d-01-01', $year), $endDate); // this year
+
+            // Cumulative AP balance at the end of each month (AP is credit-normal,
+            // so a negative GL balance = money owed → flip the sign).
+            ksort($apByMonth);
+            $running = 0.0; $apCum = [];
+            foreach ($apByMonth as $mk => $delta) { $running += $delta; $apCum[$mk] = $running; }
+            $apAtEnd = function (string $mk) use ($apCum): float {
+                $bal = 0.0;
+                foreach ($apCum as $k => $v) { if ($k <= $mk) { $bal = $v; } else { break; } }
+                return $bal;
+            };
+
+            $rawAp = []; $rawCumExp = []; $labels = []; $cumExp = 0.0;
+            for ($m = 1; $m <= $curMonth; $m++) {
+                $mk = sprintf('%04d-%02d', $year, $m);
+                $cumExp        += (float) ($expByMonth[$mk] ?? 0);   // debit-normal → positive
+                $rawAp[$m]      = max(0.0, -1.0 * $apAtEnd($mk));
+                $rawCumExp[$m]  = $cumExp;
+                $labels[$m]     = (new \DateTimeImmutable($mk . '-01'))->format('M y');
+            }
+
+            // Anchor the latest month to the headline so the line reconciles.
+            $apScale  = ($rawAp[$curMonth]     ?? 0) > 0 ? $totalAp / $rawAp[$curMonth] : 1.0;
+            $expScale = ($rawCumExp[$curMonth] ?? 0) > 0 ? $totalExpensesYtd / $rawCumExp[$curMonth] : 1.0;
+
+            $series = [];
+            foreach ($labels as $m => $label) {
+                $ap = $rawAp[$m] * $apScale;
+                $ce = $rawCumExp[$m] * $expScale;
+                $series[] = ['label' => $label, 'dpo' => ($ap > 0 && $ce > 0) ? round($ap / $ce * $daysInYtd, 1) : null];
+            }
+            return $series;
+        } catch (\Throwable $e) {
+            return [];
+        }
+    }
+
+    /** read_group balance:sum by month → [Y-m => balance]; uses __range['date']. */
+    private function monthlyBalanceByMonth(array $accountIds, ?string $from, string $to): array
+    {
+        if (empty($accountIds)) return [];
+        $domain = [['parent_state', '=', 'posted'], ['date', '<=', $to], ['account_id', 'in', $accountIds]];
+        if ($from !== null) $domain[] = ['date', '>=', $from];
+        $rows = $this->odoo->callModel('account.move.line', 'read_group', [
+            'domain' => $domain, 'fields' => ['balance:sum'], 'groupby' => ['date:month'], 'lazy' => false,
+        ]);
+        $out = [];
+        foreach ((array) $rows as $r) {
+            $mk = null;
+            foreach (['date', 'date:month'] as $rk) {
+                if (isset($r['__range'][$rk]['from'])) { $mk = substr((string) $r['__range'][$rk]['from'], 0, 7); break; }
+            }
+            if ($mk !== null) $out[$mk] = (float) ($r['balance'] ?? 0);
+        }
+        return $out;
+    }
 }
