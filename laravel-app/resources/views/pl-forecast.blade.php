@@ -141,7 +141,15 @@
                         <input type="number" step="1000000" name="revenue_annual_target" value="{{ (int) $A['revenue']['annual_target'] }}" class="w-full border border-[#d9d4ca] rounded px-2 py-1 mb-0.5 tabular-nums">
                         <div class="text-[10px] text-[#a09d95] mb-2">≈ {{ $mfmt($A['revenue']['annual_target']) }} total · with the "split evenly" method, divided equally across the {{ $fcLabel }} months</div>
                         <label class="block text-[10.5px] text-[#7c7466] mb-1">YoY growth % <span class="text-[#bcb6ab]">(growth method)</span></label>
-                        <input type="number" step="0.1" name="revenue_growth_pct" value="{{ $A['revenue']['growth_pct'] }}" class="w-full border border-[#d9d4ca] rounded px-2 py-1 tabular-nums">
+                        <input type="number" step="0.1" name="revenue_growth_pct" value="{{ $A['revenue']['growth_pct'] }}" class="w-full border border-[#d9d4ca] rounded px-2 py-1 tabular-nums mb-2">
+                        <label class="block text-[10.5px] text-[#7c7466] mb-1">Monthly variation band (XAF/mo) <span class="text-[#bcb6ab]">— optional, avoids a flat line</span></label>
+                        <div class="grid grid-cols-2 gap-2">
+                            <div><span class="block text-[9.5px] text-[#a09d95] mb-0.5">Lower</span>
+                                <input type="number" step="1000000" name="revenue_lower" value="{{ (int) ($A['revenue']['lower'] ?? 0) }}" class="w-full border border-[#d9d4ca] rounded px-2 py-1 tabular-nums"></div>
+                            <div><span class="block text-[9.5px] text-[#a09d95] mb-0.5">Upper</span>
+                                <input type="number" step="1000000" name="revenue_upper" value="{{ (int) ($A['revenue']['upper'] ?? 0) }}" class="w-full border border-[#d9d4ca] rounded px-2 py-1 tabular-nums"></div>
+                        </div>
+                        <div class="text-[9.5px] text-[#a09d95] mt-0.5">Months spread randomly within the band; the total still equals the target. Leave 0/0 for an even split.</div>
                     </div>
 
                     {{-- Margin & OpEx --}}
@@ -150,6 +158,14 @@
                         <label class="block text-[10.5px] text-[#7c7466] mb-1">Gross margin %</label>
                         <input type="number" step="0.1" name="gross_margin_pct" value="{{ $A['gross_margin_pct'] }}" class="w-full border border-[#d9d4ca] rounded px-2 py-1 mb-0.5 tabular-nums">
                         <div class="text-[10px] text-[#a09d95] mb-2">default {{ number_format((float) ($def['gross_margin_pct'] ?? 0), 1) }}% (trailing actual)</div>
+                        <label class="block text-[10.5px] text-[#7c7466] mb-1">GM% band <span class="text-[#bcb6ab]">— optional, e.g. 80–85</span></label>
+                        <div class="grid grid-cols-2 gap-2 mb-0.5">
+                            <div><span class="block text-[9.5px] text-[#a09d95] mb-0.5">Lower %</span>
+                                <input type="number" step="0.1" name="gross_margin_lower_pct" value="{{ $A['gross_margin_lower_pct'] ?? 0 }}" class="w-full border border-[#d9d4ca] rounded px-2 py-1 tabular-nums"></div>
+                            <div><span class="block text-[9.5px] text-[#a09d95] mb-0.5">Upper %</span>
+                                <input type="number" step="0.1" name="gross_margin_upper_pct" value="{{ $A['gross_margin_upper_pct'] ?? 0 }}" class="w-full border border-[#d9d4ca] rounded px-2 py-1 tabular-nums"></div>
+                        </div>
+                        <div class="text-[9.5px] text-[#a09d95] mb-2">When set, each forecast month's GM% varies within the band (else the single % above is used flat).</div>
                         <label class="block text-[10.5px] text-[#7c7466] mb-1">OpEx method</label>
                         <select name="opex_method" class="w-full border border-[#d9d4ca] rounded px-2 py-1 text-[12px] mb-2 bg-white">
                             <option value="fixed"          {{ $A['opex']['method']==='fixed'?'selected':'' }}>Fixed XAF / month (+ inflation)</option>

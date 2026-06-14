@@ -100,8 +100,14 @@
         </div>
 
         <div class="bg-white rounded-xl border border-[#e8e4de] p-5 shadow-sm mb-6">
-            <h2 class="text-sm font-semibold text-[#1e3d44] mb-1">Unit economics per scan — monthly</h2>
-            <p class="text-[11px] text-[#7c7466] mb-3">Revenue per scan and cost per scan, by month since January (closed months only — actual revenue/cost ÷ actual scans). Figures in {{ $ccy }}.</p>
+            <div class="flex items-start justify-between gap-3 flex-wrap mb-1">
+                <h2 class="text-sm font-semibold text-[#1e3d44]">Unit economics per scan — monthly</h2>
+                <label class="inline-flex items-center gap-2 text-[11px] font-medium text-[#5a6a70] cursor-pointer select-none">
+                    <input type="checkbox" id="profExEmpty" class="rounded border-[#cbc7be] text-brand-600 focus:ring-brand-500">
+                    Exclude empty containers
+                </label>
+            </div>
+            <p class="text-[11px] text-[#7c7466] mb-3">Revenue per scan and cost per scan, by month since January (closed months only — actual revenue/cost ÷ actual scans). Empty containers are scanned but earn no revenue; tick the box to exclude them from the denominator. Figures in {{ $ccy }}.</p>
             <div class="h-72"><canvas id="profUnitMonthly"></canvas></div>
         </div>
 
@@ -158,13 +164,22 @@
             });
 
             const ups = @json($data['monthly_per_scan']);
-            new Chart(document.getElementById('profUnitMonthly'), {
+            const upsChart = new Chart(document.getElementById('profUnitMonthly'), {
                 type:'line',
                 data:{ labels: ups.labels, datasets:[
                     { label:'Revenue / scan', data: ups.revenue, borderColor:'#2f6f76', backgroundColor:'#2f6f76', tension:0.3, borderWidth:2, pointRadius:3, pointHoverRadius:5, spanGaps:false, fill:false },
                     { label:'Cost / scan',    data: ups.cost,    borderColor:'#d98c3f', backgroundColor:'#d98c3f', tension:0.3, borderWidth:2, pointRadius:3, pointHoverRadius:5, spanGaps:false, fill:false },
                 ]},
                 options: baseOpts,
+            });
+            const exToggle = document.getElementById('profExEmpty');
+            if (exToggle) exToggle.addEventListener('change', function () {
+                const ex = this.checked;
+                upsChart.data.datasets[0].data = ex ? ups.revenue_ex_empty : ups.revenue;
+                upsChart.data.datasets[1].data = ex ? ups.cost_ex_empty    : ups.cost;
+                upsChart.data.datasets[0].label = ex ? 'Revenue / scan (ex-empty)' : 'Revenue / scan';
+                upsChart.data.datasets[1].label = ex ? 'Cost / scan (ex-empty)'    : 'Cost / scan';
+                upsChart.update();
             });
         })();
         </script>

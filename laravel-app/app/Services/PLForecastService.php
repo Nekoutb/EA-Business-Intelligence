@@ -452,8 +452,14 @@ final class PLForecastService
         $netFinMonthlyDef = $thruMonth >= 1 ? $lineActual['net_financial'] / $thruMonth : 0.0;
 
         $defaults = [
-            'revenue'               => ['method' => 'annual_target', 'annual_target' => round($revRun * 12, 0), 'growth_pct' => 0.0],
+            // revenue.lower / .upper (per-month XAF bounds) add deterministic
+            // variation so the spread isn't flat. 0/0 = flat (even split).
+            'revenue'               => ['method' => 'annual_target', 'annual_target' => round($revRun * 12, 0), 'growth_pct' => 0.0, 'lower' => 0.0, 'upper' => 0.0],
             'gross_margin_pct'      => round($gmDef, 1),
+            // gross_margin_lower_pct / _upper_pct: when both set (upper>lower>0)
+            // each forecast month's GM% is a deterministic value in that band.
+            'gross_margin_lower_pct'=> 0.0,
+            'gross_margin_upper_pct'=> 0.0,
             'opex'                  => ['method' => 'fixed', 'monthly' => round($opexMonthlyDef, 0), 'inflation_pct' => 0.0, 'pct_of_revenue' => round($opexPctDef, 1)],
             'da_monthly'            => round($daMonthlyDef, 0),
             'net_financial_monthly' => round($netFinMonthlyDef, 0),
@@ -477,21 +483,32 @@ final class PLForecastService
                 break;
             case 'annual_target':
             default:
-                // Split the target EVENLY across the remaining (forecast)
-                // months: the entered target is the total to place into the
-                // forecast period (e.g. Jun–Dec), divided equally. So each
-                // forecast month = target ÷ (number of forecast months), and
-                // the forecast-period total equals the target exactly.
-                $annual   = max(0.0, (float) $A['revenue']['annual_target']);
-                $perMonth = count($fc) > 0 ? $annual / count($fc) : 0.0;
-                foreach ($fc as $m) {
-                    $tRev[$m] = $perMonth;
+                // Split the target across the forecast months. The total always
+                // equals the target. If a per-month band [lower, upper] is given
+                // (upper>lower>0), distribute with deterministic variation inside
+                // that band (normalised back to the target) so the line isn't a
+                // flat figure; otherwise split evenly.
+                $annual = max(0.0, (float) $A['revenue']['annual_target']);
+                $n      = count($fc);
+                $lo     = (float) ($A['revenue']['lower'] ?? 0);
+                $hi     = (float) ($A['revenue']['upper'] ?? 0);
+                if ($n > 0 && $hi > $lo && $lo > 0) {
+                    $raw = [];
+                    foreach ($fc as $m) $raw[$m] = $lo + $this->seededRand("rev-$m") * ($hi - $lo);
+                    $sumRaw = array_sum($raw);
+                    foreach ($fc as $m) $tRev[$m] = $sumRaw > 0 ? $annual * ($raw[$m] / $sumRaw) : $annual / $n;
+                } else {
+                    $perMonth = $n > 0 ? $annual / $n : 0.0;
+                    foreach ($fc as $m) $tRev[$m] = $perMonth;
                 }
                 break;
         }
 
         // ── Cascade the remaining lines off revenue + the cost drivers ──
         $gm        = (float) $A['gross_margin_pct'] / 100.0;
+        $gmLo      = (float) ($A['gross_margin_lower_pct'] ?? 0);
+        $gmHi      = (float) ($A['gross_margin_upper_pct'] ?? 0);
+        $gmRange   = ($gmHi > $gmLo && $gmLo > 0);   // valid band → vary per month
         $opexFixed = (float) $A['opex']['monthly'] * (1 + (float) $A['opex']['inflation_pct'] / 100.0);
         $opexPct   = (float) $A['opex']['pct_of_revenue'] / 100.0;
         $daM       = (float) $A['da_monthly'];
@@ -499,8 +516,11 @@ final class PLForecastService
 
         $target = ['revenue'=>[], 'direct_costs'=>[], 'opex'=>[], 'depreciation'=>[], 'net_financial'=>[], 'income_tax'=>[]];
         foreach ($fc as $m) {
-            $rev = (float) $tRev[$m];
-            $dir = -1.0 * $rev * (1 - $gm);
+            $rev  = (float) $tRev[$m];
+            // Per-month gross margin: a deterministic value inside the band when
+            // one is set, else the flat single GM%.
+            $gmM  = $gmRange ? (($gmLo + $this->seededRand("gm-$m") * ($gmHi - $gmLo)) / 100.0) : $gm;
+            $dir  = -1.0 * $rev * (1 - $gmM);
             $opx = $A['opex']['method'] === 'pct_of_revenue' ? (-1.0 * $rev * $opexPct) : (-1.0 * $opexFixed);
             $da  = -1.0 * $daM;
             $nfn = $nfM;
@@ -523,6 +543,20 @@ final class PLForecastService
         foreach ($accountVectors as $aid => $av) {
             $grp = $groupOf($av['line']);
             if (isset($groupAccts[$grp])) $groupAccts[$grp][] = $aid;
+        }
+
+        // Income tax is DERIVED (rate × PBT). If the tenant has no class-89
+        // accounts in the GL, there's nothing for the scaling step to land on,
+        // so the tax line would stay flat at zero however the rate is set.
+        // Add a synthetic holder (zero actuals) so the computed forecast shows.
+        if (empty($groupAccts['income_tax'])) {
+            $accountVectors['__synth_income_tax'] = [
+                'line'    => 'income_tax',
+                'code'    => '89',
+                'name'    => 'Income tax (computed)',
+                'monthly' => array_fill(1, 12, 0.0),
+            ];
+            $groupAccts['income_tax'][] = '__synth_income_tax';
         }
 
         foreach ($target as $grp => $monthsTarget) {
@@ -556,12 +590,22 @@ final class PLForecastService
                 $out[$k] = array_merge($defaults[$k], $saved[$k]);
             }
         }
-        foreach (['gross_margin_pct', 'da_monthly', 'net_financial_monthly'] as $k) {
+        foreach (['gross_margin_pct', 'gross_margin_lower_pct', 'gross_margin_upper_pct', 'da_monthly', 'net_financial_monthly'] as $k) {
             if (array_key_exists($k, $saved) && is_numeric($saved[$k])) {
                 $out[$k] = (float) $saved[$k];
             }
         }
         return $out;
+    }
+
+    /**
+     * Deterministic pseudo-random value in [0,1) from a string seed. Stable
+     * across recomputes (NOT rand()) so the forecast doesn't jump around on
+     * every reload — it just isn't a flat line.
+     */
+    private function seededRand(string $seed): float
+    {
+        return (abs(crc32($seed)) % 100000) / 100000.0;
     }
 
     /* ── line aggregation ────────────────────────────────────────── */

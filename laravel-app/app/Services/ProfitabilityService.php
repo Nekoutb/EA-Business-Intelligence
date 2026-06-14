@@ -123,28 +123,35 @@ final class ProfitabilityService
         //       revenue and actual cost ÷ actual scans. Forecast/partial months
         //       are left null: their revenue is forecast while scans are partial
         //       (current month) or absent (future), which would distort per-scan.
-        $thru   = (int) ($trend['thru_month'] ?? 0);
-        $psRev  = array_fill(0, 12, null);
-        $psCost = array_fill(0, 12, null);
-        $mScans = array_fill(0, 12, null);
+        $thru     = (int) ($trend['thru_month'] ?? 0);
+        $psRev    = array_fill(0, 12, null);
+        $psCost   = array_fill(0, 12, null);
+        $psRevEx  = array_fill(0, 12, null);   // excluding empty containers
+        $psCostEx = array_fill(0, 12, null);
+        $mScans   = array_fill(0, 12, null);
+        $mScansEx = array_fill(0, 12, null);
         for ($m = 1; $m <= min(12, $thru); $m++) {
             $mFrom = new \DateTimeImmutable(sprintf('%04d-%02d-01', $year, $m));
             $mTo   = $mFrom->modify('last day of this month')->setTime(23, 59, 59);
-            $sc    = (int) $this->scanCounts($mFrom, $mTo)['total'];
-            $mScans[$m - 1] = $sc;
-            if ($sc > 0) {
-                $rev  = (float) ($trend['revenue'][$m - 1] ?? 0);
-                $cost = $rev - (float) ($trend['ebit'][$m - 1] ?? 0);   // total cost = revenue − EBIT
-                $psRev[$m - 1]  = $rev / $sc;
-                $psCost[$m - 1] = $cost / $sc;
-            }
+            $c     = $this->scanCounts($mFrom, $mTo);
+            $sc    = (int) $c['total'];
+            $scEx  = (int) $c['total_ex_empty'];
+            $mScans[$m - 1]   = $sc;
+            $mScansEx[$m - 1] = $scEx;
+            $rev  = (float) ($trend['revenue'][$m - 1] ?? 0);
+            $cost = $rev - (float) ($trend['ebit'][$m - 1] ?? 0);   // total cost = revenue − EBIT
+            if ($sc > 0)   { $psRev[$m - 1]   = $rev / $sc;   $psCost[$m - 1]   = $cost / $sc; }
+            if ($scEx > 0) { $psRevEx[$m - 1] = $rev / $scEx; $psCostEx[$m - 1] = $cost / $scEx; }
         }
         $monthlyPerScan = [
-            'labels'     => self::MONTH_LABELS,
-            'revenue'    => $psRev,
-            'cost'       => $psCost,
-            'scans'      => $mScans,
-            'thru_month' => $thru,
+            'labels'           => self::MONTH_LABELS,
+            'revenue'          => $psRev,
+            'cost'             => $psCost,
+            'revenue_ex_empty' => $psRevEx,
+            'cost_ex_empty'    => $psCostEx,
+            'scans'            => $mScans,
+            'scans_ex_empty'   => $mScansEx,
+            'thru_month'       => $thru,
         ];
 
         return [
@@ -251,6 +258,10 @@ final class ProfitabilityService
         $containers = $this->safeCount(self::MODEL_CONTAINER, $scanWindow);
         $vehicles   = $this->safeCount(self::MODEL_VEHICLE, $scanWindow);
 
+        // Empty containers (full='no', any size) are scanned but earn no
+        // revenue — counted so callers can exclude them from per-scan ratios.
+        $empty = (int) ($this->safeCount(self::MODEL_CONTAINER, array_merge($scanWindow, [['full', '=', 'no']])) ?? 0);
+
         $wood = 0;
         try {
             $groups = $this->odoo->callModel(self::MODEL_WOOD, 'read_group', [
@@ -264,12 +275,15 @@ final class ProfitabilityService
             // model absent — leave wood at 0
         }
 
+        $total = (int) ($containers ?? 0) + (int) ($vehicles ?? 0) + (int) $wood;
         return [
-            'containers' => (int) ($containers ?? 0),
-            'vehicles'   => (int) ($vehicles ?? 0),
-            'wood'       => (int) $wood,
-            'total'      => (int) ($containers ?? 0) + (int) ($vehicles ?? 0) + (int) $wood,
-            'available'  => ($containers !== null) || ($vehicles !== null),
+            'containers'      => (int) ($containers ?? 0),
+            'vehicles'        => (int) ($vehicles ?? 0),
+            'wood'            => (int) $wood,
+            'empty_containers'=> $empty,
+            'total'           => $total,
+            'total_ex_empty'  => max(0, $total - $empty),
+            'available'       => ($containers !== null) || ($vehicles !== null),
         ];
     }
 
