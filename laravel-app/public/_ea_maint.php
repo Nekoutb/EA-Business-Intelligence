@@ -19,33 +19,33 @@ $kernel = $app->make(Illuminate\Contracts\Http\Kernel::class);
 $kernel->bootstrap();
 
 echo 'PHP ' . PHP_VERSION . "\n";
-echo 'ProfitabilityController: ' . (class_exists(App\Http\Controllers\ProfitabilityController::class) ? 'OK' : 'MISSING') . "\n";
-echo 'ProfitabilityService: '   . (class_exists(App\Services\ProfitabilityService::class) ? 'OK' : 'MISSING') . "\n";
 
 try {
     $slug   = isset($_GET['slug']) ? preg_replace('/[^a-z0-9]/i', '', (string) $_GET['slug']) : 'transatlanticd';
     $tenant = App\Models\Tenant::where('slug', $slug)->first();
     echo 'tenant: ' . ($tenant ? ('#' . $tenant->id . ' ' . $tenant->slug) : 'NOT FOUND') . "\n";
-    if ($tenant) {
-        app(App\Tenancy\TenantContext::class)->set($tenant);
-    }
-    $u = App\Models\User::query()->first();
-    if ($u) {
-        Illuminate\Support\Facades\Auth::login($u);
-        echo 'auth user: #' . $u->id . "\n";
-    }
 
+    // Bind a request + session to the container BEFORE any auth/session access.
     $request = Illuminate\Http\Request::create('/t/' . ($tenant->slug ?? 'x') . '/profit-loss', 'GET', ['view' => 'profitability']);
     $app->instance('request', $request);
+    $session = $app['session']->driver();
+    $session->start();
+    $request->setLaravelSession($session);
+
+    if ($tenant) {
+        app(App\Tenancy\TenantContext::class)->set($tenant);
+        $u = App\Models\User::query()->where('tenant_id', $tenant->id)->first() ?? App\Models\User::query()->first();
+        if ($u) {
+            Illuminate\Support\Facades\Auth::login($u);
+            echo 'auth user: #' . $u->id . "\n";
+        }
+    }
 
     $resp = app(App\Http\Controllers\ProfitLossController::class)->index($request);
 
-    if ($resp instanceof Illuminate\View\View) {
+    if (is_object($resp) && method_exists($resp, 'render')) {
         $html = $resp->render();
-        echo 'RENDER OK, length=' . strlen($html) . "\n";
-    } elseif (is_object($resp) && method_exists($resp, 'render')) {
-        $html = $resp->render();
-        echo 'RESP(' . get_class($resp) . ') render len=' . strlen((string) $html) . "\n";
+        echo 'RENDER OK, length=' . strlen((string) $html) . "\n";
     } else {
         echo 'RESP type: ' . (is_object($resp) ? get_class($resp) : gettype($resp)) . "\n";
     }
@@ -54,5 +54,5 @@ try {
     echo get_class($e) . ': ' . $e->getMessage() . "\n";
     echo 'at ' . $e->getFile() . ':' . $e->getLine() . "\n\n";
     $tr = explode("\n", $e->getTraceAsString());
-    echo implode("\n", array_slice($tr, 0, 20)) . "\n";
+    echo implode("\n", array_slice($tr, 0, 22)) . "\n";
 }
