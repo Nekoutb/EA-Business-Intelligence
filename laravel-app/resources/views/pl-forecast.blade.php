@@ -133,13 +133,13 @@
                         <div class="font-semibold text-[#1e3d44] mb-2">Revenue</div>
                         <label class="block text-[10.5px] text-[#7c7466] mb-1">Method</label>
                         <select name="revenue_method" class="w-full border border-[#d9d4ca] rounded px-2 py-1 text-[12px] mb-2 bg-white">
-                            <option value="annual_target" {{ $A['revenue']['method']==='annual_target'?'selected':'' }}>Annual target · spread by last-year seasonality</option>
+                            <option value="annual_target" {{ $A['revenue']['method']==='annual_target'?'selected':'' }}>Target · split evenly across forecast months</option>
                             <option value="growth_pct"    {{ $A['revenue']['method']==='growth_pct'?'selected':'' }}>YoY growth % vs last year</option>
                             <option value="run_rate"      {{ $A['revenue']['method']==='run_rate'?'selected':'' }}>Flat monthly run-rate</option>
                         </select>
-                        <label class="block text-[10.5px] text-[#7c7466] mb-1">Annual revenue target (XAF)</label>
+                        <label class="block text-[10.5px] text-[#7c7466] mb-1">Revenue target for forecast period (XAF)</label>
                         <input type="number" step="1000000" name="revenue_annual_target" value="{{ (int) $A['revenue']['annual_target'] }}" class="w-full border border-[#d9d4ca] rounded px-2 py-1 mb-0.5 tabular-nums">
-                        <div class="text-[10px] text-[#a09d95] mb-2">≈ {{ $mfmt($A['revenue']['annual_target']) }}/yr · default {{ $mfmt($def['revenue']['annual_target'] ?? null) }}</div>
+                        <div class="text-[10px] text-[#a09d95] mb-2">≈ {{ $mfmt($A['revenue']['annual_target']) }} total · with the "split evenly" method, divided equally across the {{ $fcLabel }} months</div>
                         <label class="block text-[10.5px] text-[#7c7466] mb-1">YoY growth % <span class="text-[#bcb6ab]">(growth method)</span></label>
                         <input type="number" step="0.1" name="revenue_growth_pct" value="{{ $A['revenue']['growth_pct'] }}" class="w-full border border-[#d9d4ca] rounded px-2 py-1 tabular-nums">
                     </div>
