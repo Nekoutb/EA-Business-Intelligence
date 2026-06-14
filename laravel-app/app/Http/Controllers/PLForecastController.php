@@ -48,14 +48,13 @@ class PLForecastController extends Controller
 
         try {
             $client = OdooFactory::fromConfig();
-            $cacheKey = "pl_forecast_v2_{$view}_{$year}_{$month}";
-            $data = ea_cached($cacheKey, function () use ($client, $year, $month, $view, $budgetGrowth, $uploadedBudget, $forecastAssumptions) {
-                $svc = new PLForecastService($client);
-                return match ($view) {
-                    'mtd' => $svc->analyzeMtd($year, $month, $budgetGrowth, $uploadedBudget),
-                    'ytd' => $svc->analyzeYtd($year, $budgetGrowth, $uploadedBudget),
-                    default => $svc->analyze($year, null, $forecastAssumptions),
-                };
+            // All views render the monthly grid from analyze(): YTD/full_year
+            // show Jan–Dec + year total; MTD shows Jan..selected month + a
+            // period total (the view truncates columns). The data is identical
+            // across views, so the cache key only varies by year.
+            $cacheKey = "pl_forecast_v3_{$year}";
+            $data = ea_cached($cacheKey, function () use ($client, $year, $forecastAssumptions) {
+                return (new PLForecastService($client))->analyze($year, null, $forecastAssumptions);
             });
         } catch (\Throwable $e) {
             $error = $e->getMessage();

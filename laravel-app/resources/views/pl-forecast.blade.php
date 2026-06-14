@@ -76,15 +76,58 @@
               'margin'   => ['bg' => 'bg-[#fcfbf8]', 'font' => 'font-semibold italic',  'border' => 'border-[#f1ede5]'],
           ];
 
+          // ── Column range per view ──────────────────────────────────────
+          // YTD / full_year → all 12 months + year total. MTD → Jan..selected
+          // month + a total of just those months. (The monthly grid is shared
+          // by all three views now.)
+          $monthNames = [1=>'Jan',2=>'Feb',3=>'Mar',4=>'Apr',5=>'May',6=>'Jun',7=>'Jul',8=>'Aug',9=>'Sep',10=>'Oct',11=>'Nov',12=>'Dec'];
+          $maxCol     = ($view === 'mtd') ? max(1, min(12, (int) ($month ?? 12))) : 12;
+          $totalLabel = ($view === 'mtd') ? ('Jan–' . ($monthNames[$maxCol] ?? '')) : (string) $year;
+          $colTotal = function ($monthly) use ($maxCol) {
+              $s = 0.0;
+              for ($i = 1; $i <= $maxCol; $i++) $s += (float) ($monthly[$i] ?? 0);
+              return $s;
+          };
+          $colAvg = function ($monthly) use ($maxCol) {
+              $vals = [];
+              for ($i = 1; $i <= $maxCol; $i++) if (($monthly[$i] ?? null) !== null) $vals[] = (float) $monthly[$i];
+              return empty($vals) ? null : array_sum($vals) / count($vals);
+          };
+      @endphp
+
+      {{-- View filter: YTD (full year) · MTD (Jan..selected month) --}}
+      <div class="flex items-center justify-between gap-3 flex-wrap mb-4">
+          <div class="inline-flex items-center gap-1 bg-white border border-[#e8e4de] rounded-lg p-1 shadow-sm">
+              <a href="{{ tenant_url('/pl-forecast?view=ytd&year=' . $year) }}"
+                 class="px-3 py-1 text-[11px] font-semibold rounded {{ $view !== 'mtd' ? 'bg-brand-600 text-white' : 'text-[#7c7466] hover:bg-[#f5f2ec]' }}">YTD · full year</a>
+              <a href="{{ tenant_url('/pl-forecast?view=mtd&year=' . $year . '&month=' . $maxCol) }}"
+                 class="px-3 py-1 text-[11px] font-semibold rounded {{ $view === 'mtd' ? 'bg-brand-600 text-white' : 'text-[#7c7466] hover:bg-[#f5f2ec]' }}">MTD · Jan→month</a>
+          </div>
+          @if ($view === 'mtd')
+              <label class="inline-flex items-center gap-2 text-[11px] text-[#7c7466]">
+                  Through month:
+                  <select onchange="location.href='{{ tenant_url('/pl-forecast?view=mtd&year=' . $year . '&month=') }}'+this.value"
+                          class="border border-[#d9d4ca] rounded px-2 py-1 text-[12px] bg-white">
+                      @foreach ($monthNames as $mn => $ml)
+                          <option value="{{ $mn }}" {{ $maxCol === $mn ? 'selected' : '' }}>{{ $ml }}</option>
+                      @endforeach
+                  </select>
+              </label>
+          @endif
+      </div>
+
+      @php
+
           // For margin rows, "higher is better" is true for positive
           // margins (most P&L lines). We'll just leave variance colour
           // neutral for margins — too easy to mis-read.
       @endphp
 
       {{-- =============================================================
-           FULL YEAR VIEW — 12-month grid (existing layout, retained)
+           MONTHLY GRID — used by all views. YTD/full_year = Jan–Dec + year
+           total; MTD = Jan..selected month + period total (via $maxCol).
            ============================================================ --}}
-      @if ($view === 'full_year')
+      @if (in_array($view, ['full_year', 'ytd', 'mtd'], true))
         @php
             $months    = $data['months'];
             $lines     = $data['lines'];
@@ -246,15 +289,17 @@
                                 <span class="text-[9.5px] uppercase tracking-wider text-[#8a8578] font-medium">P&amp;L Line</span>
                             </th>
                             @foreach ($months as $m)
+                                @if ($m['num'] <= $maxCol)
                                 @php $isActual = !$m['is_forecast']; @endphp
                                 <th class="py-1.5 px-2 text-center">
                                     <span class="inline-flex text-[9px] uppercase tracking-wider rounded px-1.5 py-0.5 border font-semibold {{ $isActual ? $actualBadge : $budgetBadge }}">
                                         {{ $isActual ? 'Actual' : 'Forecast' }}
                                     </span>
                                 </th>
+                                @endif
                             @endforeach
                             <th class="py-1.5 px-2 text-center">
-                                <span class="inline-flex text-[9px] uppercase tracking-wider rounded px-1.5 py-0.5 border font-semibold bg-slate-100 text-slate-700 border-slate-200">Year</span>
+                                <span class="inline-flex text-[9px] uppercase tracking-wider rounded px-1.5 py-0.5 border font-semibold bg-slate-100 text-slate-700 border-slate-200">{{ $view === 'mtd' ? 'Total' : 'Year' }}</span>
                             </th>
                         </tr>
                         <tr class="border-b border-[#cbc7be] bg-[#fcfbf8]">
@@ -262,12 +307,14 @@
                                 <span class="text-[10px] uppercase tracking-wider text-[#5a6a70] font-semibold">Line · {{ $ccy }} (millions)</span>
                             </th>
                             @foreach ($months as $m)
+                                @if ($m['num'] <= $maxCol)
                                 @php $isActual = !$m['is_forecast']; @endphp
                                 <th class="py-2 px-2 text-center text-[11px] tabular-nums {{ $isActual ? $actualText : $budgetText }} font-bold">
                                     {{ $m['label'] }}
                                 </th>
+                                @endif
                             @endforeach
-                            <th class="py-2 px-2 text-center text-[11px] font-bold text-[#1e3d44]">{{ $year }}</th>
+                            <th class="py-2 px-2 text-center text-[11px] font-bold text-[#1e3d44]">{{ $totalLabel }}</th>
                         </tr>
                     </thead>
 
@@ -292,6 +339,7 @@
                                     @endif
                                 </td>
                                 @foreach ($months as $m)
+                                    @if ($m['num'] <= $maxCol)
                                     @php
                                         $isActual = !$m['is_forecast'];
                                         $colour   = $isActual ? $actualText : $budgetText;
@@ -300,17 +348,10 @@
                                     <td class="text-right tabular-nums px-2 py-1.5 {{ $colour }} {{ $style['font'] }}">
                                         {{ $isMarginRow ? $fmtPct($val) : $fmtM($val) }}
                                     </td>
+                                    @endif
                                 @endforeach
                                 <td class="text-right tabular-nums px-2 py-1.5 {{ $style['font'] }} text-[#1e3d44] border-l border-[#e8e4de]">
-                                    @if ($isMarginRow)
-                                        @php
-                                            $vals = array_filter($line['monthly'], fn ($v) => $v !== null);
-                                            $avg  = empty($vals) ? null : array_sum($vals) / count($vals);
-                                        @endphp
-                                        {{ $fmtPct($avg) }}
-                                    @else
-                                        {{ $fmtM($line['total']) }}
-                                    @endif
+                                    {{ $isMarginRow ? $fmtPct($colAvg($line['monthly'])) : $fmtM($colTotal($line['monthly'])) }}
                                 </td>
                             </tr>
                             @if ($isExpandable)
@@ -320,14 +361,16 @@
                                             <span class="font-mono text-[10px] text-[#a09d95] mr-1.5">{{ $acct['code'] }}</span>{{ $acct['name'] }}
                                         </td>
                                         @foreach ($months as $m)
+                                            @if ($m['num'] <= $maxCol)
                                             @php
                                                 $isActual = !$m['is_forecast'];
                                                 $colour   = $isActual ? $actualText : $budgetText;
                                                 $val      = $acct['monthly'][$m['num']] ?? null;
                                             @endphp
                                             <td class="text-right tabular-nums px-2 py-1 {{ $colour }} text-[10.5px] opacity-80">{{ $fmtM($val) }}</td>
+                                            @endif
                                         @endforeach
-                                        <td class="text-right tabular-nums px-2 py-1 text-[#5a6a70] text-[10.5px] border-l border-[#e8e4de]">{{ $fmtM($acct['total']) }}</td>
+                                        <td class="text-right tabular-nums px-2 py-1 text-[#5a6a70] text-[10.5px] border-l border-[#e8e4de]">{{ $fmtM($colTotal($acct['monthly'])) }}</td>
                                     </tr>
                                 @endforeach
                             @endif
