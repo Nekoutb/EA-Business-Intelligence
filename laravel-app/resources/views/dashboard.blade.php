@@ -716,8 +716,9 @@
 </div>
 
 {{-- ── Efficiency KPI strip — DSO · DPO · Cost/scan · Revenue/scan · EBITDA% ·
-       EBIT%. Each shows the latest month value with a month-over-month arrow:
-       green ▲ if better than last month, red ▼ if worse. --}}
+       Net profit %. Each shows the latest value with a month-over-month arrow:
+       green ▲ if better than last month, red ▼ if worse. DSO/DPO are the
+       running cumulative (YTD) figures. --}}
 @if (!empty($extraKpis))
 @php
     $fmtKpi = function ($v, $kpi) use ($ccy) {
