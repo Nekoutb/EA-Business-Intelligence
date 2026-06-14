@@ -214,10 +214,13 @@ final class PayablesService
             foreach ($accounts as $a) {
                 $id = (int) ($a['id'] ?? 0); $code = (string) ($a['code'] ?? '');
                 if ($id <= 0 || $code === '') continue;
-                if (str_starts_with($code, '40')) { $apIds[] = $id; }
+                // AP = suppliers (401) + invoices-not-received (408). Exclude
+                // 409 (supplier advances, debit) which would net the balance
+                // the wrong way.
+                if (str_starts_with($code, '401') || str_starts_with($code, '408')) { $apIds[] = $id; }
                 elseif (str_starts_with($code, '6') && !str_starts_with($code, '69')) { $expIds[] = $id; }
             }
-            if (empty($apIds)) return [];
+            if (empty($expIds)) return [];
 
             $thisYear = (int) $today->format('Y');
             $curMonth = $year < $thisYear ? 12 : ($year > $thisYear ? 0 : (int) $today->format('n'));
@@ -247,13 +250,18 @@ final class PayablesService
                 $labels[$m]     = (new \DateTimeImmutable($mk . '-01'))->format('M y');
             }
 
-            // Anchor the latest month to the headline so the line reconciles.
-            $apScale  = ($rawAp[$curMonth]     ?? 0) > 0 ? $totalAp / $rawAp[$curMonth] : 1.0;
+            // Anchor the latest month to the headline so the line reconciles
+            // exactly to dpo_days. Cumulative expense is always anchored. For
+            // the AP numerator, use the month-end balance SHAPE scaled to the
+            // headline total_ap when it's usable; otherwise fall back to a flat
+            // current-AP numerator (still reconciles, still builds up).
             $expScale = ($rawCumExp[$curMonth] ?? 0) > 0 ? $totalExpensesYtd / $rawCumExp[$curMonth] : 1.0;
+            $useShape = ($rawAp[$curMonth] ?? 0) > 0;
+            $apScale  = $useShape ? $totalAp / $rawAp[$curMonth] : 1.0;
 
             $series = [];
             foreach ($labels as $m => $label) {
-                $ap = $rawAp[$m] * $apScale;
+                $ap = $useShape ? ($rawAp[$m] * $apScale) : $totalAp;
                 $ce = $rawCumExp[$m] * $expScale;
                 $series[] = ['label' => $label, 'dpo' => ($ap > 0 && $ce > 0) ? round($ap / $ce * $daysInYtd, 1) : null];
             }
