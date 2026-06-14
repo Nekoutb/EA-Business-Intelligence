@@ -99,9 +99,14 @@ class DashboardController extends Controller
             // ── Month-over-month efficiency KPIs (DSO, DPO, Cost/scan,
             // Revenue/scan, EBITDA margin, EBIT margin). Each carries its
             // latest value + the prior month so the view can draw the
-            // better/worse arrow. Cached on its own key (own Odoo work).
+            // better/worse arrow. These are monthly figures that don't move
+            // intra-day, so cache for 30 min (vs the 5-min default) to keep
+            // the dashboard fast — the underlying Odoo work is non-trivial.
             try {
-                $extraKpis = ea_cached("dash_kpis_v1_{$year}", fn () => $this->buildExtraKpis($client, $year));
+                $extraKpis = \Illuminate\Support\Facades\Cache::remember(
+                    ea_cache_prefix() . "dash_kpis_v2_{$year}", 1800,
+                    fn () => $this->buildExtraKpis($client, $year)
+                );
             } catch (\Throwable $e) {
                 $extraKpis = [];
             }
@@ -160,21 +165,41 @@ class DashboardController extends Controller
     {
         $k = [];
 
-        // EBITDA/EBIT margin + Revenue/Cost-per-scan — from ProfitabilityService.
+        // EBITDA/EBIT margin + Revenue/Cost-per-scan. Monthly P&L from
+        // PLForecastService (much lighter than the full ProfitabilityService);
+        // per-scan denominators are the scan counts for ONLY the last two
+        // closed months (not the whole year).
         try {
-            $prof = (new \App\Services\ProfitabilityService($client))->analyze($year);
-            $ccy  = (string) ($prof['currency'] ?? 'XAF');
-            $t    = $prof['trend'] ?? [];
-            $mps  = $prof['monthly_per_scan'] ?? [];
-            $thru = (int) ($t['thru_month'] ?? 0);
+            $pl   = (new \App\Services\PLForecastService($client))->analyze($year);
+            $ccy  = (string) ($pl['currency'] ?? 'XAF');
+            $thru = (int) ($pl['thru_month'] ?? 0);
+            $by   = [];
+            foreach (($pl['lines'] ?? []) as $line) { $by[$line['key'] ?? ''] = $line['monthly'] ?? []; }
+            $rev = $by['revenue'] ?? []; $eb = $by['ebitda'] ?? []; $ei = $by['ebit'] ?? [];
             if ($thru >= 2) {
-                $i = $thru - 1; $j = $thru - 2;                 // 0-indexed latest closed + prior
-                $ri = (float) ($t['revenue'][$i] ?? 0); $rj = (float) ($t['revenue'][$j] ?? 0);
-                $marg = fn ($num, $rev) => $rev != 0.0 ? (float) $num / $rev * 100.0 : null;
-                $k['cost_per_scan'] = ['label' => 'Cost / scan',    'value' => $mps['cost'][$i] ?? null,    'prev' => $mps['cost'][$j] ?? null,    'fmt' => 'money', 'ccy' => $ccy, 'higher_better' => false];
-                $k['rev_per_scan']  = ['label' => 'Revenue / scan', 'value' => $mps['revenue'][$i] ?? null, 'prev' => $mps['revenue'][$j] ?? null, 'fmt' => 'money', 'ccy' => $ccy, 'higher_better' => true];
-                $k['ebitda_margin'] = ['label' => 'EBITDA margin',  'value' => $marg($t['ebitda'][$i] ?? 0, $ri), 'prev' => $marg($t['ebitda'][$j] ?? 0, $rj), 'fmt' => 'pct', 'higher_better' => true];
-                $k['ebit_margin']   = ['label' => 'EBIT margin',    'value' => $marg($t['ebit'][$i] ?? 0, $ri),   'prev' => $marg($t['ebit'][$j] ?? 0, $rj),   'fmt' => 'pct', 'higher_better' => true];
+                $a = $thru; $b = $thru - 1;                       // 1-indexed latest closed + prior
+                $ra = (float) ($rev[$a] ?? 0); $rb = (float) ($rev[$b] ?? 0);
+                $marg = fn ($num, $r) => $r != 0.0 ? (float) $num / $r * 100.0 : null;
+                $k['ebitda_margin'] = ['label' => 'EBITDA margin', 'value' => $marg($eb[$a] ?? 0, $ra), 'prev' => $marg($eb[$b] ?? 0, $rb), 'fmt' => 'pct', 'higher_better' => true];
+                $k['ebit_margin']   = ['label' => 'EBIT margin',   'value' => $marg($ei[$a] ?? 0, $ra), 'prev' => $marg($ei[$b] ?? 0, $rb), 'fmt' => 'pct', 'higher_better' => true];
+
+                $scanForMonth = function (int $m) use ($client, $year): int {
+                    $from = sprintf('%04d-%02d-01 00:00:00', $year, $m);
+                    $to   = (new \DateTimeImmutable(sprintf('%04d-%02d-01', $year, $m)))->modify('last day of this month')->format('Y-m-d 23:59:59');
+                    $w = [['scanned', '=', true], ['scanned_date', '>=', $from], ['scanned_date', '<=', $to]];
+                    $t = 0;
+                    try { $t += (int) $client->searchCount('aw_cargo.equipment', $w); } catch (\Throwable $e) {}
+                    try { $t += (int) $client->searchCount('aw_vehicule.vehicule', $w); } catch (\Throwable $e) {}
+                    try {
+                        $g = $client->callModel('aw_bois.bois', 'read_group', ['domain' => $w, 'fields' => [], 'groupby' => ['cargo_id'], 'lazy' => false]);
+                        $t += count(array_filter((array) $g, fn ($r) => !empty($r['cargo_id']) && $r['cargo_id'] !== false));
+                    } catch (\Throwable $e) {}
+                    return $t;
+                };
+                $sa = $scanForMonth($a); $sb = $scanForMonth($b);
+                $costA = $ra - (float) ($ei[$a] ?? 0); $costB = $rb - (float) ($ei[$b] ?? 0);
+                $k['cost_per_scan'] = ['label' => 'Cost / scan',    'value' => $sa > 0 ? $costA / $sa : null, 'prev' => $sb > 0 ? $costB / $sb : null, 'fmt' => 'money', 'ccy' => $ccy, 'higher_better' => false];
+                $k['rev_per_scan']  = ['label' => 'Revenue / scan', 'value' => $sa > 0 ? $ra / $sa : null,    'prev' => $sb > 0 ? $rb / $sb : null,    'fmt' => 'money', 'ccy' => $ccy, 'higher_better' => true];
             }
         } catch (\Throwable $e) { /* leave those KPIs absent */ }
 
