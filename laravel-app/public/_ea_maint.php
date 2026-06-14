@@ -41,13 +41,17 @@ try {
         }
     }
 
-    $resp = app(App\Http\Controllers\ProfitLossController::class)->index($request);
-
-    if (is_object($resp) && method_exists($resp, 'render')) {
-        $html = $resp->render();
-        echo 'RENDER OK, length=' . strlen((string) $html) . "\n";
-    } else {
-        echo 'RESP type: ' . (is_object($resp) ? get_class($resp) : gettype($resp)) . "\n";
+    foreach ([['n' => 'P&L (normal)', 'q' => []], ['n' => 'Profitability', 'q' => ['view' => 'profitability']]] as $case) {
+        try {
+            $req = Illuminate\Http\Request::create('/t/' . ($tenant->slug ?? 'x') . '/profit-loss', 'GET', $case['q']);
+            $req->setLaravelSession($session);
+            $app->instance('request', $req);
+            $resp = app(App\Http\Controllers\ProfitLossController::class)->index($req);
+            $html = (is_object($resp) && method_exists($resp, 'render')) ? $resp->render() : '';
+            echo $case['n'] . ': RENDER OK, length=' . strlen((string) $html) . "\n";
+        } catch (\Throwable $ex) {
+            echo $case['n'] . ': FAILED -> ' . get_class($ex) . ': ' . $ex->getMessage() . ' @ ' . basename($ex->getFile()) . ':' . $ex->getLine() . "\n";
+        }
     }
 } catch (\Throwable $e) {
     echo "\n=== EXCEPTION ===\n";
