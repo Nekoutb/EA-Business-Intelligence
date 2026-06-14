@@ -23,10 +23,13 @@ try {
     echo 'tax assumption: ' . json_encode($assum['tax'] ?? 'none') . "\n";
     echo 'revenue method: ' . ($assum['revenue']['method'] ?? '?') . "\n";
 
+    echo 'revenue assumption: ' . json_encode($assum['revenue'] ?? '?') . "\n";
+    echo 'gross_margin: ' . ($assum['gross_margin_pct'] ?? '?') . ' band [' . ($assum['gross_margin_lower_pct'] ?? 0) . ',' . ($assum['gross_margin_upper_pct'] ?? 0) . "]\n";
+    echo 'opex: ' . json_encode($assum['opex'] ?? '?') . ' · net_fin/mo: ' . ($assum['net_financial_monthly'] ?? '?') . "\n";
     $pl = (new App\Services\PLForecastService($client))->analyze($year, null, $assum);
     foreach (($pl['lines'] ?? []) as $line) {
         $k = $line['key'] ?? '';
-        if (in_array($k, ['pbt', 'income_tax', 'net_result'], true)) {
+        if (in_array($k, ['revenue', 'ebitda', 'pbt', 'income_tax', 'net_result'], true)) {
             echo str_pad($k, 12) . json_encode(array_map(fn ($v) => round(((float) $v) / 1e6, 2), array_values($line['monthly']))) . "\n";
         }
     }
