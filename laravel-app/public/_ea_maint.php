@@ -19,22 +19,25 @@ try {
 
     $client = App\Odoo\OdooFactory::fromConfig();
 
-    echo "=== LIQUIDITY TREND ===\n";
+    echo "=== LIQUIDITY TREND RAW QUERIES ===\n";
     try {
-        $lt = (new App\Services\WorkingCapitalService($client))->liquidityTrend(12);
-        $series = $lt['series'] ?? [];
-        echo 'points: ' . count($series) . "\n";
-        foreach (array_slice($series, -5) as $p) {
-            echo '  ' . str_pad($p['label'] ?? '?', 8)
-               . ' cur=' . json_encode($p['current'] ?? null)
-               . ' quick=' . json_encode($p['quick'] ?? null)
-               . ' cash=' . json_encode($p['cash'] ?? null)
-               . ' | dso=' . json_encode($p['dso'] ?? null)
-               . ' dpo=' . json_encode($p['dpo'] ?? null)
-               . ' ccc=' . json_encode($p['ccc'] ?? null)
-               . ' svc=' . json_encode($p['is_service'] ?? null) . "\n";
+        $accounts = $client->searchRead('account.account', ['|','|','|','|',['code','=like','3%'],['code','=like','4%'],['code','=like','5%'],['code','=like','6%'],['code','=like','7%']], ['id','code'], []);
+        echo 'accounts(3-7): ' . count($accounts) . "\n";
+        $ids = array_map(fn ($a) => (int) $a['id'], $accounts);
+        $rows = $client->callModel('account.move.line', 'read_group', [
+            'domain'  => [['parent_state','=','posted'],['date','<=',date('Y-m-d')],['account_id','in',$ids]],
+            'fields'  => ['debit:sum','credit:sum'],
+            'groupby' => ['account_id','date:month'],
+            'lazy'    => false,
+        ]);
+        echo 'read_group rows: ' . count($rows) . "\n";
+        if (!empty($rows)) {
+            echo 'row0 keys: ' . json_encode(array_keys($rows[0])) . "\n";
+            echo 'row0: ' . json_encode($rows[0]) . "\n";
+            echo 'account_id is_array: ' . json_encode(is_array($rows[0]['account_id'] ?? null)) . "\n";
         }
-    } catch (\Throwable $e) { echo 'EXC: ' . $e->getMessage() . ' @ ' . basename($e->getFile()) . ':' . $e->getLine() . "\n"; }
+    } catch (\Throwable $e) { echo 'RAW EXC: ' . $e->getMessage() . ' @ ' . basename($e->getFile()) . ':' . $e->getLine() . "\n"; }
+    echo "liquidityTrend points: " . count((new App\Services\WorkingCapitalService($client))->liquidityTrend(12)['series'] ?? []) . "\n";
 
     echo "\n=== PAYABLES ===\n";
     try {
