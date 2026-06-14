@@ -46,8 +46,8 @@
         {{-- ── Monthly DPO trend ─────────────────────────────────── --}}
         @if (!empty($data['dpo_trend']))
             <div class="bg-white rounded-xl border border-slate-200 p-5 shadow-sm mb-6">
-                <h2 class="text-sm font-semibold text-slate-900 mb-1">DPO evolution · monthly</h2>
-                <p class="text-[11px] text-slate-500 mb-3">Days Payable Outstanding over the trailing months.</p>
+                <h2 class="text-sm font-semibold text-slate-900 mb-1">DPO evolution · running (cumulative YTD)</h2>
+                <p class="text-[11px] text-slate-500 mb-3">Each month is the year-to-date DPO computed cumulatively (AP ÷ cumulative expenses × 365); the latest month reconciles to the headline DPO above.</p>
                 <div class="h-64"><canvas id="apDpoTrend"></canvas></div>
             </div>
         @endif
