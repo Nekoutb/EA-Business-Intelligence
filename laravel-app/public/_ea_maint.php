@@ -1,5 +1,6 @@
 <?php
-/** TEMP diagnostic — net-margin swap + running cumulative DSO/DPO. Token-guarded. */
+/** TEMP read-only probe — vehicle cylinder distribution + OOG fields + projected
+ *  scan revenue under the new rate grid. Token-guarded. No writes. */
 header('Content-Type: text/plain');
 $TOKEN = 'k7Qz9_R2mVtX4pLs8wNcB3hJ6yD0fAeU';
 if (!hash_equals($TOKEN, (string) ($_GET['t'] ?? ''))) { http_response_code(403); echo 'forbidden'; exit; }
@@ -9,56 +10,98 @@ require $base . '/vendor/autoload.php';
 $app = require $base . '/bootstrap/app.php';
 $app->make(Illuminate\Contracts\Http\Kernel::class)->bootstrap();
 
+function ln($s = '') { echo $s . "\n"; }
+
 try {
     $tenant = App\Models\Tenant::where('slug', 'transatlanticd')->first();
     app(App\Tenancy\TenantContext::class)->set($tenant);
-    $req = Illuminate\Http\Request::create('/t/transatlanticd/', 'GET');
-    $app->instance('request', $req);
-    $session = $app['session']->driver(); $session->start(); $req->setLaravelSession($session);
-    $u = App\Models\User::query()->first(); if ($u) Illuminate\Support\Facades\Auth::login($u);
-
     $client = App\Odoo\OdooFactory::fromConfig();
-    $period = ['type' => 'ytd', 'year' => 2026, 'month' => 6];
 
-    // Headlines (mirror DashboardController::index).
-    $data = (new App\Services\RevenueService($client, (string) config_env('REVENUE_SOURCE', 'invoice')))->analyze(null, $period);
-    $pl   = (new App\Services\ProfitLossService($client))->analyze(null, $period);
-    $ccy  = (string) ($data['currency'] ?? 'XAF');
-    $totalRev = (float) ($data['current']['total'] ?? 0);
-    $totalExp = max(1.0, (float) ($pl['current']['cogs'] ?? 0) + (float) ($pl['current']['opex'] ?? 0) + (float) ($pl['current']['d_and_a'] ?? 0));
-    $rec = (new App\Services\ReceivablesService($client))->analyze($totalRev, (int) ($data['period']['days'] ?? 180), $ccy);
-    $totalAr = (float) ($rec['kpis']['total_ar'] ?? $rec['total_ar'] ?? 0);
-    $ap = (new App\Services\PayablesService($client))->analyze($totalExp, 365, $ccy);
-    $totalAp = (float) ($ap['kpis']['total_ap'] ?? 0);
-    echo "headlines: rev=" . round($totalRev) . " exp=" . round($totalExp) . " AR=" . round($totalAr) . " AP=" . round($totalAp) . "\n";
-    echo "headline DPO=" . round($totalAp / $totalExp * 365, 1) . "d  DSO=" . round($totalAr / $totalRev * 365, 1) . "d\n";
+    $fromDt = new DateTimeImmutable('2026-01-01');
+    $toDt   = new DateTimeImmutable('today');
+    $from   = $fromDt->format('Y-m-d 00:00:00');
+    $to     = $toDt->format('Y-m-d 23:59:59');
+    $scan   = [['scanned', '=', true], ['scanned_date', '>=', $from], ['scanned_date', '<=', $to]];
+    ln("PERIOD: 2026-01-01 .. {$toDt->format('Y-m-d')}  (scanned = true)");
+    ln();
 
-    $dpoSer = (new App\Services\PayablesService($client))->dpoRunningSeries($totalAp, $totalExp, 365, 2026);
-    $dsoSer = (new App\Services\ReceivablesService($client))->dsoRunningSeries($totalAr, $totalRev, 365, 2026);
-    echo "DPO running: " . json_encode(array_map(fn ($p) => $p['dpo'], $dpoSer)) . "\n";
-    echo "DSO running: " . json_encode(array_map(fn ($p) => $p['dso'], $dsoSer)) . "\n";
-
-    // buildExtraKpis — confirm net_margin replaced ebit_margin.
-    $ctrl = app(App\Http\Controllers\DashboardController::class);
-    $mB = new ReflectionMethod($ctrl, 'buildExtraKpis'); $mB->setAccessible(true);
-    $k = $mB->invoke($ctrl, $client, 2026);
-    echo "KPI labels: " . implode(' | ', array_map(fn ($v) => $v['label'], $k)) . "\n";
-    $nm = $k['net_margin'] ?? null;
-    echo "net_margin: val=" . json_encode($nm['value'] ?? null) . " prev=" . json_encode($nm['prev'] ?? null) . "\n";
-
-    // Render — confirm label swap + DSO/DPO series are the cumulative ones.
-    $t = microtime(true);
-    $html = app(App\Http\Controllers\DashboardController::class)->index($req)->render();
-    $extract = function ($key) use ($html) {
-        if (preg_match('/"' . $key . '":\{[^}]*?"series":\[([^\]]*)\]/', $html, $m)) {
-            $vals = array_filter(array_map('trim', explode(',', $m[1])), fn ($x) => $x !== '' && $x !== 'null');
-            return empty($vals) ? '—' : end($vals);
+    // ── 1. Cylinder distribution on scanned vehicles ──────────────────────
+    ln('=== 1. CYLINDER DISTRIBUTION — aw_vehicule.vehicule (scanned, YTD 2026) ===');
+    $hist = [];
+    try {
+        $g = $client->callModel('aw_vehicule.vehicule', 'read_group', ['domain' => $scan, 'fields' => [], 'groupby' => ['cylinders'], 'lazy' => false]);
+        foreach ((array) $g as $row) {
+            $cyl = $row['cylinders'] ?? false;
+            $key = ($cyl === false || $cyl === null) ? 'none' : (string) (int) $cyl;
+            $hist[$key] = ($hist[$key] ?? 0) + (int) ($row['__count'] ?? 0);
         }
-        return '?';
-    };
-    echo "render " . round(microtime(true) - $t, 1) . "s · NetMargin=" . (strpos($html, 'Net profit margin') !== false ? 'y' : 'n')
-       . " · EBITgone=" . (strpos($html, 'EBIT margin') === false ? 'y' : 'n')
-       . " · chart dpo last=" . $extract('dpo') . " · chart dso last=" . $extract('dso') . "\n";
+    } catch (\Throwable $e) { ln('  read_group ERR: ' . $e->getMessage()); }
+    uksort($hist, fn ($a, $b) => (is_numeric($a) ? (int) $a : 99999) <=> (is_numeric($b) ? (int) $b : 99999));
+    $totalVeh = array_sum($hist);
+    foreach ($hist as $cyl => $n) ln(sprintf('  cyl %-5s : %6d   (%.1f%%)', $cyl, $n, $totalVeh ? 100 * $n / $totalVeh : 0));
+    ln("  TOTAL scanned vehicles: {$totalVeh}");
+    ln();
+
+    // ── 2. Field discovery — look for an OOG / gauge / type marker ─────────
+    ln('=== 2. FIELD DISCOVERY (oog | gauge | gabarit | hors | type | genre | categ | size | cylind) ===');
+    foreach (['aw_vehicule.vehicule', 'aw_cargo.equipment', 'aw_cargo.cargo'] as $model) {
+        try {
+            $fields = $client->callModel($model, 'fields_get', ['attributes' => ['string', 'type']]);
+            $hits = [];
+            foreach ((array) $fields as $fname => $meta) {
+                $label = (string) ($meta['string'] ?? '');
+                if (preg_match('/oog|gauge|gabarit|hors|\btype\b|genre|categ|size|cylind/i', $fname . ' ' . $label)) {
+                    $hits[] = "{$fname}(" . ($meta['type'] ?? '?') . ",\"{$label}\")";
+                }
+            }
+            ln("  {$model}:");
+            ln('    ' . (empty($hits) ? '(no candidate fields)' : implode('  ', $hits)));
+        } catch (\Throwable $e) { ln("  {$model} fields_get ERR: " . $e->getMessage()); }
+    }
+    ln();
+
+    // ── 3. Equipment SIZE codes (does 'OOG' show up as a container size?) ──
+    ln('=== 3. SIZE CODES — aw_cargo.equipment (scanned, YTD 2026) ===');
+    try {
+        $g = $client->callModel('aw_cargo.equipment', 'read_group', ['domain' => $scan, 'fields' => [], 'groupby' => ['size'], 'lazy' => false]);
+        foreach ((array) $g as $row) {
+            $sz = $row['size'] ?? false;
+            ln('  size ' . json_encode($sz) . ' : ' . (int) ($row['__count'] ?? 0));
+        }
+    } catch (\Throwable $e) { ln('  size read_group ERR: ' . $e->getMessage()); }
+    ln();
+
+    // ── 4. Current scan revenue breakdown (the canonical figures today) ────
+    ln('=== 4. CURRENT scanRevenueBreakdown (YTD 2026) ===');
+    try {
+        $bd = (new App\Services\OperationsService($client))->scanRevenueBreakdown($fromDt, $toDt);
+        foreach (($bd['categories'] ?? []) as $key => $c) {
+            if (preg_match('/voiture|camion|bulldoze|unclassified|wood/', $key)) {
+                ln(sprintf('  %-22s cnt=%6d  price=%-7s rev=%s', $key, (int) ($c['count'] ?? 0), (string) ($c['price'] ?? '-'), number_format((float) ($c['revenue'] ?? 0))));
+            }
+        }
+        ln('  TOTAL current scan revenue (all categories): ' . number_format((float) ($bd['total_revenue'] ?? 0)) . ' XAF');
+    } catch (\Throwable $e) { ln('  breakdown ERR: ' . $e->getMessage()); }
+    ln();
+
+    // ── 5. Projected vehicle revenue under YOUR rate grid ─────────────────
+    ln('=== 5. PROJECTED vehicle scan revenue under your rates ===');
+    $newRates = [5 => 50000, 7 => 50000, 9 => 95000, 10 => 105000, 11 => 105000];  // your NEW buckets
+    $existing = [4 => 50000, 6 => 50000, 8 => 95000, 12 => 105000];                // already classified
+    $revNew = 0; $revExisting = 0; $unbillable = 0; $unbillableCyls = [];
+    foreach ($hist as $cyl => $n) {
+        if (!is_numeric($cyl)) { $unbillable += $n; $unbillableCyls[] = "none×{$n}"; continue; }
+        $c = (int) $cyl;
+        if (isset($newRates[$c]))      { $r = $newRates[$c] * $n; $revNew += $r; ln(sprintf('  NEW   %2d cyl @ %6d : %5d veh = %s', $c, $newRates[$c], $n, number_format($r))); }
+        elseif (isset($existing[$c]))  { $revExisting += $existing[$c] * $n; ln(sprintf('  keep  %2d cyl @ %6d : %5d veh = %s', $c, $existing[$c], $n, number_format($existing[$c] * $n))); }
+        else                           { $unbillable += $n; $unbillableCyls[] = "{$c}cyl×{$n}"; }
+    }
+    ln('  ----------------------------------------------------------');
+    ln('  Already-classified (4/6/8/12):      ' . number_format($revExisting) . ' XAF');
+    ln('  NEW buckets (5/7/9/10/11):          ' . number_format($revNew) . ' XAF');
+    ln('  Vehicle total (existing + new):     ' . number_format($revExisting + $revNew) . ' XAF');
+    ln("  Still unbillable (cyl 0/none/other): {$unbillable} veh  [" . implode(' ', $unbillableCyls) . ']');
+    ln('  (OOG not included above — pending the field discovery in section 2.)');
 } catch (\Throwable $e) {
-    echo 'EXC: ' . $e->getMessage() . ' @ ' . basename($e->getFile()) . ':' . $e->getLine() . "\n";
+    ln('EXC: ' . $e->getMessage() . ' @ ' . basename($e->getFile()) . ':' . $e->getLine());
 }
