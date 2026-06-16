@@ -1,6 +1,6 @@
 <?php
-/** TEMP read-only probe — vehicle cylinder distribution + OOG fields + projected
- *  scan revenue under the new rate grid. Token-guarded. No writes. */
+/** TEMP read-only probe #2 — OOG hunt (equipment_type/type_id), full vehicle
+ *  field list, wider-window cylinder histogram. Token-guarded. No writes. */
 header('Content-Type: text/plain');
 $TOKEN = 'k7Qz9_R2mVtX4pLs8wNcB3hJ6yD0fAeU';
 if (!hash_equals($TOKEN, (string) ($_GET['t'] ?? ''))) { http_response_code(403); echo 'forbidden'; exit; }
@@ -9,7 +9,6 @@ $base = dirname(__DIR__);
 require $base . '/vendor/autoload.php';
 $app = require $base . '/bootstrap/app.php';
 $app->make(Illuminate\Contracts\Http\Kernel::class)->bootstrap();
-
 function ln($s = '') { echo $s . "\n"; }
 
 try {
@@ -17,91 +16,64 @@ try {
     app(App\Tenancy\TenantContext::class)->set($tenant);
     $client = App\Odoo\OdooFactory::fromConfig();
 
-    $fromDt = new DateTimeImmutable('2026-01-01');
-    $toDt   = new DateTimeImmutable('today');
-    $from   = $fromDt->format('Y-m-d 00:00:00');
-    $to     = $toDt->format('Y-m-d 23:59:59');
-    $scan   = [['scanned', '=', true], ['scanned_date', '>=', $from], ['scanned_date', '<=', $to]];
-    ln("PERIOD: 2026-01-01 .. {$toDt->format('Y-m-d')}  (scanned = true)");
+    $to    = (new DateTimeImmutable('today'))->format('Y-m-d 23:59:59');
+    $scan  = fn ($from) => [['scanned', '=', true], ['scanned_date', '>=', $from . ' 00:00:00'], ['scanned_date', '<=', $to]];
+
+    // ── A. equipment_type selection options + usage (OOG candidate) ────────
+    ln('=== A. aw_cargo.equipment.equipment_type — options + scanned-YTD usage ===');
+    try {
+        $fg = $client->callModel('aw_cargo.equipment', 'fields_get', ['allfields' => ['equipment_type', 'type_id'], 'attributes' => ['string', 'type', 'selection']]);
+        ln('  equipment_type options: ' . json_encode($fg['equipment_type']['selection'] ?? null));
+    } catch (\Throwable $e) { ln('  fields_get ERR: ' . $e->getMessage()); }
+    try {
+        $g = $client->callModel('aw_cargo.equipment', 'read_group', ['domain' => $scan('2026-01-01'), 'fields' => [], 'groupby' => ['equipment_type'], 'lazy' => false]);
+        foreach ((array) $g as $r) ln('  equipment_type ' . json_encode($r['equipment_type'] ?? false) . ' : ' . (int) ($r['__count'] ?? 0));
+    } catch (\Throwable $e) { ln('  equipment_type read_group ERR: ' . $e->getMessage()); }
     ln();
 
-    // ── 1. Cylinder distribution on scanned vehicles ──────────────────────
-    ln('=== 1. CYLINDER DISTRIBUTION — aw_vehicule.vehicule (scanned, YTD 2026) ===');
-    $hist = [];
+    // ── B. type_id (many2one "Type") usage ────────────────────────────────
+    ln('=== B. aw_cargo.equipment.type_id — scanned-YTD usage (name : count) ===');
     try {
-        $g = $client->callModel('aw_vehicule.vehicule', 'read_group', ['domain' => $scan, 'fields' => [], 'groupby' => ['cylinders'], 'lazy' => false]);
-        foreach ((array) $g as $row) {
-            $cyl = $row['cylinders'] ?? false;
+        $g = $client->callModel('aw_cargo.equipment', 'read_group', ['domain' => $scan('2026-01-01'), 'fields' => [], 'groupby' => ['type_id'], 'lazy' => false]);
+        foreach ((array) $g as $r) {
+            $t = $r['type_id'] ?? false;
+            $name = is_array($t) ? ($t[1] ?? '?') : json_encode($t);
+            ln('  ' . $name . ' : ' . (int) ($r['__count'] ?? 0));
+        }
+    } catch (\Throwable $e) { ln('  type_id read_group ERR: ' . $e->getMessage()); }
+    ln();
+
+    // ── C. Full field list on aw_vehicule.vehicule (what else is available) ─
+    ln('=== C. aw_vehicule.vehicule — ALL stored fields (name:type) ===');
+    try {
+        $fields = $client->callModel('aw_vehicule.vehicule', 'fields_get', ['attributes' => ['string', 'type', 'store']]);
+        $names = [];
+        foreach ((array) $fields as $fname => $meta) {
+            if (in_array($fname, ['activity_ids', 'message_ids', 'message_follower_ids', 'activity_type_id', 'activity_type_icon'], true)) continue;
+            if (str_starts_with($fname, 'message_') || str_starts_with($fname, 'activity_') || str_starts_with($fname, '__last')) continue;
+            $names[] = $fname . ':' . ($meta['type'] ?? '?');
+        }
+        ln('  ' . implode('  ', $names));
+    } catch (\Throwable $e) { ln('  fields_get ERR: ' . $e->getMessage()); }
+    ln();
+
+    // ── D. Cylinder histogram over a WIDER window (2024-01-01 .. today) ────
+    ln('=== D. CYLINDER DISTRIBUTION — wider window 2024-01-01 .. today ===');
+    try {
+        $g = $client->callModel('aw_vehicule.vehicule', 'read_group', ['domain' => $scan('2024-01-01'), 'fields' => [], 'groupby' => ['cylinders'], 'lazy' => false]);
+        $hist = [];
+        foreach ((array) $g as $r) {
+            $cyl = $r['cylinders'] ?? false;
             $key = ($cyl === false || $cyl === null) ? 'none' : (string) (int) $cyl;
-            $hist[$key] = ($hist[$key] ?? 0) + (int) ($row['__count'] ?? 0);
+            $hist[$key] = ($hist[$key] ?? 0) + (int) ($r['__count'] ?? 0);
         }
+        uksort($hist, fn ($a, $b) => (is_numeric($a) ? (int) $a : 99999) <=> (is_numeric($b) ? (int) $b : 99999));
+        $tot = array_sum($hist);
+        foreach ($hist as $cyl => $n) ln(sprintf('  cyl %-5s : %7d   (%.1f%%)', $cyl, $n, $tot ? 100 * $n / $tot : 0));
+        ln("  TOTAL scanned vehicles 2024-26: {$tot}");
+        $present = array_filter([5, 7, 10, 11], fn ($c) => isset($hist[(string) $c]));
+        ln('  Of your requested 5/7/10/11 cyl: ' . (empty($present) ? 'NONE present in any period' : 'present: ' . implode(',', $present)));
     } catch (\Throwable $e) { ln('  read_group ERR: ' . $e->getMessage()); }
-    uksort($hist, fn ($a, $b) => (is_numeric($a) ? (int) $a : 99999) <=> (is_numeric($b) ? (int) $b : 99999));
-    $totalVeh = array_sum($hist);
-    foreach ($hist as $cyl => $n) ln(sprintf('  cyl %-5s : %6d   (%.1f%%)', $cyl, $n, $totalVeh ? 100 * $n / $totalVeh : 0));
-    ln("  TOTAL scanned vehicles: {$totalVeh}");
-    ln();
-
-    // ── 2. Field discovery — look for an OOG / gauge / type marker ─────────
-    ln('=== 2. FIELD DISCOVERY (oog | gauge | gabarit | hors | type | genre | categ | size | cylind) ===');
-    foreach (['aw_vehicule.vehicule', 'aw_cargo.equipment', 'aw_cargo.cargo'] as $model) {
-        try {
-            $fields = $client->callModel($model, 'fields_get', ['attributes' => ['string', 'type']]);
-            $hits = [];
-            foreach ((array) $fields as $fname => $meta) {
-                $label = (string) ($meta['string'] ?? '');
-                if (preg_match('/oog|gauge|gabarit|hors|\btype\b|genre|categ|size|cylind/i', $fname . ' ' . $label)) {
-                    $hits[] = "{$fname}(" . ($meta['type'] ?? '?') . ",\"{$label}\")";
-                }
-            }
-            ln("  {$model}:");
-            ln('    ' . (empty($hits) ? '(no candidate fields)' : implode('  ', $hits)));
-        } catch (\Throwable $e) { ln("  {$model} fields_get ERR: " . $e->getMessage()); }
-    }
-    ln();
-
-    // ── 3. Equipment SIZE codes (does 'OOG' show up as a container size?) ──
-    ln('=== 3. SIZE CODES — aw_cargo.equipment (scanned, YTD 2026) ===');
-    try {
-        $g = $client->callModel('aw_cargo.equipment', 'read_group', ['domain' => $scan, 'fields' => [], 'groupby' => ['size'], 'lazy' => false]);
-        foreach ((array) $g as $row) {
-            $sz = $row['size'] ?? false;
-            ln('  size ' . json_encode($sz) . ' : ' . (int) ($row['__count'] ?? 0));
-        }
-    } catch (\Throwable $e) { ln('  size read_group ERR: ' . $e->getMessage()); }
-    ln();
-
-    // ── 4. Current scan revenue breakdown (the canonical figures today) ────
-    ln('=== 4. CURRENT scanRevenueBreakdown (YTD 2026) ===');
-    try {
-        $bd = (new App\Services\OperationsService($client))->scanRevenueBreakdown($fromDt, $toDt);
-        foreach (($bd['categories'] ?? []) as $key => $c) {
-            if (preg_match('/voiture|camion|bulldoze|unclassified|wood/', $key)) {
-                ln(sprintf('  %-22s cnt=%6d  price=%-7s rev=%s', $key, (int) ($c['count'] ?? 0), (string) ($c['price'] ?? '-'), number_format((float) ($c['revenue'] ?? 0))));
-            }
-        }
-        ln('  TOTAL current scan revenue (all categories): ' . number_format((float) ($bd['total_revenue'] ?? 0)) . ' XAF');
-    } catch (\Throwable $e) { ln('  breakdown ERR: ' . $e->getMessage()); }
-    ln();
-
-    // ── 5. Projected vehicle revenue under YOUR rate grid ─────────────────
-    ln('=== 5. PROJECTED vehicle scan revenue under your rates ===');
-    $newRates = [5 => 50000, 7 => 50000, 9 => 95000, 10 => 105000, 11 => 105000];  // your NEW buckets
-    $existing = [4 => 50000, 6 => 50000, 8 => 95000, 12 => 105000];                // already classified
-    $revNew = 0; $revExisting = 0; $unbillable = 0; $unbillableCyls = [];
-    foreach ($hist as $cyl => $n) {
-        if (!is_numeric($cyl)) { $unbillable += $n; $unbillableCyls[] = "none×{$n}"; continue; }
-        $c = (int) $cyl;
-        if (isset($newRates[$c]))      { $r = $newRates[$c] * $n; $revNew += $r; ln(sprintf('  NEW   %2d cyl @ %6d : %5d veh = %s', $c, $newRates[$c], $n, number_format($r))); }
-        elseif (isset($existing[$c]))  { $revExisting += $existing[$c] * $n; ln(sprintf('  keep  %2d cyl @ %6d : %5d veh = %s', $c, $existing[$c], $n, number_format($existing[$c] * $n))); }
-        else                           { $unbillable += $n; $unbillableCyls[] = "{$c}cyl×{$n}"; }
-    }
-    ln('  ----------------------------------------------------------');
-    ln('  Already-classified (4/6/8/12):      ' . number_format($revExisting) . ' XAF');
-    ln('  NEW buckets (5/7/9/10/11):          ' . number_format($revNew) . ' XAF');
-    ln('  Vehicle total (existing + new):     ' . number_format($revExisting + $revNew) . ' XAF');
-    ln("  Still unbillable (cyl 0/none/other): {$unbillable} veh  [" . implode(' ', $unbillableCyls) . ']');
-    ln('  (OOG not included above — pending the field discovery in section 2.)');
 } catch (\Throwable $e) {
     ln('EXC: ' . $e->getMessage() . ' @ ' . basename($e->getFile()) . ':' . $e->getLine());
 }
