@@ -97,6 +97,22 @@ return [
             'status'  => 'live',
         ],
         [
+            // Reports — day-level operational report. A calendar picks a date;
+            // the page discloses that day's sales (cash vs credit, outfits,
+            // customers) and inventory movements (inward/outward at standard
+            // cost). Universal for any tenant with the Odoo accounting + stock
+            // modules; default=true.
+            'key'     => 'reports',
+            'service' => 'business_intelligence',
+            'label'   => 'Reports',
+            'url'     => '/reports',
+            'active'  => 'reports',
+            'icon'    => 'M8 7V3m8 4V3M3 11h18M5 5h14a2 2 0 012 2v12a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2z',
+            'default' => true,
+            'core'    => false,
+            'status'  => 'live',
+        ],
+        [
             'key'     => 'revenue',
             'service' => 'business_intelligence',
             'label'   => 'Revenue',
