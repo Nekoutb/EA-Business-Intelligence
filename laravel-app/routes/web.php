@@ -1527,6 +1527,11 @@ Route::prefix('t/{tenant}')
                 Route::get('/',                  [DashboardController::class, 'index'])->middleware('module:dashboard');
                 Route::post('/sync',             [DashboardController::class, 'sync']);
 
+                // Reports — day-level operational report (calendar → daily sales
+                // + inventory movements). Needs the stale route cache cleared on
+                // this host (routes-v7.php); harmless/dormant until then.
+                Route::get('/reports',           [\App\Http\Controllers\ReportsController::class, 'index'])->middleware('module:reports');
+
                 Route::get('/revenue',           [RevenueController::class, 'index'])->middleware('module:revenue');
                 // Product Revenue TSD — per-product trajectory + budget editor.
                 // Page is read-only; the POST endpoint accepts the inline
