@@ -110,13 +110,13 @@
     @php $inwL = $inventory['inward']['lines'] ?? []; $outL = $inventory['outward']['lines'] ?? []; @endphp
     @if (!$inventory || (($inventory['inward']['qty'] ?? 0) == 0 && ($inventory['outward']['qty'] ?? 0) == 0))
         <div class="text-[13px] text-slate-400 italic py-6 text-center">No inventory movements on this day.</div>
-        @if ($inventory)<div class="text-center text-[12px] text-slate-500">On-hand inventory value (today, at standard cost): <b>{{ ea_money_short((float) ($inventory['on_hand_value'] ?? 0), $ccy) }}</b></div>@endif
+        @if ($inventory)<div class="text-center text-[12px] text-slate-500">On-hand inventory value (end of this day, at standard cost): <b>{{ ea_money_short((float) ($inventory['on_hand_value'] ?? 0), $ccy) }}</b></div>@endif
     @else
         <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-5">
             <x-kpi title="Inward" :value="ea_money_short((float)($inventory['inward']['value'] ?? 0), $ccy)" :sub="number_format((float)($inventory['inward']['qty'] ?? 0), 0) . ' units in'" color="sage"/>
             <x-kpi title="Outward" :value="ea_money_short((float)($inventory['outward']['value'] ?? 0), $ccy)" :sub="number_format((float)($inventory['outward']['qty'] ?? 0), 0) . ' units out'" color="coral"/>
             <x-kpi title="Net movement" :value="ea_money_short((float)($inventory['net_value'] ?? 0), $ccy)" :sub="number_format((float)($inventory['net_qty'] ?? 0), 0) . ' units'" color="slate"/>
-            <x-kpi title="On-hand @ std" :value="ea_money_short((float)($inventory['on_hand_value'] ?? 0), $ccy)" sub="value today" color="indigo"/>
+            <x-kpi title="On-hand @ std" :value="ea_money_short((float)($inventory['on_hand_value'] ?? 0), $ccy)" sub="end of this day" color="indigo"/>
         </div>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
             @foreach (['inward' => ['Inward (received)', $inwL], 'outward' => ['Outward (issued / sold)', $outL]] as [$ttl, $lines])
