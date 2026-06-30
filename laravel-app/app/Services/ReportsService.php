@@ -97,29 +97,60 @@ final class ReportsService
         $inward  = $direction([['location_dest_id.usage', '=', 'internal'], ['location_id.usage', '!=', 'internal']]);
         $outward = $direction([['location_id.usage', '=', 'internal'], ['location_dest_id.usage', '!=', 'internal']]);
 
+        $onHand = $this->onHandAsOf($date);
+
         return [
             'date'          => $date,
             'inward'        => $inward,
             'outward'       => $outward,
             'net_qty'       => $inward['qty'] - $outward['qty'],
             'net_value'     => $inward['value'] - $outward['value'],
-            'on_hand_value' => $this->onHandValueAtStd(),
+            'on_hand_value' => $onHand['value'],
+            'on_hand_qty'   => $onHand['qty'],
         ];
     }
 
-    /** Current total on-hand inventory value at standard cost. */
-    private function onHandValueAtStd(): float
+    /**
+     * On-hand inventory at the END of $date, valued at current standard cost.
+     * Reconstructed = current on-hand quantity − net internal moves made AFTER
+     * $date (so the figure moves as you navigate the calendar, rather than
+     * always showing "now"). stock.valuation.layer is absent on this Odoo, so
+     * we roll back the live stock.quant by the subsequent moves.
+     *
+     * @return array{value: float, qty: float}
+     */
+    private function onHandAsOf(string $date): array
     {
         try {
-            $g = $this->odoo->callModel('stock.quant', 'read_group', ['domain' => [['location_id.usage', '=', 'internal']], 'fields' => ['quantity:sum'], 'groupby' => ['product_id'], 'lazy' => false]);
-            $qty = []; foreach ((array) $g as $r) { $p = $r['product_id'] ?? false; if (is_array($p)) $qty[(int) $p[0]] = (float) ($r['quantity'] ?? 0); }
-            $val = 0.0;
-            foreach (array_chunk(array_keys($qty), 300) as $chunk) {
-                $prods = $this->odoo->read('product.product', $chunk, ['standard_price']);
-                foreach ($prods as $p) $val += ($qty[(int) $p['id']] ?? 0) * (float) ($p['standard_price'] ?? 0);
+            // Current on-hand quantity per product (internal locations).
+            $gq = $this->odoo->callModel('stock.quant', 'read_group', ['domain' => [['location_id.usage', '=', 'internal']], 'fields' => ['quantity:sum'], 'groupby' => ['product_id'], 'lazy' => false]);
+            $qtyNow = [];
+            foreach ((array) $gq as $r) { $p = $r['product_id'] ?? false; if (is_array($p)) $qtyNow[(int) $p[0]] = (float) ($r['quantity'] ?? 0); }
+            if (empty($qtyNow)) return ['value' => 0.0, 'qty' => 0.0];
+
+            // Net internal movement (qty) per product for moves done AFTER $date.
+            $net = [];
+            $accumulate = function (array $extra, float $sign) use (&$net, $date) {
+                $g = $this->odoo->callModel('stock.move', 'read_group', ['domain' => array_merge([['state', '=', 'done'], ['date', '>', $date . ' 23:59:59']], $extra), 'fields' => ['product_qty:sum'], 'groupby' => ['product_id'], 'lazy' => false]);
+                foreach ((array) $g as $r) { $p = $r['product_id'] ?? false; if (is_array($p)) $net[(int) $p[0]] = ($net[(int) $p[0]] ?? 0) + $sign * (float) ($r['product_qty'] ?? 0); }
+            };
+            $accumulate([['location_dest_id.usage', '=', 'internal'], ['location_id.usage', '!=', 'internal']], 1.0);   // inward
+            $accumulate([['location_id.usage', '=', 'internal'], ['location_dest_id.usage', '!=', 'internal']], -1.0);  // outward
+
+            // Costs for every on-hand product.
+            $std = [];
+            foreach (array_chunk(array_keys($qtyNow), 300) as $chunk) {
+                foreach ($this->odoo->read('product.product', $chunk, ['standard_price']) as $p) $std[(int) $p['id']] = (float) ($p['standard_price'] ?? 0);
             }
-            return $val;
-        } catch (\Throwable $e) { return 0.0; }
+
+            $val = 0.0; $qty = 0.0;
+            foreach ($qtyNow as $pid => $q) {
+                $asOf = $q - ($net[$pid] ?? 0);   // roll back the post-date moves
+                $qty += $asOf;
+                $val += $asOf * ($std[$pid] ?? 0);
+            }
+            return ['value' => $val, 'qty' => $qty];
+        } catch (\Throwable $e) { return ['value' => 0.0, 'qty' => 0.0]; }
     }
 
     /** Days in (year, month) that have posted sales — for the calendar dots. */
