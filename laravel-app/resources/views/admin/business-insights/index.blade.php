@@ -1,14 +1,14 @@
 @extends('admin.layout')
-@section('title', 'Business Insights')
+@section('title', 'Client Strategic Analysis')
 
 @section('header')
     <div class="flex items-end justify-between gap-4">
         <div>
-            <h1 class="text-2xl font-bold text-slate-900">Business Insights</h1>
+            <h1 class="text-2xl font-bold text-slate-900">Client Strategic Analysis</h1>
             <p class="text-xs text-slate-500 mt-1">
-                Daily Claude-generated management report for each tenant — refreshed automatically at 06:00.
-                Each card shows the 5 headline KPIs (Revenue YoY · Gross Margin · EBITDA Margin · DSO · Overdue Rate) as traffic-light dots.
-                Click into any tenant for the full Executive Summary + variance analysis + risk register.
+                Monthly Claude-generated strategic audit for each client — a holistic diagnosis across profitability,
+                liquidity, growth, efficiency and risk. Each card shows the 5 headline KPIs as traffic-light dots.
+                Click into any client for the full narrative, prioritized action plan, 90-day roadmap, and a downloadable report.
             </p>
         </div>
         <form method="POST" action="/admin/business-insights/run-all" onsubmit="return confirm('Regenerate insights for ALL tenants now? This will call the LLM once per tenant.')">

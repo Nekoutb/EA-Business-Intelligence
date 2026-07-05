@@ -24,7 +24,10 @@ Artisan::command('inspire', function () {
  *
  * Manual: php artisan insights:generate-daily [--force] [--tenant=slug]
  */
+// Client Strategic Analysis — generated monthly (1st of the month, 06:00).
+// The service is idempotent per calendar month, so this produces one audit
+// per client per month; admins can force a fresh run any time from the UI.
 Schedule::command('insights:generate-daily')
-    ->dailyAt('06:00')
+    ->monthlyOn(1, '06:00')
     ->withoutOverlapping()
     ->runInBackground();
