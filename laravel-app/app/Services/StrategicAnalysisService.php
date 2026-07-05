@@ -103,7 +103,11 @@ final class StrategicAnalysisService
         }
 
         $apiKey = (string) config_env('AI_API_KEY', '');
-        $model  = (string) (config('bi.strategic.model') ?: config_env('AI_MODEL', '') ?: 'claude-sonnet-4-20250514');
+        // Match the model Business Insights already uses successfully on this
+        // account (a strategic-specific override wins if set). The default
+        // sonnet-4-20250514 returns not_found here, so fall through to the
+        // proven business-insights model / haiku-4-5.
+        $model  = (string) (config('bi.strategic.model') ?: config('bi.business_insights.model') ?: config_env('AI_MODEL', '') ?: 'claude-haiku-4-5');
         if ($apiKey === '') {
             return $this->persist($tenant, $model, $snapshot, 'AI provider not configured — set AI_API_KEY.', BusinessInsight::PRIORITY_WATCH, BusinessInsight::STATUS_FAILED, 'AI_API_KEY missing');
         }
