@@ -10,6 +10,7 @@ use App\Services\BusinessInsightsService;
 use App\Services\DataInventoryService;
 use App\Services\RevenueAnalysisService;
 use App\Services\StockOperationsService;
+use App\Services\StrategicAnalysisService;
 use App\Tenancy\TenantContext;
 use Illuminate\Http\Request;
 
@@ -65,7 +66,7 @@ class BusinessInsightsController extends Controller
         ]);
     }
 
-    public function refresh(Request $request, int $tenantId, BusinessInsightsService $svc)
+    public function refresh(Request $request, int $tenantId, StrategicAnalysisService $svc)
     {
         // Same demo block as show() — don't waste an LLM call on
         // throwaway demo data even if someone clicks the button.
@@ -74,7 +75,7 @@ class BusinessInsightsController extends Controller
             $row = $svc->generate($tenant, true);
             return redirect("/admin/business-insights/{$tenant->id}")->with('flash', [
                 'type' => 'success',
-                'msg'  => 'Insight regenerated · status=' . $row->status . ' priority=' . $row->priority,
+                'msg'  => 'Strategic analysis regenerated · status=' . $row->status . ' priority=' . $row->priority,
             ]);
         } catch (\Throwable $e) {
             return redirect("/admin/business-insights/{$tenant->id}")->with('flash', [
@@ -210,7 +211,7 @@ class BusinessInsightsController extends Controller
         return [$tenant, $stock, $error];
     }
 
-    public function runAll(Request $request, BusinessInsightsService $svc)
+    public function runAll(Request $request, StrategicAnalysisService $svc)
     {
         // Real tenants only — same reasoning as index(). Generating
         // insights for visitor demo sandboxes burns LLM tokens for

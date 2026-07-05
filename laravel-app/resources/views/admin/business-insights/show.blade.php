@@ -1,10 +1,10 @@
 @extends('admin.layout')
-@section('title', 'Business Insight · ' . ($tenant->brand ?: $tenant->name))
+@section('title', 'Strategic Analysis · ' . ($tenant->brand ?: $tenant->name))
 
 @section('header')
     <div class="flex items-end justify-between gap-4">
         <div>
-            <div class="text-[11px] uppercase tracking-wider text-slate-500 font-medium">Management Report · Business Insight</div>
+            <div class="text-[11px] uppercase tracking-wider text-slate-500 font-medium">Client Strategic Analysis</div>
             <h1 class="text-2xl font-bold text-slate-900">{{ $tenant->brand ?: $tenant->name }}</h1>
             <p class="text-xs text-slate-500 mt-1">
                 <span class="font-mono">{{ $tenant->slug }}</span> ·
@@ -27,8 +27,9 @@
                     Refresh now
                 </button>
             </form>
-            <button onclick="window.print()" class="text-[12px] font-medium text-slate-600 border border-slate-200 hover:border-slate-400 rounded-lg px-3 py-2 print:hidden">
-                Print
+            <button onclick="window.print()" class="inline-flex items-center gap-1.5 text-[12px] font-semibold text-slate-700 border border-slate-300 hover:border-slate-500 rounded-lg px-3 py-2 print:hidden">
+                <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V2h12v7M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2M6 14h12v8H6z"/></svg>
+                Download report (PDF)
             </button>
         </div>
     </div>
@@ -290,6 +291,62 @@
         <article class="ea-narrative">
             {!! \Illuminate\Support\Str::markdown($latest->insight_md) !!}
         </article>
+    </div>
+  @endif
+
+  {{-- ─── 5b. Prioritized action plan ─── --}}
+  @php $actions = is_array($latest->kpis_snapshot) ? (array) ($latest->kpis_snapshot['action_table'] ?? []) : []; @endphp
+  @if (!empty($actions))
+    <div class="panel p-6 mb-4">
+        <h2 class="text-sm font-semibold text-slate-900 mb-3">Prioritized action plan</h2>
+        <div class="overflow-x-auto">
+            <table class="w-full text-[12px]">
+                <thead>
+                    <tr class="text-left text-[10px] uppercase tracking-wide text-slate-400 border-b border-slate-200">
+                        <th class="py-2 pr-2 w-6">#</th><th class="py-2 px-2">Area</th><th class="py-2 px-2">Diagnosis</th>
+                        <th class="py-2 px-2">Recommended action</th><th class="py-2 px-2 text-center">Impact</th><th class="py-2 pl-2 text-center">Effort</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach ($actions as $a)
+                        @php
+                            $imp = strtolower((string) ($a['impact'] ?? '')); $eff = strtolower((string) ($a['effort'] ?? ''));
+                            $ic = $imp === 'high' ? 'bg-emerald-50 text-emerald-700' : ($imp === 'medium' ? 'bg-amber-50 text-amber-700' : 'bg-slate-100 text-slate-600');
+                            $ec = $eff === 'low' ? 'bg-emerald-50 text-emerald-700' : ($eff === 'medium' ? 'bg-amber-50 text-amber-700' : 'bg-rose-50 text-rose-700');
+                        @endphp
+                        <tr class="border-b border-slate-100 align-top">
+                            <td class="py-2 pr-2 font-bold text-slate-400">{{ $a['priority'] ?? '' }}</td>
+                            <td class="py-2 px-2 font-semibold text-slate-800 whitespace-nowrap">{{ $a['area'] ?? '' }}</td>
+                            <td class="py-2 px-2 text-slate-700">{{ $a['diagnosis'] ?? '' }}</td>
+                            <td class="py-2 px-2 text-slate-800">{{ $a['recommendation'] ?? '' }}</td>
+                            <td class="py-2 px-2 text-center"><span class="px-1.5 py-0.5 rounded text-[10px] font-semibold {{ $ic }}">{{ $a['impact'] ?? '—' }}</span></td>
+                            <td class="py-2 pl-2 text-center"><span class="px-1.5 py-0.5 rounded text-[10px] font-semibold {{ $ec }}">{{ $a['effort'] ?? '—' }}</span></td>
+                        </tr>
+                    @endforeach
+                </tbody>
+            </table>
+        </div>
+    </div>
+  @endif
+
+  {{-- ─── 5c. 90-day roadmap ─── --}}
+  @php $roadmap = is_array($latest->kpis_snapshot) ? (array) ($latest->kpis_snapshot['roadmap_90d'] ?? []) : []; @endphp
+  @if (!empty($roadmap))
+    <div class="panel p-6 mb-4">
+        <h2 class="text-sm font-semibold text-slate-900 mb-3">90-day roadmap</h2>
+        <div class="grid md:grid-cols-3 gap-4">
+            @foreach ($roadmap as $r)
+                <div class="border border-slate-200 rounded-lg p-4">
+                    <div class="text-[11px] font-bold text-indigo-600 uppercase tracking-wide">{{ $r['horizon'] ?? '' }}</div>
+                    <div class="text-[13px] font-semibold text-slate-800 mb-2">{{ $r['theme'] ?? '' }}</div>
+                    <ul class="space-y-1.5">
+                        @foreach ((array) ($r['items'] ?? []) as $item)
+                            <li class="text-[11px] text-slate-600 flex gap-1.5"><span class="text-indigo-400 flex-shrink-0">▸</span><span>{{ $item }}</span></li>
+                        @endforeach
+                    </ul>
+                </div>
+            @endforeach
+        </div>
     </div>
   @endif
 

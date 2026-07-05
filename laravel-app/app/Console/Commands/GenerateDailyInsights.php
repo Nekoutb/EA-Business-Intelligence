@@ -3,30 +3,30 @@
 namespace App\Console\Commands;
 
 use App\Models\Tenant;
-use App\Services\BusinessInsightsService;
+use App\Services\StrategicAnalysisService;
 use Illuminate\Console\Command;
 
 /**
- * Daily Business Insights generator. Iterates every active tenant,
- * skips ones that already have a row dated today (unless --force),
- * and writes one BusinessInsight row per tenant.
+ * Client Strategic Analysis generator (replaces the old daily Business
+ * Insights). Iterates every active client and writes one strategic-audit
+ * row per client — the service itself is idempotent per calendar month, so
+ * re-runs within a month are no-ops unless --force.
  *
- * Scheduled via routes/console.php to run at 06:00 daily so insights
- * are ready for morning client meetings. Manual usage:
+ * Scheduled via routes/console.php to run monthly. Manual usage:
  *
- *   php artisan insights:generate-daily            # idempotent
- *   php artisan insights:generate-daily --force    # regenerate today
- *   php artisan insights:generate-daily --tenant=tadsa  # one tenant
+ *   php artisan insights:generate-daily            # idempotent (this month)
+ *   php artisan insights:generate-daily --force    # regenerate now
+ *   php artisan insights:generate-daily --tenant=kwr
  */
 class GenerateDailyInsights extends Command
 {
     protected $signature = 'insights:generate-daily
-                            {--force         : Regenerate even if today\'s row already exists}
+                            {--force         : Regenerate even if this month\'s analysis already exists}
                             {--tenant=       : Only run for this tenant slug}';
 
-    protected $description = 'Generate the daily Business Insights row for each active tenant';
+    protected $description = 'Generate the monthly Client Strategic Analysis for each active client';
 
-    public function handle(BusinessInsightsService $svc): int
+    public function handle(StrategicAnalysisService $svc): int
     {
         $force  = (bool) $this->option('force');
         $only   = (string) $this->option('tenant');
