@@ -168,6 +168,58 @@ final class ReportsService
         return $out;
     }
 
+    /**
+     * Operating expenses for a day + cumulative month-to-date, from posted GL
+     * lines on OHADA class-6 accounts EXCLUDING class 60 (purchases and stock
+     * variation — inventory movements are reported separately, per the daily
+     * report spec). Amounts are net debit (balance), so credit notes and
+     * reversals reduce the figure.
+     *
+     * @return array{date:string, lines:array<int,array{account:string,amount:float}>, day_total:float, mtd_total:float, month_label:string}
+     */
+    public function dailyExpenses(string $date): array
+    {
+        $d          = new \DateTimeImmutable($date);
+        $monthStart = $d->modify('first day of this month')->format('Y-m-d');
+        $empty      = ['date' => $date, 'lines' => [], 'day_total' => 0.0, 'mtd_total' => 0.0, 'month_label' => $d->format('F Y')];
+
+        try {
+            $accounts = $this->odoo->searchRead('account.account', [['code', '=like', '6%']], ['id', 'code', 'name'], ['limit' => 1000, 'order' => 'code asc']);
+        } catch (\Throwable $e) { return $empty; }
+
+        $ids = []; $label = [];
+        foreach ($accounts as $a) {
+            $code = (string) ($a['code'] ?? '');
+            if (!str_starts_with($code, '6') || str_starts_with($code, '60')) continue;
+            $ids[] = (int) $a['id'];
+            $label[(int) $a['id']] = trim($code . ' ' . (string) ($a['name'] ?? ''));
+        }
+        if (empty($ids)) return $empty;
+
+        // Expense lines posted on the day, by account.
+        $lines = []; $dayTotal = 0.0;
+        try {
+            $g = $this->odoo->callModel('account.move.line', 'read_group', ['domain' => [['parent_state', '=', 'posted'], ['account_id', 'in', $ids], ['date', '=', $date]], 'fields' => ['balance:sum'], 'groupby' => ['account_id'], 'lazy' => false]);
+            foreach ((array) $g as $r) {
+                $aid = is_array($r['account_id'] ?? null) ? (int) $r['account_id'][0] : 0;
+                $amt = (float) ($r['balance'] ?? 0);
+                if (abs($amt) < 0.005) continue;
+                $lines[] = ['account' => $label[$aid] ?? ('#' . $aid), 'amount' => $amt];
+                $dayTotal += $amt;
+            }
+            usort($lines, static fn ($a, $b) => abs($b['amount']) <=> abs($a['amount']));
+        } catch (\Throwable $e) { /* leave empty */ }
+
+        // Cumulative for the month (1st → the report day, inclusive).
+        $mtd = 0.0;
+        try {
+            $g = $this->odoo->callModel('account.move.line', 'read_group', ['domain' => [['parent_state', '=', 'posted'], ['account_id', 'in', $ids], ['date', '>=', $monthStart], ['date', '<=', $date]], 'fields' => ['balance:sum'], 'groupby' => [], 'lazy' => false]);
+            $mtd = (float) ($g[0]['balance'] ?? 0);
+        } catch (\Throwable $e) { /* leave 0 */ }
+
+        return ['date' => $date, 'lines' => $lines, 'day_total' => $dayTotal, 'mtd_total' => $mtd, 'month_label' => $d->format('F Y')];
+    }
+
     /** Best-effort company currency code. */
     public function currency(): string
     {

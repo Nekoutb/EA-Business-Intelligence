@@ -117,6 +117,22 @@ return [
             'status'  => 'live',
         ],
         [
+            // Daily Report Email — hidden module (url=null → no sidebar entry)
+            // gating the 08:00 prior-day activity email (reports:send-daily).
+            // default=false: the super admin enables it per tenant whose owner
+            // wants the daily digest; recipients are the tenant's active
+            // admin/owner users.
+            'key'     => 'daily_report',
+            'service' => 'business_intelligence',
+            'label'   => 'Daily Report Email',
+            'url'     => null,
+            'active'  => null,
+            'icon'    => 'M3 8l9 6 9-6M5 5h14a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2z',
+            'default' => false,
+            'core'    => false,
+            'status'  => 'live',
+        ],
+        [
             'key'     => 'revenue',
             'service' => 'business_intelligence',
             'label'   => 'Revenue',
