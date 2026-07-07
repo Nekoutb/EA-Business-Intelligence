@@ -31,3 +31,16 @@ Schedule::command('insights:generate-daily')
     ->monthlyOn(1, '06:00')
     ->withoutOverlapping()
     ->runInBackground();
+
+// Daily prior-day activity email to client owners (sales cash/credit,
+// inventory movements at standard cost, expenses day + MTD). Gated per
+// tenant by the hidden `daily_report` module. 08:00 in the client's
+// timezone (Douala) — the schedule entry pins the tz explicitly since
+// the app default is UTC.
+//
+// Manual: php artisan reports:send-daily [--date=YYYY-MM-DD] [--tenant=slug] [--to=a@b.com]
+Schedule::command('reports:send-daily')
+    ->dailyAt('08:00')
+    ->timezone('Africa/Douala')
+    ->withoutOverlapping()
+    ->runInBackground();
