@@ -313,6 +313,27 @@ return [
             'status'  => 'live',
         ],
         [
+            // Procurement Dashboard — one-page governance view of the PO
+            // cycle: 8 KPIs vs admin-set targets (operator + value), computed
+            // cumulative YTD as at the last closed month-end. Designed to be
+            // printed/exported for meetings; Procurement (below) is its
+            // detail page. Hosted on the cached /procurement route
+            // (?view=dashboard) because a dedicated route 404s behind this
+            // host's frozen route cache.
+            //
+            // default=false — same prerequisite as Procurement (Odoo
+            // `purchase` module). Super admin enables per tenant.
+            'key'     => 'procurement_dashboard',
+            'service' => 'business_intelligence',
+            'label'   => 'Procurement Dashboard',
+            'url'     => '/procurement?view=dashboard',
+            'active'  => 'procurement_dashboard',
+            'icon'    => 'M9 17V9m4 8V5m4 12v-4M5 21h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v14a2 2 0 002 2z',
+            'default' => false,
+            'core'    => false,
+            'status'  => 'live',
+        ],
+        [
             // Procurement — PO lifecycle lens (volume + spend, cycle time,
             // PO compliance / maverick spend). Complements Payables (which
             // lives in the what-we-owe lens).
