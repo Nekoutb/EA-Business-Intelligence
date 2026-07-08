@@ -307,6 +307,84 @@ final class BudgetService
     }
 
     /**
+     * Procurement Control Dashboard — admin-set targets. Each KPI stores an
+     * operator ('lt'|'lte'|'gt'|'gte') and a numeric value; the page derives
+     * the status chips from whichever comparison the admin chose. The
+     * emergency-procedures count (manual exceptions log) is stored per year
+     * alongside. Persisted in tenant_budgets.data.procurement_dashboard on
+     * the (tenant, year) row.
+     */
+    public const PROC_DASH_DEFAULT_TARGETS = [
+        'po_open_60'    => ['op' => 'lt',  'value' => 5.0],
+        'po_open_90'    => ['op' => 'lt',  'value' => 2.0],
+        'po_processing' => ['op' => 'lt',  'value' => 3.0],
+        'po_after_fact' => ['op' => 'lt',  'value' => 2.0],
+        'dpo'           => ['op' => 'lte', 'value' => 30.0],
+        'emergency'     => ['op' => 'lt',  'value' => 5.0],
+        'exempt'        => ['op' => 'lt',  'value' => 5.0],
+        'compliance'    => ['op' => 'gte', 'value' => 95.0],
+    ];
+    public const PROC_DASH_OPS = ['lt', 'lte', 'gt', 'gte'];
+
+    /**
+     * Load procurement-dashboard targets + the year's emergency count.
+     * Always returns a complete target map (defaults where unset).
+     *
+     * @return array{targets: array<string, array{op:string, value:float}>, emergency: int}
+     */
+    public function loadProcurementDash(int $tenantId, int $year): array
+    {
+        $row = TenantBudget::where('tenant_id', $tenantId)->where('year', $year)->first();
+        $raw = $row ? (array) ($row->data['procurement_dashboard'] ?? []) : [];
+
+        $targets = [];
+        foreach (self::PROC_DASH_DEFAULT_TARGETS as $key => $def) {
+            $t = (array) ($raw['targets'][$key] ?? []);
+            $op = in_array(($t['op'] ?? ''), self::PROC_DASH_OPS, true) ? (string) $t['op'] : $def['op'];
+            $val = isset($t['value']) && is_numeric($t['value']) ? (float) $t['value'] : $def['value'];
+            $targets[$key] = ['op' => $op, 'value' => $val];
+        }
+        $emergency = (int) ($raw['emergency'][(string) $year] ?? $raw['emergency'][$year] ?? 0);
+
+        return ['targets' => $targets, 'emergency' => $emergency];
+    }
+
+    /**
+     * Persist procurement-dashboard targets + emergency count without
+     * disturbing the other keys sharing the data JSON.
+     *
+     * @param array<string, array{op?:string, value?:mixed}> $targets
+     */
+    public function saveProcurementDash(Tenant $tenant, int $year, array $targets, ?int $emergency, ?int $userId = null): TenantBudget
+    {
+        $row = TenantBudget::firstOrNew(['tenant_id' => $tenant->id, 'year' => $year]);
+        $existing = (array) ($row->data ?? []);
+        $section  = (array) ($existing['procurement_dashboard'] ?? []);
+
+        $clean = (array) ($section['targets'] ?? []);
+        foreach (self::PROC_DASH_DEFAULT_TARGETS as $key => $def) {
+            if (!isset($targets[$key])) continue;
+            $t = (array) $targets[$key];
+            $clean[$key] = [
+                'op'    => in_array(($t['op'] ?? ''), self::PROC_DASH_OPS, true) ? (string) $t['op'] : $def['op'],
+                'value' => isset($t['value']) && is_numeric($t['value']) ? max(0.0, (float) $t['value']) : $def['value'],
+            ];
+        }
+        $section['targets'] = $clean;
+        if ($emergency !== null) {
+            $em = (array) ($section['emergency'] ?? []);
+            $em[(string) $year] = max(0, $emergency);
+            $section['emergency'] = $em;
+        }
+
+        $existing['procurement_dashboard'] = $section;
+        $row->data = $existing;
+        if ($userId) $row->uploaded_by = $userId;
+        $row->save();
+        return $row;
+    }
+
+    /**
      * Summary metadata for the upload page (year, source filename,
      * uploader, when, monthly totals per line).
      */

@@ -382,6 +382,11 @@ class DashboardController extends Controller
         if ($request->input('_intent') === 'kpi_budget') {
             return $this->saveKpiBudget($request);
         }
+        // Procurement Control Dashboard target editor posts here too, for the
+        // same stale-route-cache reason.
+        if ($request->input('_intent') === 'proc_targets') {
+            return app(ProcurementController::class)->saveDashboardTargets($request);
+        }
 
         ea_cache_clear();
         return back()->with('flash', ['type' => 'success', 'msg' => 'Data refreshed — next load will hit Odoo live.']);

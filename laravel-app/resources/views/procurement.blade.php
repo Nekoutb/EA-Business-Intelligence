@@ -1,8 +1,189 @@
 @extends('layouts.app')
-@section('title', 'Procurement')
+@section('title', ($dashMode ?? false) ? 'Procurement Dashboard' : 'Procurement')
 
-@section('page-title', 'Procurement')
+@section('page-title', ($dashMode ?? false) ? 'Procurement Control Dashboard' : 'Procurement')
 @section('content')
+@if ($dashMode ?? false)
+{{-- ═══ Procurement Control Dashboard — one-page governance view. 8 KPIs vs
+     admin-set targets (operator + value), cumulative YTD as at the last
+     closed month-end. Approved mockup v3. Hosted here behind dashMode
+     because this host cannot compile brand-new views. ═══ --}}
+@php
+    $OPTXT = ['lt' => '<', 'lte' => '≤', 'gt' => '>', 'gte' => '≥'];
+    $meets = function (string $op, float $actual, float $target): bool {
+        return match ($op) {
+            'lt'  => $actual <  $target,
+            'lte' => $actual <= $target,
+            'gt'  => $actual >  $target,
+            default => $actual >= $target,
+        };
+    };
+    $statusOf = function (?float $actual, array $t) use ($meets): array {
+        if ($actual === null) return ['na', 'No data'];
+        $op = (string) $t['op']; $tv = (float) $t['value'];
+        if ($meets($op, $actual, $tv)) return ['good', 'On target'];
+        if ($op === 'lt' || $op === 'lte') return $actual <= 2 * $tv ? ['warn', 'Watch'] : ['crit', 'Off target'];
+        return $actual >= 0.85 * $tv ? ['warn', 'Watch'] : ['crit', 'Off target'];
+    };
+    $fmtV = fn (?float $v, string $u) => $v === null ? '—' : number_format($v, ($u === '%' || $u === 'd') ? 1 : 0);
+    $unitTxt = fn (string $u) => $u === 'd' ? ' days' : $u;
+
+    // Assemble the 8 KPIs in presentation order (emergency is manual).
+    $kpis = [];
+    foreach (['po_open_60', 'po_open_90', 'po_processing', 'po_after_fact', 'dpo'] as $kk) {
+        if (isset($dash['kpis'][$kk])) $kpis[$kk] = $dash['kpis'][$kk];
+    }
+    $kpis['emergency'] = [
+        'label' => 'Emergency procedures (this year)', 'unit' => '',
+        'actual' => (float) ($emergency ?? 0), 'sub' => 'entered by management',
+        'cadence' => 'Annual', 'source' => 'Exceptions log · manual',
+    ];
+    foreach (['exempt', 'compliance'] as $kk) {
+        if (isset($dash['kpis'][$kk])) $kpis[$kk] = $dash['kpis'][$kk];
+    }
+    $asAtHuman = \DateTimeImmutable::createFromFormat('!Y-m-d', $asAt)?->format('j F Y') ?? $asAt;
+    $nextHuman = \DateTimeImmutable::createFromFormat('!Y-m-d', $nextRefresh)?->format('j M') ?? $nextRefresh;
+@endphp
+
+<style>
+  .pd-hdr { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; border-bottom:2px solid #0d6e6e; padding-bottom:12px; margin-bottom:18px; }
+  .pd-hdr .pd-who { font-size:13px; color:#64748b; margin-top:2px; }
+  .pd-hdr .pd-meta { text-align:right; font-size:12.5px; color:#64748b; }
+  .pd-btn { display:inline-block; margin-top:6px; background:#0d6e6e; color:#fff; border:0; border-radius:7px; padding:8px 15px; font-size:12.5px; font-weight:600; cursor:pointer; }
+  .pd-btn.pd-ghost { background:transparent; color:#0d6e6e; border:1px solid #0d6e6e; }
+  .pd-tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:14px; }
+  .pd-tile { border:1px solid #e2e8f0; border-radius:11px; padding:16px 18px 15px; background:#fff; }
+  .pd-lbl { font-size:12.5px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:#94a3b8; margin-bottom:10px; }
+  .pd-val { font-size:34px; font-weight:700; letter-spacing:-.02em; font-variant-numeric:tabular-nums; line-height:1; color:#0f172a; }
+  .pd-val .pd-u { font-size:16px; font-weight:600; color:#64748b; margin-left:3px; }
+  .pd-sub { font-size:12.5px; color:#64748b; margin-top:8px; }
+  .pd-row { display:flex; justify-content:space-between; align-items:center; margin-top:10px; gap:8px; flex-wrap:wrap; }
+  .pd-tgt { font-size:13px; color:#64748b; font-variant-numeric:tabular-nums; }
+  .pd-chip { display:inline-flex; align-items:center; gap:6px; font-size:11.5px; font-weight:700; border-radius:10px; padding:3px 10px; white-space:nowrap; }
+  .pd-chip::before { content:""; width:8px; height:8px; border-radius:50%; background:currentColor; }
+  .pd-chip.good { color:#1a7f37; background:#e6f4ea; }
+  .pd-chip.warn { color:#b45309; background:#fdf1e2; }
+  .pd-chip.crit { color:#b91c1c; background:#fdeaea; }
+  .pd-chip.na   { color:#64748b; background:#f1f5f9; }
+  .pd-adminbar { display:flex; align-items:center; gap:10px; margin:22px 0 0; flex-wrap:wrap; }
+  .pd-adminnote { font-size:12px; color:#94a3b8; }
+  #pdAdmin { display:none; margin-top:12px; border:1px dashed #cbd5e1; border-radius:10px; padding:14px 16px 16px; background:#fff; }
+  #pdAdmin.open { display:block; }
+  #pdAdmin h2 { font-size:14px; margin:0 0 10px; color:#0f172a; }
+  #pdAdmin h2 .pd-note { font-size:11.5px; font-weight:400; color:#94a3b8; margin-left:6px; }
+  .pd-table { width:100%; border-collapse:collapse; }
+  .pd-table th { text-align:left; font-size:10.5px; letter-spacing:.06em; text-transform:uppercase; color:#94a3b8; padding:8px 10px; border-bottom:1px solid #e2e8f0; }
+  .pd-table td { padding:8px 10px; font-size:13.5px; border-bottom:1px solid #f1f5f9; vertical-align:middle; color:#1e293b; }
+  .pd-table .num { text-align:right; font-variant-numeric:tabular-nums; }
+  .pd-table .ctr { text-align:center; }
+  .pd-src { color:#64748b; font-size:12px; }
+  .pd-op { padding:4px 4px; border:1px solid #e2e8f0; border-radius:6px; background:#fff; color:#1e293b; font-size:13.5px; font-weight:600; }
+  .pd-in { width:70px; padding:4px 7px; border:1px solid #e2e8f0; border-radius:6px; background:#fff; color:#1e293b; font-size:13.5px; font-weight:600; text-align:right; font-variant-numeric:tabular-nums; }
+  .pd-foot { margin-top:22px; padding-top:12px; border-top:1px solid #e2e8f0; font-size:11.5px; color:#64748b; }
+  .pd-foot p { margin:3px 0; }
+  @media print {
+    .ea-sb, .pd-btn, .pd-adminbar, #pdAdmin { display:none !important; }
+    .pd-tiles { grid-template-columns:repeat(3,1fr); gap:8px; }
+    .pd-val { font-size:24px; }
+  }
+</style>
+
+@if ($dashError)
+    <div class="bg-coral-50 border border-coral-200 text-coral-800 rounded-xl p-4 text-sm mb-6">{{ $dashError }}</div>
+@endif
+
+<div class="pd-hdr">
+    <div>
+        <div class="pd-who">{{ optional(tenant())->name }} — governance view of the purchase-order cycle</div>
+    </div>
+    <div class="pd-meta">
+        As at <b>{{ $asAtHuman }}</b> (last closed month-end) · <b>Cumulative YTD</b><br>
+        Open POs: <b>{{ number_format((int) ($dash['meta']['open_pos'] ?? 0)) }}</b>
+        · Confirmed POs YTD: <b>{{ number_format((int) ($dash['meta']['confirmed_ytd'] ?? 0)) }}</b>
+        · Vendor bills YTD: <b>{{ number_format((int) ($dash['meta']['bills_ytd'] ?? 0)) }}</b>
+        · Next refresh: <b>{{ $nextHuman }}</b><br>
+        <button class="pd-btn" onclick="window.print()">Print / Export PDF</button>
+    </div>
+</div>
+
+<div class="pd-tiles">
+    @foreach ($kpis as $key => $kpi)
+        @php
+            $t = $targets[$key] ?? ['op' => 'lt', 'value' => 0.0];
+            [$sCls, $sLbl] = $statusOf($kpi['actual'] !== null ? (float) $kpi['actual'] : null, $t);
+        @endphp
+        <div class="pd-tile">
+            <div class="pd-lbl">{{ $kpi['label'] }}</div>
+            <div class="pd-val">{{ $fmtV($kpi['actual'] !== null ? (float) $kpi['actual'] : null, $kpi['unit']) }}<span class="pd-u">{{ $unitTxt($kpi['unit']) }}</span></div>
+            <div class="pd-sub">{{ $kpi['sub'] }}</div>
+            <div class="pd-row">
+                <span class="pd-tgt">Target {{ $OPTXT[$t['op']] ?? '<' }} {{ rtrim(rtrim(number_format((float) $t['value'], 1, '.', ','), '0'), '.') }}{{ $unitTxt($kpi['unit']) }} · {{ $kpi['cadence'] }}</span>
+                <span class="pd-chip {{ $sCls }}">{{ $sLbl }}</span>
+            </div>
+        </div>
+    @endforeach
+</div>
+
+@if ($isAdmin)
+<div class="pd-adminbar">
+    <button class="pd-btn pd-ghost" id="pdToggle" type="button" aria-expanded="false">Set targets (admin)</button>
+    <span class="pd-adminnote">Visible to administrators only — operator + value persist for this client and drive the status chips.</span>
+</div>
+<div id="pdAdmin">
+    <h2>Governance matrix — target setup <span class="pd-note">choose operator and value per KPI · Save to persist</span></h2>
+    <form method="POST" action="{{ tenant_url('/sync') }}">
+        @csrf
+        <input type="hidden" name="_intent" value="proc_targets">
+        <table class="pd-table">
+            <tr><th style="width:30%">Indicator</th><th class="num">Actual (YTD)</th><th class="ctr">Target</th><th class="ctr">Status</th><th>Review cadence</th><th>Source</th></tr>
+            @foreach ($kpis as $key => $kpi)
+                @php
+                    $t = $targets[$key] ?? ['op' => 'lt', 'value' => 0.0];
+                    [$sCls, $sLbl] = $statusOf($kpi['actual'] !== null ? (float) $kpi['actual'] : null, $t);
+                @endphp
+                <tr>
+                    <td>{{ $kpi['label'] }}<div class="pd-src">{{ $kpi['sub'] }}</div></td>
+                    <td class="num"><b>{{ $fmtV($kpi['actual'] !== null ? (float) $kpi['actual'] : null, $kpi['unit']) }}{{ $kpi['unit'] === 'd' ? ' d' : $kpi['unit'] }}</b></td>
+                    <td class="ctr" style="white-space:nowrap;">
+                        <select class="pd-op" name="targets[{{ $key }}][op]" aria-label="Operator for {{ $kpi['label'] }}">
+                            @foreach (['lt' => '<', 'lte' => '≤', 'gt' => '>', 'gte' => '≥'] as $opv => $sym)
+                                <option value="{{ $opv }}" @if (($t['op'] ?? '') === $opv) selected @endif>{{ $sym }}</option>
+                            @endforeach
+                        </select>
+                        <input class="pd-in" type="number" step="0.5" min="0" name="targets[{{ $key }}][value]" value="{{ rtrim(rtrim(number_format((float) $t['value'], 2, '.', ''), '0'), '.') }}" aria-label="Target value for {{ $kpi['label'] }}">
+                        <span class="pd-src">{{ $unitTxt($kpi['unit']) }}</span>
+                    </td>
+                    <td class="ctr"><span class="pd-chip {{ $sCls }}">{{ $sLbl }}</span></td>
+                    <td>{{ $kpi['cadence'] }}</td>
+                    <td class="pd-src">{{ $kpi['source'] }}</td>
+                </tr>
+            @endforeach
+        </table>
+        <div style="display:flex;align-items:center;gap:12px;margin-top:12px;flex-wrap:wrap;">
+            <label class="pd-src" for="pdEm">Emergency procedures recorded this year:</label>
+            <input class="pd-in" id="pdEm" type="number" step="1" min="0" name="emergency_count" value="{{ (int) ($emergency ?? 0) }}">
+            <button class="pd-btn" type="submit">Save targets</button>
+        </div>
+    </form>
+</div>
+<script>
+document.getElementById('pdToggle').addEventListener('click', function () {
+    var p = document.getElementById('pdAdmin');
+    var open = !p.classList.contains('open');
+    p.classList.toggle('open', open);
+    this.setAttribute('aria-expanded', open ? 'true' : 'false');
+    this.textContent = open ? 'Hide targets panel' : 'Set targets (admin)';
+});
+</script>
+@endif
+
+<div class="pd-foot">
+    <p><strong>Basis.</strong> All indicators are computed cumulatively for the year to date and refresh automatically at each month-end close; the page presents the position as at the last closed month. Review cadence indicates how often each indicator is tabled, not how it is computed.</p>
+    <p><strong>Definitions.</strong> Open PO = confirmed, not fully received/billed; ageing from PO order date. Processing time = RFQ created → PO confirmed, business days (proxy — no requisition module in Odoo). After-the-fact = PO order date later than its earliest posted supplier invoice. Exempt purchases &amp; PO compliance measured on all posted vendor bills (count basis). DPO = accounts payable (401 + 408) ÷ class-6 expenses YTD × 365, running cumulative. Emergency procedures recorded manually (exceptions log). Per-PO detail lives on the Procurement page beneath this dashboard.</p>
+    <p><strong>Sources.</strong> Odoo purchase orders &amp; supplier invoices (live) · targets set by management on this page (admin only).</p>
+</div>
+
+@else
     @if ($error)
         <div class="bg-coral-50 border border-coral-200 text-coral-800 rounded-xl p-4 text-sm mb-6">
             <strong>Could not reach Odoo:</strong> {{ $error }}
@@ -609,4 +790,5 @@
         </div>
     </div>
 
+@endif {{-- /dashMode --}}
 @endsection
