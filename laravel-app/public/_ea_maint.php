@@ -27,19 +27,11 @@ try {
     $client = App\Odoo\OdooFactory::fromConfig();
     $asAt = App\Services\ProcurementDashboardService::asAtDate();
     ln('as-at = ' . $asAt->format('Y-m-d'));
-    // DPO sub-values debug (mirrors the service's account resolution).
+    // DPO sub-values debug (mirrors the service: residual AP + class-6 exp).
     try {
-        $accts = $client->searchRead('account.account', ['|', ['code', '=like', '40%'], ['code', '=like', '6%']], ['id', 'code'], []);
-        $apIds = []; $expIds = [];
-        foreach ($accts as $a) {
-            $code = (string) ($a['code'] ?? ''); $id = (int) ($a['id'] ?? 0);
-            if ($id <= 0 || $code === '') continue;
-            if (str_starts_with($code, '401') || str_starts_with($code, '408')) $apIds[] = $id;
-            elseif (str_starts_with($code, '6') && !str_starts_with($code, '69')) $expIds[] = $id;
-        }
-        $g1 = $client->callModel('account.move.line', 'read_group', ['domain' => [['parent_state', '=', 'posted'], ['account_id', 'in', $apIds], ['date', '<=', $asAt->format('Y-m-d')]], 'fields' => ['balance:sum'], 'groupby' => [], 'lazy' => false]);
-        $g2 = $client->callModel('account.move.line', 'read_group', ['domain' => [['parent_state', '=', 'posted'], ['account_id', 'in', $expIds], ['date', '>=', $asAt->format('Y-01-01')], ['date', '<=', $asAt->format('Y-m-d')]], 'fields' => ['balance:sum'], 'groupby' => [], 'lazy' => false]);
-        ln('DPO debug: apAccts=' . count($apIds) . ' apBal=' . round((float) ($g1[0]['balance'] ?? 0)) . ' · expAccts=' . count($expIds) . ' expBal=' . round((float) ($g2[0]['balance'] ?? 0)));
+        $g1 = $client->callModel('account.move', 'read_group', ['domain' => [['move_type', 'in', ['in_invoice', 'in_refund']], ['state', '=', 'posted']], 'fields' => ['amount_residual_signed:sum'], 'groupby' => [], 'lazy' => false]);
+        $rawAp = (float) ($g1[0]['amount_residual_signed'] ?? 0);
+        ln('DPO debug: residual_signed_sum=' . round($rawAp) . ' → AP=' . round(max(0, -1 * $rawAp)));
     } catch (Throwable $e) { ln('DPO debug ERR: ' . $e->getMessage()); }
 
     if (function_exists('ea_cache_clear')) ea_cache_clear();   // drop the stale null-DPO cache

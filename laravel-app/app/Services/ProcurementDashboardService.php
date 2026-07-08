@@ -138,23 +138,23 @@ final class ProcurementDashboardService
             'cadence' => 'Monthly', 'source' => 'Procurement system',
         ];
 
-        // ── DPO — running cumulative YTD, GL basis. Account lookup mirrors
-        // the proven PayablesService::dpoRunningSeries pattern exactly (one
-        // OR over 40%/6%, filtered client-side) — a 3-way OR against this
-        // customised Odoo returned nothing. ──────────────────────────────
+        // ── DPO — running cumulative YTD. Numerator = open supplier-bill
+        // balance (Σ amount_residual_signed over posted vendor bills/refunds,
+        // sign-flipped: vendor documents carry negative signed amounts) —
+        // the SAME basis as the Payables page headline, so the two pages
+        // agree. The GL 401/408 net balance is unusable on this ledger: it
+        // nets to a debit (unreconciled receipts/advances) and would read as
+        // zero AP. Denominator = class-6 (ex 69) GL expenses YTD, ×365.
         $dpo = null; $ap = 0.0; $exp = 0.0;
         try {
-            $accounts = $this->odoo->searchRead('account.account', ['|', ['code', '=like', '40%'], ['code', '=like', '6%']], ['id', 'code'], []);
-            $apIds = []; $expIds = [];
+            $g = $this->odoo->callModel('account.move', 'read_group', ['domain' => [['move_type', 'in', ['in_invoice', 'in_refund']], ['state', '=', 'posted']], 'fields' => ['amount_residual_signed:sum'], 'groupby' => [], 'lazy' => false]);
+            $ap = max(0.0, -1.0 * (float) ($g[0]['amount_residual_signed'] ?? 0));
+
+            $accounts = $this->odoo->searchRead('account.account', [['code', '=like', '6%']], ['id', 'code'], []);
+            $expIds = [];
             foreach ($accounts as $a) {
                 $code = (string) ($a['code'] ?? ''); $id = (int) ($a['id'] ?? 0);
-                if ($id <= 0 || $code === '') continue;
-                if (str_starts_with($code, '401') || str_starts_with($code, '408')) $apIds[] = $id;
-                elseif (str_starts_with($code, '6') && !str_starts_with($code, '69')) $expIds[] = $id;
-            }
-            if ($apIds) {
-                $g = $this->odoo->callModel('account.move.line', 'read_group', ['domain' => [['parent_state', '=', 'posted'], ['account_id', 'in', $apIds], ['date', '<=', $asAtD]], 'fields' => ['balance:sum'], 'groupby' => [], 'lazy' => false]);
-                $ap = max(0.0, -1.0 * (float) ($g[0]['balance'] ?? 0));   // credit-normal
+                if ($id > 0 && $code !== '' && !str_starts_with($code, '69')) $expIds[] = $id;
             }
             if ($expIds) {
                 $g = $this->odoo->callModel('account.move.line', 'read_group', ['domain' => [['parent_state', '=', 'posted'], ['account_id', 'in', $expIds], ['date', '>=', $yearStart], ['date', '<=', $asAtD]], 'fields' => ['balance:sum'], 'groupby' => [], 'lazy' => false]);
