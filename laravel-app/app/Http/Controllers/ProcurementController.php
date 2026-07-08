@@ -107,7 +107,9 @@ class ProcurementController extends Controller
             }
         } catch (\Throwable $e) { /* defaults stand */ }
 
-        $role = (string) optional($request->user())->role;
+        // auth() rather than $request->user(): the guard resolves the logged-in
+        // user regardless of how the request object was constructed.
+        $role = (string) optional(auth()->user())->role;
 
         return view('procurement', [
             'dashMode'    => true,
@@ -137,7 +139,7 @@ class ProcurementController extends Controller
     {
         $ctx = app(TenantContext::class);
         if (!$ctx->has()) abort(404);
-        $role = (string) optional($request->user())->role;
+        $role = (string) optional(auth()->user())->role;
         if (!in_array($role, self::ADMIN_ROLES, true)) {
             abort(403, 'Only administrators can set procurement targets.');
         }
@@ -155,7 +157,7 @@ class ProcurementController extends Controller
             $year,
             (array) ($v['targets'] ?? []),
             array_key_exists('emergency_count', $v) && $v['emergency_count'] !== null ? (int) $v['emergency_count'] : null,
-            optional($request->user())->id
+            optional(auth()->user())->id
         );
 
         return redirect()->to(tenant_url('/procurement?view=dashboard'))->with('flash', [

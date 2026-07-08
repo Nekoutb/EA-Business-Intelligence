@@ -138,14 +138,17 @@ final class ProcurementDashboardService
             'cadence' => 'Monthly', 'source' => 'Procurement system',
         ];
 
-        // ── DPO — running cumulative YTD, GL basis ─────────────────────────
+        // ── DPO — running cumulative YTD, GL basis. Account lookup mirrors
+        // the proven PayablesService::dpoRunningSeries pattern exactly (one
+        // OR over 40%/6%, filtered client-side) — a 3-way OR against this
+        // customised Odoo returned nothing. ──────────────────────────────
         $dpo = null; $ap = 0.0; $exp = 0.0;
         try {
-            $accounts = $this->odoo->searchRead('account.account', ['|', '|', ['code', '=like', '401%'], ['code', '=like', '408%'], ['code', '=like', '6%']], ['id', 'code'], ['limit' => 2000]);
+            $accounts = $this->odoo->searchRead('account.account', ['|', ['code', '=like', '40%'], ['code', '=like', '6%']], ['id', 'code'], []);
             $apIds = []; $expIds = [];
             foreach ($accounts as $a) {
                 $code = (string) ($a['code'] ?? ''); $id = (int) ($a['id'] ?? 0);
-                if ($id <= 0) continue;
+                if ($id <= 0 || $code === '') continue;
                 if (str_starts_with($code, '401') || str_starts_with($code, '408')) $apIds[] = $id;
                 elseif (str_starts_with($code, '6') && !str_starts_with($code, '69')) $expIds[] = $id;
             }
