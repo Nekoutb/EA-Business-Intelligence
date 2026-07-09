@@ -37,6 +37,7 @@
         'label' => 'Emergency procedures (this year)', 'unit' => '',
         'actual' => (float) ($emergency ?? 0), 'sub' => 'entered by management',
         'cadence' => 'Annual', 'source' => 'Exceptions log · manual',
+        'hint' => 'Number of emergency or exceptional procurement procedures used this year, recorded manually by management in the targets panel. Frequent emergencies point to weak purchase planning.',
     ];
     foreach (['exempt', 'compliance'] as $kk) {
         if (isset($dash['kpis'][$kk])) $kpis[$kk] = $dash['kpis'][$kk];
@@ -52,7 +53,7 @@
   .pd-btn { display:inline-block; margin-top:6px; background:#0d6e6e; color:#fff; border:0; border-radius:7px; padding:8px 15px; font-size:12.5px; font-weight:600; cursor:pointer; }
   .pd-btn.pd-ghost { background:transparent; color:#0d6e6e; border:1px solid #0d6e6e; }
   .pd-tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:14px; }
-  .pd-tile { border:1px solid #e2e8f0; border-radius:11px; padding:16px 18px 15px; background:#fff; }
+  .pd-tile { border:1px solid #e2e8f0; border-radius:11px; padding:16px 18px 15px; background:#fff; cursor:help; }
   .pd-lbl { font-size:12.5px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:#94a3b8; margin-bottom:10px; }
   .pd-val { font-size:34px; font-weight:700; letter-spacing:-.02em; font-variant-numeric:tabular-nums; line-height:1; color:#0f172a; }
   .pd-val .pd-u { font-size:16px; font-weight:600; color:#64748b; margin-left:3px; }
@@ -79,8 +80,6 @@
   .pd-src { color:#64748b; font-size:12px; }
   .pd-op { padding:4px 4px; border:1px solid #e2e8f0; border-radius:6px; background:#fff; color:#1e293b; font-size:13.5px; font-weight:600; }
   .pd-in { width:70px; padding:4px 7px; border:1px solid #e2e8f0; border-radius:6px; background:#fff; color:#1e293b; font-size:13.5px; font-weight:600; text-align:right; font-variant-numeric:tabular-nums; }
-  .pd-foot { margin-top:22px; padding-top:12px; border-top:1px solid #e2e8f0; font-size:11.5px; color:#64748b; }
-  .pd-foot p { margin:3px 0; }
   @media print {
     .ea-sb, .pd-btn, .pd-adminbar, #pdAdmin { display:none !important; }
     .pd-tiles { grid-template-columns:repeat(3,1fr); gap:8px; }
@@ -112,7 +111,7 @@
             $t = $targets[$key] ?? ['op' => 'lt', 'value' => 0.0];
             [$sCls, $sLbl] = $statusOf($kpi['actual'] !== null ? (float) $kpi['actual'] : null, $t);
         @endphp
-        <div class="pd-tile">
+        <div class="pd-tile" title="{{ $kpi['hint'] ?? '' }}">
             <div class="pd-lbl">{{ $kpi['label'] }}</div>
             <div class="pd-val">{{ $fmtV($kpi['actual'] !== null ? (float) $kpi['actual'] : null, $kpi['unit']) }}<span class="pd-u">{{ $unitTxt($kpi['unit']) }}</span></div>
             <div class="pd-sub">{{ $kpi['sub'] }}</div>
@@ -142,7 +141,7 @@
                     [$sCls, $sLbl] = $statusOf($kpi['actual'] !== null ? (float) $kpi['actual'] : null, $t);
                 @endphp
                 <tr>
-                    <td>{{ $kpi['label'] }}<div class="pd-src">{{ $kpi['sub'] }}</div></td>
+                    <td title="{{ $kpi['hint'] ?? '' }}">{{ $kpi['label'] }}<div class="pd-src">{{ $kpi['sub'] }}</div></td>
                     <td class="num"><b>{{ $fmtV($kpi['actual'] !== null ? (float) $kpi['actual'] : null, $kpi['unit']) }}{{ $kpi['unit'] === 'd' ? ' d' : $kpi['unit'] }}</b></td>
                     <td class="ctr" style="white-space:nowrap;">
                         <select class="pd-op" name="targets[{{ $key }}][op]" aria-label="Operator for {{ $kpi['label'] }}">
@@ -176,12 +175,6 @@ document.getElementById('pdToggle').addEventListener('click', function () {
 });
 </script>
 @endif
-
-<div class="pd-foot">
-    <p><strong>Basis.</strong> All indicators are computed cumulatively for the year to date and refresh automatically at each month-end close; the page presents the position as at the last closed month. Review cadence indicates how often each indicator is tabled, not how it is computed.</p>
-    <p><strong>Definitions.</strong> Open PO = confirmed, not fully received/billed; ageing from PO order date. Processing time = RFQ created → PO confirmed, business days (proxy — no requisition module in Odoo). After-the-fact = PO order date later than its earliest posted supplier invoice. Exempt purchases &amp; PO compliance measured on all posted vendor bills (count basis). DPO = open supplier-bill balance ÷ class-6 expenses (ex 69) YTD × 365, running cumulative — same basis as the Payables page. Emergency procedures recorded manually (exceptions log). Per-PO detail lives on the Procurement page beneath this dashboard.</p>
-    <p><strong>Sources.</strong> Odoo purchase orders &amp; supplier invoices (live) · targets set by management on this page (admin only).</p>
-</div>
 
 @else
     @if ($error)
