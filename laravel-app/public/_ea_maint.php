@@ -16,6 +16,31 @@ try {
     $client = App\Odoo\OdooFactory::fromConfig();
     if (function_exists('ea_cache_clear')) ea_cache_clear();
 
+    // Render-only mode: one page per call (?p=dash | ?p=proc) — swapping the
+    // bound request twice in one run breaks the auth guard's request rebind.
+    $mode = (string) ($_GET['p'] ?? '');
+    if ($mode !== '') {
+        $q = $mode === 'dash' ? ['view' => 'dashboard'] : [];
+        $req = Illuminate\Http\Request::create('/t/' . $tenant->slug . '/procurement', 'GET', $q);
+        $app->instance('request', $req);
+        $session = $app['session']->driver(); $session->start(); $req->setLaravelSession($session);
+        $u = App\Models\User::where('tenant_id', $tenant->id)->whereIn('role', ['tenant_admin', 'owner'])->first() ?? App\Models\User::first();
+        if ($u) Illuminate\Support\Facades\Auth::login($u);
+        $html = app(App\Http\Controllers\ProcurementController::class)->index($req)->render();
+        if ($mode === 'dash') {
+            ln('dashboard render: len=' . strlen($html)
+                . ' · weekly-basis=' . (strpos($html, 'end of last completed week') !== false ? 'y' : 'n')
+                . ' · Weekly-cadence=' . substr_count($html, '>Weekly<')
+                . ' · Monthly-left=' . substr_count($html, '>Monthly<'));
+        } else {
+            ln('procurement render: len=' . strlen($html)
+                . ' · evolution-section=' . (strpos($html, 'KPI evolution') !== false ? 'y' : 'n')
+                . ' · canvases=' . substr_count($html, '<canvas id="pt-')
+                . ' · chart-json=' . (strpos($html, 'po_open_60') !== false ? 'y' : 'n'));
+        }
+        exit;
+    }
+
     // 1. Weekly as-at + KPI values.
     $asAt = App\Services\ProcurementDashboardService::asAtDate();
     ln('as-at (weekly) = ' . $asAt->format('Y-m-d (D)') . ' · next refresh = ' . $asAt->modify('+7 days')->format('Y-m-d'));
