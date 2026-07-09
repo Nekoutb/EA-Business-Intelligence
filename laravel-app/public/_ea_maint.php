@@ -1,6 +1,9 @@
 <?php
-/** TEMP read-only probe v2 — PO processing time (RFQ → approval) audit: field
- *  availability, worked examples, distribution, data-quality flags. */
+/** TEMP read-only probe v3 — PO processing time (RFQ → approval) audit: field
+ *  availability, worked examples, distribution, data-quality flags, PLUS the
+ *  approval-attribution check (is date_approve the GM Alphonse Bea's approval?):
+ *  double-validation config, his user + approval rights, and who authored the
+ *  state→PO change on recent POs. */
 header('Content-Type: text/plain; charset=utf-8');
 $TOKEN = 'k7Qz9_R2mVtX4pLs8wNcB3hJ6yD0fAeU';
 if (!hash_equals($TOKEN, (string) ($_GET['t'] ?? ''))) { http_response_code(403); echo 'forbidden'; exit; }
@@ -108,6 +111,102 @@ try {
         if ($o !== '' && $o === $r['approved']->format('Y-m-d')) $same++; else $diff++;
     }
     ln("=== F. date_order vs date_approve (same calendar day): {$same} same · {$diff} different ===");
+    ln();
+
+    // G. Approval workflow — does confirming a PO require a manager's 2nd approval?
+    ln('=== G. APPROVAL WORKFLOW (res.company double validation) ===');
+    try {
+        $co = $client->searchRead('res.company', [], ['name', 'po_double_validation', 'po_double_validation_amount', 'currency_id'], ['limit' => 5]);
+        foreach ($co as $c) {
+            $ccy = is_array($c['currency_id'] ?? null) ? $c['currency_id'][1] : '';
+            ln('  ' . ($c['name'] ?? '?') . ': po_double_validation=' . json_encode($c['po_double_validation'] ?? null)
+               . '  threshold=' . number_format((float) ($c['po_double_validation_amount'] ?? 0)) . ' ' . $ccy);
+        }
+        ln('  → one_step = buyer confirms alone → date_approve = self-confirmation, NOT a manager approval');
+        ln('  → two_step = POs over threshold need a 2nd approval → date_approve on those = approver action');
+    } catch (\Throwable $e) { ln('  ERR: ' . $e->getMessage()); }
+    ln();
+
+    // H. Any stored approver field on purchase.order?
+    ln('=== H. APPROVER-RELATED FIELDS on purchase.order ===');
+    try {
+        $all = $client->callModel('purchase.order', 'fields_get', ['attributes' => ['string', 'type']]);
+        $hit = false;
+        foreach ((array) $all as $fn => $meta) {
+            $label = strtolower($fn . ' ' . ($meta['string'] ?? ''));
+            if (preg_match('/approv|valid|sign|manager/', $label)) {
+                ln('  ' . str_pad($fn, 26) . ' → "' . ($meta['string'] ?? '') . '" (' . ($meta['type'] ?? '') . ')');
+                $hit = true;
+            }
+        }
+        if (!$hit) ln('  (none — no stored "approved_by" field; approver identity lives only in the chatter/audit log)');
+    } catch (\Throwable $e) { ln('  ERR: ' . $e->getMessage()); }
+    ln();
+
+    // I. Alphonse Bea — Odoo user + approval rights.
+    ln('=== I. ALPHONSE BEA — user account + approval rights ===');
+    $alphIds = [];
+    try {
+        $us = $client->searchRead('res.users', ['|', ['name', 'ilike', 'Alphonse'], ['name', 'ilike', 'Bea']], ['id', 'name', 'login'], ['limit' => 10]);
+        if (empty($us)) ln('  no res.users match "Alphonse"/"Bea" (inactive, or named differently in Odoo)');
+        foreach ($us as $u) { $alphIds[] = (int) $u['id']; ln('  user #' . $u['id'] . ' ' . ($u['name'] ?? '') . ' <' . ($u['login'] ?? '') . '>'); }
+        $grps = $client->searchRead('res.groups', [['full_name', 'ilike', 'Purchase']], ['id', 'full_name', 'users'], ['limit' => 20]);
+        foreach ($grps as $g) {
+            $full = (string) ($g['full_name'] ?? '');
+            if (stripos($full, 'manager') === false && stripos($full, 'administr') === false) continue;
+            $mem = array_map('intval', (array) ($g['users'] ?? []));
+            $inIt = array_intersect($alphIds, $mem);
+            ln('  group "' . $full . '" (' . count($mem) . ' members): Alphonse ' . (empty($alphIds) ? '— (unknown)' : (empty($inIt) ? 'NOT a member' : 'IS a member')));
+        }
+    } catch (\Throwable $e) { ln('  ERR: ' . $e->getMessage()); }
+    ln();
+
+    // J. Who actually authored the state→PO change on recent POs?
+    ln('=== J. WHO APPROVED — chatter author of status→Purchase Order (12 recent) ===');
+    try {
+        $recent = $client->searchRead('purchase.order',
+            [['state', 'in', ['purchase', 'done']], ['date_approve', '>=', '2026-01-01 00:00:00']],
+            ['id', 'name', 'amount_total', 'create_uid', 'date_approve'],
+            ['limit' => 12, 'order' => 'date_approve desc']);
+        $ids = array_map(fn ($p) => (int) $p['id'], $recent);
+        $msgs = $client->searchRead('mail.message',
+            [['model', '=', 'purchase.order'], ['res_id', 'in', $ids], ['tracking_value_ids', '!=', false]],
+            ['res_id', 'author_id', 'date', 'tracking_value_ids'], ['limit' => 500, 'order' => 'date asc']);
+        $tvIds = [];
+        foreach ($msgs as $m) foreach ((array) ($m['tracking_value_ids'] ?? []) as $tid) $tvIds[(int) $tid] = true;
+        $tvMap = [];
+        foreach (array_chunk(array_keys($tvIds), 300) as $chunk) {
+            foreach ($client->searchRead('mail.tracking.value', [['id', 'in', $chunk]], ['id', 'field_desc', 'new_value_char'], ['limit' => 1000]) as $tv) {
+                $tvMap[(int) $tv['id']] = [strtolower((string) ($tv['field_desc'] ?? '')), strtolower((string) ($tv['new_value_char'] ?? ''))];
+            }
+        }
+        $approver = [];
+        foreach ($msgs as $m) {
+            $rid = (int) $m['res_id'];
+            if (isset($approver[$rid])) continue;
+            foreach ((array) ($m['tracking_value_ids'] ?? []) as $tid) {
+                $tv = $tvMap[(int) $tid] ?? null;
+                if (!$tv) continue;
+                $isStatus = strpos($tv[0], 'status') !== false || strpos($tv[0], 'state') !== false || strpos($tv[0], 'statut') !== false;
+                $toPO = strpos($tv[1], 'purchase') !== false || strpos($tv[1], 'bon de comm') !== false || strpos($tv[1], 'achat') !== false;
+                if ($isStatus && $toPO) {
+                    $auth = is_array($m['author_id'] ?? null) ? (string) $m['author_id'][1] : '(system)';
+                    $approver[$rid] = $auth . ' @ ' . substr((string) $m['date'], 0, 16);
+                    break;
+                }
+            }
+        }
+        foreach ($recent as $p) {
+            $rid = (int) $p['id'];
+            $creator = is_array($p['create_uid'] ?? null) ? (string) $p['create_uid'][1] : '?';
+            ln(sprintf('  %-22s %12s  RFQ-by %-16s  approved-by %s',
+                substr((string) $p['name'], 0, 22),
+                number_format((float) ($p['amount_total'] ?? 0)),
+                substr($creator, 0, 16),
+                $approver[$rid] ?? '(no status-change message logged)'));
+        }
+        ln('  (If "approved-by" is consistently Alphonse Bea, date_approve is his approval. If it is buyers/clerks, it is not.)');
+    } catch (\Throwable $e) { ln('  ERR: ' . $e->getMessage()); }
 } catch (\Throwable $e) {
     ln('EXC: ' . $e->getMessage() . ' @ ' . basename($e->getFile()) . ':' . $e->getLine());
 }
