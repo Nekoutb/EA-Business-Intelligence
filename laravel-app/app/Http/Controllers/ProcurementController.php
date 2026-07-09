@@ -66,11 +66,32 @@ class ProcurementController extends Controller
             $error = $e->getMessage();
         }
 
+        // Monthly KPI-evolution graphs (same eight indicators as the
+        // Procurement Dashboard, Jan → last closed month). Cached per month;
+        // the manual emergency count is injected fresh so an admin edit on
+        // the dashboard shows here immediately.
+        $trends = null;
+        try {
+            $mKey = (new \DateTimeImmutable('first day of this month'))->modify('-1 day')->format('Y-m');
+            $trends = ea_cached("proc_trends_v1_{$mKey}",
+                fn () => (new ProcurementDashboardService(OdooFactory::fromConfig()))->monthlyTrends());
+            $ctx = app(TenantContext::class);
+            $emergency = $ctx->has()
+                ? (new BudgetService())->loadProcurementDash($ctx->tenant()->id, (int) (new \DateTimeImmutable('today'))->format('Y'))['emergency']
+                : 0;
+            if (is_array($trends) && !empty($trends['labels'])) {
+                $trends['series']['emergency'] = array_fill(0, count($trends['labels']), (float) $emergency);
+            }
+        } catch (\Throwable $e) {
+            $trends = null;
+        }
+
         return view('procurement', [
             'active'      => 'procurement',
             'period'      => $period,
             'periodLabel' => $periodLabel,
             'procurement' => $procurement,
+            'trends'      => $trends,
             'error'       => $error,
         ]);
     }
@@ -120,7 +141,7 @@ class ProcurementController extends Controller
             'emergency'   => $emergency,
             'isAdmin'     => in_array($role, self::ADMIN_ROLES, true),
             'asAt'        => $asAt->format('Y-m-d'),
-            'nextRefresh' => (new \DateTimeImmutable('today'))->modify('last day of this month')->format('Y-m-d'),
+            'nextRefresh' => $asAt->modify('+7 days')->format('Y-m-d'),
             // Keep the normal branch's variables defined for safety.
             'period'      => ['type' => 'ytd'],
             'periodLabel' => 'YTD',
