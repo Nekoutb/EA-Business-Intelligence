@@ -96,7 +96,7 @@
         <div class="pd-who">{{ optional(tenant())->name }} — governance view of the purchase-order cycle</div>
     </div>
     <div class="pd-meta">
-        As at <b>{{ $asAtHuman }}</b> (last closed month-end) · <b>Cumulative YTD</b><br>
+        As at <b>{{ $asAtHuman }}</b> (end of last completed week) · <b>Cumulative YTD</b><br>
         Open POs: <b>{{ number_format((int) ($dash['meta']['open_pos'] ?? 0)) }}</b>
         · Confirmed POs YTD: <b>{{ number_format((int) ($dash['meta']['confirmed_ytd'] ?? 0)) }}</b>
         · Vendor bills YTD: <b>{{ number_format((int) ($dash['meta']['bills_ytd'] ?? 0)) }}</b>
@@ -782,6 +782,72 @@ document.getElementById('pdToggle').addEventListener('click', function () {
             <strong>Reading the rate:</strong> the headline is the <em>compliance</em> rate — the share of vendor bills that were raised against an approved PO. Best-in-class is &gt;95%; normal is 85–95%; below 85% means a meaningful slice of spend is bypassing the PO process ("maverick spend"). Click each card's chevron for the top-10 detail lists; spend amounts are net of taxes.
         </div>
     </div>
+
+    {{-- ── KPI evolution — the eight Procurement Dashboard indicators as
+         monthly YTD-cumulative graphs since January. ─────────────────── --}}
+    @if (!empty($trends['labels']))
+    @php
+        $ptDefs = [
+            'po_open_60'    => ['Open POs aged > 60 days', '%'],
+            'po_open_90'    => ['Open POs aged > 90 days', '%'],
+            'po_processing' => ['PO processing time (RFQ → PO)', 'd'],
+            'po_after_fact' => ['POs created after the fact', '%'],
+            'dpo'           => ['Days payable outstanding (DPO)', 'd'],
+            'emergency'     => ['Emergency procedures (annual count)', 'n'],
+            'exempt'        => ['Purchases exempt from a PO', '%'],
+            'compliance'    => ['PO compliance (bills backed by PO)', '%'],
+        ];
+        $ptPayload = ['labels' => $trends['labels'], 'series' => $trends['series'], 'defs' => $ptDefs];
+    @endphp
+    <div class="bg-white rounded-xl border border-slate-200 p-5 shadow-sm mt-6">
+        <h2 class="text-sm font-semibold text-slate-900 mb-1">KPI evolution · {{ $trends['year'] ?? '' }}</h2>
+        <p class="text-[11px] text-slate-500 mb-4">The eight Procurement Dashboard indicators, month by month since January (cumulative year-to-date basis). Open-PO ageing reflects currently-open orders; emergency procedures show the manually recorded annual count.</p>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            @foreach ($ptDefs as $ptk => $ptd)
+                <div>
+                    <div class="text-[12px] font-semibold text-slate-700 mb-1">{{ $ptd[0] }}</div>
+                    <div class="h-44"><canvas id="pt-{{ $ptk }}"></canvas></div>
+                </div>
+            @endforeach
+        </div>
+    </div>
+
+    @push('scripts')
+    <script>
+    (function () {
+        if (typeof Chart === 'undefined') return;
+        var T = @json($ptPayload);
+        Object.keys(T.defs).forEach(function (k) {
+            var el = document.getElementById('pt-' + k);
+            if (!el) return;
+            var unit = T.defs[k][1];
+            var fmt = function (v) {
+                if (v === null || v === undefined) return '—';
+                return v + (unit === '%' ? '%' : (unit === 'd' ? ' days' : ''));
+            };
+            new Chart(el, {
+                type: 'line',
+                data: { labels: T.labels, datasets: [{
+                    data: T.series[k] || [],
+                    borderColor: '#0d6e6e', backgroundColor: 'rgba(13,110,110,0.08)',
+                    fill: true, tension: 0.3, pointRadius: 3, pointBackgroundColor: '#0d6e6e', spanGaps: true,
+                }]},
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { display: false },
+                        tooltip: { callbacks: { label: function (c) { return fmt(c.parsed.y); } } } },
+                    scales: {
+                        y: { beginAtZero: true, grid: { color: '#f1f5f9' },
+                             ticks: { font: { size: 10 }, callback: function (v) { return v + (unit === '%' ? '%' : ''); } } },
+                        x: { grid: { display: false }, ticks: { font: { size: 10 } } }
+                    }
+                }
+            });
+        });
+    })();
+    </script>
+    @endpush
+    @endif
 
 @endif {{-- /dashMode --}}
 @endsection
