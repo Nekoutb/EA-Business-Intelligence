@@ -1,5 +1,5 @@
 <?php
-/** TEMP read-only probe — PO processing time (RFQ → approval) audit: field
+/** TEMP read-only probe v2 — PO processing time (RFQ → approval) audit: field
  *  availability, worked examples, distribution, data-quality flags. */
 header('Content-Type: text/plain; charset=utf-8');
 $TOKEN = 'k7Qz9_R2mVtX4pLs8wNcB3hJ6yD0fAeU';
