@@ -60,12 +60,14 @@ final class ProcurementDashboardService
             'actual' => $openTotal > 0 ? $gt60 / $openTotal * 100.0 : 0.0,
             'sub' => number_format($gt60) . ' of ' . number_format($openTotal) . ' open POs',
             'cadence' => 'Monthly', 'source' => 'Procurement system',
+            'hint' => 'Share of open purchase orders raised more than 60 days ago and still not fully delivered or billed. Old open orders usually mean stalled deliveries, or orders that should be closed or cancelled.',
         ];
         $k['po_open_90'] = [
             'label' => 'Open POs aged > 90 days', 'unit' => '%',
             'actual' => $openTotal > 0 ? $gt90 / $openTotal * 100.0 : 0.0,
             'sub' => number_format($gt90) . ' of ' . number_format($openTotal) . ' open POs',
             'cadence' => 'Monthly', 'source' => 'Procurement system',
+            'hint' => 'Share of open purchase orders raised more than 90 days ago — the most severe stragglers. Each one should be chased with the supplier, closed, or cancelled.',
         ];
 
         // ── Processing time: RFQ created → PO confirmed, business days ────
@@ -92,6 +94,7 @@ final class ProcurementDashboardService
             'actual' => $avgBiz !== null ? round($avgBiz, 1) : null,
             'sub' => 'average business days, ' . number_format($confirmed) . ' POs YTD · proxy',
             'cadence' => 'Monthly', 'source' => 'Procurement system',
+            'hint' => 'Average number of working days between a purchase request being created in the system and its confirmation as a purchase order. Measures how quickly procurement turns a need into a committed order.',
         ];
 
         // ── After-the-fact POs (PO date > earliest posted invoice date) ───
@@ -136,6 +139,7 @@ final class ProcurementDashboardService
             'actual' => $withInv > 0 ? $after / $withInv * 100.0 : 0.0,
             'sub' => number_format($after) . ' of ' . number_format($withInv) . ' invoiced POs',
             'cadence' => 'Monthly', 'source' => 'Procurement system',
+            'hint' => 'Share of purchase orders dated after their supplier invoice — the order was raised to regularise a purchase that had already happened, bypassing prior approval.',
         ];
 
         // ── DPO — running cumulative YTD. Numerator = open supplier-bill
@@ -167,6 +171,7 @@ final class ProcurementDashboardService
             'actual' => $dpo !== null ? round($dpo, 1) : null,
             'sub' => 'running cumulative, YTD',
             'cadence' => 'Monthly', 'source' => 'AP + system',
+            'hint' => 'Days Payable Outstanding — roughly how many days of expenses are sitting unpaid with suppliers (open supplier bills relative to year-to-date expenses). Shows how quickly the company settles its suppliers; same basis as the Payables page.',
         ];
 
         // ── Bills with / without a PO (count basis) ───────────────────────
@@ -181,12 +186,14 @@ final class ProcurementDashboardService
             'actual' => $bills > 0 ? ($bills - $linked) / $bills * 100.0 : 0.0,
             'sub' => number_format(max(0, $bills - $linked)) . ' of ' . number_format($bills) . ' bills, YTD',
             'cadence' => 'Quarterly', 'source' => 'Procurement system',
+            'hint' => 'Share of supplier invoices that are not backed by any purchase order. Purchases made outside the PO process escape prior approval and budget control ("maverick spend").',
         ];
         $k['compliance'] = [
             'label' => 'PO compliance (bills backed by PO)', 'unit' => '%',
             'actual' => $bills > 0 ? $linked / $bills * 100.0 : 0.0,
             'sub' => number_format($linked) . ' of ' . number_format($bills) . ' bills',
             'cadence' => 'Monthly', 'source' => 'AP + system',
+            'hint' => 'Share of supplier invoices backed by an approved purchase order — the mirror of exempt purchases. Higher means better purchasing discipline: commitments are approved before the money is spent.',
         ];
 
         return [
