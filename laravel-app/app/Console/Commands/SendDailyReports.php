@@ -16,8 +16,9 @@ use Illuminate\Support\Facades\Mail;
  * inventory movements at standard cost, expenses day + cumulative MTD).
  *
  * Scheduled daily at 08:00 Africa/Douala (routes/console.php). Only tenants
- * with the hidden `daily_report` module enabled receive it; recipients are
- * the tenant's active admin/owner users (override with --to for testing).
+ * with the hidden `daily_report` module enabled receive it. Recipients resolve
+ * in order: --to override → config/daily_report.php (per tenant slug) → the
+ * tenant's active admin/owner users (fallback).
  *
  * Manual: php artisan reports:send-daily [--date=YYYY-MM-DD] [--tenant=slug] [--to=a@b.com,...]
  */
@@ -66,7 +67,14 @@ class SendDailyReports extends Command
             try {
                 app(TenantContext::class)->set($t);
 
+                // Recipients: --to override → config/daily_report.php → admin/owner users.
                 $recipients = $toOpt;
+                if (empty($recipients)) {
+                    $recipients = array_values(array_filter(array_map(
+                        'trim',
+                        (array) config('daily_report.recipients.' . $t->slug, [])
+                    )));
+                }
                 if (empty($recipients)) {
                     $recipients = User::query()
                         ->where('tenant_id', $t->id)
@@ -76,7 +84,7 @@ class SendDailyReports extends Command
                         ->pluck('email')->unique()->values()->all();
                 }
                 if (empty($recipients)) {
-                    $this->warn('     no admin/owner recipients — skipped');
+                    $this->warn('     no configured recipients — skipped');
                     $skipped++;
                     continue;
                 }
