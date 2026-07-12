@@ -12,7 +12,7 @@ $app = require $base . '/bootstrap/app.php';
 $app->make(Illuminate\Contracts\Http\Kernel::class)->bootstrap();
 function ln($s = '') { echo $s . "\n"; }
 
-$DATE = '2026-06-12';
+$DATE = preg_match('/^\d{4}-\d{2}-\d{2}$/', (string) ($_GET['date'] ?? '')) ? (string) $_GET['date'] : '2026-06-10';
 $TO   = 'Kissywears1@gmail.com,contact@cm-ea.com';
 try {
     $tenant = App\Models\Tenant::where('slug', 'kwr')->first();
