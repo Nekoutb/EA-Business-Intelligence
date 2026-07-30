@@ -60,7 +60,7 @@ class WarmPages extends Command
         register_shutdown_function(function () {
             $e = error_get_last();
             if ($e && in_array($e['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR], true)) {
-                @file_put_contents(storage_path('logs/warm-metrics.jsonl'), json_encode([
+                @file_put_contents(self::metricsPath(), json_encode([
                     'ts' => date('c'), 'tenant' => '-', 'page' => 'FATAL', 'ms' => 0, 'ok' => false,
                     'note' => mb_substr($e['message'], 0, 150) . ' @ ' . basename($e['file']) . ':' . $e['line'],
                 ]) . PHP_EOL, FILE_APPEND | LOCK_EX);
@@ -115,6 +115,11 @@ class WarmPages extends Command
                     [$good, $ms, $note] = $this->warmPage($tenant, $user, $page);
                     $good ? $ok++ : $err++;
                     $this->metric($tenant->slug, $label, $ms, $good, $note);
+
+                    // A sweep on the heavy tenant outlives the lock TTL —
+                    // push the expiry out after every page so a second sweep
+                    // never piles on mid-run.
+                    $this->renewLock();
                     $this->line(sprintf('  %s %-22s %-18s %7.1fs %s',
                         $good ? '✓' : '✗', $tenant->slug, $label, $ms / 1000, $note ?? ''));
                 }
@@ -180,6 +185,35 @@ class WarmPages extends Command
         }
     }
 
+    /**
+     * Metrics JSONL path. storage/logs on this host is owned by the deploy
+     * user — www-data can APPEND to existing files but cannot CREATE one, so
+     * the original path failed silently. Fall back to the system temp dir,
+     * which the worker user can always write.
+     */
+    public static function metricsPath(): string
+    {
+        $primary = storage_path('logs/warm-metrics.jsonl');
+        if (is_file($primary) ? is_writable($primary) : is_writable(dirname($primary))) {
+            return $primary;
+        }
+        return rtrim(sys_get_temp_dir(), '/\\') . '/bms-warm-metrics.jsonl';
+    }
+
+    /**
+     * Keep the sweep lock alive: the heavy tenant makes a sweep outlast any
+     * reasonable TTL, so push the expiry out after each page (database cache
+     * driver; harmless no-op elsewhere).
+     */
+    private function renewLock(): void
+    {
+        try {
+            \Illuminate\Support\Facades\DB::table('cache_locks')
+                ->where('key', 'like', '%bms:warm:lock%')
+                ->update(['expiration' => time() + 1200]);
+        } catch (\Throwable $e) { /* non-database cache store — TTL governs */ }
+    }
+
     /** Append one JSONL metric line (the raw material for --report). */
     private function metric(string $tenant, string $page, float $ms, bool $ok, ?string $note): void
     {
@@ -191,13 +225,13 @@ class WarmPages extends Command
             'ok'     => $ok,
             'note'   => $note,
         ], JSON_UNESCAPED_SLASHES);
-        @file_put_contents(storage_path('logs/warm-metrics.jsonl'), $line . PHP_EOL, FILE_APPEND | LOCK_EX);
+        @file_put_contents(self::metricsPath(), $line . PHP_EOL, FILE_APPEND | LOCK_EX);
     }
 
     /** Per-tenant/per-page compute-time averages from the metrics log. */
     private function report(): int
     {
-        $path = storage_path('logs/warm-metrics.jsonl');
+        $path = self::metricsPath();
         if (!is_file($path)) {
             $this->warn('No metrics yet (' . $path . '). Run a sweep first: php artisan bms:warm');
             return self::SUCCESS;
