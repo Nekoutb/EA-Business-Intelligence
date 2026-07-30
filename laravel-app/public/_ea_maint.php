@@ -73,7 +73,33 @@ try {
             }
             if (function_exists('opcache_reset')) @opcache_reset();
             ln("recompiled {$ok} templates · failures: " . count($bad));
-            foreach (array_slice($bad, 0, 10) as $b) ln('  ✗ ' . $b);
+            foreach (array_slice($bad, 0, 40) as $b) ln('  ✗ ' . $b);
+            break;
+
+        case 'viewfile':
+            // Read a compiled view (hash-constrained, read-only) or a source
+            // view by relative path — the ground truth when a compiled file
+            // is suspected stale or corrupted. ?hash=<md5> or ?src=<rel>
+            // with optional &from=&to= line range.
+            $from = max(1, (int) ($_GET['from'] ?? 1));
+            $to   = max($from, min($from + 400, (int) ($_GET['to'] ?? ($from + 60))));
+            if (($h = preg_replace('/[^a-f0-9]/', '', (string) ($_GET['hash'] ?? ''))) !== '') {
+                $p = $base . '/storage/framework/views/' . $h . '.php';
+            } else {
+                $rel = str_replace(['..', '\\'], '', (string) ($_GET['src'] ?? 'layouts/app.blade.php'));
+                $p = $base . '/resources/views/' . ltrim($rel, '/');
+            }
+            if (!is_file($p)) { ln("missing: {$p}"); break; }
+            ln("== {$p} (lines {$from}-{$to}) · mtime " . date('c', filemtime($p)) . ' · ' . filesize($p) . " bytes ==");
+            $i = 0;
+            $fh = fopen($p, 'r');
+            while (($row = fgets($fh)) !== false) {
+                $i++;
+                if ($i < $from) continue;
+                if ($i > $to) break;
+                ln(sprintf('%5d| %s', $i, rtrim($row, "\n")));
+            }
+            fclose($fh);
             break;
 
         case 'render':
@@ -94,8 +120,11 @@ try {
             try { $s = app('session')->driver(); $s->start(); $req->setLaravelSession($s); } catch (\Throwable $e) {}
             $u = App\Models\User::where('tenant_id', $tenant->id)->orderBy('id')->first();
             if ($u) { try { Illuminate\Support\Facades\Auth::login($u); } catch (\Throwable $e) {} }
-            // Put a flash in the session to exercise the toast path too.
-            session()->flash('flash', ['type' => 'success', 'msg' => 'render-test']);
+            // Put a flash in the session to exercise the toast path too
+            // (skip with &noflash=1 to isolate flash-dependent failures).
+            if (!isset($_GET['noflash'])) {
+                session()->flash('flash', ['type' => 'success', 'msg' => 'render-test']);
+            }
             try {
                 $resp = app()->call([app((string) $def['controller']), 'index']);
                 $html = ($resp instanceof Illuminate\Contracts\Support\Renderable) ? $resp->render() : '(non-view response: ' . get_class($resp) . ')';
