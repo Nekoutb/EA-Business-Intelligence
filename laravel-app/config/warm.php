@@ -29,6 +29,11 @@ return [
     'pages' => [
         ['label' => 'dashboard',         'module' => 'dashboard',             'controller' => \App\Http\Controllers\DashboardController::class,               'query' => ['period' => 'ytd']],
         ['label' => 'dashboard-mtd',     'module' => 'dashboard',             'controller' => \App\Http\Controllers\DashboardController::class,               'query' => ['period' => 'mtd']],
+        // The master filter is remembered per user (RememberPeriod session)
+        // and re-applied on landing — so the current-month variant must be
+        // warm too, or a user whose filter says "Month" lands on a cold
+        // variant and eats the full inline rebuild (the 524 class).
+        ['label' => 'dashboard-month',   'module' => 'dashboard',             'controller' => \App\Http\Controllers\DashboardController::class,               'query' => ['period' => 'month']],
         ['label' => 'treasury',          'module' => 'treasury',              'controller' => \App\Http\Controllers\TreasuryController::class,                'query' => []],
         ['label' => 'revenue',           'module' => 'revenue',               'controller' => \App\Http\Controllers\RevenueController::class,                 'query' => []],
         ['label' => 'receivables',       'module' => 'receivables',           'controller' => \App\Http\Controllers\ReceivablesController::class,             'query' => []],
