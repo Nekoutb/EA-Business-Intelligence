@@ -667,11 +667,14 @@
                   </div>
               </div>
               <div class="ea-topbar__c">
-                  {{-- LONG-FORM @php on purpose: the short form @php(...) breaks
-                       Blade's parser when the expression contains nested
-                       parentheses — it truncates at the first `)`, leaving raw
-                       uncompiled Blade downstream (site-wide 500, 30 Jul). --}}
                   @php
+                      // Long-form block on purpose. Two Blade compiler traps
+                      // caused the 30 Jul site-wide 500s: (1) the parenthesized
+                      // short form truncates at the first ')' when the
+                      // expression nests parentheses; (2) writing that
+                      // directive's literal token inside a Blade comment makes
+                      // the block extractor mis-pair with the real closer
+                      // below. Keep this note as a plain PHP comment.
                       $eaDataTs = function_exists('ea_data_timestamp') ? ea_data_timestamp() : null;
                   @endphp
                   @if ($eaDataTs)
