@@ -667,7 +667,13 @@
                   </div>
               </div>
               <div class="ea-topbar__c">
-                  @php($eaDataTs = function_exists('ea_data_timestamp') ? ea_data_timestamp() : null)
+                  {{-- LONG-FORM @php on purpose: the short form @php(...) breaks
+                       Blade's parser when the expression contains nested
+                       parentheses — it truncates at the first `)`, leaving raw
+                       uncompiled Blade downstream (site-wide 500, 30 Jul). --}}
+                  @php
+                      $eaDataTs = function_exists('ea_data_timestamp') ? ea_data_timestamp() : null;
+                  @endphp
                   @if ($eaDataTs)
                       {{-- Honest freshness: when this page's figures were last recomputed
                            from Odoo by the background worker (oldest dataset on the page). --}}
