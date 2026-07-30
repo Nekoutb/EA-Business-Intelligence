@@ -388,8 +388,15 @@ class DashboardController extends Controller
             return app(ProcurementController::class)->saveDashboardTargets($request);
         }
 
-        ea_cache_clear();
-        return back()->with('flash', ['type' => 'success', 'msg' => 'Data refreshed — next load will hit Odoo live.']);
+        // Async-data model: the bms:warm worker recomputes every page's data
+        // roughly every 3 minutes, so a manual refresh no longer wipes the
+        // tenant cache — that would force a multi-minute inline rebuild on
+        // heavy tenants (the Cloudflare-524 class of failure). The topbar
+        // shows the exact "Data as of" time for the page.
+        return back()->with('flash', [
+            'type' => 'success',
+            'msg'  => 'Data refreshes automatically every ~3 minutes — see "Data as of" in the header for this page\'s exact timestamp.',
+        ]);
     }
 
     /**
