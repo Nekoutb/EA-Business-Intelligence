@@ -50,8 +50,27 @@ class WarmPages extends Command
             return self::SUCCESS;
         }
 
+        // Heavy tenants pull big row sets; don't let the CLI default limit
+        // kill the sweep mid-page (a dead sweep used to wedge the lock).
+        @ini_set('memory_limit', '1536M');
+
+        // If PHP dies fatally (OOM, timeout), leave a fingerprint of what it
+        // was doing — otherwise a crashed sweep is indistinguishable from a
+        // hung one.
+        register_shutdown_function(function () {
+            $e = error_get_last();
+            if ($e && in_array($e['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR], true)) {
+                @file_put_contents(storage_path('logs/warm-metrics.jsonl'), json_encode([
+                    'ts' => date('c'), 'tenant' => '-', 'page' => 'FATAL', 'ms' => 0, 'ok' => false,
+                    'note' => mb_substr($e['message'], 0, 150) . ' @ ' . basename($e['file']) . ':' . $e['line'],
+                ]) . PHP_EOL, FILE_APPEND | LOCK_EX);
+            }
+        });
+
         // One sweep at a time, across scheduler AND crontab invocations.
-        $lock = Cache::lock('bms:warm:lock', 3600);
+        // 20-min TTL: long enough for a slow sweep tick-to-tick, short enough
+        // that a crashed sweep self-heals instead of wedging the worker.
+        $lock = Cache::lock('bms:warm:lock', 1200);
         if (!$lock->get()) {
             $this->warn('Previous warm sweep still running — skipped this tick.');
             return self::SUCCESS;
@@ -88,6 +107,10 @@ class WarmPages extends Command
                         $skipped++;
                         continue;
                     }
+
+                    // Begin-marker BEFORE the page: if the process dies mid-
+                    // page, the log shows exactly where. (--report skips these.)
+                    $this->metric($tenant->slug, $label, 0, true, 'begin');
 
                     [$good, $ms, $note] = $this->warmPage($tenant, $user, $page);
                     $good ? $ok++ : $err++;
@@ -185,6 +208,7 @@ class WarmPages extends Command
         while (($line = fgets($fh)) !== false) {
             $row = json_decode($line, true);
             if (!is_array($row) || empty($row['tenant']) || empty($row['page'])) continue;
+            if (($row['note'] ?? null) === 'begin' || $row['page'] === 'FATAL') continue; // markers, not timings
             $k = $row['tenant'] . '|' . $row['page'];
             $agg[$k] ??= ['tenant' => $row['tenant'], 'page' => $row['page'], 'n' => 0, 'sum' => 0, 'max' => 0, 'err' => 0, 'last' => ''];
             $agg[$k]['n']++;

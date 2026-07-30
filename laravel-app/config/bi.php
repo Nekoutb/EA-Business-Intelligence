@@ -81,12 +81,17 @@ return [
 
     /**
      * How long a computed dataset may be SERVED, not how often it refreshes.
-     * The bms:warm background worker recomputes every page roughly every
-     * 3 minutes (see config/warm.php + routes/console.php); this TTL is only
-     * the stale-serve ceiling if that worker stalls. Beyond it, a web request
-     * falls back to computing inline — the pre-worker behaviour.
+     * The bms:warm background worker recomputes every page as fast as it can
+     * sweep (see config/warm.php); this TTL is only the stale-serve ceiling
+     * if the worker stalls. Beyond it, a web request falls back to computing
+     * inline — the pre-worker behaviour, which on heavy tenants means a
+     * multi-minute rebuild (the 524 class). It must therefore comfortably
+     * exceed the WORST sweep duration: 30 min proved too short (entries
+     * expired before the un-optimised transatlanticd sweep cycled back, and
+     * visitors paid inline rebuilds again — observed 30 Jul). Freshness is
+     * communicated by the "Data as of" stamp, not by expiring data.
      */
-    'cache_ttl' => (int) env('BI_CACHE_TTL', 1800), // 30 minutes
+    'cache_ttl' => (int) env('BI_CACHE_TTL', 21600), // 6 hours (stale-serve ceiling)
 
     /**
      * Global cache schema version. Bump this string (v1 → v2 → …) whenever
