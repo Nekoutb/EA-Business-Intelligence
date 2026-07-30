@@ -12,6 +12,19 @@ header('Content-Type: text/plain; charset=utf-8');
 $TOKEN = 'k7Qz9_R2mVtX4pLs8wNcB3hJ6yD0fAeU';
 if (!hash_equals($TOKEN, (string) ($_GET['t'] ?? ''))) { http_response_code(403); echo 'forbidden'; exit; }
 
+// Diagnostics window: surface fatals instead of a blank 500 body, rule
+// memory limits in/out, and never die mid-op on the web time limit.
+ini_set('display_errors', '1');
+error_reporting(E_ALL);
+@ini_set('memory_limit', '1024M');
+@set_time_limit(280);
+register_shutdown_function(function () {
+    $e = error_get_last();
+    if ($e && in_array($e['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR], true)) {
+        echo "\nFATAL: {$e['message']} @ {$e['file']}:{$e['line']}\n";
+    }
+});
+
 $base = dirname(__DIR__);
 require $base . '/vendor/autoload.php';
 $app = require $base . '/bootstrap/app.php';
