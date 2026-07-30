@@ -36,8 +36,11 @@ $op = (string) ($_GET['op'] ?? 'status');
 try {
     switch ($op) {
         case 'metrics':
-            ln('== warm-metrics.jsonl (tail 80) ==');
-            ln(tailFile(storage_path('logs/warm-metrics.jsonl'), 80));
+            foreach ([storage_path('logs/warm-metrics.jsonl'), rtrim(sys_get_temp_dir(), '/\\') . '/bms-warm-metrics.jsonl'] as $mp) {
+                ln("== {$mp} (tail 60) ==");
+                ln(tailFile($mp, 60));
+                ln();
+            }
             break;
 
         case 'warmlog':
@@ -87,14 +90,25 @@ try {
             } else {
                 ln('  opcache: not active');
             }
-            $mf = storage_path('logs/warm-metrics.jsonl');
-            if (is_file($mf)) {
+            ln('  storage/logs writable by web user: ' . json_encode(is_writable(storage_path('logs')))
+                . ' · tmp: ' . json_encode(is_writable(sys_get_temp_dir())));
+            $found = false;
+            foreach ([storage_path('logs/warm-metrics.jsonl'), rtrim(sys_get_temp_dir(), '/\\') . '/bms-warm-metrics.jsonl'] as $mf) {
+                if (!is_file($mf)) continue;
+                $found = true;
                 $cnt = 0; $fh = fopen($mf, 'r');
                 while (fgets($fh) !== false) $cnt++;
                 fclose($fh);
-                ln("  metrics: {$cnt} lines · last: " . tailFile($mf, 1));
-            } else {
-                ln('  metrics: NO FILE — the worker has never completed (or written) a page');
+                ln("  metrics {$mf}: {$cnt} lines · last: " . tailFile($mf, 1));
+            }
+            if (!$found) ln('  metrics: NO FILE in either location — no page has completed since the metrics fix deployed');
+            // Is a sweep process holding the cron-level flock right now?
+            $fh = @fopen('/tmp/bms-warm.lock', 'c');
+            if ($fh) {
+                $free = flock($fh, LOCK_EX | LOCK_NB);
+                if ($free) flock($fh, LOCK_UN);
+                fclose($fh);
+                ln('  cron flock /tmp/bms-warm.lock: ' . ($free ? 'free' : 'HELD — a sweep process is alive right now'));
             }
             try {
                 $rows = Illuminate\Support\Facades\DB::table('cache_locks')
