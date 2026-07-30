@@ -671,8 +671,8 @@
                   @if ($eaDataTs)
                       {{-- Honest freshness: when this page's figures were last recomputed
                            from Odoo by the background worker (oldest dataset on the page). --}}
-                      <span class="ea-topbar__meta" title="When this page's figures were last recomputed from Odoo. The background worker refreshes them roughly every 3 minutes.">
-                          Data as of <b>{{ \Carbon\Carbon::createFromTimestamp($eaDataTs)->timezone('Africa/Douala')->format('H:i') }}</b> · auto-refresh ≈3 min
+                      <span class="ea-topbar__meta" title="When this page's figures were last recomputed from Odoo. A background worker refreshes every page continuously, cycling as fast as the data allows.">
+                          Data as of <b>{{ \Carbon\Carbon::createFromTimestamp($eaDataTs)->timezone('Africa/Douala')->format('H:i') }}</b> · auto-refreshed
                       </span>
                   @else
                       <span class="ea-topbar__meta">Updated <b>{{ now()->format('H:i') }}</b> · {{ ea_last_sync_label() }}</span>
