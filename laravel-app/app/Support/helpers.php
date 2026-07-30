@@ -209,7 +209,41 @@ if (!function_exists('ea_cached')) {
         // Keep the per-session "last synced" label working for the UI.
         session(['bi_last_sync' => time()]);
 
-        return \Illuminate\Support\Facades\Cache::remember($full, $ttl, $producer);
+        $cache = \Illuminate\Support\Facades\Cache::getFacadeRoot();
+
+        // Async model: web requests only READ; the bms:warm worker (which
+        // sets the force switch) is the one that recomputes. Entries are
+        // stored as an envelope carrying their computed-at timestamp so
+        // pages can show an honest "Data as of HH:MM".
+        if (!\App\Support\CacheFreshness::forcing()) {
+            $hit = $cache->get($full);
+            if (is_array($hit) && array_key_exists('__v', $hit) && array_key_exists('__at', $hit)) {
+                \App\Support\CacheFreshness::note($key, (int) $hit['__at']);
+                return $hit['__v'];
+            }
+            if ($hit !== null) {
+                // Legacy pre-envelope entry — serve it; it expires on its own.
+                return $hit;
+            }
+        }
+
+        $value = $producer();
+        $cache->put($full, ['__v' => $value, '__at' => time()], $ttl);
+        \App\Support\CacheFreshness::note($key, time());
+
+        return $value;
+    }
+}
+
+if (!function_exists('ea_data_timestamp')) {
+    /**
+     * Unix timestamp of the OLDEST cached dataset the current page consumed
+     * (conservative "data as of" for the topbar), or null when the page used
+     * no ea_cached() data at all.
+     */
+    function ea_data_timestamp(): ?int
+    {
+        return \App\Support\CacheFreshness::oldest();
     }
 }
 

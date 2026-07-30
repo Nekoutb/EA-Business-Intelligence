@@ -44,3 +44,13 @@ Schedule::command('reports:send-daily')
     ->timezone('Africa/Douala')
     ->withoutOverlapping()
     ->runInBackground();
+
+// Async-data worker: pre-computes every Odoo-heavy page for every tenant
+// (config/warm.php) so web requests only ever serve cached data — no more
+// inline multi-minute rebuilds behind Cloudflare's ~100s ceiling. A sweep
+// longer than the interval makes the next tick skip via the lock; the
+// direct-crontab fallback (flock + `php artisan bms:warm`) behaves the same.
+Schedule::command('bms:warm')
+    ->everyThreeMinutes()
+    ->withoutOverlapping(30)
+    ->runInBackground();

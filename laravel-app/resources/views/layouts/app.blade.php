@@ -667,7 +667,16 @@
                   </div>
               </div>
               <div class="ea-topbar__c">
-                  <span class="ea-topbar__meta">Updated <b>{{ now()->format('H:i') }}</b> · {{ ea_last_sync_label() }}</span>
+                  @php($eaDataTs = function_exists('ea_data_timestamp') ? ea_data_timestamp() : null)
+                  @if ($eaDataTs)
+                      {{-- Honest freshness: when this page's figures were last recomputed
+                           from Odoo by the background worker (oldest dataset on the page). --}}
+                      <span class="ea-topbar__meta" title="When this page's figures were last recomputed from Odoo. The background worker refreshes them roughly every 3 minutes.">
+                          Data as of <b>{{ \Carbon\Carbon::createFromTimestamp($eaDataTs)->timezone('Africa/Douala')->format('H:i') }}</b> · auto-refresh ≈3 min
+                      </span>
+                  @else
+                      <span class="ea-topbar__meta">Updated <b>{{ now()->format('H:i') }}</b> · {{ ea_last_sync_label() }}</span>
+                  @endif
                   <form method="POST" action="{{ tenant_url('/sync') }}" style="margin:0;">
                       @csrf
                       <button type="submit" class="ea-refresh-btn" title="Force refresh" aria-label="Force data refresh">
