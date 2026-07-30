@@ -33,29 +33,79 @@ function tailFile(string $path, int $lines = 60): string
 }
 
 $op = (string) ($_GET['op'] ?? 'status');
+$L = max(10, min(2000, (int) ($_GET['lines'] ?? 60)));
 try {
     switch ($op) {
         case 'metrics':
             foreach ([storage_path('logs/warm-metrics.jsonl'), rtrim(sys_get_temp_dir(), '/\\') . '/bms-warm-metrics.jsonl'] as $mp) {
-                ln("== {$mp} (tail 60) ==");
-                ln(tailFile($mp, 60));
+                ln("== {$mp} (tail {$L}) ==");
+                ln(tailFile($mp, $L));
                 ln();
             }
             break;
 
         case 'warmlog':
-            ln('== /var/log/bms-warm.log (tail 80) ==');
-            ln(tailFile('/var/log/bms-warm.log', 80));
+            ln("== /var/log/bms-warm.log (tail {$L}) ==");
+            ln(tailFile('/var/log/bms-warm.log', $L));
             break;
 
         case 'deploylog':
-            ln('== /var/log/bms-deploy.log (tail 40) ==');
-            ln(tailFile('/var/log/bms-deploy.log', 40));
+            ln("== /var/log/bms-deploy.log (tail {$L}) ==");
+            ln(tailFile('/var/log/bms-deploy.log', $L));
             break;
 
         case 'laravellog':
-            ln('== storage/logs/laravel.log (tail 60) ==');
-            ln(tailFile(storage_path('logs/laravel.log'), 60));
+            ln("== storage/logs/laravel.log (tail {$L}) ==");
+            ln(tailFile(storage_path('logs/laravel.log'), $L));
+            break;
+
+        case 'recompile':
+            // Force-recompile EVERY Blade template in place. Overwrite is
+            // permitted (compiled files are web-user-owned); this repairs a
+            // half-written/corrupted compiled view after a compile race.
+            $compiler = app('blade.compiler');
+            $ok = 0; $bad = [];
+            $it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($base . '/resources/views', FilesystemIterator::SKIP_DOTS));
+            foreach ($it as $f) {
+                if (!str_ends_with($f->getFilename(), '.blade.php')) continue;
+                try { $compiler->compile($f->getPathname()); $ok++; }
+                catch (\Throwable $e) { $bad[] = $f->getFilename() . ': ' . mb_substr($e->getMessage(), 0, 90); }
+            }
+            if (function_exists('opcache_reset')) @opcache_reset();
+            ln("recompiled {$ok} templates · failures: " . count($bad));
+            foreach (array_slice($bad, 0, 10) as $b) ln('  ✗ ' . $b);
+            break;
+
+        case 'render':
+            // Reproduce a page render exactly like a logged-in visitor and
+            // print the true exception if it fails. ?tenant=slug&page=label
+            $slug = (string) ($_GET['tenant'] ?? 'kwr');
+            $want = (string) ($_GET['page'] ?? 'dashboard');
+            $tenant = App\Models\Tenant::where('slug', $slug)->first();
+            if (!$tenant) { ln("no tenant '{$slug}'"); break; }
+            app(App\Tenancy\TenantContext::class)->set($tenant);
+            $def = null;
+            foreach ((array) config('warm.pages', []) as $p) {
+                if (($p['label'] ?? '') === $want) { $def = $p; break; }
+            }
+            if (!$def) { ln("no page '{$want}' in config/warm.php"); break; }
+            $req = Illuminate\Http\Request::create('/t/' . $slug, 'GET', (array) ($def['query'] ?? []));
+            app()->instance('request', $req);
+            try { $s = app('session')->driver(); $s->start(); $req->setLaravelSession($s); } catch (\Throwable $e) {}
+            $u = App\Models\User::where('tenant_id', $tenant->id)->orderBy('id')->first();
+            if ($u) { try { Illuminate\Support\Facades\Auth::login($u); } catch (\Throwable $e) {} }
+            // Put a flash in the session to exercise the toast path too.
+            session()->flash('flash', ['type' => 'success', 'msg' => 'render-test']);
+            try {
+                $resp = app()->call([app((string) $def['controller']), 'index']);
+                $html = ($resp instanceof Illuminate\Contracts\Support\Renderable) ? $resp->render() : '(non-view response: ' . get_class($resp) . ')';
+                ln("RENDER OK — {$slug}/{$want} — " . strlen((string) $html) . ' bytes');
+            } catch (\Throwable $e) {
+                ln("RENDER FAILED — {$slug}/{$want}");
+                ln('  ' . get_class($e) . ': ' . $e->getMessage());
+                ln('  @ ' . $e->getFile() . ':' . $e->getLine());
+                foreach (array_slice(explode("\n", $e->getTraceAsString()), 0, 4) as $tline) ln('  ' . $tline);
+            }
             break;
 
         case 'unlock':

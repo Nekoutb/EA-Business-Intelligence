@@ -7,7 +7,6 @@ use App\Models\User;
 use App\Support\CacheFreshness;
 use App\Tenancy\TenantContext;
 use Illuminate\Console\Command;
-use Illuminate\Contracts\Support\Renderable;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Cache;
@@ -164,18 +163,13 @@ class WarmPages extends Command
             $controller = app((string) $page['controller']);
             $response   = app()->call([$controller, 'index']);
 
-            // Render best-effort: the datasets are cached by the controller
-            // run itself; a render hiccup must not fail the warm.
-            $note = null;
-            try {
-                if ($response instanceof Renderable) {
-                    $response->render();
-                } elseif ($response instanceof \Illuminate\Http\RedirectResponse) {
-                    $note = 'redirected';
-                }
-            } catch (\Throwable $e) {
-                $note = 'data ok, render: ' . mb_substr($e->getMessage(), 0, 80);
-            }
+            // DO NOT render the view. The datasets are cached by the
+            // controller run itself, and rendering from the worker made this
+            // CLI process compile Blade templates concurrently with web
+            // requests/deploys — compiled-view writes are not atomic, and a
+            // collision shipped a half-written compiled layout that 500'd
+            // every authenticated page (30 Jul). Data-only warming.
+            $note = $response instanceof \Illuminate\Http\RedirectResponse ? 'redirected' : null;
 
             return [true, (microtime(true) - $t0) * 1000, $note];
         } catch (\Throwable $e) {
