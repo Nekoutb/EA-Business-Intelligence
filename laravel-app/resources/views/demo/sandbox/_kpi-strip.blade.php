@@ -19,9 +19,12 @@
     - `$kpis ?? []` so an un-passed variable doesn't error (Laravel's
       strict-variables flag would otherwise throw).
     - `@if (!empty($kpis))` guard around the whole block — `return;`
-      inside a @php block inside an included view does NOT cleanly exit
-      the parent view's render function under some Blade compiles, so
-      we wrap with @if instead.
+      inside a raw-PHP block inside an included view does NOT cleanly
+      exit the parent view's render function under some Blade compiles,
+      so we wrap with @if instead. (Do not write the raw-PHP directive's
+      literal token in comments — Blade's block extractor reads tokens
+      even inside comments and mis-pairs them; that corrupted this
+      compiled view.)
     - Every $kpi['*'] access uses `?? ''` / `?? 'na'` so a malformed
       builder row can't take down the whole strip.
 --}}
