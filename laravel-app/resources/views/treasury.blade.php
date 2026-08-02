@@ -399,6 +399,13 @@
     $cByCat = [];
     foreach ((array) $collections['streams'] as $cs) { $cByCat[$cs['category']][] = $cs; }
     $cTh = 'text-align:right;padding:6px 8px;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-subtle);';
+    // Columns follow the master period filter: 'sel' = the selected window
+    // (July when Month·July is picked; MTD on the default view), 'ytd' =
+    // year-to-date of the selected year. Field map: 'sel' figures travel in
+    // the payload's 'mtd' slots.
+    $cCols  = (array) ($collections['columns'] ?? ['sel', 'ytd']);
+    $cLab   = (array) ($collections['labels'] ?? ['sel' => 'MTD', 'ytd' => 'YTD']);
+    $cField = ['sel' => 'mtd', 'ytd' => 'ytd'];
 @endphp
 <div class="v5-card" style="margin-top: 14px;">
   <div class="v5-card__h">
@@ -412,8 +419,9 @@
       <thead>
         <tr style="border-bottom:1px solid var(--border);">
           <th style="text-align:left;padding:6px 8px;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-subtle);">Revenue stream</th>
-          <th style="{{ $cTh }}">MTD</th>
-          <th style="{{ $cTh }}">YTD</th>
+          @foreach ($cCols as $cw)
+          <th style="{{ $cTh }}">{{ $cLab[$cw] ?? strtoupper($cw) }}</th>
+          @endforeach
         </tr>
       </thead>
       <tbody>
@@ -424,14 +432,16 @@
               <td style="padding:6px 8px;font-weight:700;">
                 <span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:{{ $cat['color'] ?? '#64748b' }};margin-right:6px;"></span>{{ $cat['label'] ?? $ck }}
               </td>
-              <td style="padding:6px 8px;text-align:right;font-weight:700;">{{ $cFmt($cCatT[$ck]['mtd'] ?? 0) }}</td>
-              <td style="padding:6px 8px;text-align:right;font-weight:700;">{{ $cFmt($cCatT[$ck]['ytd'] ?? 0) }}</td>
+              @foreach ($cCols as $cw)
+              <td style="padding:6px 8px;text-align:right;font-weight:700;">{{ $cFmt($cCatT[$ck][$cField[$cw]] ?? 0) }}</td>
+              @endforeach
             </tr>
             @foreach ($cRows as $cs)
             <tr style="border-bottom:1px solid var(--border-faint);">
               <td style="padding:5px 8px 5px 26px;color:var(--text-muted);">{{ $cs['label'] }}</td>
-              <td style="padding:5px 8px;text-align:right;">{{ $cFmt($cs['mtd']) }}</td>
-              <td style="padding:5px 8px;text-align:right;">{{ $cFmt($cs['ytd']) }}</td>
+              @foreach ($cCols as $cw)
+              <td style="padding:5px 8px;text-align:right;">{{ $cFmt($cs[$cField[$cw]] ?? 0) }}</td>
+              @endforeach
             </tr>
             @endforeach
           @endif
@@ -439,29 +449,32 @@
         @if (abs((float) ($cUn['ytd'] ?? 0)) > 0.5 || abs((float) ($cUn['mtd'] ?? 0)) > 0.5)
         <tr style="border-bottom:1px solid var(--border-faint);">
           <td style="padding:5px 8px;color:var(--warn);">Unmatched class-70 accounts ({{ count($cUn['accounts'] ?? []) }})</td>
-          <td style="padding:5px 8px;text-align:right;color:var(--warn);">{{ $cFmt($cUn['mtd'] ?? 0) }}</td>
-          <td style="padding:5px 8px;text-align:right;color:var(--warn);">{{ $cFmt($cUn['ytd'] ?? 0) }}</td>
+          @foreach ($cCols as $cw)
+          <td style="padding:5px 8px;text-align:right;color:var(--warn);">{{ $cFmt($cUn[$cField[$cw]] ?? 0) }}</td>
+          @endforeach
         </tr>
         @endif
         @if (abs((float) ($cOth['ytd'] ?? 0)) > 0.5 || abs((float) ($cOth['mtd'] ?? 0)) > 0.5)
         <tr style="border-bottom:1px solid var(--border-faint);">
           <td style="padding:5px 8px;color:var(--text-subtle);">Other income (non-70x invoice lines)</td>
-          <td style="padding:5px 8px;text-align:right;color:var(--text-subtle);">{{ $cFmt($cOth['mtd'] ?? 0) }}</td>
-          <td style="padding:5px 8px;text-align:right;color:var(--text-subtle);">{{ $cFmt($cOth['ytd'] ?? 0) }}</td>
+          @foreach ($cCols as $cw)
+          <td style="padding:5px 8px;text-align:right;color:var(--text-subtle);">{{ $cFmt($cOth[$cField[$cw]] ?? 0) }}</td>
+          @endforeach
         </tr>
         @endif
       </tbody>
       <tfoot>
         <tr style="border-top:2px solid var(--border);">
           <td style="padding:7px 8px;font-weight:700;">Total collected (HT)</td>
-          <td style="padding:7px 8px;text-align:right;font-weight:700;">{{ $cFmt($cRec['mtd'] ?? 0) }}</td>
-          <td style="padding:7px 8px;text-align:right;font-weight:700;">{{ $cFmt($cRec['ytd'] ?? 0) }}</td>
+          @foreach ($cCols as $cw)
+          <td style="padding:7px 8px;text-align:right;font-weight:700;">{{ $cFmt($cRec[$cField[$cw]] ?? 0) }}</td>
+          @endforeach
         </tr>
       </tfoot>
     </table>
   </div>
   <div class="v5-card__f">
-    Collected = invoice HT × paid fraction ((total − residual) ÷ total) per posted customer invoice, windowed on invoice date — the same construction as the Scan → Cash reconciliation's "Collected", so the YTD total ties to the dashboard's collected figure. Streams map the named class-70 scanning accounts through the same matcher as Product Revenue TSD (shared accounts split by the same redistribution shares). MTD = current calendar month · YTD = 1 Jan to date · partially-paid invoices contribute their paid share ({{ (int) ($collections['meta']['partials_ytd'] ?? 0) }} partial YTD).
+    Collected = invoice HT × paid fraction ((total − residual) ÷ total) per posted customer invoice, windowed on invoice date — the same construction as the Scan → Cash reconciliation's "Collected", so the YTD total ties to the dashboard's collected figure. Streams map the named class-70 scanning accounts through the same matcher as Product Revenue TSD (shared accounts split by the same redistribution shares). Columns follow the master period filter — {{ $cLab['sel'] ?? 'MTD' }} = the selected period · {{ $cLab['ytd'] ?? 'YTD' }} = 1 Jan of the selected year to the period's end · partially-paid invoices contribute their paid share ({{ (int) ($collections['meta']['partials_ytd'] ?? 0) }} partial YTD).
   </div>
 </div>
 @endif

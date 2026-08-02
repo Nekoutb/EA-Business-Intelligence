@@ -341,12 +341,22 @@ class TreasuryController extends Controller
         try {
             $tn = tenant();
             if ($tn && method_exists($tn, 'moduleEnabled') && $tn->moduleEnabled('product_revenue_tsd')) {
+                // Master period filter — RememberPeriod back-fills these on
+                // every GET (input(), not query(): the middleware merges).
+                $pType = strtolower((string) $request->input('period', 'ytd'));
+                if (!in_array($pType, ['ytd', 'mtd', 'month', 'yoy'], true)) {
+                    $pType = 'ytd';
+                }
+                $pYear  = (int) $request->input('year', (int) date('Y'));
+                $pMonth = (int) $request->input('month', (int) date('m'));
+                $periodSel = ['type' => $pType, 'year' => $pYear, 'month' => $pMonth];
+
                 $client = \App\Odoo\OdooFactory::fromConfig();
-                $collections = ea_cached('treasury_collections_v1', function () use ($client) {
+                $collections = ea_cached("treasury_collections_v2_{$pType}_{$pYear}_{$pMonth}", function () use ($client, $periodSel) {
                     return (new \App\Services\CollectionsByStreamService(
                         $client,
                         new \App\Services\GLRevenueService($client)
-                    ))->analyze();
+                    ))->analyze(null, $periodSel);
                 });
             }
         } catch (\Throwable $e) {

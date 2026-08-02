@@ -160,12 +160,19 @@ try {
             if (!$tenant) { ln("no tenant '{$slug}'"); break; }
             app(App\Tenancy\TenantContext::class)->set($tenant);
             $client = App\Odoo\OdooFactory::fromConfig();
+            // Optional master-filter emulation: &period=month&year=2026&month=7
+            $periodSel = [
+                'type'  => in_array(($pt = strtolower((string) ($_GET['period'] ?? 'ytd'))), ['ytd', 'mtd', 'month', 'yoy'], true) ? $pt : 'ytd',
+                'year'  => (int) ($_GET['year'] ?? date('Y')),
+                'month' => (int) ($_GET['month'] ?? date('m')),
+            ];
             $t0 = microtime(true);
             $svc = new App\Services\CollectionsByStreamService($client, new App\Services\GLRevenueService($client));
-            $c = $svc->analyze();
-            ln(sprintf('analyze: %.1fs · invoices YTD=%d · partial YTD=%d · as of %s',
-                microtime(true) - $t0, $c['meta']['invoices_ytd'], $c['meta']['partials_ytd'], $c['as_of']));
-            ln(sprintf('%-40s %14s %16s', 'stream', 'MTD', 'YTD'));
+            $c = $svc->analyze(null, $periodSel);
+            ln(sprintf('analyze: %.1fs · period=%s · columns=%s · invoices(ytd win)=%d · partial=%d · as of %s',
+                microtime(true) - $t0, json_encode($periodSel), implode('+', $c['columns'] ?? []),
+                $c['meta']['invoices_ytd'], $c['meta']['partials_ytd'], $c['as_of']));
+            ln(sprintf('%-40s %14s %16s', 'stream', $c['labels']['sel'] ?? 'MTD', $c['labels']['ytd'] ?? 'YTD'));
             foreach ($c['streams'] as $s) {
                 ln(sprintf('%-40s %14s %16s', mb_substr($s['label'], 0, 40), number_format($s['mtd']), number_format($s['ytd'])));
             }
