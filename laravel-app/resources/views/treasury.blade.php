@@ -384,6 +384,88 @@
 
 </div>
 
+{{-- ── Collections by revenue stream — Product Revenue TSD categories ── --}}
+@if (!empty($collections['streams']))
+@php
+    $cFmt = function ($v) {
+        if ($v === null) return '—';
+        return number_format((float) $v, 0);
+    };
+    $cCats = (array) ($collections['categories'] ?? []);
+    $cCatT = (array) ($collections['cat_totals'] ?? []);
+    $cUn   = (array) ($collections['unmatched'] ?? []);
+    $cOth  = (array) ($collections['other_income'] ?? []);
+    $cRec  = (array) ($collections['recon'] ?? []);
+    $cByCat = [];
+    foreach ((array) $collections['streams'] as $cs) { $cByCat[$cs['category']][] = $cs; }
+    $cTh = 'text-align:right;padding:6px 8px;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-subtle);';
+@endphp
+<div class="v5-card" style="margin-top: 14px;">
+  <div class="v5-card__h">
+    <div>
+      <div class="v5-card__t">Collections by Revenue Stream</div>
+      <div class="v5-card__sub">Paid share of customer invoices (HT · {{ $ccy }}) · Product Revenue TSD categories · as of {{ $collections['as_of'] ?? '' }}</div>
+    </div>
+  </div>
+  <div class="v5-card__b" style="overflow-x: auto;">
+    <table style="width:100%; border-collapse:collapse; font-size:12px;">
+      <thead>
+        <tr style="border-bottom:1px solid var(--border);">
+          <th style="text-align:left;padding:6px 8px;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-subtle);">Revenue stream</th>
+          <th style="{{ $cTh }}">MTD</th>
+          <th style="{{ $cTh }}">YTD</th>
+        </tr>
+      </thead>
+      <tbody>
+        @foreach ($cCats as $ck => $cat)
+          @php $cRows = $cByCat[$ck] ?? []; @endphp
+          @if (!empty($cRows))
+            <tr style="background: var(--surface-alt);">
+              <td style="padding:6px 8px;font-weight:700;">
+                <span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:{{ $cat['color'] ?? '#64748b' }};margin-right:6px;"></span>{{ $cat['label'] ?? $ck }}
+              </td>
+              <td style="padding:6px 8px;text-align:right;font-weight:700;">{{ $cFmt($cCatT[$ck]['mtd'] ?? 0) }}</td>
+              <td style="padding:6px 8px;text-align:right;font-weight:700;">{{ $cFmt($cCatT[$ck]['ytd'] ?? 0) }}</td>
+            </tr>
+            @foreach ($cRows as $cs)
+            <tr style="border-bottom:1px solid var(--border-faint);">
+              <td style="padding:5px 8px 5px 26px;color:var(--text-muted);">{{ $cs['label'] }}</td>
+              <td style="padding:5px 8px;text-align:right;">{{ $cFmt($cs['mtd']) }}</td>
+              <td style="padding:5px 8px;text-align:right;">{{ $cFmt($cs['ytd']) }}</td>
+            </tr>
+            @endforeach
+          @endif
+        @endforeach
+        @if (abs((float) ($cUn['ytd'] ?? 0)) > 0.5 || abs((float) ($cUn['mtd'] ?? 0)) > 0.5)
+        <tr style="border-bottom:1px solid var(--border-faint);">
+          <td style="padding:5px 8px;color:var(--warn);">Unmatched class-70 accounts ({{ count($cUn['accounts'] ?? []) }})</td>
+          <td style="padding:5px 8px;text-align:right;color:var(--warn);">{{ $cFmt($cUn['mtd'] ?? 0) }}</td>
+          <td style="padding:5px 8px;text-align:right;color:var(--warn);">{{ $cFmt($cUn['ytd'] ?? 0) }}</td>
+        </tr>
+        @endif
+        @if (abs((float) ($cOth['ytd'] ?? 0)) > 0.5 || abs((float) ($cOth['mtd'] ?? 0)) > 0.5)
+        <tr style="border-bottom:1px solid var(--border-faint);">
+          <td style="padding:5px 8px;color:var(--text-subtle);">Other income (non-70x invoice lines)</td>
+          <td style="padding:5px 8px;text-align:right;color:var(--text-subtle);">{{ $cFmt($cOth['mtd'] ?? 0) }}</td>
+          <td style="padding:5px 8px;text-align:right;color:var(--text-subtle);">{{ $cFmt($cOth['ytd'] ?? 0) }}</td>
+        </tr>
+        @endif
+      </tbody>
+      <tfoot>
+        <tr style="border-top:2px solid var(--border);">
+          <td style="padding:7px 8px;font-weight:700;">Total collected (HT)</td>
+          <td style="padding:7px 8px;text-align:right;font-weight:700;">{{ $cFmt($cRec['mtd'] ?? 0) }}</td>
+          <td style="padding:7px 8px;text-align:right;font-weight:700;">{{ $cFmt($cRec['ytd'] ?? 0) }}</td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+  <div class="v5-card__f">
+    Collected = invoice HT × paid fraction ((total − residual) ÷ total) per posted customer invoice, windowed on invoice date — the same construction as the Scan → Cash reconciliation's "Collected", so the YTD total ties to the dashboard's collected figure. Streams map the named class-70 scanning accounts through the same matcher as Product Revenue TSD (shared accounts split by the same redistribution shares). MTD = current calendar month · YTD = 1 Jan to date · partially-paid invoices contribute their paid share ({{ (int) ($collections['meta']['partials_ytd'] ?? 0) }} partial YTD).
+  </div>
+</div>
+@endif
+
 {{-- ── Methodology footer (single block, all four KPIs) ──────── --}}
 <div class="methodology">
   <h3>How these figures are computed</h3>
