@@ -164,10 +164,13 @@ final class CollectionsByStreamService
             'ytd' => array_sum(array_column($list, 'ytd')) + $un70['ytd'],
         ];
 
+        $monthly = $this->monthlyByStream($year, $to, array_keys($accIndex), $assigned, $redistributed, $streams);
+
         return [
             'as_of'        => $to,
             'columns'      => $columns,
             'labels'       => ['sel' => $selLabel, 'ytd' => $ytdLabel],
+            'monthly'      => $monthly,
             'streams'      => $list,
             'categories'   => $cats,
             'cat_totals'   => $catTotals,
@@ -195,6 +198,111 @@ final class CollectionsByStreamService
      * @param list<int> $accountIds
      * @return array{by_account: array<int,float>, recon_total: float, partials: int, invoices: int}
      */
+    /**
+     * Monthly collected per stream, Jan → the window end of the selected
+     * year — feeds the evolution chart. One grouped call (account × month)
+     * covers the fully-paid majority; the partial minority is folded in at
+     * its exact paid fraction. Same account→stream routing as the table.
+     *
+     * @param list<int> $accountIds
+     * @param array<int,string> $assigned
+     * @param array<int,array{targets?:array<string,float>}> $redistributed
+     * @param array<string,array{label:string,color:string}> $streamsMeta
+     * @return array{labels: list<string>, series: list<array{key:string,label:string,color:string,data:list<float>}>}
+     */
+    private function monthlyByStream(int $year, string $to, array $accountIds, array $assigned, array $redistributed, array $streamsMeta): array
+    {
+        $from   = sprintf('%04d-01-01', $year);
+        $months = max(1, (int) (new DateTimeImmutable($to))->format('n'));
+        $labels = [];
+        for ($m = 1; $m <= $months; $m++) {
+            $labels[] = DateTimeImmutable::createFromFormat('!Y-n-j', "{$year}-{$m}-1")->format('M');
+        }
+
+        $blank  = array_fill(1, $months, 0.0);
+        $series = [];
+        foreach ($streamsMeta as $k => $meta) $series[$k] = $blank;
+        $un = $blank;
+
+        $put = function (int $aid, int $mo, float $val) use (&$series, &$un, $assigned, $redistributed, $months) {
+            if ($mo < 1 || $mo > $months || $val == 0.0) return;
+            $pk = $assigned[$aid] ?? null;
+            if ($pk !== null && isset($series[$pk])) { $series[$pk][$mo] += $val; return; }
+            $targets = (array) ($redistributed[$aid]['targets'] ?? []);
+            if ($targets !== []) {
+                foreach ($targets as $tk => $share) {
+                    if (isset($series[(string) $tk])) $series[(string) $tk][$mo] += $val * (float) $share;
+                }
+                return;
+            }
+            $un[$mo] += $val;
+        };
+
+        // Fully-paid majority — account × month in one grouped call.
+        $g = $this->odoo->callModel('account.move.line', 'read_group', [
+            'domain' => [
+                ['move_id.move_type', '=', 'out_invoice'], ['parent_state', '=', 'posted'],
+                ['date', '>=', $from], ['date', '<=', $to],
+                ['move_id.payment_state', 'in', ['paid', 'in_payment']],
+                ['account_id', 'in', $accountIds],
+            ],
+            'fields'  => ['price_subtotal:sum'],
+            'groupby' => ['account_id', 'date:month'],
+            'lazy'    => false,
+        ]);
+        foreach ((array) $g as $r) {
+            $aid = is_array($r['account_id'] ?? null) ? (int) $r['account_id'][0] : 0;
+            $mo  = 0;
+            $rangeFrom = $r['__range']['date']['from'] ?? ($r['__range']['date:month']['from'] ?? null);
+            if (is_string($rangeFrom) && strlen($rangeFrom) >= 7) {
+                $mo = (int) substr($rangeFrom, 5, 2);
+            } elseif (is_string($r['date:month'] ?? null) && ($ts = strtotime('1 ' . $r['date:month'])) !== false) {
+                $mo = (int) date('n', $ts);
+            }
+            if ($aid > 0) $put($aid, $mo, (float) ($r['price_subtotal'] ?? 0));
+        }
+
+        // Partially-paid minority — exact fraction into its invoice month.
+        $pMoves = $this->odoo->searchRead('account.move',
+            [['move_type', '=', 'out_invoice'], ['state', '=', 'posted'],
+             ['invoice_date', '>=', $from], ['invoice_date', '<=', $to],
+             ['payment_state', '=', 'partial']],
+            ['id', 'invoice_date', 'amount_total_signed', 'amount_residual_signed'],
+            ['limit' => 4000]);
+        if ($pMoves !== []) {
+            $prog = []; $moOf = [];
+            foreach ($pMoves as $m) {
+                $total = (float) ($m['amount_total_signed'] ?? 0);
+                $resid = (float) ($m['amount_residual_signed'] ?? 0);
+                $id    = (int) ($m['id'] ?? 0);
+                $prog[$id] = $total != 0.0 ? max(0.0, min(1.0, ($total - $resid) / $total)) : 0.0;
+                $moOf[$id] = (int) substr((string) ($m['invoice_date'] ?? '0000-00'), 5, 2);
+            }
+            foreach (array_chunk(array_keys($prog), 400) as $chunk) {
+                $lines = $this->odoo->searchRead('account.move.line',
+                    [['move_id', 'in', $chunk], ['account_id', 'in', $accountIds]],
+                    ['move_id', 'account_id', 'price_subtotal'], ['limit' => 2000]);
+                foreach ($lines as $l) {
+                    $mid = is_array($l['move_id'] ?? null) ? (int) $l['move_id'][0] : (int) ($l['move_id'] ?? 0);
+                    $aid = is_array($l['account_id'] ?? null) ? (int) $l['account_id'][0] : (int) ($l['account_id'] ?? 0);
+                    $put($aid, $moOf[$mid] ?? 0, ((float) ($l['price_subtotal'] ?? 0)) * ($prog[$mid] ?? 0.0));
+                }
+            }
+        }
+
+        $out = [];
+        foreach ($streamsMeta as $k => $meta) {
+            $data = array_values($series[$k]);
+            if (array_sum($data) == 0.0) continue;
+            $out[] = ['key' => (string) $k, 'label' => (string) $meta['label'], 'color' => (string) $meta['color'], 'data' => $data];
+        }
+        if (array_sum($un) != 0.0) {
+            $out[] = ['key' => '_unmatched', 'label' => 'Unmatched 70x', 'color' => '#b45309', 'data' => array_values($un)];
+        }
+
+        return ['labels' => $labels, 'series' => $out];
+    }
+
     private function collectedByAccount(string $from, string $to, array $accountIds): array
     {
         // Server-side aggregation, no row caps: fully-paid invoices

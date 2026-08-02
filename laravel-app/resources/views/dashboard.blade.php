@@ -524,7 +524,6 @@
             @endphp
             CPO {{ number_format($cpoR, 0) }}% of unit revenue
             ({{ $cpoR > 35 ? 'above' : 'within' }} 35% target).
-            Tighten cost-per-outfit first.
         </div>
     </div>
     @endif {{-- /cost ratio --}}

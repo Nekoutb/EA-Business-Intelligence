@@ -415,6 +415,7 @@
     </div>
   </div>
   <div class="v5-card__b" style="overflow-x: auto;">
+    <div id="ec-coll-monthly" style="min-height: 230px; margin-bottom: 10px;"></div>
     <table style="width:100%; border-collapse:collapse; font-size:12px;">
       <thead>
         <tr style="border-bottom:1px solid var(--border);">
@@ -474,38 +475,38 @@
     </table>
   </div>
   <div class="v5-card__f">
-    Collected = invoice HT × paid fraction ((total − residual) ÷ total) per posted customer invoice, windowed on invoice date — the same construction as the Scan → Cash reconciliation's "Collected", so the YTD total ties to the dashboard's collected figure. Streams map the named class-70 scanning accounts through the same matcher as Product Revenue TSD (shared accounts split by the same redistribution shares). Columns follow the master period filter — {{ $cLab['sel'] ?? 'MTD' }} = the selected period · {{ $cLab['ytd'] ?? 'YTD' }} = 1 Jan of the selected year to the period's end · partially-paid invoices contribute their paid share ({{ (int) ($collections['meta']['partials_ytd'] ?? 0) }} partial YTD).
+    Paid share of customer invoices (HT) — same basis as Scan → Cash "Collected"; streams per the Product Revenue TSD mapping; columns follow the master period filter.
   </div>
 </div>
+@push('scripts')
+<script>
+(function () {
+    var el = document.getElementById('ec-coll-monthly');
+    if (!el || typeof echarts === 'undefined') return;
+    var M = @json($collections['monthly'] ?? null);
+    if (!M || !M.series || !M.series.length) { el.style.display = 'none'; return; }
+    var chart = echarts.init(el);
+    chart.setOption({
+        grid: { left: 74, right: 16, top: 24, bottom: 52 },
+        tooltip: { trigger: 'axis', valueFormatter: function (v) { return (v || 0).toLocaleString(); } },
+        legend: { bottom: 0, type: 'scroll', textStyle: { fontSize: 10 } },
+        xAxis: { type: 'category', data: M.labels, axisLabel: { fontSize: 10 } },
+        yAxis: { type: 'value', splitLine: { lineStyle: { color: '#f3f4f6' } },
+                 axisLabel: { fontSize: 10, formatter: function (v) { return v >= 1e6 ? (v / 1e6) + 'M' : (v >= 1e3 ? (v / 1e3) + 'K' : v); } } },
+        series: M.series.map(function (s) {
+            return { name: s.label, type: 'line', smooth: true, symbolSize: 5, data: s.data,
+                     lineStyle: { color: s.color, width: 2 }, itemStyle: { color: s.color } };
+        })
+    });
+    window.addEventListener('resize', function () { chart.resize(); });
+})();
+</script>
+@endpush
 @endif
 
-{{-- ── Methodology footer (single block, all four KPIs) ──────── --}}
+{{-- Tenant view keeps a one-liner; detailed methodology lives in the admin platform. --}}
 <div class="methodology">
-  <h3>How these figures are computed</h3>
-  <p style="margin-bottom: 10px;">
-    Every value reads <b>as of right now</b> from the latest Odoo refresh.
-    No filters, no period selector. The engine queries posted move lines
-    on the OHADA chart of accounts and aggregates server-side.
-  </p>
-  <dl>
-    <dt>Cash &amp; equivalents</dt>
-    <dd>Σ debit-positive balances per account, on classes <code>52</code> (banques) + <code>57</code> (caisse). Bank accounts in overdraft are excluded — their credit balances surface under Short-term debt instead.</dd>
-
-    <dt>Debt</dt>
-    <dd>Long-term + short-term liabilities combined into a single tile. <strong>Long-term</strong> = net credit balance on class <code>16</code> (emprunts et dettes assimilées). <strong>Short-term</strong> = Σ per-account credit-positive balances on class <code>4</code> (third parties) + class <code>52</code> (bank overdrafts). Per-account aggregation on class 4 prevents AR (411 in normal debit position) from offsetting AP (401 in normal credit position).</dd>
-
-    <dt>Liquidity ratios · 12 months</dt>
-    <dd>Three-line trend chart with a 1.0× threshold reference. <strong>Current</strong> = current assets ÷ current liabilities. <strong>Quick</strong> = (current assets − inventory) ÷ current liabilities. <strong>Cash</strong> = Σ debit-positive balances on classes <code>52</code> + <code>57</code> ÷ current liabilities (strictest view — bank + caisse only). The 12 prior data points are computed from cumulative GL balances at month-end; the right-most point evolves day-to-day as new entries post in the current month. Single-pass query (groupby account + month) so trend length is free; mirrors the as-of-now ratios on <a href="{{ tenant_url('/working-capital') }}" style="color: var(--text); text-decoration: underline;">Working Capital</a>.</dd>
-
-    <dt>Cash conversion cycle · 12 months</dt>
-    <dd>Trailing-twelve-month working capital efficiency in days. <strong>CCC = DSO + DIO − DPO</strong>, where DSO = AR ÷ (TTM revenue ÷ 365), DIO = inventory ÷ (TTM COGS ÷ 365), DPO = AP ÷ (TTM COGS ÷ 365). For service businesses (no material inventory), DIO is dropped and CCC simplifies to DSO − DPO. Computed in the same single-pass query as the liquidity ratios — both charts share the underlying data shape so they render together with no extra round-trips.</dd>
-
-    <dt>Liquidity snapshot</dt>
-    <dd>Per-account list of every <code>52</code> + <code>57</code> account with a positive debit balance, sorted high → low. Zero-balance and overdrawn accounts are excluded — overdrafts surface under Short-term debt instead.</dd>
-
-    <dt>Next 30-day disbursements</dt>
-    <dd>Forward-looking cash-outflow projection based on YTD history, by category. For each prefix (<code>16</code> long-term debt, <code>42</code> salaries, <code>43</code> social, <code>44</code> tax, <code>401</code> suppliers), sum debits posted via cash journals (type <code>cash</code> or <code>bank</code>) from <strong>1 January through the end of the last full month</strong>, divide by the number of full months elapsed → monthly run-rate. <strong>Supplier payments</strong> combine three components into a single row: (i) the <code>401</code> cash-journal average, (ii) the average of <em>direct expense-to-cash</em> entries (Dr 6XX / Cr 52|57 in the same move — petty-cash purchases that bypass the AP step), and (iii) the actual amount of AP invoices already posted with a due-date in the next 30 days (from the AP ledger). Class 2 (fixed assets) is excluded as non-recurrent; class 5 (cash) is excluded as internal transfers.</dd>
-  </dl>
+  <p style="margin:0;">All figures read as-of-now from the latest posted GL in Odoo (OHADA account prefixes), with no period filter — detailed methodology is documented in the admin platform.</p>
 </div>
 
 @else

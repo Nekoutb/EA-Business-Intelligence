@@ -519,15 +519,8 @@
           $dom = abs($tot['volume_effect_xaf']) > abs($tot['price_effect_xaf']) ? 'volume-driven' : 'price-driven';
         @endphp
         <b>Reading:</b>
-        Headline {{ $isMtd ? 'monthly' : $monthsInRange . '-mo' }} revenue gap (full plan vs class-70 actuals):
-        <span class="{{ $headlineGap < 0 ? 'prt-neg' : 'prt-pos' }}">{{ $fmtSigned($headlineGap) }} XAF</span>.
-        Full budget of <b>{{ $fmtMShort($headlineBud) }} XAF</b> = annual ÷ 12 × {{ $monthsInRange }} {{ $monthsInRange === 1 ? 'month' : 'months' }}.
-        <br><span style="color:#6b7280;font-size:11px;">
-          Tracked-subset variance is <b>{{ $dom }}</b> —
-          Volume effect <span class="{{ $tot['volume_effect_xaf'] < 0 ? 'prt-neg' : 'prt-pos' }}">{{ $fmtSigned($tot['volume_effect_xaf']) }}</span>,
-          Price effect <span class="{{ $tot['price_effect_xaf'] < 0 ? 'prt-neg' : 'prt-pos' }}">{{ $fmtSigned($tot['price_effect_xaf']) }}</span>.
-          The breakdown excludes containers (no budget) and Other Cargo (actuals pending Odoo) — that's why it doesn't reconcile to the headline.
-        </span>
+        Headline {{ $isMtd ? 'monthly' : $monthsInRange . '-mo' }} gap vs full plan:
+        <span class="{{ $headlineGap < 0 ? 'prt-neg' : 'prt-pos' }}">{{ $fmtSigned($headlineGap) }} XAF</span> ({{ $dom }}).
       </div>
     </div>
 
@@ -608,21 +601,7 @@
           </table>
         </div>
         <div class="v5-card__f">
-          <b>Reading:</b>
-          Total revenue YTD ({{ $fmtMShort($class70Ytd) }} XAF) is the sum of every class 70 account
-          movement — reconciles to the Dashboard's headline figure on an HT basis.
-          @if (!empty($redistributed))
-            The {{ count($redistributed) }} redistributed {{ count($redistributed) === 1 ? 'account' : 'accounts' }}
-            ({{ $fmtMShort(array_sum(array_column($redistributed, 'ytd_revenue'))) }} XAF YTD)
-            are catch-all GL buckets split across multiple products per the
-            <code style="font-size:11px;background:#f3f4f6;padding:1px 4px;border-radius:3px">revenue_redistribute</code>
-            rules in <code style="font-size:11px;background:#f3f4f6;padding:1px 4px;border-radius:3px">config/budget_products.php</code>.
-          @endif
-          @if (!empty($unmatched706))
-            <b>{{ count($unmatched706) }} {{ count($unmatched706) === 1 ? 'account is' : 'accounts are' }} still unmatched in 706</b>
-            ({{ $fmtMShort(array_sum(array_column($unmatched706, 'ytd_revenue'))) }} XAF YTD)
-            — tell me which product they should land in and I'll widen the patterns.
-          @endif
+          <b>Reading:</b> Class-70 YTD ({{ $fmtMShort($class70Ytd) }} XAF) reconciles to the Dashboard headline (HT); redistributed and unmatched accounts are listed above.
         </div>
       </div>
     @endif
@@ -791,20 +770,7 @@
         @endif
 
         <div class="v5-card__f">
-          <b>Reading:</b>
-          The Dashboard's "Revenue YTD" sums <em>customer-invoice</em> lines only, so any class-70 movement listed here
-          is invisible to the Dashboard but contributes to the TSD class-70 total.
-          The {{ $fmtAmt($niAmount) }} XAF YTD above is the difference between the two views.
-          @if (!empty($niByType))
-            @php
-              $entryRow = collect($niByType)->firstWhere('label', 'Manual journal entry');
-              $entryAmt = $entryRow ? (float) $entryRow['amount'] : 0.0;
-            @endphp
-            @if ($entryAmt !== 0.0)
-              Of that, <strong>{{ $fmtAmt($entryAmt) }} XAF</strong> comes from manual journal entries — review whether these are
-              year-end close-out moves to class 13, reclassifications, or actual revenue that should have been invoiced.
-            @endif
-          @endif
+          <b>Reading:</b> Non-invoice class-70 movements ({{ $fmtAmt($niAmount) }} XAF YTD) explain the gap vs the Dashboard's customer-invoice revenue.
         </div>
       </div>
     @endif

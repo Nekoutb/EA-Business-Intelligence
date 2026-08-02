@@ -186,6 +186,17 @@ try {
             ln('tie-out: streams+unmatched+other − recon = '
                 . number_format(($c['totals']['mtd'] + $c['other_income']['mtd']) - $c['recon']['mtd'], 2) . ' MTD · '
                 . number_format(($c['totals']['ytd'] + $c['other_income']['ytd']) - $c['recon']['ytd'], 2) . ' YTD (expect 0.00)');
+            if (!empty($c['monthly']['series'])) {
+                $ytdByKey = [];
+                foreach ($c['streams'] as $s) $ytdByKey[$s['key']] = (float) $s['ytd'];
+                $drift = 0.0;
+                foreach ($c['monthly']['series'] as $s) {
+                    if (!isset($ytdByKey[$s['key']])) continue;
+                    $drift = max($drift, abs(array_sum($s['data']) - $ytdByKey[$s['key']]));
+                }
+                ln('monthly chart: ' . count($c['monthly']['labels']) . ' months · '
+                    . count($c['monthly']['series']) . ' series · max Σmonths↔YTD drift = ' . number_format($drift, 2));
+            }
             break;
 
         case 'unlock':
