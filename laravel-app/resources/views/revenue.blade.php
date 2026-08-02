@@ -396,9 +396,9 @@
         <div class="rv-card__f">
             <b>Reading:</b>
             @if ($cpoR > 35)
-              <span class="warn">CpO at {{ number_format($cpoR, 0) }}% — {{ number_format($cpoR - 35, 0) }} pts above target</span>. Cost discipline is the lever.
+              <span class="warn">CpO at {{ number_format($cpoR, 0) }}%</span>.
             @elseif ($cpoR > 0)
-              <span class="pos">CpO inside target band</span>. Discounting is well-controlled too.
+              <span class="pos">CpO inside target band</span>.
             @else
               Run sync to populate cost ratios.
             @endif

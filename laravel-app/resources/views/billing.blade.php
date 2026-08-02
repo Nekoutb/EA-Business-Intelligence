@@ -367,7 +367,7 @@
                   <div class="text-[11px] text-[#7c7466] mt-3 leading-relaxed">
                       <strong>Reading:</strong>
                       @if ($billGap > 0)
-                          <span class="text-coral-700 font-semibold">Earned but not invoiced</span> — operations recorded scans worth {{ ea_money_short(abs($billGap), 'XAF') }} more than what's been billed. Likely invoice-cycle lag or scans that need a billable.
+                          <span class="text-coral-700 font-semibold">Earned but not invoiced</span> — operations recorded scans worth {{ ea_money_short(abs($billGap), 'XAF') }} more than what's been billed.
                       @elseif ($billGap < 0)
                           <span class="text-warm-700 font-semibold">Invoiced more than scanned</span> — typical when billing catches up on prior-period scans inside this window.
                       @else
@@ -423,7 +423,7 @@
                   <div class="text-[11px] text-[#7c7466] mt-3 leading-relaxed">
                       <strong>Reading:</strong>
                       @if (abs($collGap) > 0)
-                          <span class="text-coral-700 font-semibold">Invoiced but not yet collected</span> — open AR of {{ ea_money_short(abs($collGap), 'XAF') }} on this period's invoices. Cross-references the Receivables page and feeds DSO.
+                          <span class="text-coral-700 font-semibold">Invoiced but not yet collected</span> — open AR of {{ ea_money_short(abs($collGap), 'XAF') }} on this period's invoices.
                       @else
                           <span class="text-sage-700 font-semibold">Fully collected</span> — every invoice in period is paid.
                       @endif
@@ -637,7 +637,7 @@
           @endif
 
           <div class="text-[11px] text-[#7c7466] mt-4 leading-relaxed">
-              <strong>Reading:</strong> Expected = scans × tariff (HT). Billed = posted out_invoice amount_untaxed_signed in period. Collected = Billed × payment_progress (where payment_progress = (amount_total − amount_residual) / amount_total). All figures HT to keep the comparison apples-to-apples.
+              <strong>Reading:</strong> Expected = scans × tariff · Billed = posted invoices · Collected = billed × paid fraction (all HT).
           </div>
 
           {{-- ── Transaction details (expandable + CSV export) ─────────── --}}
@@ -846,7 +846,7 @@
           @endif
 
           <div class="text-[11px] text-[#7c7466] mt-3 leading-relaxed">
-              <strong>Reading the latency:</strong> 0 or negative = invoice issued on or before the last scan (advance billing). Positive = days waited after operation completion before billing. Industry good = single-digit days; &gt;14 days starts to drag working capital.
+              <strong>Reading the latency:</strong> days from last scan to invoice — single digits are healthy; &gt;14 days drags working capital.
           </div>
       </div>
     @endif

@@ -560,7 +560,7 @@ document.getElementById('pdToggle').addEventListener('click', function () {
           @endif
 
           <div class="text-[11px] text-[#7c7466] mt-3 leading-relaxed">
-              <strong>Reading the ageing:</strong> POs older than 30 days warrant a chase; over 90 days usually means either a stuck supplier, a forgotten partial receipt, or a PO that should be cancelled. Periodic clean-up here directly improves cycle-time and removes phantom commitments from the books.
+              <strong>Reading the ageing:</strong> chase POs older than 30 days; over 90 days, close or cancel.
           </div>
       </div>
     @endif
@@ -779,7 +779,7 @@ document.getElementById('pdToggle').addEventListener('click', function () {
         </div>
 
         <div class="text-[11px] text-[#7c7466] mt-3 leading-relaxed">
-            <strong>Reading the rate:</strong> the headline is the <em>compliance</em> rate — the share of vendor bills that were raised against an approved PO. Best-in-class is &gt;95%; normal is 85–95%; below 85% means a meaningful slice of spend is bypassing the PO process ("maverick spend"). Click each card's chevron for the top-10 detail lists; spend amounts are net of taxes.
+            <strong>Reading the rate:</strong> share of vendor bills backed by an approved PO — best-in-class &gt;95% (HT).
         </div>
     </div>
 
