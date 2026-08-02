@@ -150,6 +150,37 @@ try {
             }
             break;
 
+        case 'collcheck':
+            // Collections-by-stream verification: run the service fresh and
+            // print every stream + the tie-out against the recon-style
+            // Collected (HT) total, plus unmatched accounts for pattern
+            // tuning. Read-only. ?tenant=slug (default transatlanticd)
+            $slug = (string) ($_GET['tenant'] ?? 'transatlanticd');
+            $tenant = App\Models\Tenant::where('slug', $slug)->first();
+            if (!$tenant) { ln("no tenant '{$slug}'"); break; }
+            app(App\Tenancy\TenantContext::class)->set($tenant);
+            $client = App\Odoo\OdooFactory::fromConfig();
+            $t0 = microtime(true);
+            $svc = new App\Services\CollectionsByStreamService($client, new App\Services\GLRevenueService($client));
+            $c = $svc->analyze();
+            ln(sprintf('analyze: %.1fs · invoices YTD=%d · partial YTD=%d · as of %s',
+                microtime(true) - $t0, $c['meta']['invoices_ytd'], $c['meta']['partials_ytd'], $c['as_of']));
+            ln(sprintf('%-40s %14s %16s', 'stream', 'MTD', 'YTD'));
+            foreach ($c['streams'] as $s) {
+                ln(sprintf('%-40s %14s %16s', mb_substr($s['label'], 0, 40), number_format($s['mtd']), number_format($s['ytd'])));
+            }
+            ln(sprintf('%-40s %14s %16s', 'UNMATCHED 70x (' . count($c['unmatched']['accounts']) . ' accts)',
+                number_format($c['unmatched']['mtd']), number_format($c['unmatched']['ytd'])));
+            foreach (array_slice($c['unmatched']['accounts'], 0, 10) as $ua) ln('    · ' . $ua);
+            ln(sprintf('%-40s %14s %16s', 'Other income (non-70x)',
+                number_format($c['other_income']['mtd']), number_format($c['other_income']['ytd'])));
+            ln(sprintf('%-40s %14s %16s', 'TOTAL = recon Collected (HT)',
+                number_format($c['recon']['mtd']), number_format($c['recon']['ytd'])));
+            ln('tie-out: streams+unmatched+other − recon = '
+                . number_format(($c['totals']['mtd'] + $c['other_income']['mtd']) - $c['recon']['mtd'], 2) . ' MTD · '
+                . number_format(($c['totals']['ytd'] + $c['other_income']['ytd']) - $c['recon']['ytd'], 2) . ' YTD (expect 0.00)');
+            break;
+
         case 'unlock':
             $n = Illuminate\Support\Facades\DB::table('cache_locks')
                 ->where('key', 'like', '%bms:warm:lock%')->delete();

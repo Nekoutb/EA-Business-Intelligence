@@ -332,11 +332,37 @@ class TreasuryController extends Controller
             ]);
         }
 
+        // ── Collections by revenue stream (Product Revenue TSD categories).
+        // Gated on the product_revenue_tsd module: the stream matcher only
+        // means something for tenants whose chart of accounts carries the
+        // named 706 scanning sub-accounts. Own try/catch: a failure here
+        // must never take down the rest of the Treasury page.
+        $collections = null;
+        try {
+            $tn = tenant();
+            if ($tn && method_exists($tn, 'moduleEnabled') && $tn->moduleEnabled('product_revenue_tsd')) {
+                $client = \App\Odoo\OdooFactory::fromConfig();
+                $collections = ea_cached('treasury_collections_v1', function () use ($client) {
+                    return (new \App\Services\CollectionsByStreamService(
+                        $client,
+                        new \App\Services\GLRevenueService($client)
+                    ))->analyze();
+                });
+            }
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('treasury.collections: exception', [
+                'tenant' => optional(tenant())->slug,
+                'error'  => $e->getMessage(),
+            ]);
+            $collections = null;
+        }
+
         return view('treasury', [
-            'treasury' => $treasury,
-            'error'    => $error,
-            'active'   => 'treasury',
-            'aiPage'   => 'dashboard',
+            'treasury'    => $treasury,
+            'collections' => $collections,
+            'error'       => $error,
+            'active'      => 'treasury',
+            'aiPage'      => 'dashboard',
         ]);
     }
 
