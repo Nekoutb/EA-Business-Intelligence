@@ -28,9 +28,6 @@ use DateTimeImmutable;
  */
 final class CollectionsByStreamService
 {
-    /** Safety cap on invoices per window (≫ TSD's annual volume). */
-    private const CAP = 8000;
-
     public function __construct(
         private OdooClient $odoo,
         private GLRevenueService $gl,
@@ -166,52 +163,83 @@ final class CollectionsByStreamService
      */
     private function collectedByAccount(string $from, string $to, array $accountIds): array
     {
-        $progressByMove = [];
-        $reconTotal = 0.0; $partials = 0; $invoices = 0;
+        // Server-side aggregation, no row caps: fully-paid invoices
+        // (progress 1, the vast majority) are summed by Odoo in ONE grouped
+        // call; only the partially-paid minority is fetched row-wise for
+        // exact per-invoice weighting. An earlier row-fetching version
+        // silently truncated at its safety cap on this tenant's 8k+
+        // invoices — aggregation removes the cap entirely.
+        $paidStates = ['paid', 'in_payment'];
+        $by = []; $reconTotal = 0.0; $partials = 0; $invoices = 0;
 
-        $offset = 0;
-        while (true) {
-            $page = $this->odoo->searchRead('account.move',
-                [['move_type', '=', 'out_invoice'], ['state', '=', 'posted'],
-                 ['invoice_date', '>=', $from], ['invoice_date', '<=', $to]],
-                ['id', 'amount_untaxed_signed', 'amount_total_signed', 'amount_residual_signed', 'payment_state'],
-                ['limit' => 1000, 'offset' => $offset]);
-            foreach ($page as $m) {
+        // Fully-paid share — one grouped sum per class-70 account.
+        $g = $this->odoo->callModel('account.move.line', 'read_group', [
+            'domain' => [
+                ['move_id.move_type', '=', 'out_invoice'],
+                ['parent_state', '=', 'posted'],
+                ['move_id.invoice_date', '>=', $from],
+                ['move_id.invoice_date', '<=', $to],
+                ['move_id.payment_state', 'in', $paidStates],
+                ['account_id', 'in', $accountIds],
+            ],
+            'fields'  => ['price_subtotal:sum'],
+            'groupby' => ['account_id'],
+            'lazy'    => false,
+        ]);
+        foreach ((array) $g as $r) {
+            $aid = is_array($r['account_id'] ?? null) ? (int) $r['account_id'][0] : 0;
+            if ($aid > 0) $by[$aid] = (float) ($r['price_subtotal'] ?? 0);
+        }
+
+        // Fully-paid HT total + count (the recon numerator's paid part).
+        $g = $this->odoo->callModel('account.move', 'read_group', [
+            'domain' => [
+                ['move_type', '=', 'out_invoice'], ['state', '=', 'posted'],
+                ['invoice_date', '>=', $from], ['invoice_date', '<=', $to],
+                ['payment_state', 'in', $paidStates],
+            ],
+            'fields'  => ['amount_untaxed_signed:sum'],
+            'groupby' => [],
+            'lazy'    => false,
+        ]);
+        $reconTotal += (float) ($g[0]['amount_untaxed_signed'] ?? 0);
+        $invoices   += (int) ($g[0]['__count'] ?? 0);
+
+        // Partially-paid minority — exact per-invoice progress weighting.
+        $pMoves = $this->odoo->searchRead('account.move',
+            [['move_type', '=', 'out_invoice'], ['state', '=', 'posted'],
+             ['invoice_date', '>=', $from], ['invoice_date', '<=', $to],
+             ['payment_state', '=', 'partial']],
+            ['id', 'amount_untaxed_signed', 'amount_total_signed', 'amount_residual_signed'],
+            ['limit' => 4000]);
+        if ($pMoves !== []) {
+            $prog = [];
+            foreach ($pMoves as $m) {
                 $total = (float) ($m['amount_total_signed'] ?? 0);
                 $resid = (float) ($m['amount_residual_signed'] ?? 0);
                 $ht    = (float) ($m['amount_untaxed_signed'] ?? 0);
-                $prog  = $total != 0.0 ? max(0.0, min(1.0, ($total - $resid) / $total)) : 0.0;
-                $progressByMove[(int) ($m['id'] ?? 0)] = $prog;
-                $reconTotal += $ht * $prog;
+                $p     = $total != 0.0 ? max(0.0, min(1.0, ($total - $resid) / $total)) : 0.0;
+                $prog[(int) ($m['id'] ?? 0)] = $p;
+                $reconTotal += $ht * $p;
+                $partials++;
                 $invoices++;
-                if (($m['payment_state'] ?? '') === 'partial') $partials++;
             }
-            if (count($page) < 1000 || count($progressByMove) >= self::CAP) break;
-            $offset += 1000;
-        }
-        if ($progressByMove === []) {
-            return ['by_account' => [], 'recon_total' => 0.0, 'partials' => 0, 'invoices' => 0];
-        }
-
-        // Class-70 lines of those invoices, weighted by invoice progress.
-        // Tax and receivable counter-lines post outside class 70, so the
-        // account filter alone isolates the revenue lines.
-        $by = [];
-        foreach (array_chunk(array_keys($progressByMove), 400) as $chunk) {
-            $offset = 0;
-            while (true) {
-                $lines = $this->odoo->searchRead('account.move.line',
-                    [['move_id', 'in', $chunk], ['account_id', 'in', $accountIds]],
-                    ['move_id', 'account_id', 'price_subtotal'],
-                    ['limit' => 1000, 'offset' => $offset]);
-                foreach ($lines as $l) {
-                    $mid = is_array($l['move_id'] ?? null) ? (int) $l['move_id'][0] : (int) ($l['move_id'] ?? 0);
-                    $aid = is_array($l['account_id'] ?? null) ? (int) $l['account_id'][0] : (int) ($l['account_id'] ?? 0);
-                    $by[$aid] = ($by[$aid] ?? 0.0)
-                        + ((float) ($l['price_subtotal'] ?? 0)) * ($progressByMove[$mid] ?? 0.0);
+            foreach (array_chunk(array_keys($prog), 400) as $chunk) {
+                $offset = 0;
+                while (true) {
+                    $lines = $this->odoo->searchRead('account.move.line',
+                        [['move_id', 'in', $chunk], ['account_id', 'in', $accountIds]],
+                        ['move_id', 'account_id', 'price_subtotal'],
+                        ['limit' => 1000, 'offset' => $offset]);
+                    foreach ($lines as $l) {
+                        $mid = is_array($l['move_id'] ?? null) ? (int) $l['move_id'][0] : (int) ($l['move_id'] ?? 0);
+                        $aid = is_array($l['account_id'] ?? null) ? (int) $l['account_id'][0] : (int) ($l['account_id'] ?? 0);
+                        $by[$aid] = ($by[$aid] ?? 0.0)
+                            + ((float) ($l['price_subtotal'] ?? 0)) * ($prog[$mid] ?? 0.0);
+                    }
+                    if (count($lines) < 1000) break;
+                    $offset += 1000;
                 }
-                if (count($lines) < 1000) break;
-                $offset += 1000;
             }
         }
 
