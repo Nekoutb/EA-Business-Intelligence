@@ -72,6 +72,28 @@ try {
             ln(tailFile(storage_path('logs/laravel.log'), $L));
             break;
 
+        case 'maillog':
+            // The daily-report cron's output — every 07:00 UTC run appends
+            // here (success lines or the failure reason).
+            ln("== /var/log/kwr-daily-report.log (tail {$L}) ==");
+            ln(tailFile('/var/log/kwr-daily-report.log', $L));
+            break;
+
+        case 'sendreport':
+            // Remote catch-up trigger for the Kissywears daily report.
+            // ?date=YYYY-MM-DD (the report day, i.e. the "prior day" the
+            // email covers). Uses the same artisan command as the cron.
+            $d = (string) ($_GET['date'] ?? '');
+            if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $d)) { ln('need ?date=YYYY-MM-DD'); break; }
+            $code = Illuminate\Support\Facades\Artisan::call('reports:send-daily', [
+                '--tenant' => (string) ($_GET['tenant'] ?? 'kwr'),
+                '--date'   => $d,
+                '--to'     => (string) ($_GET['to'] ?? 'kissywears1@gmail.com,contact@cm-ea.com'),
+            ]);
+            ln(rtrim(Illuminate\Support\Facades\Artisan::output()));
+            ln('exit=' . $code);
+            break;
+
         case 'recompile':
             // Force-recompile EVERY Blade template in place. Overwrite is
             // permitted (compiled files are web-user-owned); this repairs a
