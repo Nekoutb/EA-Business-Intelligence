@@ -46,12 +46,40 @@ final class CollectionsByStreamService
      *   meta: array{partials_mtd:int,partials_ytd:int,invoices_ytd:int}
      * }
      */
-    public function analyze(?DateTimeImmutable $today = null): array
+    /**
+     * @param array{type?:string, year?:int, month?:int} $period The master
+     *        filter selection (RememberPeriod back-fills it on every page).
+     *        Column 1 = the selected window (July when Month·July is
+     *        picked; MTD on the default view); column 2 = YTD of the
+     *        selected year, through the selected window's end. When the two
+     *        windows coincide (e.g. a past full year), only YTD renders.
+     */
+    public function analyze(?DateTimeImmutable $today = null, array $period = ['type' => 'ytd']): array
     {
-        $today   = $today ?? new DateTimeImmutable('today');
-        $to      = $today->format('Y-m-d');
-        $ytdFrom = $today->format('Y-01-01');
-        $mtdFrom = $today->format('Y-m-01');
+        $today = $today ?? new DateTimeImmutable('today');
+        [$selStart, $selEnd, , $ntype] = ea_resolve_period($today, $period);
+
+        $year    = (int) $selStart->format('Y');
+        $isCurYr = $year === (int) $today->format('Y');
+        $to      = $selEnd->format('Y-m-d');
+        $ytdFrom = sprintf('%04d-01-01', $year);
+
+        // Column 1 (selected window). On the default YTD view keep the
+        // original card shape: current month alongside YTD. A past full
+        // year collapses to the single YTD column.
+        if ($ntype === 'ytd' && $isCurYr) {
+            $selFrom  = $today->format('Y-m-01');
+            $selLabel = 'MTD';
+        } elseif ($ntype === 'ytd') {
+            $selFrom  = null; // same window as YTD → single column
+            $selLabel = 'Year ' . $year;
+        } else {
+            $selFrom  = $selStart->format('Y-m-d');
+            $selLabel = $ntype === 'month' ? $selStart->format('M Y') : 'MTD';
+        }
+        $columns  = $selFrom === null ? ['ytd'] : ['sel', 'ytd'];
+        $ytdLabel = $isCurYr ? 'YTD' : 'YTD ' . $year;
+        $mtdFrom  = $selFrom ?? $ytdFrom;
 
         // ── Class-70 accounts, mapped through the page's own matcher. ────
         $accIndex = [];
@@ -66,7 +94,11 @@ final class CollectionsByStreamService
         $redistributed = (array) ($match['redistributed'] ?? []);   // account_id → ['targets' => [key => share]]
 
         $ytd = $this->collectedByAccount($ytdFrom, $to, array_keys($accIndex));
-        $mtd = $this->collectedByAccount($mtdFrom, $to, array_keys($accIndex));
+        // Column 1 shares the YTD figures when the windows coincide —
+        // no second round-trip, and the blade then renders a single column.
+        $mtd = ($selFrom === null)
+            ? $ytd
+            : $this->collectedByAccount($mtdFrom, $to, array_keys($accIndex));
 
         // ── Fold account sums into product streams (assigned + shares). ──
         $products = (array) config('budget_products.products', []);
@@ -134,6 +166,8 @@ final class CollectionsByStreamService
 
         return [
             'as_of'        => $to,
+            'columns'      => $columns,
+            'labels'       => ['sel' => $selLabel, 'ytd' => $ytdLabel],
             'streams'      => $list,
             'categories'   => $cats,
             'cat_totals'   => $catTotals,
