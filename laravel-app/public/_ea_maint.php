@@ -173,16 +173,14 @@ try {
             break;
 
         case 'collcheck':
-            // Collections-by-stream verification: run the service fresh and
-            // print every stream + the tie-out against the recon-style
-            // Collected (HT) total, plus unmatched accounts for pattern
-            // tuning. Read-only. ?tenant=slug (default transatlanticd)
+            // Cash-basis collections verification: settlements applied in
+            // the window, routed to streams, HT + TTC, with internal
+            // tie-outs. ?tenant=slug &period=&year=&month=
             $slug = (string) ($_GET['tenant'] ?? 'transatlanticd');
             $tenant = App\Models\Tenant::where('slug', $slug)->first();
             if (!$tenant) { ln("no tenant '{$slug}'"); break; }
             app(App\Tenancy\TenantContext::class)->set($tenant);
             $client = App\Odoo\OdooFactory::fromConfig();
-            // Optional master-filter emulation: &period=month&year=2026&month=7
             $periodSel = [
                 'type'  => in_array(($pt = strtolower((string) ($_GET['period'] ?? 'ytd'))), ['ytd', 'mtd', 'month', 'yoy'], true) ? $pt : 'ytd',
                 'year'  => (int) ($_GET['year'] ?? date('Y')),
@@ -191,33 +189,36 @@ try {
             $t0 = microtime(true);
             $svc = new App\Services\CollectionsByStreamService($client, new App\Services\GLRevenueService($client));
             $c = $svc->analyze(null, $periodSel);
-            ln(sprintf('analyze: %.1fs · period=%s · columns=%s · invoices(ytd win)=%d · partial=%d · as of %s',
-                microtime(true) - $t0, json_encode($periodSel), implode('+', $c['columns'] ?? []),
-                $c['meta']['invoices_ytd'], $c['meta']['partials_ytd'], $c['as_of']));
-            ln(sprintf('%-40s %14s %16s', 'stream', $c['labels']['sel'] ?? 'MTD', $c['labels']['ytd'] ?? 'YTD'));
-            foreach ($c['streams'] as $s) {
-                ln(sprintf('%-40s %14s %16s', mb_substr($s['label'], 0, 40), number_format($s['mtd']), number_format($s['ytd'])));
-            }
-            ln(sprintf('%-40s %14s %16s', 'UNMATCHED 70x (' . count($c['unmatched']['accounts']) . ' accts)',
-                number_format($c['unmatched']['mtd']), number_format($c['unmatched']['ytd'])));
-            foreach (array_slice($c['unmatched']['accounts'], 0, 10) as $ua) ln('    · ' . $ua);
-            ln(sprintf('%-40s %14s %16s', 'Other income (non-70x)',
-                number_format($c['other_income']['mtd']), number_format($c['other_income']['ytd'])));
-            ln(sprintf('%-40s %14s %16s', 'TOTAL = recon Collected (HT)',
-                number_format($c['recon']['mtd']), number_format($c['recon']['ytd'])));
-            ln('tie-out: streams+unmatched+other − recon = '
-                . number_format(($c['totals']['mtd'] + $c['other_income']['mtd']) - $c['recon']['mtd'], 2) . ' MTD · '
-                . number_format(($c['totals']['ytd'] + $c['other_income']['ytd']) - $c['recon']['ytd'], 2) . ' YTD (expect 0.00)');
+            ln(sprintf('analyze: %.1fs · period=%s · settlements=%d · invoices touched=%d · as of %s',
+                microtime(true) - $t0, json_encode($periodSel), $c['meta']['settlements'], $c['meta']['invoices'], $c['as_of']));
+            $cols = $c['columns'];
+            $hdr = sprintf('%-34s', 'stream');
+            foreach ($cols as $cc) $hdr .= sprintf(' %16s', $cc['label']);
+            ln($hdr);
+            $rowOut = function (string $label, array $row) use ($cols) {
+                $line = sprintf('%-34s', mb_substr($label, 0, 34));
+                foreach ($cols as $cc) $line .= sprintf(' %16s', number_format((float) ($row[$cc['k']] ?? 0)));
+                ln($line);
+            };
+            foreach ($c['streams'] as $s) $rowOut($s['label'], $s);
+            $rowOut('UNMATCHED 70x (' . count($c['unmatched']['accounts']) . ')', $c['unmatched']);
+            $rowOut('Other income (non-70x)', $c['other']);
+            $rowOut('TOTAL', $c['totals']);
+            $sumHt = $c['unmatched']['ytd_ht'] + $c['other']['ytd_ht'];
+            $sumTtc = $c['unmatched']['ytd_ttc'] + $c['other']['ytd_ttc'];
+            foreach ($c['streams'] as $s) { $sumHt += $s['ytd_ht']; $sumTtc += $s['ytd_ttc']; }
+            ln('tie-out YTD: rows−totals HT=' . number_format($sumHt - $c['totals']['ytd_ht'], 2)
+                . ' · TTC=' . number_format($sumTtc - $c['totals']['ytd_ttc'], 2) . ' (expect 0.00)');
             if (!empty($c['monthly']['series'])) {
-                $ytdByKey = [];
-                foreach ($c['streams'] as $s) $ytdByKey[$s['key']] = (float) $s['ytd'];
+                $ttcByKey = [];
+                foreach ($c['streams'] as $s) $ttcByKey[$s['key']] = (float) $s['ytd_ttc'];
                 $drift = 0.0;
                 foreach ($c['monthly']['series'] as $s) {
-                    if (!isset($ytdByKey[$s['key']])) continue;
-                    $drift = max($drift, abs(array_sum($s['data']) - $ytdByKey[$s['key']]));
+                    if (!isset($ttcByKey[$s['key']])) continue;
+                    $drift = max($drift, abs(array_sum($s['data']) - $ttcByKey[$s['key']]));
                 }
-                ln('monthly chart: ' . count($c['monthly']['labels']) . ' months · '
-                    . count($c['monthly']['series']) . ' series · max Σmonths↔YTD drift = ' . number_format($drift, 2));
+                ln('monthly chart (TTC): ' . count($c['monthly']['labels']) . ' months · '
+                    . count($c['monthly']['series']) . ' series · max drift vs YTD = ' . number_format($drift, 2));
             }
             break;
 

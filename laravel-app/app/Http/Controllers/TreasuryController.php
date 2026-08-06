@@ -352,7 +352,7 @@ class TreasuryController extends Controller
                 $periodSel = ['type' => $pType, 'year' => $pYear, 'month' => $pMonth];
 
                 $client = \App\Odoo\OdooFactory::fromConfig();
-                $collections = ea_cached("treasury_collections_v2_{$pType}_{$pYear}_{$pMonth}", function () use ($client, $periodSel) {
+                $collections = ea_cached("treasury_collections_v3_{$pType}_{$pYear}_{$pMonth}", function () use ($client, $periodSel) {
                     return (new \App\Services\CollectionsByStreamService(
                         $client,
                         new \App\Services\GLRevenueService($client)
