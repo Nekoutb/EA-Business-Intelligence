@@ -394,24 +394,23 @@
     $cCats = (array) ($collections['categories'] ?? []);
     $cCatT = (array) ($collections['cat_totals'] ?? []);
     $cUn   = (array) ($collections['unmatched'] ?? []);
-    $cOth  = (array) ($collections['other_income'] ?? []);
-    $cRec  = (array) ($collections['recon'] ?? []);
+    $cOth  = (array) ($collections['other'] ?? []);
+    $cTot  = (array) ($collections['totals'] ?? []);
+    $cCols = (array) ($collections['columns'] ?? []);
     $cByCat = [];
     foreach ((array) $collections['streams'] as $cs) { $cByCat[$cs['category']][] = $cs; }
     $cTh = 'text-align:right;padding:6px 8px;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-subtle);';
-    // Columns follow the master period filter: 'sel' = the selected window
-    // (July when Month·July is picked; MTD on the default view), 'ytd' =
-    // year-to-date of the selected year. Field map: 'sel' figures travel in
-    // the payload's 'mtd' slots.
-    $cCols  = (array) ($collections['columns'] ?? ['sel', 'ytd']);
-    $cLab   = (array) ($collections['labels'] ?? ['sel' => 'MTD', 'ytd' => 'YTD']);
-    $cField = ['sel' => 'mtd', 'ytd' => 'ytd'];
+    $cHasUn = false; $cHasOth = false;
+    foreach (['sel_ht', 'sel_ttc', 'ytd_ht', 'ytd_ttc'] as $ck) {
+        if (abs((float) ($cUn[$ck] ?? 0)) > 0.5) $cHasUn = true;
+        if (abs((float) ($cOth[$ck] ?? 0)) > 0.5) $cHasOth = true;
+    }
 @endphp
 <div class="v5-card" style="margin-top: 14px;">
   <div class="v5-card__h">
     <div>
       <div class="v5-card__t">Collections by Revenue Stream</div>
-      <div class="v5-card__sub">Paid share of customer invoices (HT · {{ $ccy }}) · Product Revenue TSD categories · as of {{ $collections['as_of'] ?? '' }}</div>
+      <div class="v5-card__sub">Cash basis · settlements applied in the period, any invoice date · HT &amp; TTC ({{ $ccy }}) · as of {{ $collections['as_of'] ?? '' }}</div>
     </div>
   </div>
   <div class="v5-card__b" style="overflow-x: auto;">
@@ -420,8 +419,8 @@
       <thead>
         <tr style="border-bottom:1px solid var(--border);">
           <th style="text-align:left;padding:6px 8px;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-subtle);">Revenue stream</th>
-          @foreach ($cCols as $cw)
-          <th style="{{ $cTh }}">{{ $cLab[$cw] ?? strtoupper($cw) }}</th>
+          @foreach ($cCols as $cc)
+          <th style="{{ $cTh }}">{{ $cc['label'] }}</th>
           @endforeach
         </tr>
       </thead>
@@ -433,49 +432,49 @@
               <td style="padding:6px 8px;font-weight:700;">
                 <span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:{{ $cat['color'] ?? '#64748b' }};margin-right:6px;"></span>{{ $cat['label'] ?? $ck }}
               </td>
-              @foreach ($cCols as $cw)
-              <td style="padding:6px 8px;text-align:right;font-weight:700;">{{ $cFmt($cCatT[$ck][$cField[$cw]] ?? 0) }}</td>
+              @foreach ($cCols as $cc)
+              <td style="padding:6px 8px;text-align:right;font-weight:700;">{{ $cFmt($cCatT[$ck][$cc['k']] ?? 0) }}</td>
               @endforeach
             </tr>
             @foreach ($cRows as $cs)
             <tr style="border-bottom:1px solid var(--border-faint);">
               <td style="padding:5px 8px 5px 26px;color:var(--text-muted);">{{ $cs['label'] }}</td>
-              @foreach ($cCols as $cw)
-              <td style="padding:5px 8px;text-align:right;">{{ $cFmt($cs[$cField[$cw]] ?? 0) }}</td>
+              @foreach ($cCols as $cc)
+              <td style="padding:5px 8px;text-align:right;">{{ $cFmt($cs[$cc['k']] ?? 0) }}</td>
               @endforeach
             </tr>
             @endforeach
           @endif
         @endforeach
-        @if (abs((float) ($cUn['ytd'] ?? 0)) > 0.5 || abs((float) ($cUn['mtd'] ?? 0)) > 0.5)
+        @if ($cHasUn)
         <tr style="border-bottom:1px solid var(--border-faint);">
           <td style="padding:5px 8px;color:var(--warn);">Unmatched class-70 accounts ({{ count($cUn['accounts'] ?? []) }})</td>
-          @foreach ($cCols as $cw)
-          <td style="padding:5px 8px;text-align:right;color:var(--warn);">{{ $cFmt($cUn[$cField[$cw]] ?? 0) }}</td>
+          @foreach ($cCols as $cc)
+          <td style="padding:5px 8px;text-align:right;color:var(--warn);">{{ $cFmt($cUn[$cc['k']] ?? 0) }}</td>
           @endforeach
         </tr>
         @endif
-        @if (abs((float) ($cOth['ytd'] ?? 0)) > 0.5 || abs((float) ($cOth['mtd'] ?? 0)) > 0.5)
+        @if ($cHasOth)
         <tr style="border-bottom:1px solid var(--border-faint);">
-          <td style="padding:5px 8px;color:var(--text-subtle);">Other income (non-70x invoice lines)</td>
-          @foreach ($cCols as $cw)
-          <td style="padding:5px 8px;text-align:right;color:var(--text-subtle);">{{ $cFmt($cOth[$cField[$cw]] ?? 0) }}</td>
+          <td style="padding:5px 8px;color:var(--text-subtle);">Other income (non-70x share)</td>
+          @foreach ($cCols as $cc)
+          <td style="padding:5px 8px;text-align:right;color:var(--text-subtle);">{{ $cFmt($cOth[$cc['k']] ?? 0) }}</td>
           @endforeach
         </tr>
         @endif
       </tbody>
       <tfoot>
         <tr style="border-top:2px solid var(--border);">
-          <td style="padding:7px 8px;font-weight:700;">Total collected (HT)</td>
-          @foreach ($cCols as $cw)
-          <td style="padding:7px 8px;text-align:right;font-weight:700;">{{ $cFmt($cRec[$cField[$cw]] ?? 0) }}</td>
+          <td style="padding:7px 8px;font-weight:700;">Total collected</td>
+          @foreach ($cCols as $cc)
+          <td style="padding:7px 8px;text-align:right;font-weight:700;">{{ $cFmt($cTot[$cc['k']] ?? 0) }}</td>
           @endforeach
         </tr>
       </tfoot>
     </table>
   </div>
   <div class="v5-card__f">
-    Paid share of customer invoices (HT) — same basis as Scan → Cash "Collected"; streams per the Product Revenue TSD mapping; columns follow the master period filter.
+    Cash basis: payments applied in the period (settlement date), whatever the invoice's issue date — TTC = cash applied incl. taxes; HT pro-rated from each invoice's own tax mix; chart shows TTC; columns follow the master period filter.
   </div>
 </div>
 @push('scripts')
