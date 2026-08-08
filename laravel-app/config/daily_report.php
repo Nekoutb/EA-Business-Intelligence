@@ -25,4 +25,20 @@ return [
             'contact@cm-ea.com',
         ],
     ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Receivables Top-Offender Scorecard — recipients per tenant
+    |--------------------------------------------------------------------------
+    |
+    | Sent every 3 days by reports:send-offenders. Separate list from the
+    | daily digest above: this one goes to the people who chase collections.
+    | A tenant with no entry here is skipped.
+    */
+    'offenders' => [
+        'kwr' => [
+            'Contact@cm-ea.com',
+            'cmahouvi@kissywears.co',
+        ],
+    ],
 ];

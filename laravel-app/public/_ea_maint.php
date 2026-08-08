@@ -94,6 +94,16 @@ try {
             ln('exit=' . $code);
             break;
 
+        case 'sendoffenders':
+            // Remote trigger for the receivables Top-Offender Scorecard.
+            // ?tenant=kwr (default) &to=a@b.com,... (default: config list)
+            $args = ['--tenant' => (string) ($_GET['tenant'] ?? 'kwr')];
+            if (!empty($_GET['to'])) $args['--to'] = (string) $_GET['to'];
+            $code = Illuminate\Support\Facades\Artisan::call('reports:send-offenders', $args);
+            ln(rtrim(Illuminate\Support\Facades\Artisan::output()));
+            ln('exit=' . $code);
+            break;
+
         case 'recompile':
             // Force-recompile EVERY Blade template in place. Overwrite is
             // permitted (compiled files are web-user-owned); this repairs a
