@@ -73,7 +73,7 @@ class SendOffendersReport extends Command
                     (string) ($rev['currency'] ?? 'XAF'),
                 );
 
-                $apiKey = trim((string) env('MAILERSEND_API_KEY', ''));
+                $apiKey = trim((string) config('daily_report.mailersend_api_key', ''));
                 if ($apiKey !== '') {
                     $resp = Http::withToken($apiKey)->acceptJson()->timeout(30)
                         ->post('https://api.mailersend.com/v1/email', [

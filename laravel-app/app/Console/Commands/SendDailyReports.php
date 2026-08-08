@@ -103,7 +103,7 @@ class SendDailyReports extends Command
                 // status + x-message-id, so every send is traceable in the
                 // MailerSend dashboard and failures surface HERE with their
                 // reason instead of vanishing after acceptance.
-                $apiKey = trim((string) env('MAILERSEND_API_KEY', ''));
+                $apiKey = trim((string) config('daily_report.mailersend_api_key', ''));
                 if ($apiKey !== '') {
                     $resp = \Illuminate\Support\Facades\Http::withToken($apiKey)
                         ->acceptJson()
