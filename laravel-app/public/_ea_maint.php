@@ -94,6 +94,42 @@ try {
             ln('exit=' . $code);
             break;
 
+        case 'migstatus':
+            // Which migrations Laravel thinks have run. The deploy workflow
+            // dies when a migration is pending but its table already exists.
+            Illuminate\Support\Facades\Artisan::call('migrate:status');
+            ln(rtrim(Illuminate\Support\Facades\Artisan::output()));
+            break;
+
+        case 'migmark':
+            // Record a migration as run WITHOUT executing it — the repair for
+            // "table already exists". Refuses unless the table is genuinely
+            // present, so a migration that really needs to run can never be
+            // skipped by accident. ?name=<migration_file_stem>&table=<table>
+            $name  = (string) ($_GET['name'] ?? '');
+            $table = (string) ($_GET['table'] ?? '');
+            if ($name === '' || $table === '') { ln('need ?name=<migration>&table=<table>'); break; }
+            if (!Illuminate\Support\Facades\Schema::hasTable($table)) {
+                ln("REFUSED: table '{$table}' does not exist — this migration should actually run, not be marked.");
+                break;
+            }
+            if (Illuminate\Support\Facades\DB::table('migrations')->where('migration', $name)->exists()) {
+                ln("already recorded: {$name}");
+                break;
+            }
+            $batch = (int) Illuminate\Support\Facades\DB::table('migrations')->max('batch');
+            Illuminate\Support\Facades\DB::table('migrations')->insert(['migration' => $name, 'batch' => $batch ?: 1]);
+            ln("marked as run: {$name} (table '{$table}' verified present, batch {$batch})");
+            break;
+
+        case 'migrate':
+            // Run pending migrations — the same command the deploy workflow
+            // runs, so a clean result here means the workflow will pass.
+            $code = Illuminate\Support\Facades\Artisan::call('migrate', ['--force' => true]);
+            ln(rtrim(Illuminate\Support\Facades\Artisan::output()));
+            ln('exit=' . $code);
+            break;
+
         case 'sendoffenders':
             // Remote trigger for the receivables Top-Offender Scorecard.
             // ?tenant=kwr (default) &to=a@b.com,... (default: config list)
