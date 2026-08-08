@@ -45,6 +45,15 @@ Schedule::command('reports:send-daily')
     ->withoutOverlapping()
     ->runInBackground();
 
+// Receivables Top-Offender Scorecard — every 3 days at 08:15 Douala (just
+// after the daily digest, so the two never contend for the same minute).
+// Recipients live in config/daily_report.php ('offenders').
+Schedule::command('reports:send-offenders')
+    ->cron('15 7 */3 * *')
+    ->timezone('Africa/Douala')
+    ->withoutOverlapping()
+    ->runInBackground();
+
 // Async-data worker: pre-computes every Odoo-heavy page for every tenant
 // (config/warm.php) so web requests only ever serve cached data — no more
 // inline multi-minute rebuilds behind Cloudflare's ~100s ceiling. A sweep
