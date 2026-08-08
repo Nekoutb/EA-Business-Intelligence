@@ -98,9 +98,39 @@ class SendDailyReports extends Command
                     $svc->dailyExpenses($date),
                     $svc->currency(),
                 );
-                Mail::to($recipients)->send($mail);
-                $this->line('     sent to ' . implode(', ', $recipients));
-                $sent++;
+                // Prefer the MailerSend API when a key is configured: unlike
+                // SMTP (fire-and-forget), the API returns a per-message
+                // status + x-message-id, so every send is traceable in the
+                // MailerSend dashboard and failures surface HERE with their
+                // reason instead of vanishing after acceptance.
+                $apiKey = trim((string) env('MAILERSEND_API_KEY', ''));
+                if ($apiKey !== '') {
+                    $resp = \Illuminate\Support\Facades\Http::withToken($apiKey)
+                        ->acceptJson()
+                        ->timeout(30)
+                        ->post('https://api.mailersend.com/v1/email', [
+                            'from'    => [
+                                'email' => (string) config('mail.from.address'),
+                                'name'  => (string) config('mail.from.name'),
+                            ],
+                            'to'      => array_map(fn ($e) => ['email' => $e], $recipients),
+                            'subject' => (string) $mail->envelope()->subject,
+                            'html'    => $mail->render(),
+                        ]);
+                    if (in_array($resp->status(), [200, 202], true)) {
+                        $this->line('     sent via API to ' . implode(', ', $recipients)
+                            . ' · message-id=' . ($resp->header('x-message-id') ?: 'n/a'));
+                        $sent++;
+                    } else {
+                        $this->error('     API send failed: HTTP ' . $resp->status()
+                            . ' · ' . mb_substr((string) $resp->body(), 0, 300));
+                        $failed++;
+                    }
+                } else {
+                    Mail::to($recipients)->send($mail);
+                    $this->line('     sent to ' . implode(', ', $recipients));
+                    $sent++;
+                }
             } catch (\Throwable $e) {
                 $this->error('     failed: ' . $e->getMessage());
                 $failed++;
