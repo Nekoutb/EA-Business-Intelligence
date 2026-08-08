@@ -3,6 +3,18 @@
 return [
     /*
     |--------------------------------------------------------------------------
+    | MailerSend API key
+    |--------------------------------------------------------------------------
+    |
+    | Read HERE, not via env() at call time: once `php artisan config:cache`
+    | runs (the deploy workflow does), env() returns null outside config files
+    | and the senders silently fall back to SMTP — losing the per-message id
+    | that makes delivery traceable.
+    */
+    'mailersend_api_key' => env('MAILERSEND_API_KEY'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Daily activity report — recipients per tenant
     |--------------------------------------------------------------------------
     |
