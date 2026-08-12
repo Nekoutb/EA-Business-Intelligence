@@ -316,7 +316,17 @@ final class BillingService
         $billedByMonth    = [];
         $collectedByMonth = [];
 
-        // Billed + the fully-settled share of collected, month × state.
+        // Billed, plus collected wherever a whole payment-state group settles
+        // uniformly. Group sums carry total and residual too, so each group
+        // is classified by arithmetic rather than by state name:
+        //   residual 0        → fully settled  → collected += HT
+        //   residual = total  → nothing paid   → contributes nothing
+        //   anything else     → mixed          → fetched row-wise below
+        // The dual-run gate caught the earlier assumption that only
+        // paid/in_payment can contribute: reversed and credit-noted invoices
+        // clear their residual too, and the original per-invoice formula
+        // credits them. Classifying by residual reproduces it exactly.
+        $mixed = [];
         $rows = $this->odoo->callModel('account.move', 'read_group', [
             'domain'  => [
                 ['move_type', '=', 'out_invoice'],
@@ -324,40 +334,50 @@ final class BillingService
                 ['invoice_date', '>=', $from->format('Y-m-d')],
                 ['invoice_date', '<=', $to->format('Y-m-d')],
             ],
-            'fields'  => ['amount_untaxed_signed:sum'],
+            'fields'  => ['amount_untaxed_signed:sum', 'amount_total_signed:sum', 'amount_residual_signed:sum'],
             'groupby' => ['invoice_date:month', 'payment_state'],
             'lazy'    => false,
         ]);
         foreach ((array) $rows as $r) {
             $m = $this->monthOfGroup($r, 'invoice_date');
             if ($m === null) continue;
-            $ht = (float) ($r['amount_untaxed_signed'] ?? 0);
+            $ht    = (float) ($r['amount_untaxed_signed'] ?? 0);
+            $total = (float) ($r['amount_total_signed'] ?? 0);
+            $resid = (float) ($r['amount_residual_signed'] ?? 0);
+
             $billedByMonth[$m] = ($billedByMonth[$m] ?? 0.0) + $ht;
-            if (in_array((string) ($r['payment_state'] ?? ''), ['paid', 'in_payment'], true)) {
+
+            if (abs($resid) < 0.005) {
                 $collectedByMonth[$m] = ($collectedByMonth[$m] ?? 0.0) + $ht;
+            } elseif (abs($resid - $total) >= 0.005) {
+                $mixed[] = [$m, (string) ($r['payment_state'] ?? '')];
             }
         }
 
-        // Partially-paid minority — exact per-invoice progress.
-        $partials = $this->odoo->searchRead('account.move',
-            [
-                ['move_type', '=', 'out_invoice'], ['state', '=', 'posted'],
-                ['invoice_date', '>=', $from->format('Y-m-d')],
-                ['invoice_date', '<=', $to->format('Y-m-d')],
-                ['payment_state', '=', 'partial'],
-            ],
-            ['invoice_date', 'amount_untaxed_signed', 'amount_total_signed', 'amount_residual_signed'],
-            ['limit' => self::INVOICE_FETCH_CAP]
-        );
-        foreach ($partials as $inv) {
-            $m = (int) substr((string) ($inv['invoice_date'] ?? '0000-00'), 5, 2);
-            if ($m < 1 || $m > 12) continue;
-            $total = (float) ($inv['amount_total_signed'] ?? 0);
-            if ($total <= 0) continue;
-            $resid = (float) ($inv['amount_residual_signed'] ?? 0);
-            $ht    = (float) ($inv['amount_untaxed_signed'] ?? 0);
-            $collectedByMonth[$m] = ($collectedByMonth[$m] ?? 0.0)
-                + $ht * max(0.0, min(1.0, ($total - $resid) / $total));
+        // Mixed groups only — exact per-invoice progress, same formula as the
+        // original loop. Typically a handful of invoices.
+        $year = (int) $from->format('Y');
+        foreach ($mixed as [$m, $state]) {
+            $ms = new \DateTimeImmutable(sprintf('%04d-%02d-01', $year, $m));
+            $me = $ms->modify('last day of this month');
+            $invs = $this->odoo->searchRead('account.move',
+                [
+                    ['move_type', '=', 'out_invoice'], ['state', '=', 'posted'],
+                    ['payment_state', '=', $state],
+                    ['invoice_date', '>=', ($ms < $from ? $from : $ms)->format('Y-m-d')],
+                    ['invoice_date', '<=', ($me > $to ? $to : $me)->format('Y-m-d')],
+                ],
+                ['amount_untaxed_signed', 'amount_total_signed', 'amount_residual_signed'],
+                ['limit' => self::INVOICE_FETCH_CAP]
+            );
+            foreach ($invs as $inv) {
+                $total = (float) ($inv['amount_total_signed'] ?? 0);
+                if ($total <= 0) continue;
+                $resid = (float) ($inv['amount_residual_signed'] ?? 0);
+                $ht    = (float) ($inv['amount_untaxed_signed'] ?? 0);
+                $collectedByMonth[$m] = ($collectedByMonth[$m] ?? 0.0)
+                    + $ht * max(0.0, min(1.0, ($total - $resid) / $total));
+            }
         }
 
         // Emit one bucket per calendar month in the window, clamped to it —
