@@ -94,6 +94,54 @@ try {
             ln('exit=' . $code);
             break;
 
+        case 'reconcheck':
+            // P1 GATE — dual-run: batched reconciliation vs the original
+            // per-month loop, month by month, with timings. The batched path
+            // ships only if every variance is 0.00. ?tenant=slug
+            $slug = (string) ($_GET['tenant'] ?? 'transatlanticd');
+            $tenant = App\Models\Tenant::where('slug', $slug)->first();
+            if (!$tenant) { ln("no tenant '{$slug}'"); break; }
+            app(App\Tenancy\TenantContext::class)->set($tenant);
+            $client = App\Odoo\OdooFactory::fromConfig();
+            $period = ['type' => 'ytd', 'year' => (int) date('Y')];
+
+            $run = function (bool $batched) use ($client, $period) {
+                config(['bi.recon_batched' => $batched]);
+                $t0 = microtime(true);
+                $r = (new App\Services\BillingService($client))->reconciliationOnly(null, $period);
+                return [$r, microtime(true) - $t0];
+            };
+            [$new, $tNew] = $run(true);
+            [$old, $tOld] = $run(false);
+            config(['bi.recon_batched' => true]);
+
+            ln(sprintf('batched %.1fs · per-month loop %.1fs · speed-up %.1f×', $tNew, $tOld, $tOld > 0 ? $tOld / $tNew : 0));
+            ln();
+            ln(sprintf('%-6s %18s %18s %18s', 'month', 'Δ expected', 'Δ billed', 'Δ collected'));
+            $nb = (array) ($new['buckets'] ?? []); $ob = (array) ($old['buckets'] ?? []);
+            $worst = 0.0;
+            foreach ($ob as $i => $o) {
+                $n = $nb[$i] ?? ['expected' => 0, 'billed' => 0, 'collected' => 0];
+                $d = [
+                    (float) $n['expected']  - (float) $o['expected'],
+                    (float) $n['billed']    - (float) $o['billed'],
+                    (float) $n['collected'] - (float) $o['collected'],
+                ];
+                foreach ($d as $x) $worst = max($worst, abs($x));
+                ln(sprintf('%-6s %18s %18s %18s', $o['label'] ?? '?',
+                    number_format($d[0], 2), number_format($d[1], 2), number_format($d[2], 2)));
+            }
+            ln();
+            foreach (['expected', 'billed', 'collected'] as $k) {
+                $dn = (float) ($new['headline'][$k] ?? 0); $do = (float) ($old['headline'][$k] ?? 0);
+                $worst = max($worst, abs($dn - $do));
+                ln(sprintf('headline %-10s new %18s · old %18s · Δ %s', $k,
+                    number_format($dn, 2), number_format($do, 2), number_format($dn - $do, 2)));
+            }
+            ln();
+            ln('GATE: worst variance = ' . number_format($worst, 2) . ' — ' . ($worst < 0.005 ? 'PASS ✅' : 'FAIL ❌'));
+            break;
+
         case 'migstatus':
             // Which migrations Laravel thinks have run. The deploy workflow
             // dies when a migration is pending but its table already exists.

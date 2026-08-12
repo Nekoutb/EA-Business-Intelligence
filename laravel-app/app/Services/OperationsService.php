@@ -107,6 +107,103 @@ final class OperationsService
      */
     private const SCAN_TIME_SAMPLE_CAP = 10_000;
 
+    /**
+     * Scan revenue per calendar month, in TWO Odoo round-trips for the whole
+     * window (P1, Aug 2026).
+     *
+     * The reconciliation chart previously called scanRevenueBreakdown() once
+     * per month, each firing ~11 counts — ~88 round-trips for a YTD view and
+     * the dominant cost of a 251-second page. Every container tariff is
+     * currently zero (see the PRICE_HT_* block), so month-level revenue is
+     * driven solely by vehicles and wood: one read_group over vehicles
+     * grouped by month × cylinders, and one over bois grouped by
+     * month × cargo, cover every month at once.
+     *
+     * Figures are identical to summing scanRevenueBreakdown() per month —
+     * same domains, same price constants, same cylinder buckets — which the
+     * reconcheck diagnostic verifies month by month before this path is
+     * trusted.
+     *
+     * @return array<int, float> month number (1-12) => revenue HT
+     */
+    public function scanRevenueByMonth(\DateTimeImmutable $from, \DateTimeImmutable $to): array
+    {
+        $out = [];
+        $window = [
+            ['scanned', '=', true],
+            ['scanned_date', '>=', $from->format('Y-m-d 00:00:00')],
+            ['scanned_date', '<=', $to->format('Y-m-d 23:59:59')],
+        ];
+
+        // Vehicles — month × cylinders in one pass. Cylinder buckets mirror
+        // scanRevenueBreakdown exactly: 4/6 voiture, 8 camion, 12 bulldoze,
+        // anything else priced as voiture (the residual bucket).
+        try {
+            $rows = $this->odoo->callModel('aw_vehicule.vehicule', 'read_group', [
+                'domain'  => $window,
+                'fields'  => [],
+                'groupby' => ['scanned_date:month', 'cylinders'],
+                'lazy'    => false,
+            ]);
+            foreach ((array) $rows as $r) {
+                $m = $this->monthOfGroup($r, 'scanned_date');
+                if ($m === null) continue;
+                $cyl   = $r['cylinders'] ?? null;
+                $cyl   = is_array($cyl) ? (int) ($cyl[0] ?? 0) : (int) $cyl;
+                $count = (int) ($r['__count'] ?? 0);
+                $price = match ($cyl) {
+                    4, 6 => self::PRICE_HT_VOITURE,
+                    8    => self::PRICE_HT_CAMION,
+                    12   => self::PRICE_HT_BULLDOZE,
+                    default => self::PRICE_HT_VOITURE,   // residual bucket
+                };
+                $out[$m] = ($out[$m] ?? 0.0) + $count * $price;
+            }
+        } catch (\Throwable $e) {
+            // model unreachable — vehicles contribute 0, same as the
+            // per-month path's own try/catch
+        }
+
+        // Wood — tariff is per truckload, proxied by distinct cargo. Grouping
+        // by month × cargo makes each returned row one truckload in a month.
+        try {
+            $rows = $this->odoo->callModel('aw_bois.bois', 'read_group', [
+                'domain'  => $window,
+                'fields'  => [],
+                'groupby' => ['scanned_date:month', 'cargo_id'],
+                'lazy'    => false,
+            ]);
+            foreach ((array) $rows as $r) {
+                $m = $this->monthOfGroup($r, 'scanned_date');
+                if ($m === null || empty($r['cargo_id']) || $r['cargo_id'] === false) continue;
+                $out[$m] = ($out[$m] ?? 0.0) + self::PRICE_HT_WOOD_PER_TRUCK;
+            }
+        } catch (\Throwable $e) {
+            // model unreachable — wood contributes 0
+        }
+
+        return $out;
+    }
+
+    /**
+     * Month number from a read_group row. Odoo reports the bucket either as
+     * a __range (preferred — unambiguous) or as a localised label string.
+     */
+    private function monthOfGroup(array $row, string $field): ?int
+    {
+        $from = $row['__range'][$field]['from']
+            ?? $row['__range'][$field . ':month']['from']
+            ?? null;
+        if (is_string($from) && strlen($from) >= 7) {
+            return (int) substr($from, 5, 2);
+        }
+        $label = $row[$field . ':month'] ?? null;
+        if (is_string($label) && ($ts = strtotime('1 ' . $label)) !== false) {
+            return (int) date('n', $ts);
+        }
+        return null;
+    }
+
     public function __construct(OdooClient $odoo)
     {
         $this->odoo = $odoo;
