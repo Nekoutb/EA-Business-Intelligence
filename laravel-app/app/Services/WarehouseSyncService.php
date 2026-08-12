@@ -27,6 +27,14 @@ final class WarehouseSyncService
     /** Rows per Odoo page. */
     private const PAGE = 1000;
 
+    /**
+     * Wall-clock stop time (unix seconds, 0 = unlimited). A long backfill
+     * driven over HTTP must stop before the gateway cuts the connection;
+     * because the watermark advances per page, the next call resumes from
+     * where this one stopped.
+     */
+    private float $deadline = 0.0;
+
     /** Rows per database upsert batch. */
     private const CHUNK = 500;
 
@@ -40,8 +48,9 @@ final class WarehouseSyncService
      *
      * @return array<string, array{rows:int, seconds:float, error:?string}>
      */
-    public function syncAll(bool $full = false, ?callable $progress = null): array
+    public function syncAll(bool $full = false, ?callable $progress = null, ?string $onlyModel = null, float $deadline = 0.0): array
     {
+        $this->deadline = $deadline;
         $out = [];
         foreach ([
             'res.partner'            => fn () => $this->syncPartners($full),
@@ -49,6 +58,7 @@ final class WarehouseSyncService
             'account.move'           => fn () => $this->syncInvoices($full),
             'account.move.line'      => fn () => $this->syncInvoiceLines($full),
         ] as $model => $fn) {
+            if ($onlyModel !== null && $onlyModel !== $model) continue;
             $t0 = microtime(true);
             try {
                 $rows = $fn();
@@ -202,17 +212,37 @@ final class WarehouseSyncService
             }
 
             $rows += count($page);
-            if (count($page) < self::PAGE) break;
-            $offset += self::PAGE;
-        }
 
-        // Advance the watermark only after every page landed.
-        DB::table('wh_sync_state')->where('id', $state->id)->update([
-            'last_write_date' => $maxWrite,
-            'last_run_at'     => now(),
-            'rows_synced'     => (int) $state->rows_synced + $rows,
-            'updated_at'      => now(),
-        ]);
+            // Advance the watermark after EVERY page so a long backfill is
+            // resumable. One second of overlap on resume is deliberate:
+            // records sharing the page's last write_date get re-read rather
+            // than skipped, and the upsert makes that a no-op.
+            if ($maxWrite !== null) {
+                DB::table('wh_sync_state')->where('id', $state->id)->update([
+                    'last_write_date' => date('Y-m-d H:i:s', max(0, strtotime($maxWrite) - 1)),
+                    'last_run_at'     => now(),
+                    'rows_synced'     => (int) $state->rows_synced + $rows,
+                    'updated_at'      => now(),
+                ]);
+            }
+
+            if (count($page) < self::PAGE) break;
+
+            // Out of time — stop cleanly; the watermark already points at the
+            // resume position.
+            if ($this->deadline > 0 && microtime(true) >= $this->deadline) break;
+
+            // Watermark-driven paging: the domain now excludes what we just
+            // wrote, so keep reading from the start rather than walking an
+            // offset that would skip rows.
+            if ($watermark !== null || $maxWrite !== null) {
+                $domain = $extra;
+                $domain[] = ['write_date', '>', (string) DB::table('wh_sync_state')->where('id', $state->id)->value('last_write_date')];
+                $offset = 0;
+            } else {
+                $offset += self::PAGE;
+            }
+        }
 
         return $rows;
     }

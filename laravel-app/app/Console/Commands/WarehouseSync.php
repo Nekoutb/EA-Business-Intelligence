@@ -22,7 +22,9 @@ class WarehouseSync extends Command
 {
     protected $signature = 'bms:warehouse-sync
                             {--tenant= : Only this tenant slug}
-                            {--full    : Ignore watermarks and re-read everything}';
+                            {--full    : Ignore watermarks and re-read everything}
+                            {--model=  : Only this Odoo model (res.partner, account.account, account.move, account.move.line)}
+                            {--seconds=0 : Stop cleanly after N seconds (0 = no limit); resumes next run}';
 
     protected $description = 'Copy Odoo facts into the local warehouse tables (P2)';
 
@@ -51,10 +53,11 @@ class WarehouseSync extends Command
                 try {
                     app(TenantContext::class)->set($tenant);
                     $svc = new WarehouseSyncService(OdooFactory::fromConfig(), $tenant);
+                    $budget = (float) $this->option('seconds');
                     $res = $svc->syncAll($full, function (string $model, array $r) {
                         $this->line(sprintf('   %-20s %8s rows %7.1fs %s',
                             $model, number_format($r['rows']), $r['seconds'], $r['error'] ?? ''));
-                    });
+                    }, ($this->option('model') ?: null), $budget > 0 ? microtime(true) + $budget : 0.0);
                     $fixed = $svc->reconcileLineDates();
                     $this->line("   line dates back-filled: " . number_format($fixed));
                     foreach ($res as $r) if ($r['error']) $failed++;

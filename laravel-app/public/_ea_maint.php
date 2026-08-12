@@ -97,7 +97,9 @@ try {
         case 'whsync':
             // Run the warehouse sync for one tenant. &full=1 for a backfill.
             $args = ['--tenant' => (string) ($_GET['tenant'] ?? 'kwr')];
-            if (!empty($_GET['full'])) $args['--full'] = true;
+            if (!empty($_GET['full']))    $args['--full'] = true;
+            if (!empty($_GET['model']))   $args['--model'] = (string) $_GET['model'];
+            $args['--seconds'] = (string) ((int) ($_GET['seconds'] ?? 70));
             $t0 = microtime(true);
             $code = Illuminate\Support\Facades\Artisan::call('bms:warehouse-sync', $args);
             ln(rtrim(Illuminate\Support\Facades\Artisan::output()));
