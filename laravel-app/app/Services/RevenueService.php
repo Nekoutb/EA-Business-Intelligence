@@ -144,6 +144,7 @@ final class RevenueService
             'partner_orders_py'  => $py['partner_orders'],
             'partner_months_py'  => $py['partner_months'],
             'doc_ids_cy'         => $cy['doc_ids'],
+            'line_scope_cy'      => $cy['line_scope'] ?? [],
             'budget'             => $this->buildBudgetPackage($cyFrom, $cyTo, $cy['series']),
         ];
     }
@@ -156,22 +157,90 @@ final class RevenueService
     {
         [$model, $domain, $dateField, $amountField, $lineModel, $lineParentField] = $this->modelConfig($from, $to);
 
-        // Pull only what we need. Paginate in chunks to be safe on large datasets.
-        $records = [];
-        $offset = 0;
-        $limit  = 1000;
-        do {
-            $batch = $this->odoo->searchRead($model, $domain, [$dateField, $amountField, 'partner_id', 'id'], [
-                'offset' => $offset,
-                'limit'  => $limit,
-                'order'  => $dateField . ' asc',
-            ]);
-            foreach ($batch as $r) {
-                $records[] = $r;
-            }
-            $offset += $limit;
-        } while (count($batch) === $limit);
+        // Scope for line queries: the parent domain with each condition
+        // prefixed by the parent link, e.g. move_id.invoice_date >= X. Lets
+        // downstream product sections target lines directly instead of
+        // needing a list of every document id.
+        $lineScope = [];
+        foreach ($domain as $cond) {
+            $lineScope[] = (is_array($cond) && count($cond) === 3)
+                ? [$lineParentField . '.' . $cond[0], $cond[1], $cond[2]]
+                : $cond;
+        }
 
+        // Batched path (P1, Aug 2026): totals, the daily series and the
+        // per-customer aggregates are all group-bys. Walking every document
+        // for two years cost ~32 round-trips per analyse and was the largest
+        // remaining slice of the dashboard. Identical arithmetic — Odoo sums
+        // the same field over the same domain.
+        $records = null;
+        if (config('bi.revenue_batched', true)) {
+            try {
+                $total = 0.0; $series = []; $orderIds = [];
+                $partnerRevenue = []; $partnerNames = []; $partnerOrders = []; $partnerMonths = [];
+
+                foreach ((array) $this->odoo->callModel($model, 'read_group', [
+                    'domain' => $domain, 'fields' => [$amountField . ':sum'],
+                    'groupby' => [$dateField . ':day'], 'lazy' => false,
+                ]) as $g) {
+                    $day = $this->dayOfGroup($g, $dateField);
+                    $amt = (float) ($g[$amountField] ?? 0);
+                    $total += $amt;
+                    if ($day !== null) $series[$day] = ($series[$day] ?? 0.0) + $amt;
+                }
+
+                foreach ((array) $this->odoo->callModel($model, 'read_group', [
+                    'domain' => $domain, 'fields' => [$amountField . ':sum'],
+                    'groupby' => ['partner_id'], 'lazy' => false,
+                ]) as $g) {
+                    $pv = $g['partner_id'] ?? null;
+                    if (!is_array($pv)) continue;
+                    $pid = (int) $pv[0];
+                    $partnerRevenue[$pid] = ($partnerRevenue[$pid] ?? 0.0) + (float) ($g[$amountField] ?? 0);
+                    $partnerNames[$pid]   = $partnerNames[$pid] ?? (string) ($pv[1] ?? '');
+                    $partnerOrders[$pid]  = ($partnerOrders[$pid] ?? 0) + (int) ($g['__count'] ?? 0);
+                }
+
+                foreach ((array) $this->odoo->callModel($model, 'read_group', [
+                    'domain' => $domain, 'fields' => [],
+                    'groupby' => ['partner_id', $dateField . ':month'], 'lazy' => false,
+                ]) as $g) {
+                    $pv = $g['partner_id'] ?? null;
+                    if (!is_array($pv)) continue;
+                    $day = $this->dayOfGroup($g, $dateField);
+                    if ($day !== null) $partnerMonths[(int) $pv[0]][substr($day, 0, 7)] = true;
+                }
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning('revenue batched aggregate failed, paginating', [
+                    'error' => $e->getMessage(),
+                ]);
+                // Discard any partial aggregate so the row path below runs
+                // from a clean slate rather than inheriting half a result.
+                unset($total, $series, $orderIds, $partnerRevenue, $partnerNames, $partnerOrders, $partnerMonths);
+                $records = null;
+            }
+        }
+
+        // Row fetch — original path, used when the batched aggregate is
+        // disabled or failed.
+        if (!isset($partnerRevenue)) {
+            $records = [];
+            $offset = 0;
+            $limit  = 1000;
+            do {
+                $batch = $this->odoo->searchRead($model, $domain, [$dateField, $amountField, 'partner_id', 'id'], [
+                    'offset' => $offset,
+                    'limit'  => $limit,
+                    'order'  => $dateField . ' asc',
+                ]);
+                foreach ($batch as $r) {
+                    $records[] = $r;
+                }
+                $offset += $limit;
+            } while (count($batch) === $limit);
+        }
+
+        if ($records !== null) {
         $total   = 0.0;
         $series  = [];
         $orderIds = [];
@@ -213,6 +282,7 @@ final class RevenueService
                 }
             }
         }
+        } // /row-path aggregation
         $customers = count($partnerRevenue);
 
         // Count outfits and compute discount metrics from product lines.
@@ -222,8 +292,10 @@ final class RevenueService
         $outfits = 0;
         $totalDiscount = 0.0;
         $discountedOutfits = 0;
-        if ($orderIds !== [] && $lineModel !== null) {
-            $lineDomain = [[$lineParentField, 'in', $orderIds]];
+        if ($lineModel !== null) {
+            $lineDomain = $orderIds !== []
+                ? [[$lineParentField, 'in', $orderIds]]
+                : $lineScope;
             if ($lineModel === 'account.move.line') {
                 $lineDomain[] = ['display_type', 'not in',
                     ['line_section', 'line_note', 'payment_term', 'tax', 'cogs', 'rounding']];
@@ -245,9 +317,12 @@ final class RevenueService
                 try {
                     $outfits = 0;
                     // Chunk the id list so a single domain payload stays sane.
-                    foreach (array_chunk($orderIds, 5000) as $idChunk) {
+                    $chunks = $orderIds !== [] ? array_chunk($orderIds, 5000) : [null];
+                    foreach ($chunks as $idChunk) {
                         $chunkDomain = $lineDomain;
-                        $chunkDomain[0] = [$lineParentField, 'in', $idChunk];
+                        if ($idChunk !== null) {
+                            $chunkDomain[0] = [$lineParentField, 'in', $idChunk];
+                        }
                         $g = $this->odoo->callModel($lineModel, 'read_group', [
                             'domain' => $chunkDomain, 'fields' => [], 'groupby' => [], 'lazy' => false,
                         ]);
@@ -331,6 +406,7 @@ final class RevenueService
             'partner_orders'     => $partnerOrders,
             'partner_months'     => $partnerMonths,
             'doc_ids'            => $orderIds,
+            'line_scope'         => $lineScope,
             'total_discount'     => $totalDiscount,
             'discounted_outfits' => $discountedOutfits,
         ];
@@ -374,7 +450,8 @@ final class RevenueService
     public function topProducts(array $analysis, int $limit = 5): array
     {
         $docIds = $analysis['doc_ids_cy'] ?? [];
-        if ($docIds === []) {
+        $scope  = (array) ($analysis['line_scope_cy'] ?? []);
+        if ($docIds === [] && $scope === []) {
             return [];
         }
         $total = (float) ($analysis['current']['total'] ?? 0.0);
@@ -396,7 +473,7 @@ final class RevenueService
             return [];
         }
 
-        $domain = array_merge([[$parent, 'in', $docIds]], $extraDomain);
+        $domain = array_merge($docIds !== [] ? [[$parent, 'in', $docIds]] : $scope, $extraDomain);
         $lines = $this->odoo->searchRead($lineModel, $domain,
             ['product_id', $amountField, $qtyField], []);
 
@@ -428,6 +505,16 @@ final class RevenueService
      * @return array{0:string,1:array,2:string,3:string,4:?string,5:?string}
      *   [model, domain, dateField, amountField, lineModel, lineParentField]
      */
+    /** Day (Y-m-d) from a read_group row; __range preferred, label fallback. */
+    private function dayOfGroup(array $row, string $field): ?string
+    {
+        $f = $row['__range'][$field]['from'] ?? $row['__range'][$field . ':day']['from'] ?? null;
+        if (is_string($f) && strlen($f) >= 10) return substr($f, 0, 10);
+        $label = $row[$field . ':day'] ?? null;
+        if (is_string($label) && ($ts = strtotime($label)) !== false) return date('Y-m-d', $ts);
+        return null;
+    }
+
     private function modelConfig(\DateTimeImmutable $from, \DateTimeImmutable $to): array
     {
         $fromS = $from->format('Y-m-d H:i:s');
@@ -517,7 +604,8 @@ final class RevenueService
     public function productProfitability(array $analysis, int $limit = 5): array
     {
         $docIds = $analysis['doc_ids_cy'] ?? [];
-        if ($docIds === []) {
+        $scope  = (array) ($analysis['line_scope_cy'] ?? []);
+        if ($docIds === [] && $scope === []) {
             return ['most_profitable' => [], 'least_profitable' => []];
         }
 
@@ -540,7 +628,7 @@ final class RevenueService
         }
 
         // Fetch all product lines for the period's documents
-        $domain = array_merge([[$parent, 'in', $docIds]], $extraDomain);
+        $domain = array_merge($docIds !== [] ? [[$parent, 'in', $docIds]] : $scope, $extraDomain);
         $lines = [];
         $offset = 0;
         $batchSize = 1000;
@@ -628,7 +716,8 @@ final class RevenueService
     public function topDiscountedProducts(array $analysis, int $limit = 5): array
     {
         $docIds = $analysis['doc_ids_cy'] ?? [];
-        if ($docIds === []) {
+        $scope  = (array) ($analysis['line_scope_cy'] ?? []);
+        if ($docIds === [] && $scope === []) {
             return [];
         }
 
@@ -649,7 +738,7 @@ final class RevenueService
 
         // Only fetch lines that actually have a discount > 0
         $domain = array_merge(
-            [[$parent, 'in', $docIds], ['discount', '>', 0]],
+            array_merge($docIds !== [] ? [[$parent, 'in', $docIds]] : $scope, [['discount', '>', 0]]),
             $extraDomain
         );
 
