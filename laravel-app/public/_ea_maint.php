@@ -126,8 +126,8 @@ try {
             foreach ((array) ($ar['ar_evolution'] ?? []) as $e) {
                 ln(sprintf('%-6s %18s %18s %18s', $e['label'] ?? '?',
                     number_format((float) ($e['total'] ?? 0), 2),
-                    number_format((float) ($e['over60'] ?? 0), 2),
-                    number_format((float) ($e['over90'] ?? 0), 2)));
+                    number_format((float) ($e['over_60'] ?? 0), 2),
+                    number_format((float) ($e['over_90'] ?? 0), 2)));
             }
             break;
 
