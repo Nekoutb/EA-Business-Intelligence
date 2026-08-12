@@ -54,6 +54,15 @@ Schedule::command('reports:send-offenders')
     ->withoutOverlapping()
     ->runInBackground();
 
+// P2 — warehouse sync. Incremental: each model resumes from its watermark,
+// so a run only carries what changed. Every 15 minutes, offset from the
+// page warmer so the two never compete for the same minute, and given a
+// 10-minute budget after which it stops cleanly and resumes next tick.
+Schedule::command('bms:warehouse-sync --seconds=600')
+    ->cron('7,22,37,52 * * * *')
+    ->withoutOverlapping(30)
+    ->runInBackground();
+
 // Async-data worker: pre-computes every Odoo-heavy page for every tenant
 // (config/warm.php) so web requests only ever serve cached data — no more
 // inline multi-minute rebuilds behind Cloudflare's ~100s ceiling. A sweep
