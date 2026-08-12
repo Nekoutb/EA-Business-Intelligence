@@ -94,6 +94,44 @@ try {
             ln('exit=' . $code);
             break;
 
+        case 'revcheck':
+            // P1 GATE — revenue: batched line metrics vs the row fetch.
+            $slug = (string) ($_GET['tenant'] ?? 'transatlanticd');
+            $tenant = App\Models\Tenant::where('slug', $slug)->first();
+            if (!$tenant) { ln("no tenant '{$slug}'"); break; }
+            app(App\Tenancy\TenantContext::class)->set($tenant);
+            $client = App\Odoo\OdooFactory::fromConfig();
+            $src = (string) config_env('REVENUE_SOURCE', 'invoice');
+            $period = ['type' => 'ytd', 'year' => (int) date('Y')];
+            $run = function (bool $b) use ($client, $src, $period) {
+                config(['bi.revenue_batched' => $b]);
+                $t0 = microtime(true);
+                $r = (new App\Services\RevenueService($client, $src))->analyze(null, $period);
+                return [$r, microtime(true) - $t0];
+            };
+            [$new, $tN] = $run(true);
+            [$old, $tO] = $run(false);
+            config(['bi.revenue_batched' => true]);
+            ln(sprintf('batched %.1fs · row fetch %.1fs · speed-up %.1f×', $tN, $tO, $tN > 0 ? $tO / $tN : 0));
+            ln();
+            $worst = 0.0;
+            foreach ([['current', 'total'], ['current', 'outfits'], ['current', 'customers'],
+                      ['current', 'total_discount'], ['current', 'discounted_outfits'],
+                      ['prior', 'total'], ['prior', 'outfits']] as [$grp, $k]) {
+                $n = (float) ($new[$grp][$k] ?? 0); $o = (float) ($old[$grp][$k] ?? 0);
+                $worst = max($worst, abs($n - $o));
+                ln(sprintf('%-8s %-20s new %18s · old %18s · Δ %s', $grp, $k,
+                    number_format($n, 2), number_format($o, 2), number_format($n - $o, 2)));
+            }
+            $sN = (array) ($new['current']['series'] ?? []); $sO = (array) ($old['current']['series'] ?? []);
+            $sd = 0.0;
+            foreach ($sO as $d => $v) $sd = max($sd, abs((float) $v - (float) ($sN[$d] ?? 0)));
+            $worst = max($worst, $sd);
+            ln(sprintf('%-8s %-20s %d days · worst daily Δ %s', 'series', 'daily', count($sO), number_format($sd, 2)));
+            ln();
+            ln('GATE: worst variance = ' . number_format($worst, 2) . ' — ' . ($worst < 0.005 ? 'PASS ✅' : 'FAIL ❌'));
+            break;
+
         case 'reconcheck':
             // P1 GATE — dual-run: batched reconciliation vs the original
             // per-month loop, month by month, with timings. The batched path
