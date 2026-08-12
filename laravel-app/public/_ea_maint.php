@@ -146,11 +146,74 @@ try {
                 $r = (new App\Services\RevenueService($client, $src))->analyze(null, $period);
                 return [$r, microtime(true) - $t0];
             };
-            [$new, $tN] = $run(true);
-            [$old, $tO] = $run(false);
-            config(['bi.revenue_batched' => true]);
-            ln(sprintf('batched %.1fs · row fetch %.1fs · speed-up %.1f×', $tN, $tO, $tN > 0 ? $tO / $tN : 0));
+            // ONE path per request (&path=batched|row), figures stashed in
+            // cache; &path=compare diffs them. Running both back-to-back
+            // exceeded Cloudflare's 100s ceiling — the OLD path alone is ~60s.
+            $which = (string) ($_GET['path'] ?? 'compare');
+            $ckey  = 'revcheck:' . $slug . ':';
+            $shape = fn (array $r) => [
+                'total'              => (float) ($r['current']['total'] ?? 0),
+                'outfits'            => (float) ($r['current']['outfits'] ?? 0),
+                'customers'          => (float) ($r['current']['customers'] ?? 0),
+                'total_discount'     => (float) ($r['current']['total_discount'] ?? 0),
+                'discounted_outfits' => (float) ($r['current']['discounted_outfits'] ?? 0),
+                'prior_total'        => (float) ($r['prior']['total'] ?? 0),
+                'prior_outfits'      => (float) ($r['prior']['outfits'] ?? 0),
+                'series'             => array_map('floatval', (array) ($r['current']['series'] ?? [])),
+            ];
+            if ($which === 'batched' || $which === 'row') {
+                [$res, $t] = $run($which === 'batched');
+                config(['bi.revenue_batched' => true]);
+                Illuminate\Support\Facades\Cache::put($ckey . $which, $shape($res), 3600);
+                ln(sprintf('%s path: %.1fs · total %s · outfits %s · discount %s', $which, $t,
+                    number_format((float) ($res['current']['total'] ?? 0), 2),
+                    number_format((float) ($res['current']['outfits'] ?? 0)),
+                    number_format((float) ($res['current']['total_discount'] ?? 0), 2)));
+                ln('stashed — run the other path, then &path=compare');
+                break;
+            }
+            $newS = Illuminate\Support\Facades\Cache::get($ckey . 'batched');
+            $oldS = Illuminate\Support\Facades\Cache::get($ckey . 'row');
+            if (!$newS || !$oldS) { ln('need both runs first: &path=batched then &path=row'); break; }
+            $worstS = 0.0;
+            foreach (['total', 'outfits', 'customers', 'total_discount', 'discounted_outfits', 'prior_total', 'prior_outfits'] as $k) {
+                $d = (float) $newS[$k] - (float) $oldS[$k];
+                $worstS = max($worstS, abs($d));
+                ln(sprintf('%-20s batched %18s · row %18s · Δ %s', $k,
+                    number_format((float) $newS[$k], 2), number_format((float) $oldS[$k], 2), number_format($d, 2)));
+            }
+            $sdS = 0.0;
+            foreach ((array) $oldS['series'] as $d => $v) $sdS = max($sdS, abs((float) $v - (float) ($newS['series'][$d] ?? 0)));
+            $worstS = max($worstS, $sdS);
+            ln(sprintf('%-20s %d days · worst daily Δ %s', 'series', count((array) $oldS['series']), number_format($sdS, 2)));
             ln();
+            ln('GATE: worst variance = ' . number_format($worstS, 2) . ' — ' . ($worstS < 0.005 ? 'PASS ✅' : 'FAIL ❌'));
+            break;
+
+        case 'dashtime':
+            // P1 outcome measure — cold dashboard compute, cache cleared.
+            $slug = (string) ($_GET['tenant'] ?? 'transatlanticd');
+            $tenant = App\Models\Tenant::where('slug', $slug)->first();
+            if (!$tenant) { ln("no tenant '{$slug}'"); break; }
+            app(App\Tenancy\TenantContext::class)->set($tenant);
+            if (function_exists('ea_cache_clear')) ea_cache_clear();
+            $req = Illuminate\Http\Request::create('/t/' . $slug, 'GET', ['period' => (string) ($_GET['period'] ?? 'ytd')]);
+            app()->instance('request', $req);
+            try { $s = app('session')->driver(); $s->start(); $req->setLaravelSession($s); } catch (\Throwable $e) {}
+            $u = App\Models\User::where('tenant_id', $tenant->id)->orderBy('id')->first();
+            if ($u) { try { Illuminate\Support\Facades\Auth::login($u); } catch (\Throwable $e) {} }
+            $t0 = microtime(true);
+            $resp = app()->call([app(App\Http\Controllers\DashboardController::class), 'index']);
+            $tData = microtime(true) - $t0;
+            $t1 = microtime(true);
+            $html = ($resp instanceof Illuminate\Contracts\Support\Renderable) ? $resp->render() : '';
+            $tRender = microtime(true) - $t1;
+            ln(sprintf('COLD dashboard (%s): data %.1fs · render %.1fs · TOTAL %.1fs · %d bytes',
+                $slug, $tData, $tRender, $tData + $tRender, strlen((string) $html)));
+            ln('baseline before P1: 266.0s');
+            break;
+
+        case 'revcheck_unused':
             $worst = 0.0;
             foreach ([['current', 'total'], ['current', 'outfits'], ['current', 'customers'],
                       ['current', 'total_discount'], ['current', 'discounted_outfits'],
