@@ -296,6 +296,101 @@ final class BillingService
     }
 
     /**
+     * Monthly reconciliation buckets in ~4 Odoo round-trips for the whole
+     * window, replacing ~13 per month.
+     *
+     * Expected: OperationsService::scanRevenueByMonth (2 grouped calls).
+     * Billed:   one read_group on posted customer invoices, month × payment
+     *           state, summing amount_untaxed_signed.
+     * Collected: HT × payment progress, exactly as the per-invoice path —
+     *           fully-paid states weigh 1 (so their HT sum is their
+     *           collected), and only the partial minority is fetched
+     *           row-wise for its exact fraction. Not an approximation.
+     *
+     * @return array<int, array{label:string, from:string, to:string, expected:float, billed:float, collected:float}>
+     */
+    private function reconciliationBucketsBatched(\DateTimeImmutable $from, \DateTimeImmutable $to): array
+    {
+        $expectedByMonth = (new OperationsService($this->odoo))->scanRevenueByMonth($from, $to);
+
+        $billedByMonth    = [];
+        $collectedByMonth = [];
+
+        // Billed + the fully-settled share of collected, month × state.
+        $rows = $this->odoo->callModel('account.move', 'read_group', [
+            'domain'  => [
+                ['move_type', '=', 'out_invoice'],
+                ['state', '=', 'posted'],
+                ['invoice_date', '>=', $from->format('Y-m-d')],
+                ['invoice_date', '<=', $to->format('Y-m-d')],
+            ],
+            'fields'  => ['amount_untaxed_signed:sum'],
+            'groupby' => ['invoice_date:month', 'payment_state'],
+            'lazy'    => false,
+        ]);
+        foreach ((array) $rows as $r) {
+            $m = $this->monthOfGroup($r, 'invoice_date');
+            if ($m === null) continue;
+            $ht = (float) ($r['amount_untaxed_signed'] ?? 0);
+            $billedByMonth[$m] = ($billedByMonth[$m] ?? 0.0) + $ht;
+            if (in_array((string) ($r['payment_state'] ?? ''), ['paid', 'in_payment'], true)) {
+                $collectedByMonth[$m] = ($collectedByMonth[$m] ?? 0.0) + $ht;
+            }
+        }
+
+        // Partially-paid minority — exact per-invoice progress.
+        $partials = $this->odoo->searchRead('account.move',
+            [
+                ['move_type', '=', 'out_invoice'], ['state', '=', 'posted'],
+                ['invoice_date', '>=', $from->format('Y-m-d')],
+                ['invoice_date', '<=', $to->format('Y-m-d')],
+                ['payment_state', '=', 'partial'],
+            ],
+            ['invoice_date', 'amount_untaxed_signed', 'amount_total_signed', 'amount_residual_signed'],
+            ['limit' => self::INVOICE_FETCH_CAP]
+        );
+        foreach ($partials as $inv) {
+            $m = (int) substr((string) ($inv['invoice_date'] ?? '0000-00'), 5, 2);
+            if ($m < 1 || $m > 12) continue;
+            $total = (float) ($inv['amount_total_signed'] ?? 0);
+            if ($total <= 0) continue;
+            $resid = (float) ($inv['amount_residual_signed'] ?? 0);
+            $ht    = (float) ($inv['amount_untaxed_signed'] ?? 0);
+            $collectedByMonth[$m] = ($collectedByMonth[$m] ?? 0.0)
+                + $ht * max(0.0, min(1.0, ($total - $resid) / $total));
+        }
+
+        // Emit one bucket per calendar month in the window, clamped to it —
+        // same shape and labels the chart already consumes.
+        $buckets = [];
+        $cursor  = new \DateTimeImmutable($from->format('Y-m-01'));
+        while ($cursor <= $to) {
+            $monthEnd = $cursor->modify('last day of this month')->setTime(23, 59, 59);
+            $m = (int) $cursor->format('n');
+            $buckets[] = [
+                'label'     => $cursor->format('M'),
+                'from'      => ($cursor < $from ? $from : $cursor)->format('Y-m-d'),
+                'to'        => ($monthEnd > $to ? $to : $monthEnd)->format('Y-m-d'),
+                'expected'  => (float) ($expectedByMonth[$m]  ?? 0.0),
+                'billed'    => (float) ($billedByMonth[$m]    ?? 0.0),
+                'collected' => (float) ($collectedByMonth[$m] ?? 0.0),
+            ];
+            $cursor = $cursor->modify('first day of next month');
+        }
+        return $buckets;
+    }
+
+    /** Month number from a read_group row (__range preferred, label fallback). */
+    private function monthOfGroup(array $row, string $field): ?int
+    {
+        $f = $row['__range'][$field]['from'] ?? $row['__range'][$field . ':month']['from'] ?? null;
+        if (is_string($f) && strlen($f) >= 7) return (int) substr($f, 5, 2);
+        $label = $row[$field . ':month'] ?? null;
+        if (is_string($label) && ($ts = strtotime('1 ' . $label)) !== false) return (int) date('n', $ts);
+        return null;
+    }
+
+    /**
      * Compute (expected, billed, collected) HT for [from, to].
      *
      * @return array{expected:float, billed:float, collected:float, billing_gap:float, collection_gap:float, billing_realisation_pct:?float, collection_realisation_pct:?float}
@@ -380,6 +475,23 @@ final class BillingService
         $buckets = [];
 
         if ($granularity === 'month') {
+            // Batched path (P1, Aug 2026): the per-month loop below fired
+            // ~13 Odoo calls per month — ~117 for a YTD view, the bulk of a
+            // 251-second page. Two grouped calls now cover scan revenue for
+            // every month, and two more cover billed/collected. Identical
+            // figures by construction; verified month-by-month by the
+            // reconcheck diagnostic. Set bi.recon_batched=false to fall
+            // back to the original loop.
+            if (config('bi.recon_batched', true)) {
+                try {
+                    return $this->reconciliationBucketsBatched($from, $to);
+                } catch (\Throwable $e) {
+                    \Illuminate\Support\Facades\Log::warning('recon batched path failed, using per-month loop', [
+                        'error' => $e->getMessage(),
+                    ]);
+                }
+            }
+
             $cursor = new \DateTimeImmutable($from->format('Y-m-01'));
             while ($cursor <= $to) {
                 $monthEnd = $cursor->modify('last day of this month')->setTime(23, 59, 59);

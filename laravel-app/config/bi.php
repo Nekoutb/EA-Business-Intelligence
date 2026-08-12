@@ -91,6 +91,14 @@ return [
      * visitors paid inline rebuilds again — observed 30 Jul). Freshness is
      * communicated by the "Data as of" stamp, not by expiring data.
      */
+    /**
+     * Reconciliation buckets: batched (2+2 grouped Odoo calls for the whole
+     * window) vs the original per-month loop (~13 calls per month). Kept as
+     * a switch so the old path is one config change away if a figure ever
+     * looks wrong. Verified equal by the reconcheck diagnostic.
+     */
+    'recon_batched' => (bool) env('BI_RECON_BATCHED', true),
+
     'cache_ttl' => (int) env('BI_CACHE_TTL', 21600), // 6 hours (stale-serve ceiling)
 
     /**
