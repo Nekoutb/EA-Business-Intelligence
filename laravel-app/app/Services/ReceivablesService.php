@@ -299,35 +299,43 @@ final class ReceivablesService
         $evolution = [];
         $year      = (int) $today->format('Y');
         $endMonNum = (int) $today->format('n');
+
+        // Parse each invoice's dates ONCE (P1, Aug 2026). This loop used to
+        // construct two DateTimeImmutable objects per invoice per month —
+        // ~240,000 date parses on a tenant with 15k open invoices, and the
+        // bulk of a 151-second page. The snapshot logic below is unchanged;
+        // it just compares integer timestamps instead of re-parsing strings.
+        $snap = [];
+        foreach ($records as $r) {
+            $residual = (float) ($r['amount_residual_signed'] ?? $r['amount_residual'] ?? 0);
+            if ($residual == 0.0) continue;
+            $invStr = (string) ($r['invoice_date'] ?? '');
+            if ($invStr === '') continue;
+            $invTs = strtotime(substr($invStr, 0, 10));
+            if ($invTs === false) continue;
+            $dueStr = (string) ($r['invoice_date_due'] ?? '');
+            $dueTs  = $dueStr !== '' ? strtotime(substr($dueStr, 0, 10)) : false;
+            $snap[] = [$residual, $invTs, $dueTs === false ? null : $dueTs];
+        }
+
         for ($m = 1; $m <= $endMonNum; $m++) {
             $monthEnd = new \DateTimeImmutable(sprintf('%04d-%02d-01', $year, $m));
             $monthEnd = $monthEnd->modify('last day of this month')->setTime(23, 59, 59);
             if ($monthEnd > $today) $monthEnd = $today;
+            $endTs = $monthEnd->getTimestamp();
 
             $totalAtM = 0.0; $over60AtM = 0.0; $over90AtM = 0.0;
-            foreach ($records as $r) {
-                $residual = (float) ($r['amount_residual_signed'] ?? $r['amount_residual'] ?? 0);
-                if ($residual == 0.0) continue;
-
-                $invStr = (string) ($r['invoice_date'] ?? '');
-                if ($invStr === '') continue;
-                try {
-                    $invDate = new \DateTimeImmutable(substr($invStr, 0, 10));
-                } catch (\Throwable $e) { continue; }
-                if ($invDate > $monthEnd) continue;   // not yet issued at snapshot
+            foreach ($snap as [$residual, $invTs, $dueTs]) {
+                if ($invTs > $endTs) continue;   // not yet issued at snapshot
 
                 $totalAtM += $residual;
 
-                $dueStr = (string) ($r['invoice_date_due'] ?? '');
-                if ($dueStr !== '') {
-                    try {
-                        $dueDate = new \DateTimeImmutable(substr($dueStr, 0, 10));
-                        if ($dueDate < $monthEnd) {
-                            $daysOverdueAtM = (int) $dueDate->diff($monthEnd)->days;
-                            if ($daysOverdueAtM > 60) $over60AtM += $residual;
-                            if ($daysOverdueAtM > 90) $over90AtM += $residual;
-                        }
-                    } catch (\Throwable $e) { /* skip */ }
+                if ($dueTs !== null && $dueTs < $endTs) {
+                    // Whole days between due date and snapshot — identical to
+                    // DateTimeImmutable::diff()->days for these date-only values.
+                    $daysOverdueAtM = intdiv($endTs - $dueTs, 86400);
+                    if ($daysOverdueAtM > 60) $over60AtM += $residual;
+                    if ($daysOverdueAtM > 90) $over90AtM += $residual;
                 }
             }
 
