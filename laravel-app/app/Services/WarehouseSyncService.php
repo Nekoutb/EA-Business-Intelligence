@@ -180,7 +180,11 @@ final class WarehouseSyncService
 
         $domain = $extra;
         if ($watermark) {
-            $domain[] = ['write_date', '>', (string) $watermark];
+            // '>=' not '>': if a previous run stopped on a deadline partway
+            // through a group of records sharing one write_date, '>' would
+            // skip the unread remainder. Re-reading the boundary is free —
+            // every row upserts.
+            $domain[] = ['write_date', '>=', (string) $watermark];
         }
 
         $rows = 0;
@@ -213,13 +217,14 @@ final class WarehouseSyncService
 
             $rows += count($page);
 
-            // Advance the watermark after EVERY page so a long backfill is
-            // resumable. One second of overlap on resume is deliberate:
-            // records sharing the page's last write_date get re-read rather
-            // than skipped, and the upsert makes that a no-op.
+            // Advance the watermark after every page so a long backfill can
+            // resume. Stored EXACTLY as read — an earlier version subtracted
+            // a second for safety, which meant the final record always came
+            // back on the next pass and the sync spun on it forever.
+            // Boundary safety comes from the '>=' on resume instead.
             if ($maxWrite !== null) {
                 DB::table('wh_sync_state')->where('id', $state->id)->update([
-                    'last_write_date' => date('Y-m-d H:i:s', max(0, strtotime($maxWrite) - 1)),
+                    'last_write_date' => $maxWrite,
                     'last_run_at'     => now(),
                     'rows_synced'     => (int) $state->rows_synced + $rows,
                     'updated_at'      => now(),
@@ -228,20 +233,12 @@ final class WarehouseSyncService
 
             if (count($page) < self::PAGE) break;
 
-            // Out of time — stop cleanly; the watermark already points at the
-            // resume position.
+            // Out of time — stop cleanly; the watermark marks the resume point.
             if ($this->deadline > 0 && microtime(true) >= $this->deadline) break;
 
-            // Watermark-driven paging: the domain now excludes what we just
-            // wrote, so keep reading from the start rather than walking an
-            // offset that would skip rows.
-            if ($watermark !== null || $maxWrite !== null) {
-                $domain = $extra;
-                $domain[] = ['write_date', '>', (string) DB::table('wh_sync_state')->where('id', $state->id)->value('last_write_date')];
-                $offset = 0;
-            } else {
-                $offset += self::PAGE;
-            }
+            // Offset paging against a FIXED domain. The domain must not change
+            // mid-run: mutating it while walking an offset skips rows.
+            $offset += self::PAGE;
         }
 
         return $rows;
