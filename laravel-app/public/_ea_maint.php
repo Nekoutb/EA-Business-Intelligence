@@ -94,6 +94,74 @@ try {
             ln('exit=' . $code);
             break;
 
+        case 'whsync':
+            // Run the warehouse sync for one tenant. &full=1 for a backfill.
+            $args = ['--tenant' => (string) ($_GET['tenant'] ?? 'kwr')];
+            if (!empty($_GET['full'])) $args['--full'] = true;
+            $t0 = microtime(true);
+            $code = Illuminate\Support\Facades\Artisan::call('bms:warehouse-sync', $args);
+            ln(rtrim(Illuminate\Support\Facades\Artisan::output()));
+            ln(sprintf('exit=%d · %.1fs', $code, microtime(true) - $t0));
+            break;
+
+        case 'whcheck':
+            // P2 GATE — do warehouse totals tie to Odoo? Compares row counts
+            // and money for the selected year, straight from each source.
+            $slug = (string) ($_GET['tenant'] ?? 'kwr');
+            $year = (int) ($_GET['year'] ?? date('Y'));
+            $tenant = App\Models\Tenant::where('slug', $slug)->first();
+            if (!$tenant) { ln("no tenant '{$slug}'"); break; }
+            app(App\Tenancy\TenantContext::class)->set($tenant);
+            $client = App\Odoo\OdooFactory::fromConfig();
+            $from = sprintf('%04d-01-01', $year); $to = sprintf('%04d-12-31', $year);
+
+            ln("== warehouse vs Odoo · {$slug} · {$year} ==");
+            $worst = 0.0; $rowsOff = 0;
+            foreach ([['out_invoice', 'customer invoices'], ['in_invoice', 'supplier bills']] as [$mt, $label]) {
+                $oG = $client->callModel('account.move', 'read_group', [
+                    'domain' => [['move_type', '=', $mt], ['state', '=', 'posted'],
+                                 ['invoice_date', '>=', $from], ['invoice_date', '<=', $to]],
+                    'fields' => ['amount_untaxed_signed:sum', 'amount_residual_signed:sum'],
+                    'groupby' => [], 'lazy' => false,
+                ]);
+                $oCount = (int) ($oG[0]['__count'] ?? 0);
+                $oHt    = (float) ($oG[0]['amount_untaxed_signed'] ?? 0);
+                $oRes   = (float) ($oG[0]['amount_residual_signed'] ?? 0);
+
+                $w = Illuminate\Support\Facades\DB::table('wh_fact_invoice')
+                    ->where('tenant_id', $tenant->id)->where('move_type', $mt)->where('state', 'posted')
+                    ->whereBetween('invoice_date', [$from, $to])
+                    ->selectRaw('COUNT(*) c, COALESCE(SUM(amount_untaxed),0) ht, COALESCE(SUM(amount_residual),0) res')
+                    ->first();
+                $wCount = (int) ($w->c ?? 0); $wHt = (float) ($w->ht ?? 0); $wRes = (float) ($w->res ?? 0);
+
+                $rowsOff += abs($oCount - $wCount);
+                $worst = max($worst, abs($oHt - $wHt), abs($oRes - $wRes));
+                ln(sprintf('%-20s rows %7s/%-7s Δ%-5d · HT %18s/%-18s Δ %s', $label,
+                    number_format($wCount), number_format($oCount), $wCount - $oCount,
+                    number_format($wHt, 2), number_format($oHt, 2), number_format($wHt - $oHt, 2)));
+                ln(sprintf('%-20s residual %s / %s · Δ %s', '',
+                    number_format($wRes, 2), number_format($oRes, 2), number_format($wRes - $oRes, 2)));
+            }
+
+            $lc = Illuminate\Support\Facades\DB::table('wh_fact_invoice_line')
+                ->where('tenant_id', $tenant->id)->whereBetween('invoice_date', [$from, $to])->count();
+            $oLc = $client->searchCount('account.move.line', [
+                ['move_id.move_type', 'in', ['out_invoice', 'out_refund', 'in_invoice', 'in_refund']],
+                ['date', '>=', $from], ['date', '<=', $to],
+            ]);
+            ln(sprintf('%-20s rows %7s/%-7s Δ%d', 'invoice lines', number_format($lc), number_format($oLc), $lc - $oLc));
+
+            foreach (Illuminate\Support\Facades\DB::table('wh_sync_state')->where('tenant_id', $tenant->id)->get() as $st) {
+                ln(sprintf('  state %-20s watermark %-20s rows %8s %s',
+                    $st->model, (string) ($st->last_write_date ?? '—'),
+                    number_format((int) $st->rows_synced), $st->last_error ? ('ERR: ' . mb_substr($st->last_error, 0, 60)) : ''));
+            }
+            ln();
+            ln('GATE: worst money Δ = ' . number_format($worst, 2) . ' · invoice row Δ = ' . $rowsOff
+                . ' — ' . ($worst < 0.005 && $rowsOff === 0 ? 'PASS ✅' : 'FAIL ❌'));
+            break;
+
         case 'archeck':
             // P1 GATE — receivables. The evolution rewrite is pure CPU (no
             // Odoo change), so this measures the page and prints the whole
