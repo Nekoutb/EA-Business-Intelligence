@@ -97,6 +97,14 @@ return [
      * a switch so the old path is one config change away if a figure ever
      * looks wrong. Verified equal by the reconcheck diagnostic.
      */
+    /**
+     * Revenue line metrics: aggregate the line count and fetch only
+     * discounted lines, instead of downloading every product line of every
+     * invoice for two years. Same figures; set false to restore the row
+     * fetch if a discount total ever looks wrong.
+     */
+    'revenue_batched' => (bool) env('BI_REVENUE_BATCHED', true),
+
     'recon_batched' => (bool) env('BI_RECON_BATCHED', true),
 
     'cache_ttl' => (int) env('BI_CACHE_TTL', 21600), // 6 hours (stale-serve ceiling)

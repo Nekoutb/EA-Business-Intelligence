@@ -234,7 +234,54 @@ final class RevenueService
             // Determine quantity field name
             $qtyField = ($lineModel === 'sale.order.line') ? 'product_uom_qty' : 'quantity';
 
+            // Batched path (P1, Aug 2026): the loop below downloads EVERY
+            // product line — tens of thousands of rows and ~30-100 round
+            // trips per window, twice (current + prior year). Two facts make
+            // that unnecessary: `outfits` is just a row count, and discount
+            // metrics only involve lines that actually carry a discount.
+            // So: count via read_group, then fetch only discounted lines.
+            // Identical figures — same domain, same per-line arithmetic.
+            if (config('bi.revenue_batched', true)) {
+                try {
+                    $outfits = 0;
+                    // Chunk the id list so a single domain payload stays sane.
+                    foreach (array_chunk($orderIds, 5000) as $idChunk) {
+                        $chunkDomain = $lineDomain;
+                        $chunkDomain[0] = [$lineParentField, 'in', $idChunk];
+                        $g = $this->odoo->callModel($lineModel, 'read_group', [
+                            'domain' => $chunkDomain, 'fields' => [], 'groupby' => [], 'lazy' => false,
+                        ]);
+                        $outfits += (int) ($g[0]['__count'] ?? 0);
+
+                        // Only discounted lines can move the discount totals.
+                        $discRows = $this->odoo->searchRead(
+                            $lineModel,
+                            array_merge($chunkDomain, [['discount', '>', 0]]),
+                            ['discount', 'price_unit', $qtyField],
+                            ['limit' => 20000]
+                        );
+                        foreach ($discRows as $line) {
+                            $disc = (float) ($line['discount'] ?? 0);
+                            if ($disc <= 0) continue;
+                            $totalDiscount += ((float) ($line['price_unit'] ?? 0))
+                                * ((float) ($line[$qtyField] ?? 0)) * ($disc / 100.0);
+                            $discountedOutfits++;
+                        }
+                    }
+                    // Skip the row-by-row pass below.
+                    $allLines = null;
+                } catch (\Throwable $e) {
+                    \Illuminate\Support\Facades\Log::warning('revenue batched line path failed, using row fetch', [
+                        'error' => $e->getMessage(),
+                    ]);
+                    $allLines = [];
+                }
+            } else {
+                $allLines = [];
+            }
+
             // Fetch lines with discount data to compute discount metrics
+            if ($allLines !== null) {
             $lineOffset = 0;
             $lineBatch  = 1000;
             $allLines   = [];
@@ -260,6 +307,7 @@ final class RevenueService
                     $discountedOutfits++;
                 }
             }
+            } // /row-fetch fallback
         }
 
         // Ensure every working day in the window is represented so charts stay aligned
