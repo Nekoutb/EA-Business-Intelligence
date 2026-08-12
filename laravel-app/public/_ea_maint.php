@@ -94,6 +94,43 @@ try {
             ln('exit=' . $code);
             break;
 
+        case 'archeck':
+            // P1 GATE — receivables. The evolution rewrite is pure CPU (no
+            // Odoo change), so this measures the page and prints the whole
+            // evolution series plus headline figures for eyeball comparison
+            // against the values recorded before the change.
+            $slug = (string) ($_GET['tenant'] ?? 'transatlanticd');
+            $tenant = App\Models\Tenant::where('slug', $slug)->first();
+            if (!$tenant) { ln("no tenant '{$slug}'"); break; }
+            app(App\Tenancy\TenantContext::class)->set($tenant);
+            $client = App\Odoo\OdooFactory::fromConfig();
+            $src = (string) config_env('REVENUE_SOURCE', 'invoice');
+            $t0 = microtime(true);
+            $rev = (new App\Services\RevenueService($client, $src))->analyze(null, ['type' => 'ytd', 'year' => (int) date('Y')]);
+            $tRev = microtime(true) - $t0;
+            $t1 = microtime(true);
+            $ar = (new App\Services\ReceivablesService($client))->analyze(
+                (float) ($rev['current']['total'] ?? 0),
+                (int) ($rev['period']['days'] ?? 1),
+                (string) ($rev['currency'] ?? 'XAF'),
+                new DateTimeImmutable('today')
+            );
+            $tAr = microtime(true) - $t1;
+            ln(sprintf('revenue %.1fs · receivables %.1fs · open invoices %d',
+                $tRev, $tAr, (int) ($ar['open_invoice_count'] ?? 0)));
+            ln(sprintf('total_ar %s · dso %s · over60 %s · over90 %s',
+                number_format((float) ($ar['total_ar'] ?? 0), 2), number_format((float) ($ar['dso'] ?? 0), 1),
+                number_format((float) ($ar['over60_amount'] ?? 0), 2), number_format((float) ($ar['over90_amount'] ?? 0), 2)));
+            ln();
+            ln(sprintf('%-6s %18s %18s %18s', 'month', 'total', 'over60', 'over90'));
+            foreach ((array) ($ar['ar_evolution'] ?? []) as $e) {
+                ln(sprintf('%-6s %18s %18s %18s', $e['label'] ?? '?',
+                    number_format((float) ($e['total'] ?? 0), 2),
+                    number_format((float) ($e['over60'] ?? 0), 2),
+                    number_format((float) ($e['over90'] ?? 0), 2)));
+            }
+            break;
+
         case 'revcheck':
             // P1 GATE — revenue: batched line metrics vs the row fetch.
             $slug = (string) ($_GET['tenant'] ?? 'transatlanticd');
