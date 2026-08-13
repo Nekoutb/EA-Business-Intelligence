@@ -97,10 +97,32 @@ return [
 
     /**
      * P3 — read the open-AR set from the local warehouse instead of Odoo.
-     * Default OFF: it flips on only once the p3check dual-run gate reports
-     * 0.00 variance for the tenant, per the alignment plan.
+     *
+     * ON since 13 Aug 2026: the p3check dual-run gate reported 0.00 variance
+     * on both tenants across headline figures, the whole 8-month evolution
+     * series and the 10-customer offender scorecard. Set false to fall back
+     * to reading account.move over the network; the service also falls back
+     * on its own for any tenant that has not been synced yet.
+     *
+     * Note this only re-points the invoice FETCH. DSO's denominator still
+     * comes from Odoo via GLAccountService, and that — not the invoice set —
+     * is now the floor on this page (~0.8s regardless of AR size). It clears
+     * once GL move lines land in the warehouse.
      */
-    'warehouse_receivables' => (bool) env('BI_WAREHOUSE_RECEIVABLES', false),
+    'warehouse_receivables' => (bool) env('BI_WAREHOUSE_RECEIVABLES', true),
+
+    /**
+     * P3 — read GL balances (debit/credit by account-code prefix) from the
+     * warehouse instead of Odoo. This is what the DSO denominator, the
+     * Treasury liquidity snapshot and the short-term-debt figures all go
+     * through, so it is the fixed per-page cost that re-pointing the
+     * invoice fetch alone left behind.
+     *
+     * Default OFF until glcheck reports 0.00 for a tenant. The gate is
+     * also what proves the GL backfill actually completed: a half-synced
+     * tenant cannot tie out, so it cannot pass.
+     */
+    'warehouse_gl' => (bool) env('BI_WAREHOUSE_GL', false),
 
     /**
      * How long a computed dataset may be SERVED, not how often it refreshes.
