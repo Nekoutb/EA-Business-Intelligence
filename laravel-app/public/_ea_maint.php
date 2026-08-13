@@ -157,6 +157,25 @@ try {
             ln('GATE: worst variance = ' . number_format($worst, 2) . ' — ' . ($worst < 0.005 ? 'PASS ✅' : 'FAIL ❌'));
             break;
 
+        case 'glbackfill':
+            // Fill the accounting columns on rows that predate them. Safe to
+            // call repeatedly: each pass takes the next slice of still-NULL
+            // rows, so it resumes wherever the last one ran out of time.
+            $slug = (string) ($_GET['tenant'] ?? 'kwr');
+            $tenant = App\Models\Tenant::where('slug', $slug)->first();
+            if (!$tenant) { ln("no tenant '{$slug}'"); break; }
+            app(App\Tenancy\TenantContext::class)->set($tenant);
+            $svc = new App\Services\WarehouseSyncService(App\Odoo\OdooFactory::fromConfig(), $tenant);
+            $svc->setDeadline(microtime(true) + (float) ($_GET['seconds'] ?? 70));
+            $t0 = microtime(true);
+            $r = $svc->backfillGlColumns();
+            $fixed = $svc->reconcileLineDates();
+            ln(sprintf('filled %s · removed (gone from odoo) %s · still stale %s · line dates %s · %.1fs',
+                number_format($r['filled']), number_format($r['removed']),
+                number_format($r['remaining']), number_format($fixed), microtime(true) - $t0));
+            ln($r['remaining'] === 0 ? 'BACKFILL COMPLETE ✅' : 'more passes needed — call again');
+            break;
+
         case 'glstate':
             // Ground truth for the GL fact table. Written because inferring
             // sync progress from year-scoped counts kept producing plausible

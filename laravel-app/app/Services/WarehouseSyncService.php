@@ -147,35 +147,42 @@ final class WarehouseSyncService
         return $this->pull('account.move.line', $full,
             ['move_id', 'account_id', 'product_id', 'journal_id', 'quantity', 'price_unit', 'discount',
              'price_subtotal', 'debit', 'credit', 'parent_state', 'date', 'write_date', 'display_type'],
-            function (array $r) {
-                $mv = $r['move_id'] ?? null;
-                return [
-                    'tenant_id'       => $this->tenant->id,
-                    'odoo_id'         => (int) $r['id'],
-                    'move_odoo_id'    => is_array($mv) ? (int) $mv[0] : null,
-                    'account_odoo_id' => is_array($r['account_id'] ?? null) ? (int) $r['account_id'][0] : null,
-                    'product_odoo_id' => is_array($r['product_id'] ?? null) ? (int) $r['product_id'][0] : null,
-                    'journal_odoo_id' => is_array($r['journal_id'] ?? null) ? (int) $r['journal_id'][0] : null,
-                    // Two dates, on purpose. gl_date is the accounting date
-                    // as booked and is never rewritten. invoice_date starts
-                    // as the same value but gets replaced by the parent
-                    // document's date in reconcileLineDates(), so revenue
-                    // reports in the invoice's month — which is not always
-                    // the month the entry was posted in.
-                    'gl_date'         => $this->d($r['date'] ?? null),
-                    'invoice_date'    => $this->d($r['date'] ?? null),
-                    'move_type'       => (string) ($r['display_type'] ?: ''),
-                    'quantity'        => (float) ($r['quantity'] ?? 0),
-                    'price_unit'      => (float) ($r['price_unit'] ?? 0),
-                    'discount'        => (float) ($r['discount'] ?? 0),
-                    'price_subtotal'  => (float) ($r['price_subtotal'] ?? 0),
-                    'debit'           => (float) ($r['debit'] ?? 0),
-                    'credit'          => (float) ($r['credit'] ?? 0),
-                    'parent_state'    => (string) ($r['parent_state'] ?: ''),
-                    'write_date'      => $this->dt($r['write_date'] ?? null),
-                ];
-            },
+            fn (array $r) => $this->glRow($r),
             'wh_fact_gl_line');
+    }
+
+    /**
+     * One Odoo move line => one warehouse row. Shared by the incremental
+     * sync and the column backfill so the two can never disagree about what
+     * a GL row contains.
+     */
+    private function glRow(array $r): array
+    {
+        $mv = $r['move_id'] ?? null;
+        return [
+            'tenant_id'       => $this->tenant->id,
+            'odoo_id'         => (int) $r['id'],
+            'move_odoo_id'    => is_array($mv) ? (int) $mv[0] : null,
+            'account_odoo_id' => is_array($r['account_id'] ?? null) ? (int) $r['account_id'][0] : null,
+            'product_odoo_id' => is_array($r['product_id'] ?? null) ? (int) $r['product_id'][0] : null,
+            'journal_odoo_id' => is_array($r['journal_id'] ?? null) ? (int) $r['journal_id'][0] : null,
+            // Two dates, on purpose. gl_date is the accounting date as booked
+            // and is never rewritten. invoice_date starts as the same value
+            // but gets replaced by the parent document's date in
+            // reconcileLineDates(), so revenue reports in the invoice's month
+            // — which is not always the month the entry was posted in.
+            'gl_date'         => $this->d($r['date'] ?? null),
+            'invoice_date'    => $this->d($r['date'] ?? null),
+            'move_type'       => (string) ($r['display_type'] ?: ''),
+            'quantity'        => (float) ($r['quantity'] ?? 0),
+            'price_unit'      => (float) ($r['price_unit'] ?? 0),
+            'discount'        => (float) ($r['discount'] ?? 0),
+            'price_subtotal'  => (float) ($r['price_subtotal'] ?? 0),
+            'debit'           => (float) ($r['debit'] ?? 0),
+            'credit'          => (float) ($r['credit'] ?? 0),
+            'parent_state'    => (string) ($r['parent_state'] ?: ''),
+            'write_date'      => $this->dt($r['write_date'] ?? null),
+        ];
     }
 
     // ── Engine ──────────────────────────────────────────────────────────
@@ -273,6 +280,85 @@ final class WarehouseSyncService
         }
 
         return $rows;
+    }
+
+    /**
+     * Re-fetch GL lines whose row predates the accounting columns.
+     *
+     * Adding columns to a fact table leaves every existing row NULL in them,
+     * and an incremental sync will never come back for those rows: their
+     * write_date sits far behind the cursor. A --full pass would refresh
+     * them, but it restarts from the beginning on every invocation, so it
+     * can only ever finish if one invocation outlives the whole dataset —
+     * which it cannot behind a gateway timeout.
+     *
+     * So select the stale rows by the thing that actually identifies them —
+     * a NULL in the new columns — and fetch exactly those by id. Each pass
+     * shrinks the set, which makes it resumable by construction and lets it
+     * run in as many short bursts as the gateway allows.
+     *
+     * Rows whose Odoo record has since been deleted are removed rather than
+     * left behind: they can never be filled, and leaving them would mean the
+     * stale count never reaches zero and the backfill never reads as done.
+     */
+    public function backfillGlColumns(): array
+    {
+        $filled = 0; $removed = 0;
+
+        while (true) {
+            $ids = DB::table('wh_fact_gl_line')
+                ->where('tenant_id', $this->tenant->id)
+                ->where(fn ($q) => $q->whereNull('gl_date')->orWhereNull('parent_state')->orWhere('parent_state', ''))
+                ->orderBy('odoo_id')
+                ->limit(self::PAGE)
+                ->pluck('odoo_id')
+                ->all();
+            if ($ids === []) break;
+
+            $recs = $this->odoo->searchRead('account.move.line', [['id', 'in', $ids]],
+                ['id', 'move_id', 'account_id', 'product_id', 'journal_id', 'quantity', 'price_unit',
+                 'discount', 'price_subtotal', 'debit', 'credit', 'parent_state', 'date', 'write_date',
+                 'display_type'], []);
+
+            $batch = []; $seen = [];
+            foreach ($recs as $r) {
+                $batch[] = $this->glRow($r);
+                $seen[(int) $r['id']] = true;
+            }
+            foreach (array_chunk($batch, self::CHUNK) as $chunk) {
+                DB::table('wh_fact_gl_line')->upsert(
+                    $chunk,
+                    ['tenant_id', 'odoo_id'],
+                    array_values(array_diff(array_keys($chunk[0]), ['tenant_id', 'odoo_id']))
+                );
+            }
+            $filled += count($batch);
+
+            // Asked for these ids and Odoo did not return them — gone upstream.
+            $gone = array_values(array_diff($ids, array_keys($seen)));
+            if ($gone !== []) {
+                DB::table('wh_fact_gl_line')
+                    ->where('tenant_id', $this->tenant->id)
+                    ->whereIn('odoo_id', $gone)
+                    ->delete();
+                $removed += count($gone);
+            }
+
+            if ($this->deadline > 0 && microtime(true) >= $this->deadline) break;
+        }
+
+        $left = DB::table('wh_fact_gl_line')
+            ->where('tenant_id', $this->tenant->id)
+            ->where(fn ($q) => $q->whereNull('gl_date')->orWhereNull('parent_state')->orWhere('parent_state', ''))
+            ->count();
+
+        return ['filled' => $filled, 'removed' => $removed, 'remaining' => $left];
+    }
+
+    /** Set the wall-clock stop time for a backfill driven over HTTP. */
+    public function setDeadline(float $deadline): void
+    {
+        $this->deadline = $deadline;
     }
 
     /**
