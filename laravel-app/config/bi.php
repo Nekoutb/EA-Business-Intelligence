@@ -112,6 +112,19 @@ return [
     'warehouse_receivables' => (bool) env('BI_WAREHOUSE_RECEIVABLES', true),
 
     /**
+     * P3 — read GL balances (debit/credit by account-code prefix) from the
+     * warehouse instead of Odoo. This is what the DSO denominator, the
+     * Treasury liquidity snapshot and the short-term-debt figures all go
+     * through, so it is the fixed per-page cost that re-pointing the
+     * invoice fetch alone left behind.
+     *
+     * Default OFF until glcheck reports 0.00 for a tenant. The gate is
+     * also what proves the GL backfill actually completed: a half-synced
+     * tenant cannot tie out, so it cannot pass.
+     */
+    'warehouse_gl' => (bool) env('BI_WAREHOUSE_GL', false),
+
+    /**
      * How long a computed dataset may be SERVED, not how often it refreshes.
      * The bms:warm worker recomputes pages as fast as it can sweep; this TTL
      * is only the stale-serve ceiling if that worker stalls. It must exceed
