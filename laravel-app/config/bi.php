@@ -118,11 +118,22 @@ return [
      * through, so it is the fixed per-page cost that re-pointing the
      * invoice fetch alone left behind.
      *
-     * Default OFF until glcheck reports 0.00 for a tenant. The gate is
-     * also what proves the GL backfill actually completed: a half-synced
-     * tenant cannot tie out, so it cannot pass.
+     * ON since 13 Aug 2026: glcheck reports 0.00 on both tenants across all
+     * seven prefixes and the per-account listing, and the GL fact table ties
+     * to Odoo exactly (140,163 of 140,163 rows on transatlanticd, nothing
+     * missing, no NULLs in the accounting columns).
+     *
+     * Set false to send GL reads back over the network; the service also
+     * falls back on its own for a tenant with no GL rows synced yet.
+     *
+     * Worth knowing if a figure ever looks wrong here: this path depends on
+     * wh_dim_account as much as on the lines, because the account dimension
+     * is what resolves a code prefix to the set of accounts. A stale
+     * dimension shows up as ONE prefix disagreeing while every other figure
+     * ties — which is exactly how the class-6 expense variance presented
+     * before the dimension was resynced.
      */
-    'warehouse_gl' => (bool) env('BI_WAREHOUSE_GL', false),
+    'warehouse_gl' => (bool) env('BI_WAREHOUSE_GL', true),
 
     /**
      * How long a computed dataset may be SERVED, not how often it refreshes.
