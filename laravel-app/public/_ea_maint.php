@@ -106,6 +106,57 @@ try {
             ln(sprintf('exit=%d · %.1fs', $code, microtime(true) - $t0));
             break;
 
+        case 'p3check':
+            // P3 GATE — receivables from the warehouse vs from Odoo. Runs both
+            // paths, compares every headline figure, the whole evolution
+            // series and the offender scorecard, and times each.
+            $slug = (string) ($_GET['tenant'] ?? 'kwr');
+            $tenant = App\Models\Tenant::where('slug', $slug)->first();
+            if (!$tenant) { ln("no tenant '{$slug}'"); break; }
+            app(App\Tenancy\TenantContext::class)->set($tenant);
+            $client = App\Odoo\OdooFactory::fromConfig();
+            $rev = (new App\Services\RevenueService($client, (string) config_env('REVENUE_SOURCE', 'invoice')))
+                ->analyze(null, ['type' => 'ytd', 'year' => (int) date('Y')]);
+            $args = [(float) ($rev['current']['total'] ?? 0), (int) ($rev['period']['days'] ?? 1),
+                     (string) ($rev['currency'] ?? 'XAF'), new DateTimeImmutable('today')];
+            $run = function (bool $wh) use ($client, $args) {
+                config(['bi.warehouse_receivables' => $wh]);
+                $t0 = microtime(true);
+                $r = (new App\Services\ReceivablesService($client))->analyze(...$args);
+                return [$r, microtime(true) - $t0];
+            };
+            [$w, $tW] = $run(true);
+            [$o, $tO] = $run(false);
+            config(['bi.warehouse_receivables' => false]);
+            ln(sprintf('warehouse %.2fs · odoo %.2fs · speed-up %.1f×', $tW, $tO, $tW > 0 ? $tO / $tW : 0));
+            ln();
+            $worst = 0.0;
+            foreach (['total_ar', 'dso', 'over60_amount', 'over90_amount', 'pct_gt_90', 'open_invoice_count'] as $k) {
+                $a1 = (float) ($w[$k] ?? 0); $b1 = (float) ($o[$k] ?? 0);
+                $worst = max($worst, abs($a1 - $b1));
+                ln(sprintf('%-20s wh %18s · odoo %18s · Δ %s', $k,
+                    number_format($a1, 2), number_format($b1, 2), number_format($a1 - $b1, 2)));
+            }
+            $ew = (array) ($w['ar_evolution'] ?? []); $eo = (array) ($o['ar_evolution'] ?? []);
+            $ed = 0.0;
+            foreach ($eo as $i => $row) {
+                foreach (['total', 'over_60', 'over_90'] as $k) {
+                    $ed = max($ed, abs((float) ($row[$k] ?? 0) - (float) ($ew[$i][$k] ?? 0)));
+                }
+            }
+            $worst = max($worst, $ed);
+            ln(sprintf('%-20s %d months · worst Δ %s', 'evolution', count($eo), number_format($ed, 2)));
+            $pw = (array) ($w['top_partners'] ?? []); $po = (array) ($o['top_partners'] ?? []);
+            $pd = 0.0;
+            foreach ($po as $i => $row) {
+                $pd = max($pd, abs((float) ($row['ar'] ?? 0) - (float) ($pw[$i]['ar'] ?? 0)));
+            }
+            $worst = max($worst, $pd);
+            ln(sprintf('%-20s %d customers · worst Δ %s', 'offenders', count($po), number_format($pd, 2)));
+            ln();
+            ln('GATE: worst variance = ' . number_format($worst, 2) . ' — ' . ($worst < 0.005 ? 'PASS ✅' : 'FAIL ❌'));
+            break;
+
         case 'whcheck':
             // P2 GATE — do warehouse totals tie to Odoo? Compares row counts
             // and money for the selected year, straight from each source.

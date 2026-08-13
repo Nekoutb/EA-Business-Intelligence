@@ -55,20 +55,79 @@ final class ReceivablesService
             'move_type',
         ];
 
-        $records = [];
-        $offset = 0;
-        $limit  = 1000;
-        do {
-            $batch = $this->odoo->searchRead('account.move', $domain, $fields, [
-                'offset' => $offset,
-                'limit'  => $limit,
-                'order'  => 'invoice_date_due asc',
-            ]);
-            foreach ($batch as $r) {
-                $records[] = $r;
+        // P3 — read the open-AR set from the warehouse when it is populated
+        // for this tenant. The rows are reshaped into the exact Odoo record
+        // structure the rest of this method expects, so nothing downstream
+        // changes. Falls back to Odoo whenever the flag is off, the tenant
+        // has not been synced, or anything goes wrong.
+        $records = null;
+        if (config('bi.warehouse_receivables', false)) {
+            try {
+                $tenantId = (int) (optional(tenant())->id ?? 0);
+                if ($tenantId > 0) {
+                    $rows = \Illuminate\Support\Facades\DB::table('wh_fact_invoice as i')
+                        ->leftJoin('wh_dim_partner as p', function ($j) {
+                            $j->on('p.tenant_id', '=', 'i.tenant_id')
+                              ->on('p.odoo_id', '=', 'i.partner_odoo_id');
+                        })
+                        ->where('i.tenant_id', $tenantId)
+                        ->whereIn('i.move_type', ['out_invoice', 'out_refund'])
+                        ->where('i.state', 'posted')
+                        // Odoo filters on the UNSIGNED residual; the warehouse
+                        // stores the signed one, so "still open" is |residual|>0
+                        // — which also keeps open credit notes in scope.
+                        ->whereRaw('ABS(i.amount_residual) > 0.005')
+                        ->orderBy('i.invoice_date_due')
+                        ->get([
+                            'i.odoo_id', 'i.name', 'i.partner_odoo_id', 'p.name as partner_name',
+                            'i.invoice_date', 'i.invoice_date_due', 'i.amount_total',
+                            'i.amount_residual', 'i.move_type',
+                        ]);
+
+                    if ($rows->isNotEmpty()) {
+                        $records = [];
+                        foreach ($rows as $r) {
+                            $records[] = [
+                                'id'                     => (int) $r->odoo_id,
+                                'name'                   => (string) ($r->name ?? ''),
+                                'partner_id'             => $r->partner_odoo_id
+                                    ? [(int) $r->partner_odoo_id, (string) ($r->partner_name ?? '')]
+                                    : false,
+                                'invoice_date'           => $r->invoice_date,
+                                'invoice_date_due'       => $r->invoice_date_due,
+                                'amount_total_signed'    => (float) $r->amount_total,
+                                'amount_residual_signed' => (float) $r->amount_residual,
+                                'amount_residual'        => abs((float) $r->amount_residual),
+                                'move_type'              => (string) ($r->move_type ?? ''),
+                            ];
+                        }
+                    }
+                }
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning('receivables warehouse read failed, using Odoo', [
+                    'error' => $e->getMessage(),
+                ]);
+                $records = null;
             }
-            $offset += $limit;
-        } while (count($batch) === $limit);
+        }
+
+        // Odoo path — used unless the warehouse already supplied the set.
+        if ($records === null) {
+            $records = [];
+            $offset = 0;
+            $limit  = 1000;
+            do {
+                $batch = $this->odoo->searchRead('account.move', $domain, $fields, [
+                    'offset' => $offset,
+                    'limit'  => $limit,
+                    'order'  => 'invoice_date_due asc',
+                ]);
+                foreach ($batch as $r) {
+                    $records[] = $r;
+                }
+                $offset += $limit;
+            } while (count($batch) === $limit);
+        }
 
         $totalAr   = 0.0;
         $overdueAr = 0.0;
