@@ -157,6 +157,52 @@ try {
             ln('GATE: worst variance = ' . number_format($worst, 2) . ' — ' . ($worst < 0.005 ? 'PASS ✅' : 'FAIL ❌'));
             break;
 
+        case 'glstate':
+            // Ground truth for the GL fact table. Written because inferring
+            // sync progress from year-scoped counts kept producing plausible
+            // but unfalsifiable theories: the table total, the cursor and the
+            // Odoo total are what actually decide whether a run advanced.
+            $slug = (string) ($_GET['tenant'] ?? 'kwr');
+            $tenant = App\Models\Tenant::where('slug', $slug)->first();
+            if (!$tenant) { ln("no tenant '{$slug}'"); break; }
+            app(App\Tenancy\TenantContext::class)->set($tenant);
+            $client = App\Odoo\OdooFactory::fromConfig();
+            $T = Illuminate\Support\Facades\DB::table('wh_fact_gl_line')->where('tenant_id', $tenant->id);
+            $agg = (clone $T)->selectRaw(
+                'COUNT(*) total,
+                 SUM(gl_date IS NULL) nodate,
+                 SUM(parent_state IS NULL OR parent_state = "") nostate,
+                 SUM(parent_state = "posted") posted,
+                 MIN(gl_date) mind, MAX(gl_date) maxd,
+                 MIN(odoo_id) minid, MAX(odoo_id) maxid,
+                 SUM(debit) dr, SUM(credit) cr'
+            )->first();
+            ln("== wh_fact_gl_line · {$slug} ==");
+            ln(sprintf('rows in table      %s', number_format((int) $agg->total)));
+            ln(sprintf('gl_date NULL       %s', number_format((int) $agg->nodate)));
+            ln(sprintf('parent_state empty %s', number_format((int) $agg->nostate)));
+            ln(sprintf('parent_state posted %s', number_format((int) $agg->posted)));
+            ln(sprintf('gl_date range      %s .. %s', (string) ($agg->mind ?? '—'), (string) ($agg->maxd ?? '—')));
+            ln(sprintf('odoo_id range      %s .. %s', number_format((int) $agg->minid), number_format((int) $agg->maxid)));
+            ln(sprintf('debit / credit     %s / %s', number_format((float) $agg->dr, 2), number_format((float) $agg->cr, 2)));
+            ln();
+            $st = Illuminate\Support\Facades\DB::table('wh_sync_state')
+                ->where('tenant_id', $tenant->id)->where('model', 'account.move.line')->first();
+            ln('== cursor ==');
+            ln(sprintf('last_write_date    %s', (string) ($st->last_write_date ?? '—')));
+            ln(sprintf('last_id            %s', $st && $st->last_id !== null ? number_format((int) $st->last_id) : '— (NULL)'));
+            ln(sprintf('rows_synced        %s', number_format((int) ($st->rows_synced ?? 0))));
+            ln(sprintf('last_error         %s', (string) ($st->last_error ?? '—')));
+            ln();
+            ln('== odoo ==');
+            $oTotal = $client->searchCount('account.move.line', []);
+            ln(sprintf('account.move.line  %s total (no domain)', number_format($oTotal)));
+            $oBlock = $client->searchCount('account.move.line', [['write_date', '=', (string) ($st->last_write_date ?? '')]]);
+            ln(sprintf('sharing watermark  %s records at write_date %s',
+                number_format($oBlock), (string) ($st->last_write_date ?? '—')));
+            ln(sprintf('missing from table %s', number_format($oTotal - (int) $agg->total)));
+            break;
+
         case 'glcheck':
             // P3 GATE — GL balances from the warehouse vs from Odoo, across
             // every prefix the app actually reports on, in each of the three
