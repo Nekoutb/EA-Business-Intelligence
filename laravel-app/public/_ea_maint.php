@@ -157,6 +157,85 @@ try {
             ln('GATE: worst variance = ' . number_format($worst, 2) . ' — ' . ($worst < 0.005 ? 'PASS ✅' : 'FAIL ❌'));
             break;
 
+        case 'glcheck':
+            // P3 GATE — GL balances from the warehouse vs from Odoo, across
+            // every prefix the app actually reports on, in each of the three
+            // aggregation shapes GLAccountService offers. Passing this is
+            // also what proves the GL backfill is complete: a partially
+            // synced tenant sums to less than Odoo and cannot tie out.
+            $slug = (string) ($_GET['tenant'] ?? 'kwr');
+            $tenant = App\Models\Tenant::where('slug', $slug)->first();
+            if (!$tenant) { ln("no tenant '{$slug}'"); break; }
+            app(App\Tenancy\TenantContext::class)->set($tenant);
+            $client = App\Odoo\OdooFactory::fromConfig();
+            $today = new DateTimeImmutable('today');
+            $win   = $today->modify('-90 days');
+
+            // Each probe: label => callable(GLAccountService): ?float
+            $probes = [
+                'balance 41 (AR)'      => fn ($g) => $g->balanceByPrefix('41', null, $today),
+                'credit 70 (revenue)'  => fn ($g) => $g->creditByPrefix('70', $win, $today),
+                'balance 40 (AP)'      => fn ($g) => $g->balanceByPrefix('40', null, $today),
+                'balance 6 (expenses)' => fn ($g) => $g->balanceByPrefix('6', null, $today),
+                'cr+ 4 (ST debt)'      => fn ($g) => $g->sumPositiveCreditBalancesByPrefix('4', $today),
+                'dr+ 52 (bank)'        => fn ($g) => $g->sumPositiveDebitBalancesByPrefix('52', $today),
+                'dr+ 57 (cash)'        => fn ($g) => $g->sumPositiveDebitBalancesByPrefix('57', $today),
+            ];
+
+            $run = function (bool $wh) use ($client, $probes, $today) {
+                config(['bi.warehouse_gl' => $wh]);
+                $g = new App\Services\GLAccountService($client);
+                $t0 = microtime(true);
+                $out = [];
+                foreach ($probes as $label => $fn) $out[$label] = $fn($g);
+                $out['__accounts_52'] = $g->accountBalancesByPrefix('52', $today);
+                return [$out, microtime(true) - $t0];
+            };
+            [$w, $tW] = $run(true);
+            [$o, $tO] = $run(false);
+            config(['bi.warehouse_gl' => false]);
+
+            ln(sprintf('warehouse %.2fs · odoo %.2fs · speed-up %.1f×', $tW, $tO, $tW > 0 ? $tO / $tW : 0));
+            ln();
+            $worst = 0.0; $nullMismatch = 0;
+            foreach ($probes as $label => $_) {
+                $a1 = $w[$label]; $b1 = $o[$label];
+                // null vs a number is a real difference, not a 0.00 tie.
+                if (($a1 === null) !== ($b1 === null)) {
+                    $nullMismatch++;
+                    ln(sprintf('%-22s wh %18s · odoo %18s · NULL MISMATCH', $label,
+                        $a1 === null ? 'null' : number_format((float) $a1, 2),
+                        $b1 === null ? 'null' : number_format((float) $b1, 2)));
+                    continue;
+                }
+                $d = abs((float) $a1 - (float) $b1);
+                $worst = max($worst, $d);
+                ln(sprintf('%-22s wh %18s · odoo %18s · Δ %s', $label,
+                    number_format((float) $a1, 2), number_format((float) $b1, 2), number_format($d, 2)));
+            }
+
+            // Per-account shape: same accounts, same order, same balances.
+            $aw = (array) ($w['__accounts_52'] ?? []); $ao = (array) ($o['__accounts_52'] ?? []);
+            $ad = 0.0;
+            if (count($aw) !== count($ao)) {
+                $nullMismatch++;
+                ln(sprintf('%-22s wh %d accounts · odoo %d accounts · COUNT MISMATCH', 'accounts 52', count($aw), count($ao)));
+            } else {
+                foreach ($ao as $i => $row) {
+                    if ((string) ($row['code'] ?? '') !== (string) ($aw[$i]['code'] ?? '')) { $nullMismatch++; break; }
+                    $ad = max($ad, abs((float) ($row['balance'] ?? 0) - (float) ($aw[$i]['balance'] ?? 0)));
+                }
+                $worst = max($worst, $ad);
+                ln(sprintf('%-22s %d accounts · worst Δ %s', 'accounts 52', count($ao), number_format($ad, 2)));
+            }
+
+            ln();
+            $pass = $worst < 0.005 && $nullMismatch === 0;
+            ln('GATE: worst variance = ' . number_format($worst, 2)
+                . ($nullMismatch ? " · {$nullMismatch} shape mismatch(es)" : '')
+                . ' — ' . ($pass ? 'PASS ✅' : 'FAIL ❌'));
+            break;
+
         case 'whcheck':
             // P2 GATE — do warehouse totals tie to Odoo? Compares row counts
             // and money for the selected year, straight from each source.
@@ -197,13 +276,27 @@ try {
                     number_format($wRes, 2), number_format($oRes, 2), number_format($wRes - $oRes, 2)));
             }
 
-            $lc = Illuminate\Support\Facades\DB::table('wh_fact_invoice_line')
-                ->where('tenant_id', $tenant->id)->whereBetween('invoice_date', [$from, $to])->count();
+            // Like-for-like on BOTH sides. This comparison used to read as a
+            // 26k-row discrepancy purely because the sides counted different
+            // things: the warehouse table holds every GL line (the sync has
+            // no domain filter), while Odoo was being asked for invoice lines
+            // only. Match the document filter, and date on gl_date — the date
+            // as booked — since invoice_date is rewritten to the parent's.
+            $docTypes = ['out_invoice', 'out_refund', 'in_invoice', 'in_refund'];
+            $lc = Illuminate\Support\Facades\DB::table('wh_fact_gl_line')
+                ->where('tenant_id', $tenant->id)
+                ->whereIn('move_type', $docTypes)
+                ->whereBetween('gl_date', [$from, $to])->count();
             $oLc = $client->searchCount('account.move.line', [
-                ['move_id.move_type', 'in', ['out_invoice', 'out_refund', 'in_invoice', 'in_refund']],
+                ['move_id.move_type', 'in', $docTypes],
                 ['date', '>=', $from], ['date', '<=', $to],
             ]);
             ln(sprintf('%-20s rows %7s/%-7s Δ%d', 'invoice lines', number_format($lc), number_format($oLc), $lc - $oLc));
+
+            $glc = Illuminate\Support\Facades\DB::table('wh_fact_gl_line')
+                ->where('tenant_id', $tenant->id)->whereBetween('gl_date', [$from, $to])->count();
+            $oGlc = $client->searchCount('account.move.line', [['date', '>=', $from], ['date', '<=', $to]]);
+            ln(sprintf('%-20s rows %7s/%-7s Δ%d', 'all GL lines', number_format($glc), number_format($oGlc), $glc - $oGlc));
 
             foreach (Illuminate\Support\Facades\DB::table('wh_sync_state')->where('tenant_id', $tenant->id)->get() as $st) {
                 ln(sprintf('  state %-20s watermark %-20s rows %8s %s',

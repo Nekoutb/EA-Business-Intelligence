@@ -56,7 +56,7 @@ final class WarehouseSyncService
             'res.partner'            => fn () => $this->syncPartners($full),
             'account.account'        => fn () => $this->syncAccounts($full),
             'account.move'           => fn () => $this->syncInvoices($full),
-            'account.move.line'      => fn () => $this->syncInvoiceLines($full),
+            'account.move.line'      => fn () => $this->syncGlLines($full),
         ] as $model => $fn) {
             if ($onlyModel !== null && $onlyModel !== $model) continue;
             $t0 = microtime(true);
@@ -136,11 +136,17 @@ final class WarehouseSyncService
             [['move_type', 'in', ['out_invoice', 'out_refund', 'in_invoice', 'in_refund']]]);
     }
 
-    private function syncInvoiceLines(bool $full): int
+    /**
+     * Every GL move line. There is deliberately no domain filter: this is
+     * the general ledger, so journal entries, payments and openings belong
+     * here alongside invoice lines. Invoice lines are the subset whose
+     * move_odoo_id resolves in wh_fact_invoice.
+     */
+    private function syncGlLines(bool $full): int
     {
         return $this->pull('account.move.line', $full,
-            ['move_id', 'account_id', 'product_id', 'quantity', 'price_unit', 'discount',
-             'price_subtotal', 'date', 'write_date', 'display_type'],
+            ['move_id', 'account_id', 'product_id', 'journal_id', 'quantity', 'price_unit', 'discount',
+             'price_subtotal', 'debit', 'credit', 'parent_state', 'date', 'write_date', 'display_type'],
             function (array $r) {
                 $mv = $r['move_id'] ?? null;
                 return [
@@ -149,19 +155,27 @@ final class WarehouseSyncService
                     'move_odoo_id'    => is_array($mv) ? (int) $mv[0] : null,
                     'account_odoo_id' => is_array($r['account_id'] ?? null) ? (int) $r['account_id'][0] : null,
                     'product_odoo_id' => is_array($r['product_id'] ?? null) ? (int) $r['product_id'][0] : null,
-                    // `date` is the accounting date on the line and matches
-                    // the parent's period; the parent's invoice_date is
-                    // back-filled by the reconcile step below.
+                    'journal_odoo_id' => is_array($r['journal_id'] ?? null) ? (int) $r['journal_id'][0] : null,
+                    // Two dates, on purpose. gl_date is the accounting date
+                    // as booked and is never rewritten. invoice_date starts
+                    // as the same value but gets replaced by the parent
+                    // document's date in reconcileLineDates(), so revenue
+                    // reports in the invoice's month — which is not always
+                    // the month the entry was posted in.
+                    'gl_date'         => $this->d($r['date'] ?? null),
                     'invoice_date'    => $this->d($r['date'] ?? null),
                     'move_type'       => (string) ($r['display_type'] ?: ''),
                     'quantity'        => (float) ($r['quantity'] ?? 0),
                     'price_unit'      => (float) ($r['price_unit'] ?? 0),
                     'discount'        => (float) ($r['discount'] ?? 0),
                     'price_subtotal'  => (float) ($r['price_subtotal'] ?? 0),
+                    'debit'           => (float) ($r['debit'] ?? 0),
+                    'credit'          => (float) ($r['credit'] ?? 0),
+                    'parent_state'    => (string) ($r['parent_state'] ?: ''),
                     'write_date'      => $this->dt($r['write_date'] ?? null),
                 ];
             },
-            'wh_fact_invoice_line');
+            'wh_fact_gl_line');
     }
 
     // ── Engine ──────────────────────────────────────────────────────────
@@ -244,11 +258,14 @@ final class WarehouseSyncService
         return $rows;
     }
 
-    /** Back-fill invoice_date onto lines from their parent invoice. */
+    /**
+     * Back-fill invoice_date onto lines from their parent invoice.
+     * Only invoice_date moves — gl_date keeps the date the line was booked.
+     */
     public function reconcileLineDates(): int
     {
         return DB::update(
-            'UPDATE wh_fact_invoice_line l
+            'UPDATE wh_fact_gl_line l
                JOIN wh_fact_invoice i
                  ON i.tenant_id = l.tenant_id AND i.odoo_id = l.move_odoo_id
                 SET l.invoice_date = i.invoice_date, l.move_type = i.move_type

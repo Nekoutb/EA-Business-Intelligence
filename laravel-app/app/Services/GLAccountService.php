@@ -27,6 +27,92 @@ final class GLAccountService
 {
     public function __construct(private OdooClient $odoo) {}
 
+    // ── Warehouse ────────────────────────────────────────────────────
+    //
+    // P3. Every method below asks the same question — "sum debit and
+    // credit for the accounts under this code prefix, posted only,
+    // within this date window" — which is a local indexed query once the
+    // GL lines are in the warehouse. Odoo remains the fallback for any
+    // tenant not yet synced, and the whole path is behind a flag that
+    // only flips once glcheck reports 0.00 against Odoo.
+
+    /** Warehouse GL is usable for this tenant, or null to use Odoo. */
+    private function whTenantId(): ?int
+    {
+        if (!config('bi.warehouse_gl', false)) return null;
+        try {
+            $id = (int) (optional(tenant())->id ?? 0);
+            if ($id <= 0) return null;
+            // A tenant mid-backfill would silently under-report every GL
+            // figure, so require lines to actually be there first.
+            $any = \Illuminate\Support\Facades\DB::table('wh_fact_gl_line')
+                ->where('tenant_id', $id)->limit(1)->exists();
+            return $any ? $id : null;
+        } catch (\Throwable $e) {
+            return null;
+        }
+    }
+
+    /**
+     * Debit/credit totals per account for a code prefix, read locally.
+     *
+     * Returns a list of ['odoo_id','code','name','debit','credit'], one
+     * row per matching account INCLUDING accounts with no posted lines
+     * (so callers can list a zero-balance bank exactly as the Odoo path
+     * does). Null means "not available" — caller falls back to Odoo.
+     */
+    private function whSumsByAccount(
+        string $prefix,
+        ?\DateTimeImmutable $from,
+        ?\DateTimeImmutable $to
+    ): ?array {
+        $tenantId = $this->whTenantId();
+        if ($tenantId === null) return null;
+
+        try {
+            $accounts = \Illuminate\Support\Facades\DB::table('wh_dim_account')
+                ->where('tenant_id', $tenantId)
+                ->where('code', 'like', $prefix . '%')
+                ->orderBy('code')
+                ->get(['odoo_id', 'code', 'name']);
+            if ($accounts->isEmpty()) return [];
+
+            $ids = $accounts->pluck('odoo_id')->all();
+
+            $q = \Illuminate\Support\Facades\DB::table('wh_fact_gl_line')
+                ->where('tenant_id', $tenantId)
+                ->whereIn('account_odoo_id', $ids)
+                ->where('parent_state', 'posted');
+            if ($from) $q->where('gl_date', '>=', $from->format('Y-m-d'));
+            if ($to)   $q->where('gl_date', '<=', $to->format('Y-m-d'));
+
+            $sums = $q->groupBy('account_odoo_id')->get([
+                'account_odoo_id',
+                \Illuminate\Support\Facades\DB::raw('SUM(debit) AS d'),
+                \Illuminate\Support\Facades\DB::raw('SUM(credit) AS c'),
+            ])->keyBy('account_odoo_id');
+
+            $rows = [];
+            foreach ($accounts as $a) {
+                $s = $sums->get($a->odoo_id);
+                $rows[] = [
+                    'odoo_id' => (int) $a->odoo_id,
+                    'code'    => (string) $a->code,
+                    'name'    => (string) ($a->name ?? ''),
+                    'debit'   => (float) ($s->d ?? 0),
+                    'credit'  => (float) ($s->c ?? 0),
+                ];
+            }
+            return $rows;
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('warehouse GL read failed; using Odoo', [
+                'prefix' => $prefix,
+                'error'  => $e->getMessage(),
+            ]);
+            return null;
+        }
+    }
+
     /**
      * Net balance (debit − credit) for every account whose code
      * starts with $prefix, optionally bounded by [from, to] on
@@ -145,6 +231,18 @@ final class GLAccountService
         string $prefix,
         ?\DateTimeImmutable $asOf = null
     ): ?array {
+        $wh = $this->whSumsByAccount($prefix, null, $asOf);
+        if ($wh !== null) {
+            return array_map(fn (array $r) => [
+                'id'      => $r['odoo_id'],
+                'code'    => $r['code'],
+                'name'    => $r['name'],
+                'debit'   => $r['debit'],
+                'credit'  => $r['credit'],
+                'balance' => $r['debit'] - $r['credit'],
+            ], $wh);
+        }
+
         try {
             $accounts = $this->odoo->searchRead(
                 'account.account',
@@ -458,6 +556,16 @@ final class GLAccountService
         ?\DateTimeImmutable $asOf,
         bool $signCredit
     ): ?float {
+        $wh = $this->whSumsByAccount($prefix, null, $asOf);
+        if ($wh !== null) {
+            $total = 0.0;
+            foreach ($wh as $r) {
+                $signed = $signCredit ? ($r['credit'] - $r['debit']) : ($r['debit'] - $r['credit']);
+                if ($signed > 0) $total += $signed;
+            }
+            return $total;
+        }
+
         try {
             $accounts = $this->odoo->searchRead(
                 'account.account',
@@ -505,6 +613,17 @@ final class GLAccountService
         ?\DateTimeImmutable $from,
         ?\DateTimeImmutable $to
     ): ?array {
+        $wh = $this->whSumsByAccount($prefix, $from, $to);
+        if ($wh !== null) {
+            // No account under this prefix is a null, not a zero: it means
+            // the chart is not OHADA-shaped and DSO must fall back to the
+            // invoice-derived calculation rather than report 0.
+            if ($wh === []) return null;
+            $debit = 0.0; $credit = 0.0;
+            foreach ($wh as $r) { $debit += $r['debit']; $credit += $r['credit']; }
+            return ['debit' => $debit, 'credit' => $credit];
+        }
+
         try {
             // 1) Resolve which accounts match the prefix. account.account.code
             //    is a string in Odoo, so a like '41%' filter is the natural
