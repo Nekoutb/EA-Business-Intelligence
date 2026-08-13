@@ -80,40 +80,38 @@ return [
     'dso_sales_prefix' => env('DSO_SALES_PREFIX', '70'),
 
     /**
-     * How long a computed dataset may be SERVED, not how often it refreshes.
-     * The bms:warm background worker recomputes every page as fast as it can
-     * sweep (see config/warm.php); this TTL is only the stale-serve ceiling
-     * if the worker stalls. Beyond it, a web request falls back to computing
-     * inline — the pre-worker behaviour, which on heavy tenants means a
-     * multi-minute rebuild (the 524 class). It must therefore comfortably
-     * exceed the WORST sweep duration: 30 min proved too short (entries
-     * expired before the un-optimised transatlanticd sweep cycled back, and
-     * visitors paid inline rebuilds again — observed 30 Jul). Freshness is
-     * communicated by the "Data as of" stamp, not by expiring data.
+     * Reconciliation buckets: batched (a handful of grouped Odoo calls for
+     * the whole window) vs the original per-month loop (~13 calls per month).
+     * Kept as a switch so the old path is one config change away if a figure
+     * ever looks wrong. Verified equal by the reconcheck diagnostic.
      */
+    'recon_batched' => (bool) env('BI_RECON_BATCHED', true),
+
     /**
-     * Reconciliation buckets: batched (2+2 grouped Odoo calls for the whole
-     * window) vs the original per-month loop (~13 calls per month). Kept as
-     * a switch so the old path is one config change away if a figure ever
-     * looks wrong. Verified equal by the reconcheck diagnostic.
-     */
-    /**
-     * Revenue line metrics: aggregate the line count and fetch only
-     * discounted lines, instead of downloading every product line of every
-     * invoice for two years. Same figures; set false to restore the row
-     * fetch if a discount total ever looks wrong.
+     * Revenue: derive totals, the daily series and per-customer aggregates
+     * from grouped queries, and fetch only discounted lines, instead of
+     * downloading every document and every line for two years. Same figures;
+     * set false to restore the row fetch. Verified by the revcheck diagnostic.
      */
     'revenue_batched' => (bool) env('BI_REVENUE_BATCHED', true),
 
-    'recon_batched' => (bool) env('BI_RECON_BATCHED', true),
-
-    'cache_ttl' => (int) env('BI_CACHE_TTL', 21600), // 6 hours (stale-serve ceiling)
+    /**
+     * P3 — read the open-AR set from the local warehouse instead of Odoo.
+     * Default OFF: it flips on only once the p3check dual-run gate reports
+     * 0.00 variance for the tenant, per the alignment plan.
+     */
+    'warehouse_receivables' => (bool) env('BI_WAREHOUSE_RECEIVABLES', false),
 
     /**
-     * Global cache schema version. Bump this string (v1 → v2 → …) whenever
-     * the SHAPE of any ea_cached() payload changes, so a deploy invalidates
-     * every stale-shaped entry across the whole app at once. Replaces the
-     * old per-controller manual version strings (e.g. monthly_tax_return_v6).
+     * How long a computed dataset may be SERVED, not how often it refreshes.
+     * The bms:warm worker recomputes pages as fast as it can sweep; this TTL
+     * is only the stale-serve ceiling if that worker stalls. It must exceed
+     * the worst sweep duration — 30 min proved too short (entries expired
+     * before the sweep cycled back and visitors paid inline rebuilds again,
+     * observed 30 Jul). Freshness is communicated by the "Data as of" stamp,
+     * not by expiring data.
      */
+    'cache_ttl' => (int) env('BI_CACHE_TTL', 21600), // 6 hours
+
     'cache_schema_version' => env('BI_CACHE_SCHEMA_VERSION', 'v1'),
 ];
