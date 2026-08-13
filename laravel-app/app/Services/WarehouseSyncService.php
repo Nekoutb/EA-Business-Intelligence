@@ -189,37 +189,51 @@ final class WarehouseSyncService
      */
     private function pull(string $model, bool $full, array $fields, callable $map, string $table, array $extra = []): int
     {
-        $state     = $this->state($model);
-        $watermark = $full ? null : ($state->last_write_date ?? null);
-
-        $domain = $extra;
-        if ($watermark) {
-            // '>=' not '>': if a previous run stopped on a deadline partway
-            // through a group of records sharing one write_date, '>' would
-            // skip the unread remainder. Re-reading the boundary is free —
-            // every row upserts.
-            $domain[] = ['write_date', '>=', (string) $watermark];
-        }
+        $state  = $this->state($model);
+        $cursorW = $full ? null : ($state->last_write_date ?? null);
+        $cursorId = $full ? null : ($state->last_id ?? null);
 
         $rows = 0;
-        $maxWrite = $watermark;
-        $offset = 0;
 
         while (true) {
+            // Keyset pagination on (write_date, id). Both halves matter:
+            //
+            // write_date alone cannot resume precisely, because a group of
+            // records sharing one write_date has to be re-read from its start
+            // ('>=') or risk skipping its tail ('>'). Once such a group is
+            // bigger than one run's budget, '>=' re-reads the same slice every
+            // run and the sync never advances — which is exactly what a
+            // 566,653-row counter against a 40,754-row table looks like.
+            //
+            // Pairing it with id makes the cursor unique and strictly ordered,
+            // so a run resumes on the record straight after the last one read.
+            // It also retires offset paging: asking Odoo for offset 400,000
+            // makes it walk 400,000 rows to reach the page every time.
+            $domain = $extra;
+            if ($cursorW !== null) {
+                if ($cursorId !== null) {
+                    $domain[] = '|';
+                    $domain[] = ['write_date', '>', (string) $cursorW];
+                    $domain[] = '&';
+                    $domain[] = ['write_date', '=', (string) $cursorW];
+                    $domain[] = ['id', '>', (int) $cursorId];
+                } else {
+                    // Pre-cursor state: no id recorded yet, so fall back to the
+                    // inclusive boundary for one run until the cursor is set.
+                    $domain[] = ['write_date', '>=', (string) $cursorW];
+                }
+            }
+
             $page = $this->odoo->searchRead($model, $domain, array_merge(['id'], $fields), [
-                'offset' => $offset,
-                'limit'  => self::PAGE,
-                // Ordering by write_date makes the watermark meaningful even
-                // if a run is interrupted mid-model.
-                'order'  => 'write_date asc, id asc',
+                'limit' => self::PAGE,
+                // Must match the cursor exactly or the keyset walk breaks.
+                'order' => 'write_date asc, id asc',
             ]);
             if ($page === []) break;
 
             $batch = [];
             foreach ($page as $r) {
                 $batch[] = $map($r);
-                $w = $this->dt($r['write_date'] ?? null);
-                if ($w !== null && ($maxWrite === null || $w > $maxWrite)) $maxWrite = $w;
             }
             foreach (array_chunk($batch, self::CHUNK) as $chunk) {
                 DB::table($table)->upsert(
@@ -229,30 +243,33 @@ final class WarehouseSyncService
                 );
             }
 
+            // Advance to the LAST row of the page — the ordering guarantees it
+            // is the highest (write_date, id) seen, so this is the resume point.
+            $last = $page[count($page) - 1];
+            $lastW = $this->dt($last['write_date'] ?? null);
+            if ($lastW !== null) {
+                $cursorW  = $lastW;
+                $cursorId = (int) $last['id'];
+            } else {
+                // No write_date to key on: stop rather than loop on the same
+                // page forever. Next run re-reads from the existing cursor.
+                break;
+            }
+
             $rows += count($page);
 
-            // Advance the watermark after every page so a long backfill can
-            // resume. Stored EXACTLY as read — an earlier version subtracted
-            // a second for safety, which meant the final record always came
-            // back on the next pass and the sync spun on it forever.
-            // Boundary safety comes from the '>=' on resume instead.
-            if ($maxWrite !== null) {
-                DB::table('wh_sync_state')->where('id', $state->id)->update([
-                    'last_write_date' => $maxWrite,
-                    'last_run_at'     => now(),
-                    'rows_synced'     => (int) $state->rows_synced + $rows,
-                    'updated_at'      => now(),
-                ]);
-            }
+            DB::table('wh_sync_state')->where('id', $state->id)->update([
+                'last_write_date' => $cursorW,
+                'last_id'         => $cursorId,
+                'last_run_at'     => now(),
+                'rows_synced'     => (int) $state->rows_synced + $rows,
+                'updated_at'      => now(),
+            ]);
 
             if (count($page) < self::PAGE) break;
 
-            // Out of time — stop cleanly; the watermark marks the resume point.
+            // Out of time — stop cleanly; the cursor marks the resume point.
             if ($this->deadline > 0 && microtime(true) >= $this->deadline) break;
-
-            // Offset paging against a FIXED domain. The domain must not change
-            // mid-run: mutating it while walking an offset skips rows.
-            $offset += self::PAGE;
         }
 
         return $rows;
