@@ -216,6 +216,19 @@ final class WarehouseSyncService
         $windowFrom = $full ? null : ($state->last_write_date ?? null);
         $lastId     = $full ? null : ($state->last_id ?? null);
 
+        if ($full) {
+            // Clear the stored window too, not just the local variable. A full
+            // pass rarely finishes inside one run's budget, and if the old
+            // window survived in the database the resuming run would re-apply
+            // it and silently skip everything below it — turning a full
+            // backfill into a partial one that still reports success.
+            DB::table('wh_sync_state')->where('id', $state->id)->update([
+                'last_write_date' => null,
+                'last_id'         => null,
+                'updated_at'      => now(),
+            ]);
+        }
+
         $rows    = 0;
         $maxSeen = $windowFrom;
         $drained = false;
