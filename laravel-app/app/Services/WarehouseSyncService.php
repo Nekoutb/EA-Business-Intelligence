@@ -196,51 +196,54 @@ final class WarehouseSyncService
      */
     private function pull(string $model, bool $full, array $fields, callable $map, string $table, array $extra = []): int
     {
-        $state  = $this->state($model);
-        $cursorW = $full ? null : ($state->last_write_date ?? null);
-        $cursorId = $full ? null : ($state->last_id ?? null);
+        $state = $this->state($model);
 
-        $rows = 0;
+        // Two separate jobs, and conflating them is what broke this twice.
+        //
+        // The WINDOW (write_date >= $windowFrom) decides which records a run
+        // cares about. PAGINATION (id > $lastId) decides how it walks them.
+        //
+        // Progress must never come from write_date. Odoo reports write_date to
+        // whole seconds while Postgres stores microseconds, so a boundary row
+        // saved as '10:55:31' still satisfies write_date > '10:55:31' — its
+        // real value is 10:55:31.123456 — and comes back on every query. The
+        // previous cursor took its resume point from exactly that comparison
+        // and locked solid; the offset paging before it only escaped because
+        // the offset advanced independently of any timestamp.
+        //
+        // id is an integer and strictly ordered. It cannot express a boundary
+        // it then fails to move past.
+        $windowFrom = $full ? null : ($state->last_write_date ?? null);
+        $lastId     = $full ? null : ($state->last_id ?? null);
+
+        $rows    = 0;
+        $maxSeen = $windowFrom;
+        $drained = false;
 
         while (true) {
-            // Keyset pagination on (write_date, id). Both halves matter:
-            //
-            // write_date alone cannot resume precisely, because a group of
-            // records sharing one write_date has to be re-read from its start
-            // ('>=') or risk skipping its tail ('>'). Once such a group is
-            // bigger than one run's budget, '>=' re-reads the same slice every
-            // run and the sync never advances — which is exactly what a
-            // 566,653-row counter against a 40,754-row table looks like.
-            //
-            // Pairing it with id makes the cursor unique and strictly ordered,
-            // so a run resumes on the record straight after the last one read.
-            // It also retires offset paging: asking Odoo for offset 400,000
-            // makes it walk 400,000 rows to reach the page every time.
             $domain = $extra;
-            if ($cursorW !== null) {
-                if ($cursorId !== null) {
-                    $domain[] = '|';
-                    $domain[] = ['write_date', '>', (string) $cursorW];
-                    $domain[] = '&';
-                    $domain[] = ['write_date', '=', (string) $cursorW];
-                    $domain[] = ['id', '>', (int) $cursorId];
-                } else {
-                    // Pre-cursor state: no id recorded yet, so fall back to the
-                    // inclusive boundary for one run until the cursor is set.
-                    $domain[] = ['write_date', '>=', (string) $cursorW];
-                }
+            if ($windowFrom !== null) {
+                // Inclusive, which is what makes sub-second precision harmless:
+                // re-reading the boundary second costs nothing because every
+                // row upserts.
+                $domain[] = ['write_date', '>=', (string) $windowFrom];
+            }
+            if ($lastId !== null) {
+                $domain[] = ['id', '>', (int) $lastId];
             }
 
             $page = $this->odoo->searchRead($model, $domain, array_merge(['id'], $fields), [
                 'limit' => self::PAGE,
-                // Must match the cursor exactly or the keyset walk breaks.
-                'order' => 'write_date asc, id asc',
+                // Must match the pagination key, not the window key.
+                'order' => 'id asc',
             ]);
-            if ($page === []) break;
+            if ($page === []) { $drained = true; break; }
 
             $batch = [];
             foreach ($page as $r) {
                 $batch[] = $map($r);
+                $w = $this->dt($r['write_date'] ?? null);
+                if ($w !== null && ($maxSeen === null || $w > $maxSeen)) $maxSeen = $w;
             }
             foreach (array_chunk($batch, self::CHUNK) as $chunk) {
                 DB::table($table)->upsert(
@@ -250,33 +253,36 @@ final class WarehouseSyncService
                 );
             }
 
-            // Advance to the LAST row of the page — the ordering guarantees it
-            // is the highest (write_date, id) seen, so this is the resume point.
-            $last = $page[count($page) - 1];
-            $lastW = $this->dt($last['write_date'] ?? null);
-            if ($lastW !== null) {
-                $cursorW  = $lastW;
-                $cursorId = (int) $last['id'];
-            } else {
-                // No write_date to key on: stop rather than loop on the same
-                // page forever. Next run re-reads from the existing cursor.
-                break;
-            }
+            $lastId = (int) $page[count($page) - 1]['id'];
+            $rows  += count($page);
 
-            $rows += count($page);
-
+            // Mid-window: keep the window open and record only how far the id
+            // walk reached. Advancing the window here would strand whatever
+            // this run has not got to yet.
             DB::table('wh_sync_state')->where('id', $state->id)->update([
-                'last_write_date' => $cursorW,
-                'last_id'         => $cursorId,
-                'last_run_at'     => now(),
-                'rows_synced'     => (int) $state->rows_synced + $rows,
-                'updated_at'      => now(),
+                'last_id'     => $lastId,
+                'last_run_at' => now(),
+                'rows_synced' => (int) $state->rows_synced + $rows,
+                'updated_at'  => now(),
             ]);
 
-            if (count($page) < self::PAGE) break;
+            if (count($page) < self::PAGE) { $drained = true; break; }
 
-            // Out of time — stop cleanly; the cursor marks the resume point.
+            // Out of time — stop cleanly; last_id marks the resume point.
             if ($this->deadline > 0 && microtime(true) >= $this->deadline) break;
+        }
+
+        if ($drained) {
+            // Window walked to the end: advance it and clear the id cursor so
+            // the next run rescans the new window from the start. That rescan
+            // is the point — a low-id record edited later would be invisible
+            // to an id cursor that never resets.
+            DB::table('wh_sync_state')->where('id', $state->id)->update([
+                'last_write_date' => $maxSeen,
+                'last_id'         => null,
+                'last_run_at'     => now(),
+                'updated_at'      => now(),
+            ]);
         }
 
         return $rows;
