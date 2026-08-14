@@ -469,6 +469,75 @@ try {
             ln('GATE: worst variance = ' . number_format($worstS, 2) . ' — ' . ($worstS < 0.005 ? 'PASS ✅' : 'FAIL ❌'));
             break;
 
+        case 'pocheck':
+            // Which field actually carries the negative, and what excluding it
+            // does to PO compliance. amount_total_signed is negative for EVERY
+            // vendor bill by Odoo's sign convention, so filtering on the wrong
+            // one either changes nothing or removes the entire population.
+            $slug = (string) ($_GET['tenant'] ?? 'kwr');
+            $tenant = App\Models\Tenant::where('slug', $slug)->first();
+            if (!$tenant) { ln("no tenant '{$slug}'"); break; }
+            app(App\Tenancy\TenantContext::class)->set($tenant);
+            $client = App\Odoo\OdooFactory::fromConfig();
+            $ys = date('Y') . '-01-01'; $asAt = date('Y-m-d');
+            $baseDom = [['move_type', '=', 'in_invoice'], ['state', '=', 'posted'],
+                        ['invoice_date', '>=', $ys], ['invoice_date', '<=', $asAt]];
+
+            $all = $client->searchRead('account.move', $baseDom,
+                ['name', 'invoice_date', 'amount_total', 'amount_total_signed', 'amount_untaxed'],
+                ['limit' => 20000]);
+            $negTotal = 0; $negSigned = 0; $posTotal = 0; $zero = 0;
+            foreach ($all as $r) {
+                $t = (float) ($r['amount_total'] ?? 0);
+                $s = (float) ($r['amount_total_signed'] ?? 0);
+                if ($t < 0) $negTotal++; elseif ($t > 0) $posTotal++; else $zero++;
+                if ($s < 0) $negSigned++;
+            }
+            ln("== posted in_invoice YTD · {$slug} ==");
+            ln(sprintf('bills fetched          %s', number_format(count($all))));
+            ln(sprintf('amount_total  < 0      %s', number_format($negTotal)));
+            ln(sprintf('amount_total  = 0      %s', number_format($zero)));
+            ln(sprintf('amount_total  > 0      %s', number_format($posTotal)));
+            ln(sprintf('amount_total_signed <0 %s   <- negative for ALL bills means wrong field',
+                number_format($negSigned)));
+            ln();
+            $samples = array_slice(array_values(array_filter($all,
+                fn ($r) => (float) ($r['amount_total'] ?? 0) < 0)), 0, 6);
+            if ($samples) {
+                ln('sample negative-amount bills:');
+                foreach ($samples as $r) {
+                    ln(sprintf('  %-18s %-12s total %16s · signed %16s',
+                        mb_substr((string) ($r['name'] ?? ''), 0, 18),
+                        (string) ($r['invoice_date'] ?? ''),
+                        number_format((float) ($r['amount_total'] ?? 0), 2),
+                        number_format((float) ($r['amount_total_signed'] ?? 0), 2)));
+                }
+            } else {
+                ln('no bills with amount_total < 0 in this window');
+            }
+            ln();
+            // Impact on the ratio, both ways.
+            $g = $client->callModel('account.move.line', 'read_group', [
+                'domain' => array_merge(
+                    [['move_id.move_type', '=', 'in_invoice'], ['parent_state', '=', 'posted'],
+                     ['move_id.invoice_date', '>=', $ys], ['move_id.invoice_date', '<=', $asAt],
+                     ['purchase_line_id', '!=', false]], []),
+                'fields' => [], 'groupby' => ['move_id'], 'lazy' => false,
+            ]);
+            $linkedIds = [];
+            foreach ((array) $g as $r) { $mv = $r['move_id'] ?? false; if (is_array($mv)) $linkedIds[(int) $mv[0]] = true; }
+            $binAll = count($all); $linkAll = 0; $binPos = 0; $linkPos = 0;
+            foreach ($all as $r) {
+                $isLinked = isset($linkedIds[(int) ($r['id'] ?? 0)]);
+                if ($isLinked) $linkAll++;
+                if ((float) ($r['amount_total'] ?? 0) >= 0) { $binPos++; if ($isLinked) $linkPos++; }
+            }
+            ln(sprintf('compliance incl. negatives  %6.2f%%  (%s of %s)',
+                $binAll > 0 ? $linkAll / $binAll * 100 : 0, number_format($linkAll), number_format($binAll)));
+            ln(sprintf('compliance excl. negatives  %6.2f%%  (%s of %s)',
+                $binPos > 0 ? $linkPos / $binPos * 100 : 0, number_format($linkPos), number_format($binPos)));
+            break;
+
         case 'revwhcheck':
             // GATE — revenue document aggregates from the warehouse vs Odoo.
             // Compares the headline totals, EVERY day of the series and EVERY
