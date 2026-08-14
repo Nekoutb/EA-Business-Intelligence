@@ -800,12 +800,17 @@ try {
             if (!$tenant) { ln("no tenant '{$slug}'"); break; }
             app(App\Tenancy\TenantContext::class)->set($tenant);
             $year = (int) ($_GET['year'] ?? date('Y'));
+            // Explicit from/to so a big tenant can be done in slices that fit
+            // the gateway timeout. A whole year of transatlanticd is ~140k ids
+            // and runs past it, and an incomplete scan cannot delete safely.
+            $from = (string) ($_GET['from'] ?? ($year . '-01-01'));
+            $to   = (string) ($_GET['to']   ?? ($year . '-12-31'));
             $svc = new App\Services\WarehouseSyncService(App\Odoo\OdooFactory::fromConfig(), $tenant);
             $svc->setDeadline(microtime(true) + (float) ($_GET['seconds'] ?? 70));
             $t0 = microtime(true);
-            $r = $svc->reconcileGlState($year . '-01-01', $year . '-12-31');
-            ln(sprintf('%s %d · checked %s · states fixed %s · rows removed %s · %s · %.1fs',
-                $slug, $year, number_format($r['checked']), number_format($r['fixed']),
+            $r = $svc->reconcileGlState($from, $to);
+            ln(sprintf('%s %s..%s · checked %s · states fixed %s · rows removed %s · %s · %.1fs',
+                $slug, $from, $to, number_format($r['checked']), number_format($r['fixed']),
                 number_format($r['removed']),
                 $r['complete'] ? 'COMPLETE' : 'INCOMPLETE (deadline) — no deletions performed',
                 microtime(true) - $t0));
