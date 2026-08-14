@@ -182,8 +182,17 @@ final class ProcurementDashboardService
         // ── Bills with / without a PO (count basis) ───────────────────────
         $bills = 0; $linked = 0;
         try {
-            $bills = $this->odoo->searchCount('account.move', [['move_type', '=', 'in_invoice'], ['state', '=', 'posted'], ['invoice_date', '>=', $yearStart], ['invoice_date', '<=', $asAtD]]);
-            $g = $this->odoo->callModel('account.move.line', 'read_group', ['domain' => [['move_id.move_type', '=', 'in_invoice'], ['parent_state', '=', 'posted'], ['move_id.invoice_date', '>=', $yearStart], ['move_id.invoice_date', '<=', $asAtD], ['purchase_line_id', '!=', false]], 'fields' => [], 'groupby' => ['move_id'], 'lazy' => false]);
+            // Negative-amount bills are credit notes in substance — a PO is not
+            // raised against a credit — so they do not belong in a compliance
+            // denominator. Filter on amount_total, NOT amount_total_signed:
+            // the signed field is negative for every vendor bill by Odoo's
+            // sign convention, so testing it would empty the denominator and
+            // report 0% compliance. (Measured 13 Aug 2026: no bill on either
+            // tenant currently has amount_total < 0, so this is a guard rather
+            // than a correction. Proper credit notes carry move_type
+            // 'in_refund' and were already excluded.)
+            $bills = $this->odoo->searchCount('account.move', [['move_type', '=', 'in_invoice'], ['state', '=', 'posted'], ['amount_total', '>=', 0], ['invoice_date', '>=', $yearStart], ['invoice_date', '<=', $asAtD]]);
+            $g = $this->odoo->callModel('account.move.line', 'read_group', ['domain' => [['move_id.move_type', '=', 'in_invoice'], ['parent_state', '=', 'posted'], ['move_id.amount_total', '>=', 0], ['move_id.invoice_date', '>=', $yearStart], ['move_id.invoice_date', '<=', $asAtD], ['purchase_line_id', '!=', false]], 'fields' => [], 'groupby' => ['move_id'], 'lazy' => false]);
             $linked = count((array) $g);
         } catch (\Throwable $e) { /* leave zeros */ }
         $k['exempt'] = [
@@ -321,11 +330,13 @@ final class ProcurementDashboardService
 
         // Exempt / compliance — cumulative YTD share at each month-end.
         try {
+            // Same credit-note exclusion as the YTD KPI above, so the monthly
+            // chart and the headline share one definition of the denominator.
             $bills = $this->odoo->searchRead('account.move',
-                [['move_type', '=', 'in_invoice'], ['state', '=', 'posted'], ['invoice_date', '>=', $yearStart], ['invoice_date', '<=', $mEndLast->format('Y-m-d')]],
+                [['move_type', '=', 'in_invoice'], ['state', '=', 'posted'], ['amount_total', '>=', 0], ['invoice_date', '>=', $yearStart], ['invoice_date', '<=', $mEndLast->format('Y-m-d')]],
                 ['invoice_date'], ['limit' => self::FETCH_CAP]);
             $linked = [];
-            $g = $this->odoo->callModel('account.move.line', 'read_group', ['domain' => [['move_id.move_type', '=', 'in_invoice'], ['parent_state', '=', 'posted'], ['move_id.invoice_date', '>=', $yearStart], ['move_id.invoice_date', '<=', $mEndLast->format('Y-m-d')], ['purchase_line_id', '!=', false]], 'fields' => [], 'groupby' => ['move_id'], 'lazy' => false]);
+            $g = $this->odoo->callModel('account.move.line', 'read_group', ['domain' => [['move_id.move_type', '=', 'in_invoice'], ['parent_state', '=', 'posted'], ['move_id.amount_total', '>=', 0], ['move_id.invoice_date', '>=', $yearStart], ['move_id.invoice_date', '<=', $mEndLast->format('Y-m-d')], ['purchase_line_id', '!=', false]], 'fields' => [], 'groupby' => ['move_id'], 'lazy' => false]);
             foreach ((array) $g as $r) { $mv = $r['move_id'] ?? false; if (is_array($mv)) $linked[(int) $mv[0]] = true; }
             $items = [];
             foreach ($bills as $b) {

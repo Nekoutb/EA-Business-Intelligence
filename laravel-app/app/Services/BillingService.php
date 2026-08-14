@@ -309,6 +309,24 @@ final class BillingService
      *
      * @return array<int, array{label:string, from:string, to:string, expected:float, billed:float, collected:float}>
      */
+    /**
+     * Warehouse invoice facts usable for this tenant, or null to use Odoo.
+     * Shares bi.warehouse_revenue: both read wh_fact_invoice, so a gate that
+     * proved that table for one is evidence for the other.
+     */
+    private function whTenantId(): ?int
+    {
+        if (!config('bi.warehouse_revenue', false)) return null;
+        try {
+            $id = (int) (optional(tenant())->id ?? 0);
+            if ($id <= 0) return null;
+            return \Illuminate\Support\Facades\DB::table('wh_fact_invoice')
+                ->where('tenant_id', $id)->limit(1)->exists() ? $id : null;
+        } catch (\Throwable $e) {
+            return null;
+        }
+    }
+
     private function reconciliationBucketsBatched(\DateTimeImmutable $from, \DateTimeImmutable $to): array
     {
         $expectedByMonth = (new OperationsService($this->odoo))->scanRevenueByMonth($from, $to);
@@ -327,17 +345,56 @@ final class BillingService
         // clear their residual too, and the original per-invoice formula
         // credits them. Classifying by residual reproduces it exactly.
         $mixed = [];
-        $rows = $this->odoo->callModel('account.move', 'read_group', [
-            'domain'  => [
-                ['move_type', '=', 'out_invoice'],
-                ['state', '=', 'posted'],
-                ['invoice_date', '>=', $from->format('Y-m-d')],
-                ['invoice_date', '<=', $to->format('Y-m-d')],
-            ],
-            'fields'  => ['amount_untaxed_signed:sum', 'amount_total_signed:sum', 'amount_residual_signed:sum'],
-            'groupby' => ['invoice_date:month', 'payment_state'],
-            'lazy'    => false,
-        ]);
+        $whT = $this->whTenantId();
+
+        // P3 — the same grouping, read locally. wh_fact_invoice stores the
+        // SIGNED amounts (its columns are fed from *_signed), so the residual
+        // arithmetic below is identical without any sign juggling.
+        $rows = null;
+        if ($whT !== null) {
+            try {
+                $rows = [];
+                foreach (\Illuminate\Support\Facades\DB::table('wh_fact_invoice')
+                    ->where('tenant_id', $whT)
+                    ->where('move_type', 'out_invoice')
+                    ->where('state', 'posted')
+                    ->whereNotNull('invoice_date')
+                    ->whereBetween('invoice_date', [$from->format('Y-m-d'), $to->format('Y-m-d')])
+                    ->selectRaw("DATE_FORMAT(invoice_date, '%Y-%m') AS ym,
+                                 COALESCE(payment_state, '') AS ps,
+                                 SUM(amount_untaxed) AS ht, SUM(amount_total) AS tot,
+                                 SUM(amount_residual) AS res")
+                    ->groupBy(\Illuminate\Support\Facades\DB::raw("DATE_FORMAT(invoice_date, '%Y-%m')"), 'payment_state')
+                    ->get() as $r) {
+                    $rows[] = [
+                        '__range'                => ['invoice_date' => ['from' => $r->ym . '-01']],
+                        'payment_state'          => (string) $r->ps,
+                        'amount_untaxed_signed'  => (float) $r->ht,
+                        'amount_total_signed'    => (float) $r->tot,
+                        'amount_residual_signed' => (float) $r->res,
+                    ];
+                }
+                if ($rows === []) $rows = null;
+            } catch (\Throwable $e) {
+                $rows = null;
+                \Illuminate\Support\Facades\Log::warning('billing warehouse group failed, using Odoo', [
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+        if ($rows === null) {
+            $rows = $this->odoo->callModel('account.move', 'read_group', [
+                'domain'  => [
+                    ['move_type', '=', 'out_invoice'],
+                    ['state', '=', 'posted'],
+                    ['invoice_date', '>=', $from->format('Y-m-d')],
+                    ['invoice_date', '<=', $to->format('Y-m-d')],
+                ],
+                'fields'  => ['amount_untaxed_signed:sum', 'amount_total_signed:sum', 'amount_residual_signed:sum'],
+                'groupby' => ['invoice_date:month', 'payment_state'],
+                'lazy'    => false,
+            ]);
+        }
         foreach ((array) $rows as $r) {
             $m = $this->monthOfGroup($r, 'invoice_date');
             if ($m === null) continue;
@@ -360,16 +417,41 @@ final class BillingService
         foreach ($mixed as [$m, $state]) {
             $ms = new \DateTimeImmutable(sprintf('%04d-%02d-01', $year, $m));
             $me = $ms->modify('last day of this month');
-            $invs = $this->odoo->searchRead('account.move',
-                [
-                    ['move_type', '=', 'out_invoice'], ['state', '=', 'posted'],
-                    ['payment_state', '=', $state],
-                    ['invoice_date', '>=', ($ms < $from ? $from : $ms)->format('Y-m-d')],
-                    ['invoice_date', '<=', ($me > $to ? $to : $me)->format('Y-m-d')],
-                ],
-                ['amount_untaxed_signed', 'amount_total_signed', 'amount_residual_signed'],
-                ['limit' => self::INVOICE_FETCH_CAP]
-            );
+            $lo = ($ms < $from ? $from : $ms)->format('Y-m-d');
+            $hi = ($me > $to   ? $to   : $me)->format('Y-m-d');
+
+            $invs = null;
+            if ($whT !== null) {
+                try {
+                    $invs = \Illuminate\Support\Facades\DB::table('wh_fact_invoice')
+                        ->where('tenant_id', $whT)
+                        ->where('move_type', 'out_invoice')
+                        ->where('state', 'posted')
+                        ->where(\Illuminate\Support\Facades\DB::raw("COALESCE(payment_state, '')"), '=', $state)
+                        ->whereBetween('invoice_date', [$lo, $hi])
+                        ->limit(self::INVOICE_FETCH_CAP)
+                        ->get(['amount_untaxed', 'amount_total', 'amount_residual'])
+                        ->map(fn ($r) => [
+                            'amount_untaxed_signed'  => (float) $r->amount_untaxed,
+                            'amount_total_signed'    => (float) $r->amount_total,
+                            'amount_residual_signed' => (float) $r->amount_residual,
+                        ])->all();
+                } catch (\Throwable $e) {
+                    $invs = null;
+                }
+            }
+            if ($invs === null) {
+                $invs = $this->odoo->searchRead('account.move',
+                    [
+                        ['move_type', '=', 'out_invoice'], ['state', '=', 'posted'],
+                        ['payment_state', '=', $state],
+                        ['invoice_date', '>=', $lo],
+                        ['invoice_date', '<=', $hi],
+                    ],
+                    ['amount_untaxed_signed', 'amount_total_signed', 'amount_residual_signed'],
+                    ['limit' => self::INVOICE_FETCH_CAP]
+                );
+            }
             foreach ($invs as $inv) {
                 $total = (float) ($inv['amount_total_signed'] ?? 0);
                 if ($total <= 0) continue;
