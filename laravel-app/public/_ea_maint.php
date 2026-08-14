@@ -792,6 +792,51 @@ try {
             ln('GATE: worst variance = ' . number_format($worst, 2) . ' — ' . ($worst < 0.005 ? 'PASS ✅' : 'FAIL ❌'));
             break;
 
+        case 'pnlcheck':
+            // GATE — P&L from the warehouse vs Odoo. Walks every numeric field
+            // of both the current and prior windows, since the page shows a
+            // period-on-period comparison and the prior window is just as
+            // capable of drifting as the current one.
+            $slug = (string) ($_GET['tenant'] ?? 'kwr');
+            $tenant = App\Models\Tenant::where('slug', $slug)->first();
+            if (!$tenant) { ln("no tenant '{$slug}'"); break; }
+            app(App\Tenancy\TenantContext::class)->set($tenant);
+            $client = App\Odoo\OdooFactory::fromConfig();
+            $period = ['type' => (string) ($_GET['period'] ?? 'ytd'), 'year' => (int) date('Y')];
+            $run = function (bool $wh) use ($client, $period) {
+                config(['bi.warehouse_gl' => $wh]);
+                $t0 = microtime(true);
+                $r = (new App\Services\ProfitLossService($client))->analyze(null, $period);
+                return [$r, microtime(true) - $t0];
+            };
+            [$w, $tW] = $run(true);
+            [$o, $tO] = $run(false);
+            config(['bi.warehouse_gl' => true]);
+
+            ln(sprintf('warehouse %.2fs · odoo %.2fs · speed-up %.1f×', $tW, $tO, $tW > 0 ? $tO / $tW : 0));
+            ln();
+            $worst = 0.0; $worstKey = '—'; $compared = 0; $shape = 0;
+            foreach (['current', 'previous'] as $sec) {
+                foreach ((array) ($o[$sec] ?? []) as $k => $v) {
+                    if (!is_numeric($v)) continue;
+                    if (!array_key_exists($k, (array) ($w[$sec] ?? []))) { $shape++; continue; }
+                    $compared++;
+                    $a1 = (float) $w[$sec][$k]; $b1 = (float) $v;
+                    $d = abs($a1 - $b1);
+                    if ($d > $worst) { $worst = $d; $worstKey = "{$sec}.{$k}"; }
+                    ln(sprintf('%-22s wh %18s · odoo %18s · Δ %s', "{$sec}.{$k}",
+                        number_format($a1, 2), number_format($b1, 2), number_format($d, 2)));
+                }
+            }
+            ln();
+            ln(sprintf('%d value comparisons made', $compared));
+            $pass = $compared > 0 && $worst < 0.005 && $shape === 0;
+            ln('GATE: worst variance = ' . number_format($worst, 2) . " ({$worstKey})"
+                . ($shape ? " · {$shape} shape mismatch(es)" : '')
+                . ($compared === 0 ? ' · NOTHING COMPARED' : '')
+                . ' — ' . ($pass ? 'PASS ✅' : 'FAIL ❌'));
+            break;
+
         case 'glreconcile':
             // Re-check parent_state and existence for a window. Deletion only
             // happens on a complete scan — see the service note.
