@@ -381,6 +381,89 @@ final class WarehouseSyncService
     }
 
     /**
+     * Re-check state and existence for GL lines in a date window.
+     *
+     * Two things an upsert-only sync can never learn, both measured on
+     * 13 Aug 2026 (kwr April: 2 surplus posted lines worth 11,925;
+     * transatlanticd July: 1 worth 50,000):
+     *
+     *  1. parent_state is derived from the parent move. Posting, resetting to
+     *     draft or cancelling a move flips it on every line, but does not
+     *     reliably bump the LINE's write_date — and the line watermark is what
+     *     the sync resumes from. A move whose state changed after its lines
+     *     were last read keeps the old state here permanently.
+     *  2. Deleting a move deletes its lines. An upsert never removes anything,
+     *     so those lines stay, still flagged posted, and keep contributing to
+     *     every balance for ever.
+     *
+     * Both present the same way: the warehouse reports MORE posted rows than
+     * Odoo, and no amount of ordinary syncing corrects it.
+     *
+     * Windowed because the id list is held in memory; a year at a time is the
+     * intended granularity.
+     */
+    public function reconcileGlState(string $from, string $to): array
+    {
+        $state  = [];   // odoo id => current parent_state
+        $lastId = 0;
+        $complete = false;
+
+        while (true) {
+            $page = $this->odoo->searchRead('account.move.line',
+                [['date', '>=', $from], ['date', '<=', $to], ['id', '>', $lastId]],
+                ['id', 'parent_state'],
+                ['limit' => 2000, 'order' => 'id asc']);
+            if ($page === []) { $complete = true; break; }
+            foreach ($page as $r) $state[(int) $r['id']] = (string) ($r['parent_state'] ?: '');
+            $lastId = (int) $page[count($page) - 1]['id'];
+            if (count($page) < 2000) { $complete = true; break; }
+            if ($this->deadline > 0 && microtime(true) >= $this->deadline) break;
+        }
+
+        // Correct states that drifted. Grouped by target value so this is a
+        // handful of UPDATEs rather than one per row.
+        $fixed = 0;
+        $byState = [];
+        foreach ($state as $id => $st) $byState[$st][] = $id;
+        foreach ($byState as $st => $ids) {
+            foreach (array_chunk($ids, 1000) as $chunk) {
+                $fixed += DB::table('wh_fact_gl_line')
+                    ->where('tenant_id', $this->tenant->id)
+                    ->whereIn('odoo_id', $chunk)
+                    ->where(function ($q) use ($st) {
+                        $q->where('parent_state', '!=', $st)->orWhereNull('parent_state');
+                    })
+                    ->update(['parent_state' => $st]);
+            }
+        }
+
+        // Remove what no longer exists upstream. Only safe on a COMPLETE scan:
+        // a window cut short by the deadline has an incomplete id set, and
+        // deleting against it would wipe rows that simply were not read yet.
+        $removed = 0;
+        if ($complete) {
+            $whIds = DB::table('wh_fact_gl_line')
+                ->where('tenant_id', $this->tenant->id)
+                ->whereBetween('gl_date', [$from, $to])
+                ->pluck('odoo_id')->all();
+            $gone = array_values(array_diff($whIds, array_keys($state)));
+            foreach (array_chunk($gone, 1000) as $chunk) {
+                $removed += DB::table('wh_fact_gl_line')
+                    ->where('tenant_id', $this->tenant->id)
+                    ->whereIn('odoo_id', $chunk)
+                    ->delete();
+            }
+        }
+
+        return [
+            'checked'  => count($state),
+            'fixed'    => $fixed,
+            'removed'  => $removed,
+            'complete' => $complete,
+        ];
+    }
+
+    /**
      * Back-fill invoice_date onto lines from their parent invoice.
      * Only invoice_date moves — gl_date keeps the date the line was booked.
      */
