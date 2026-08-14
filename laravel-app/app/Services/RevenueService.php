@@ -174,7 +174,68 @@ final class RevenueService
         // remaining slice of the dashboard. Identical arithmetic — Odoo sums
         // the same field over the same domain.
         $records = null;
-        if (config('bi.revenue_batched', true)) {
+
+        // P3 — the same three aggregates, read locally.
+        //
+        // Only for the invoice source: the warehouse holds account.move, and
+        // a tenant configured for sale.order or pos.order has no local table
+        // to answer from, so those keep going to Odoo.
+        if ($model === 'account.move' && ($whT = $this->whTenantId()) !== null) {
+            try {
+                $base = fn () => \Illuminate\Support\Facades\DB::table('wh_fact_invoice')
+                    ->where('wh_fact_invoice.tenant_id', $whT)
+                    ->whereIn('wh_fact_invoice.move_type', ['out_invoice', 'out_refund'])
+                    ->where('wh_fact_invoice.state', 'posted')
+                    ->whereNotNull('wh_fact_invoice.invoice_date')
+                    ->whereBetween('wh_fact_invoice.invoice_date',
+                        [$from->format('Y-m-d'), $to->format('Y-m-d')]);
+
+                $total = 0.0; $series = []; $orderIds = [];
+                $partnerRevenue = []; $partnerNames = []; $partnerOrders = []; $partnerMonths = [];
+
+                foreach ($base()
+                    ->selectRaw('wh_fact_invoice.invoice_date AS d, SUM(wh_fact_invoice.amount_untaxed) AS amt')
+                    ->groupBy('wh_fact_invoice.invoice_date')->get() as $r) {
+                    $amt = (float) $r->amt;
+                    $total += $amt;
+                    $series[(string) $r->d] = ($series[(string) $r->d] ?? 0.0) + $amt;
+                }
+
+                foreach ($base()
+                    ->leftJoin('wh_dim_partner as p', function ($j) {
+                        $j->on('p.tenant_id', '=', 'wh_fact_invoice.tenant_id')
+                          ->on('p.odoo_id', '=', 'wh_fact_invoice.partner_odoo_id');
+                    })
+                    ->whereNotNull('wh_fact_invoice.partner_odoo_id')
+                    ->selectRaw('wh_fact_invoice.partner_odoo_id AS pid, MAX(p.name) AS pname,
+                                 SUM(wh_fact_invoice.amount_untaxed) AS amt, COUNT(*) AS n')
+                    ->groupBy('wh_fact_invoice.partner_odoo_id')->get() as $r) {
+                    $pid = (int) $r->pid;
+                    $partnerRevenue[$pid] = (float) $r->amt;
+                    $partnerNames[$pid]   = (string) ($r->pname ?? '');
+                    $partnerOrders[$pid]  = (int) $r->n;
+                }
+
+                foreach ($base()
+                    ->whereNotNull('wh_fact_invoice.partner_odoo_id')
+                    ->selectRaw("wh_fact_invoice.partner_odoo_id AS pid,
+                                 DATE_FORMAT(wh_fact_invoice.invoice_date, '%Y-%m') AS ym")
+                    ->groupBy('wh_fact_invoice.partner_odoo_id',
+                        \Illuminate\Support\Facades\DB::raw("DATE_FORMAT(wh_fact_invoice.invoice_date, '%Y-%m')"))
+                    ->get() as $r) {
+                    $partnerMonths[(int) $r->pid][(string) $r->ym] = true;
+                }
+            } catch (\Throwable $e) {
+                // Drop every partial aggregate — inheriting half a result is
+                // how a fallback path silently reports wrong totals.
+                unset($total, $series, $orderIds, $partnerRevenue, $partnerNames, $partnerOrders, $partnerMonths);
+                \Illuminate\Support\Facades\Log::warning('revenue warehouse aggregate failed, using Odoo', [
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
+        if (!isset($partnerRevenue) && config('bi.revenue_batched', true)) {
             try {
                 $total = 0.0; $series = []; $orderIds = [];
                 $partnerRevenue = []; $partnerNames = []; $partnerOrders = []; $partnerMonths = [];
@@ -505,6 +566,25 @@ final class RevenueService
      * @return array{0:string,1:array,2:string,3:string,4:?string,5:?string}
      *   [model, domain, dateField, amountField, lineModel, lineParentField]
      */
+    /**
+     * Warehouse invoice facts usable for this tenant, or null to use Odoo.
+     * Separate flag from bi.warehouse_gl: this reads wh_fact_invoice, not the
+     * GL lines, so it earns its own gate rather than riding on one that
+     * proved a different table.
+     */
+    private function whTenantId(): ?int
+    {
+        if (!config('bi.warehouse_revenue', false)) return null;
+        try {
+            $id = (int) (optional(tenant())->id ?? 0);
+            if ($id <= 0) return null;
+            return \Illuminate\Support\Facades\DB::table('wh_fact_invoice')
+                ->where('tenant_id', $id)->limit(1)->exists() ? $id : null;
+        } catch (\Throwable $e) {
+            return null;
+        }
+    }
+
     /** Day (Y-m-d) from a read_group row; __range preferred, label fallback. */
     private function dayOfGroup(array $row, string $field): ?string
     {
