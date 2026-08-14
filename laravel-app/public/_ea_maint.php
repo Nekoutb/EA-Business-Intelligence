@@ -792,6 +792,58 @@ try {
             ln('GATE: worst variance = ' . number_format($worst, 2) . ' — ' . ($worst < 0.005 ? 'PASS ✅' : 'FAIL ❌'));
             break;
 
+        case 'plcheck':
+            // GATE — P&L forecast from the warehouse vs Odoo. Walks every
+            // line's twelve monthly values, not just the totals: the KPI strip
+            // reads monthly margins, so a month could drift while the annual
+            // figure still ties.
+            $slug = (string) ($_GET['tenant'] ?? 'kwr');
+            $tenant = App\Models\Tenant::where('slug', $slug)->first();
+            if (!$tenant) { ln("no tenant '{$slug}'"); break; }
+            app(App\Tenancy\TenantContext::class)->set($tenant);
+            $client = App\Odoo\OdooFactory::fromConfig();
+            $year = (int) ($_GET['year'] ?? date('Y'));
+            $run = function (bool $wh) use ($client, $year) {
+                config(['bi.warehouse_gl' => $wh]);
+                $t0 = microtime(true);
+                $r = (new App\Services\PLForecastService($client))->analyze($year);
+                return [$r, microtime(true) - $t0];
+            };
+            [$w, $o] = [null, null];
+            [$w, $tW] = $run(true);
+            [$o, $tO] = $run(false);
+            config(['bi.warehouse_gl' => true]);
+
+            ln(sprintf('warehouse %.2fs · odoo %.2fs · speed-up %.1f×', $tW, $tO, $tW > 0 ? $tO / $tW : 0));
+            ln();
+            $lw = (array) ($w['lines'] ?? []); $lo = (array) ($o['lines'] ?? []);
+            $byKeyW = [];
+            foreach ($lw as $L) $byKeyW[(string) ($L['key'] ?? '')] = $L;
+            $worst = 0.0; $worstKey = '—'; $compared = 0; $shape = 0;
+            if (count($lw) !== count($lo)) { $shape++; ln(sprintf('line count wh %d · odoo %d — MISMATCH', count($lw), count($lo))); }
+            foreach ($lo as $L) {
+                $k = (string) ($L['key'] ?? '');
+                if (!isset($byKeyW[$k])) { $shape++; continue; }
+                foreach ((array) ($L['monthly'] ?? []) as $m => $v) {
+                    if (!is_numeric($v)) continue;
+                    $b1 = $byKeyW[$k]['monthly'][$m] ?? null;
+                    if ($b1 === null) { $shape++; continue; }
+                    $compared++;
+                    $d = abs((float) $v - (float) $b1);
+                    if ($d > $worst) { $worst = $d; $worstKey = "{$k}[m{$m}]"; }
+                }
+            }
+            ln(sprintf('%d lines · %d monthly values compared', count($lo), $compared));
+            ln(sprintf('thru_month wh %s · odoo %s', (string) ($w['thru_month'] ?? '—'), (string) ($o['thru_month'] ?? '—')));
+            if ((string) ($w['thru_month'] ?? '') !== (string) ($o['thru_month'] ?? '')) $shape++;
+            ln();
+            $pass = $compared > 0 && $worst < 0.005 && $shape === 0;
+            ln('GATE: worst variance = ' . number_format($worst, 4) . " ({$worstKey})"
+                . ($shape ? " · {$shape} shape mismatch(es)" : '')
+                . ($compared === 0 ? ' · NOTHING COMPARED' : '')
+                . ' — ' . ($pass ? 'PASS ✅' : 'FAIL ❌'));
+            break;
+
         case 'reconwhcheck':
             // GATE — reconciliation buckets warehouse vs Odoo, holding the
             // batched path on BOTH sides. reconcheck toggles recon_batched

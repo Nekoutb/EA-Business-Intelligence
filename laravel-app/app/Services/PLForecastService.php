@@ -278,8 +278,45 @@ final class PLForecastService
 
     /* ── data fetch ───────────────────────────────────────────────── */
 
+    /**
+     * Warehouse GL usable for this tenant, or null to use Odoo.
+     * Shares bi.warehouse_gl with GLAccountService and WorkingCapitalService:
+     * all three read wh_fact_gl_line, gated together at 0.00.
+     */
+    private function whTenantId(): ?int
+    {
+        if (!config('bi.warehouse_gl', false)) return null;
+        try {
+            $id = (int) (optional(tenant())->id ?? 0);
+            if ($id <= 0) return null;
+            return \Illuminate\Support\Facades\DB::table('wh_fact_gl_line')
+                ->where('tenant_id', $id)->limit(1)->exists() ? $id : null;
+        } catch (\Throwable $e) {
+            return null;
+        }
+    }
+
     private function fetchAccountsInScope(): array
     {
+        $whT = $this->whTenantId();
+        if ($whT !== null) {
+            try {
+                $rows = \Illuminate\Support\Facades\DB::table('wh_dim_account')
+                    ->where('tenant_id', $whT)
+                    ->where(function ($q) {
+                        foreach (['6', '7', '89'] as $p) $q->orWhere('code', 'like', $p . '%');
+                    })
+                    ->orderBy('code')
+                    ->get(['odoo_id', 'code', 'name'])
+                    ->map(fn ($r) => [
+                        'id'   => (int) $r->odoo_id,
+                        'code' => (string) $r->code,
+                        'name' => (string) ($r->name ?? ''),
+                    ])->all();
+                if ($rows !== []) return $rows;
+            } catch (\Throwable $e) { /* fall through to Odoo */ }
+        }
+
         return $this->odoo->searchRead('account.account',
             [
                 '|', '|',
@@ -301,6 +338,40 @@ final class PLForecastService
     private function fetchMonthlyBalances(array $accountIds, int $year): array
     {
         if (empty($accountIds)) return [];
+
+        // P3 — same aggregation locally. This returns the finished
+        // account => [1..12] map, so the warehouse branch builds that directly
+        // instead of emitting read_group rows. That also sidesteps the month
+        // LABEL parsing the Odoo path needs: Odoo returns 'date:month' as
+        // "January 2026", localised, and a French-locale server would return
+        // "janvier 2026" for the same data. MONTH() returns an integer.
+        $whT = $this->whTenantId();
+        if ($whT !== null) {
+            try {
+                $agg = \Illuminate\Support\Facades\DB::table('wh_fact_gl_line')
+                    ->where('tenant_id', $whT)
+                    ->where('parent_state', 'posted')
+                    ->whereNotNull('gl_date')
+                    ->whereBetween('gl_date', [$year . '-01-01', $year . '-12-31'])
+                    ->whereIn('account_odoo_id', $accountIds)
+                    ->selectRaw('account_odoo_id AS aid, MONTH(gl_date) AS m,
+                                 SUM(debit) - SUM(credit) AS bal')
+                    ->groupBy('account_odoo_id', \Illuminate\Support\Facades\DB::raw('MONTH(gl_date)'))
+                    ->get();
+                if ($agg->isNotEmpty()) {
+                    $byAccount = [];
+                    foreach ($agg as $r) {
+                        $m = (int) $r->m;
+                        if ($m < 1 || $m > 12) continue;
+                        $aid = (int) $r->aid;
+                        $byAccount[$aid] ??= array_fill(1, 12, 0.0);
+                        $byAccount[$aid][$m] += (float) $r->bal;
+                    }
+                    return $byAccount;
+                }
+            } catch (\Throwable $e) { /* fall through to Odoo */ }
+        }
+
         try {
             $rows = $this->odoo->callModel('account.move.line', 'read_group', [
                 'domain'  => [
