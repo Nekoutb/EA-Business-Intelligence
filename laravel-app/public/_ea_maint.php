@@ -492,28 +492,44 @@ try {
             ln(sprintf('warehouse %.2fs · odoo %.2fs · speed-up %.1f×', $tW, $tO, $tW > 0 ? $tO / $tW : 0));
             ln();
             $sw = (array) ($w['series'] ?? []); $so = (array) ($o['series'] ?? []);
-            $worst = 0.0; $worstKey = '—'; $shape = 0;
+            $worst = 0.0; $worstKey = '—'; $shape = 0; $compared = 0;
             if (count($sw) !== count($so)) {
                 $shape++;
                 ln(sprintf('series length wh %d · odoo %d — COUNT MISMATCH', count($sw), count($so)));
             }
+            $diffs = [];
             foreach ($so as $i => $pt) {
+                $mk = (string) ($pt['month'] ?? $pt['label'] ?? $i);
                 foreach ((array) $pt as $k => $v) {
                     if (!is_numeric($v)) continue;
-                    $a1 = (float) $v;
-                    $b1 = (float) (($sw[$i][$k] ?? null) ?? 0);
-                    if (!isset($sw[$i][$k])) { $shape++; continue; }
-                    $d = abs($a1 - $b1);
-                    if ($d > $worst) { $worst = $d; $worstKey = "{$k}@" . (string) ($pt['month'] ?? $pt['label'] ?? $i); }
+                    if (!array_key_exists($k, (array) ($sw[$i] ?? []))) { $shape++; continue; }
+                    $compared++;
+                    $a1 = (float) $v; $b1 = (float) $sw[$i][$k];
+                    $d  = abs($a1 - $b1);
+                    if ($d >= 0.005) $diffs[] = [$mk, $k, $b1, $a1, $d];
+                    if ($d > $worst) { $worst = $d; $worstKey = "{$k}@{$mk}"; }
                 }
             }
-            ln(sprintf('%d months · %d numeric fields each · worst Δ %s (%s)',
-                count($so), count($so) ? count(array_filter((array) $so[0], 'is_numeric')) : 0,
-                number_format($worst, 4), $worstKey));
+            // Show which fields exist at all — a series of nulls compares
+            // nothing and would otherwise read as a clean pass.
+            $keysO = count($so) ? implode(',', array_keys(array_filter((array) end($so), 'is_numeric'))) : '';
+            ln(sprintf('%d months · numeric fields on last point: %s', count($so), $keysO !== '' ? $keysO : '(none)'));
+            ln(sprintf('%d value comparisons made', $compared));
+            if ($diffs) {
+                ln();
+                ln(sprintf('%-10s %-14s %18s %18s %14s', 'month', 'field', 'warehouse', 'odoo', 'Δ'));
+                foreach (array_slice($diffs, 0, 25) as [$mk, $k, $bw, $bo, $d]) {
+                    ln(sprintf('%-10s %-14s %18s %18s %14s', $mk, $k,
+                        number_format($bw, 4), number_format($bo, 4), number_format($d, 4)));
+                }
+                if (count($diffs) > 25) ln(sprintf('… and %d more', count($diffs) - 25));
+            }
             ln();
-            $pass = $worst < 0.005 && $shape === 0;
+            // A gate that compares nothing must not report success.
+            $pass = $compared > 0 && $worst < 0.005 && $shape === 0;
             ln('GATE: worst variance = ' . number_format($worst, 4)
                 . ($shape ? " · {$shape} shape mismatch(es)" : '')
+                . ($compared === 0 ? ' · NOTHING COMPARED' : '')
                 . ' — ' . ($pass ? 'PASS ✅' : 'FAIL ❌'));
             break;
 
