@@ -517,8 +517,14 @@ try {
                 if ($d > $worst) { $worst = $d; $worstKey = "series[{$day}]"; }
             }
             ln(sprintf('%-24s %d days · worst Δ %s', 'daily series', count($do), number_format($sd, 2)));
-            // Top customers — name and amount both.
-            $cw = (array) ($w['top_customers'] ?? []); $co = (array) ($o['top_customers'] ?? []);
+            // Top customers — name and amount both. analyze() does not carry
+            // this key; it is derived by topCustomers(), so it has to be built
+            // here or the per-customer aggregates go untested. They come from
+            // the new wh_dim_partner join and feed the dashboard's customer
+            // table, which makes them the riskiest part of this change.
+            $svc = new App\Services\RevenueService($client, $src);
+            $cw = (array) $svc->topCustomers($w, 25);
+            $co = (array) $svc->topCustomers($o, 25);
             $cd = 0.0;
             if (count($cw) !== count($co)) { $shape++; }
             foreach ($co as $i => $row) {
