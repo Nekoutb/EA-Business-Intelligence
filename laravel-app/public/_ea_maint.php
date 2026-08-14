@@ -792,6 +792,62 @@ try {
             ln('GATE: worst variance = ' . number_format($worst, 2) . ' — ' . ($worst < 0.005 ? 'PASS ✅' : 'FAIL ❌'));
             break;
 
+        case 'reconwhcheck':
+            // GATE — reconciliation buckets warehouse vs Odoo, holding the
+            // batched path on BOTH sides. reconcheck toggles recon_batched
+            // instead, which pits the warehouse against the original
+            // per-month loop: ~13 Odoo calls a month, and on transatlanticd
+            // that arm alone runs past the gateway's ~100s ceiling and
+            // returns 524 before any comparison happens. Toggling only the
+            // warehouse keeps both arms fast and isolates the actual change.
+            $slug = (string) ($_GET['tenant'] ?? 'kwr');
+            $tenant = App\Models\Tenant::where('slug', $slug)->first();
+            if (!$tenant) { ln("no tenant '{$slug}'"); break; }
+            app(App\Tenancy\TenantContext::class)->set($tenant);
+            $client = App\Odoo\OdooFactory::fromConfig();
+            $period = ['type' => 'ytd', 'year' => (int) date('Y')];
+            $run = function (bool $wh) use ($client, $period) {
+                config(['bi.recon_batched' => true, 'bi.warehouse_revenue' => $wh]);
+                $t0 = microtime(true);
+                $r = (new App\Services\BillingService($client))->reconciliationOnly(null, $period);
+                return [$r, microtime(true) - $t0];
+            };
+            [$w, $tW] = $run(true);
+            [$o, $tO] = $run(false);
+            config(['bi.warehouse_revenue' => true]);
+
+            ln(sprintf('warehouse %.1fs · odoo %.1fs · speed-up %.1f×', $tW, $tO, $tW > 0 ? $tO / $tW : 0));
+            ln();
+            ln(sprintf('%-6s %18s %18s %18s', 'month', 'Δ expected', 'Δ billed', 'Δ collected'));
+            $nb = (array) ($w['buckets'] ?? []); $ob = (array) ($o['buckets'] ?? []);
+            $worst = 0.0; $compared = 0;
+            if (count($nb) !== count($ob)) ln(sprintf('bucket count wh %d · odoo %d — MISMATCH', count($nb), count($ob)));
+            foreach ($ob as $i => $ov) {
+                $nv = $nb[$i] ?? ['expected' => 0, 'billed' => 0, 'collected' => 0];
+                $d = [
+                    (float) $nv['expected']  - (float) $ov['expected'],
+                    (float) $nv['billed']    - (float) $ov['billed'],
+                    (float) $nv['collected'] - (float) $ov['collected'],
+                ];
+                foreach ($d as $x) { $worst = max($worst, abs($x)); $compared++; }
+                ln(sprintf('%-6s %18s %18s %18s', $ov['label'] ?? '?',
+                    number_format($d[0], 2), number_format($d[1], 2), number_format($d[2], 2)));
+            }
+            ln();
+            foreach (['expected', 'billed', 'collected'] as $k) {
+                $dn = (float) ($w['headline'][$k] ?? 0); $dd = (float) ($o['headline'][$k] ?? 0);
+                $worst = max($worst, abs($dn - $dd)); $compared++;
+                ln(sprintf('headline %-10s wh %18s · odoo %18s · Δ %s', $k,
+                    number_format($dn, 2), number_format($dd, 2), number_format($dn - $dd, 2)));
+            }
+            ln();
+            ln(sprintf('%d value comparisons made', $compared));
+            $pass = $compared > 0 && $worst < 0.005;
+            ln('GATE: worst variance = ' . number_format($worst, 2)
+                . ($compared === 0 ? ' · NOTHING COMPARED' : '')
+                . ' — ' . ($pass ? 'PASS ✅' : 'FAIL ❌'));
+            break;
+
         case 'reconcheck':
             // P1 GATE — dual-run: batched reconciliation vs the original
             // per-month loop, month by month, with timings. The batched path
