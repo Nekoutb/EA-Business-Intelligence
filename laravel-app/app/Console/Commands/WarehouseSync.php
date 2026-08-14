@@ -24,7 +24,9 @@ class WarehouseSync extends Command
                             {--tenant= : Only this tenant slug}
                             {--full    : Ignore watermarks and re-read everything}
                             {--model=  : Only this Odoo model (res.partner, account.account, account.move, account.move.line)}
-                            {--seconds=0 : Stop cleanly after N seconds (0 = no limit); resumes next run}';
+                            {--seconds=0 : Stop cleanly after N seconds (0 = no limit); resumes next run}
+                            {--reconcile : Also re-check GL line state/existence for the current year}
+                            {--year= : Year for --reconcile (default: current)}';
 
     protected $description = 'Copy Odoo facts into the local warehouse tables (P2)';
 
@@ -60,6 +62,20 @@ class WarehouseSync extends Command
                     }, ($this->option('model') ?: null), $budget > 0 ? microtime(true) + $budget : 0.0);
                     $fixed = $svc->reconcileLineDates();
                     $this->line("   line dates back-filled: " . number_format($fixed));
+
+                    // Deletions and parent-state changes are invisible to an
+                    // upsert-only sync, so they need their own pass. Kept off
+                    // the 15-minute tick — it re-reads a whole year of ids —
+                    // and scheduled nightly instead.
+                    if ($this->option('reconcile')) {
+                        $y = (int) ($this->option('year') ?: date('Y'));
+                        $svc->setDeadline($budget > 0 ? microtime(true) + $budget : 0.0);
+                        $r = $svc->reconcileGlState($y . '-01-01', $y . '-12-31');
+                        $this->line(sprintf('   gl reconcile %d: checked %s · states fixed %s · removed %s · %s',
+                            $y, number_format($r['checked']), number_format($r['fixed']),
+                            number_format($r['removed']),
+                            $r['complete'] ? 'complete' : 'incomplete (no deletions)'));
+                    }
                     foreach ($res as $r) if ($r['error']) $failed++;
                 } catch (\Throwable $e) {
                     $this->error("   failed: " . $e->getMessage());

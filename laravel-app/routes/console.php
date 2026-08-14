@@ -63,6 +63,24 @@ Schedule::command('bms:warehouse-sync --seconds=600')
     ->withoutOverlapping(30)
     ->runInBackground();
 
+// Nightly: re-check GL line state and existence for the current year.
+//
+// The incremental sync upserts by the LINE's write_date, which leaves two
+// blind spots it can never close on its own — a move deleted upstream takes
+// its lines with it and an upsert removes nothing, and parent_state changes
+// with the parent move without reliably bumping the line's write_date. Both
+// show up as the warehouse reporting MORE posted rows than Odoo (measured
+// 13 Aug 2026: 12 stale rows on kwr alone) and neither is corrected by
+// syncing harder.
+//
+// Separate from the 15-minute tick because it re-reads a year of ids. 02:40
+// Douala, clear of the daily report and the offenders scorecard.
+Schedule::command('bms:warehouse-sync --reconcile --seconds=900')
+    ->dailyAt('02:40')
+    ->timezone('Africa/Douala')
+    ->withoutOverlapping(60)
+    ->runInBackground();
+
 // Async-data worker: pre-computes every Odoo-heavy page for every tenant
 // (config/warm.php) so web requests only ever serve cached data — no more
 // inline multi-minute rebuilds behind Cloudflare's ~100s ceiling. A sweep
