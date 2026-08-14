@@ -149,9 +149,12 @@ return [
      * display_type needed to exclude section, note and tax lines from a
      * product-line count.
      *
-     * Default OFF until revcheck reports 0.00 on both tenants.
+     * ON since 13 Aug 2026: revwhcheck reports 0.00 on both tenants across
+     * the headline figures, all 196 days of the daily series and the top 25
+     * customers by name and amount (226 comparisons each).
+     * kwr 3.80s -> 1.64s, transatlanticd 16.49s -> 5.59s.
      */
-    'warehouse_revenue' => (bool) env('BI_WAREHOUSE_REVENUE', false),
+    'warehouse_revenue' => (bool) env('BI_WAREHOUSE_REVENUE', true),
 
     /**
      * How long a computed dataset may be SERVED, not how often it refreshes.
