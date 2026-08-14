@@ -469,6 +469,54 @@ try {
             ln('GATE: worst variance = ' . number_format($worstS, 2) . ' — ' . ($worstS < 0.005 ? 'PASS ✅' : 'FAIL ❌'));
             break;
 
+        case 'wccheck':
+            // GATE — liquidity trend from the warehouse vs from Odoo. Walks
+            // every numeric field of every month rather than a chosen few,
+            // because this series feeds the CCC and DSO/DPO strips and a
+            // single drifting sub-figure would be invisible in a headline.
+            $slug = (string) ($_GET['tenant'] ?? 'kwr');
+            $tenant = App\Models\Tenant::where('slug', $slug)->first();
+            if (!$tenant) { ln("no tenant '{$slug}'"); break; }
+            app(App\Tenancy\TenantContext::class)->set($tenant);
+            $client = App\Odoo\OdooFactory::fromConfig();
+            $run = function (bool $wh) use ($client) {
+                config(['bi.warehouse_gl' => $wh]);
+                $t0 = microtime(true);
+                $r = (new App\Services\WorkingCapitalService($client))->liquidityTrend(12);
+                return [$r, microtime(true) - $t0];
+            };
+            [$w, $tW] = $run(true);
+            [$o, $tO] = $run(false);
+            config(['bi.warehouse_gl' => true]);
+
+            ln(sprintf('warehouse %.2fs · odoo %.2fs · speed-up %.1f×', $tW, $tO, $tW > 0 ? $tO / $tW : 0));
+            ln();
+            $sw = (array) ($w['series'] ?? []); $so = (array) ($o['series'] ?? []);
+            $worst = 0.0; $worstKey = '—'; $shape = 0;
+            if (count($sw) !== count($so)) {
+                $shape++;
+                ln(sprintf('series length wh %d · odoo %d — COUNT MISMATCH', count($sw), count($so)));
+            }
+            foreach ($so as $i => $pt) {
+                foreach ((array) $pt as $k => $v) {
+                    if (!is_numeric($v)) continue;
+                    $a1 = (float) $v;
+                    $b1 = (float) (($sw[$i][$k] ?? null) ?? 0);
+                    if (!isset($sw[$i][$k])) { $shape++; continue; }
+                    $d = abs($a1 - $b1);
+                    if ($d > $worst) { $worst = $d; $worstKey = "{$k}@" . (string) ($pt['month'] ?? $pt['label'] ?? $i); }
+                }
+            }
+            ln(sprintf('%d months · %d numeric fields each · worst Δ %s (%s)',
+                count($so), count($so) ? count(array_filter((array) $so[0], 'is_numeric')) : 0,
+                number_format($worst, 4), $worstKey));
+            ln();
+            $pass = $worst < 0.005 && $shape === 0;
+            ln('GATE: worst variance = ' . number_format($worst, 4)
+                . ($shape ? " · {$shape} shape mismatch(es)" : '')
+                . ' — ' . ($pass ? 'PASS ✅' : 'FAIL ❌'));
+            break;
+
         case 'dashprofile':
             // Where the cold dashboard's seconds actually go, service by
             // service. dashtime gives one total, which is enough to know the

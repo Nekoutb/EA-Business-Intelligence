@@ -547,14 +547,31 @@ final class WorkingCapitalService
             // 1) Chart of accounts — extended to classes 3, 4, 5, 6, 7 so
             //    one query covers BOTH the balance-sheet ratios (3/4/5)
             //    AND the CCC denominators (6/7 = COGS / revenue).
-            $accounts = $this->odoo->searchRead('account.account', [
-                '|', '|', '|', '|',
-                ['code', '=like', '3%'],
-                ['code', '=like', '4%'],
-                ['code', '=like', '5%'],
-                ['code', '=like', '6%'],
-                ['code', '=like', '7%'],
-            ], ['id', 'code'], []);
+            $whTenant = $this->whTenantId();
+
+            $accounts = null;
+            if ($whTenant !== null) {
+                $accounts = \Illuminate\Support\Facades\DB::table('wh_dim_account')
+                    ->where('tenant_id', $whTenant)
+                    ->where(function ($q) {
+                        foreach (['3', '4', '5', '6', '7'] as $p) $q->orWhere('code', 'like', $p . '%');
+                    })
+                    ->orderBy('code')
+                    ->get(['odoo_id', 'code'])
+                    ->map(fn ($r) => ['id' => (int) $r->odoo_id, 'code' => (string) $r->code])
+                    ->all();
+                if ($accounts === []) $accounts = null; // not synced — use Odoo
+            }
+            if ($accounts === null) {
+                $accounts = $this->odoo->searchRead('account.account', [
+                    '|', '|', '|', '|',
+                    ['code', '=like', '3%'],
+                    ['code', '=like', '4%'],
+                    ['code', '=like', '5%'],
+                    ['code', '=like', '6%'],
+                    ['code', '=like', '7%'],
+                ], ['id', 'code'], []);
+            }
             if (empty($accounts)) return $emptyResult;
 
             // Per-account class-bucket lookup. Same code can land in
@@ -597,16 +614,46 @@ final class WorkingCapitalService
             // 2) Monthly aggregates per account across all classes, all
             //    time up to today. Single read_group; PHP handles the
             //    per-snapshot ratio + CCC math in the loop below.
-            $rows = $this->odoo->callModel('account.move.line', 'read_group', [
-                'domain'  => [
-                    ['parent_state', '=',  'posted'],
-                    ['date',         '<=', $today->format('Y-m-d')],
-                    ['account_id',   'in', array_keys($codeByAccount)],
-                ],
-                'fields'  => ['debit:sum', 'credit:sum'],
-                'groupby' => ['account_id', 'date:month'],
-                'lazy'    => false,
-            ]);
+            $rows = null;
+            if ($whTenant !== null) {
+                // Same aggregation, done locally. Rows are emitted in Odoo's
+                // read_group shape — including __range, which is what
+                // extractMonthKey() reads — so every ratio and CCC calculation
+                // below is untouched and the two paths cannot drift.
+                $agg = \Illuminate\Support\Facades\DB::table('wh_fact_gl_line')
+                    ->where('tenant_id', $whTenant)
+                    ->where('parent_state', 'posted')
+                    ->whereNotNull('gl_date')
+                    ->where('gl_date', '<=', $today->format('Y-m-d'))
+                    ->whereIn('account_odoo_id', array_keys($codeByAccount))
+                    ->selectRaw("account_odoo_id AS aid, DATE_FORMAT(gl_date, '%Y-%m') AS ym,
+                                 SUM(debit) AS d, SUM(credit) AS c")
+                    ->groupBy('account_odoo_id', \Illuminate\Support\Facades\DB::raw("DATE_FORMAT(gl_date, '%Y-%m')"))
+                    ->get();
+
+                $rows = [];
+                foreach ($agg as $r) {
+                    $rows[] = [
+                        'account_id' => [(int) $r->aid, ''],
+                        '__range'    => ['date' => ['from' => $r->ym . '-01']],
+                        'debit'      => (float) $r->d,
+                        'credit'     => (float) $r->c,
+                    ];
+                }
+                if ($rows === []) $rows = null; // nothing local — fall back
+            }
+            if ($rows === null) {
+                $rows = $this->odoo->callModel('account.move.line', 'read_group', [
+                    'domain'  => [
+                        ['parent_state', '=',  'posted'],
+                        ['date',         '<=', $today->format('Y-m-d')],
+                        ['account_id',   'in', array_keys($codeByAccount)],
+                    ],
+                    'fields'  => ['debit:sum', 'credit:sum'],
+                    'groupby' => ['account_id', 'date:month'],
+                    'lazy'    => false,
+                ]);
+            }
             if (empty($rows)) return $emptyResult;
 
             // 3) Build time-indexed maps. Two parallel structures:
@@ -845,6 +892,24 @@ final class WorkingCapitalService
      * structured `__range` array with `from`/`to` ISO dates. Try the
      * range first since it's locale-independent.
      */
+    /**
+     * Warehouse GL is usable for this tenant, or null to use Odoo.
+     * Shares bi.warehouse_gl with GLAccountService: the two read the same
+     * table, so one flag turning them on together is the honest coupling.
+     */
+    private function whTenantId(): ?int
+    {
+        if (!config('bi.warehouse_gl', false)) return null;
+        try {
+            $id = (int) (optional(tenant())->id ?? 0);
+            if ($id <= 0) return null;
+            return \Illuminate\Support\Facades\DB::table('wh_fact_gl_line')
+                ->where('tenant_id', $id)->limit(1)->exists() ? $id : null;
+        } catch (\Throwable $e) {
+            return null;
+        }
+    }
+
     private function extractMonthKey(array $row): ?string
     {
         // Odoo read_group with groupby 'date:month' returns the period window
