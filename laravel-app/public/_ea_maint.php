@@ -970,6 +970,29 @@ try {
                 ln('IN ODOO ONLY (warehouse account dimension is behind):');
                 foreach (array_slice($onlyOd, 0, 15, true) as $id => $code) ln(sprintf('  id %-8s code %s', $id, $code));
             }
+
+            // Same ids, different CODE. This is what the id-set comparison
+            // above cannot see, and it is the one that silently changes a
+            // figure: every P&L bucket is chosen by code prefix, so a stale
+            // code moves an account's balance into a different line - or out
+            // of the statement entirely, if it lands on an excluded prefix
+            // like 69.
+            ln();
+            $codeDiff = [];
+            foreach ($wMap as $id => $wc) {
+                if (!isset($oMap[$id])) continue;
+                if ((string) $wc !== (string) $oMap[$id]) $codeDiff[$id] = [$wc, $oMap[$id]];
+            }
+            ln(sprintf('CODE MISMATCHES (same id, different code): %s', number_format(count($codeDiff))));
+            foreach (array_slice($codeDiff, 0, 20, true) as $id => [$wc, $oc]) {
+                $bal = Illuminate\Support\Facades\DB::table('wh_fact_gl_line')
+                    ->where('tenant_id', $tenant->id)->where('account_odoo_id', $id)
+                    ->where('parent_state', 'posted')
+                    ->whereBetween('gl_date', [date('Y') . '-01-01', date('Y') . '-12-31'])
+                    ->selectRaw('SUM(debit) - SUM(credit) AS b')->value('b');
+                ln(sprintf('  id %-8s warehouse %-14s odoo %-14s ytd balance %s',
+                    $id, $wc, $oc, number_format((float) ($bal ?? 0), 2)));
+            }
             break;
 
         case 'plcheck':
