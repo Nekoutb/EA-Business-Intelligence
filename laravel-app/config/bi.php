@@ -136,6 +136,24 @@ return [
     'warehouse_gl' => (bool) env('BI_WAREHOUSE_GL', true),
 
     /**
+     * P3 — revenue's document aggregates (daily series, per-customer totals,
+     * active months) from wh_fact_invoice instead of three Odoo read_groups
+     * per window, twice per analyse.
+     *
+     * Invoice source only: a tenant on sale.order or pos.order has no local
+     * table for it and keeps using Odoo regardless of this flag.
+     *
+     * Line-level metrics — the outfit count and discount totals — still go to
+     * Odoo. wh_fact_gl_line cannot answer them yet because reconcileLineDates()
+     * overwrites move_type with the parent document's type, which discards the
+     * display_type needed to exclude section, note and tax lines from a
+     * product-line count.
+     *
+     * Default OFF until revcheck reports 0.00 on both tenants.
+     */
+    'warehouse_revenue' => (bool) env('BI_WAREHOUSE_REVENUE', false),
+
+    /**
      * How long a computed dataset may be SERVED, not how often it refreshes.
      * The bms:warm worker recomputes pages as fast as it can sweep; this TTL
      * is only the stale-serve ceiling if that worker stalls. It must exceed

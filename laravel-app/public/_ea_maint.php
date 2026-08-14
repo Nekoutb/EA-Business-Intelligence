@@ -469,6 +469,76 @@ try {
             ln('GATE: worst variance = ' . number_format($worstS, 2) . ' — ' . ($worstS < 0.005 ? 'PASS ✅' : 'FAIL ❌'));
             break;
 
+        case 'revwhcheck':
+            // GATE — revenue document aggregates from the warehouse vs Odoo.
+            // Compares the headline totals, EVERY day of the series and EVERY
+            // customer aggregate, because the dashboard shows a chart and a
+            // top-customer table, and either could drift while the headline
+            // stays right.
+            $slug = (string) ($_GET['tenant'] ?? 'kwr');
+            $tenant = App\Models\Tenant::where('slug', $slug)->first();
+            if (!$tenant) { ln("no tenant '{$slug}'"); break; }
+            app(App\Tenancy\TenantContext::class)->set($tenant);
+            $client = App\Odoo\OdooFactory::fromConfig();
+            $src = (string) config_env('REVENUE_SOURCE', 'invoice');
+            $period = ['type' => (string) ($_GET['period'] ?? 'ytd'), 'year' => (int) date('Y')];
+            $run = function (bool $wh) use ($client, $src, $period) {
+                config(['bi.warehouse_revenue' => $wh]);
+                $t0 = microtime(true);
+                $r = (new App\Services\RevenueService($client, $src))->analyze(null, $period);
+                return [$r, microtime(true) - $t0];
+            };
+            [$w, $tW] = $run(true);
+            [$o, $tO] = $run(false);
+            config(['bi.warehouse_revenue' => false]);
+
+            ln(sprintf('warehouse %.2fs · odoo %.2fs · speed-up %.1f×', $tW, $tO, $tW > 0 ? $tO / $tW : 0));
+            ln();
+            $worst = 0.0; $worstKey = '—'; $compared = 0; $shape = 0;
+            foreach ([['current', 'total'], ['current', 'outfits'], ['current', 'customers'],
+                      ['previous', 'total'], ['current', 'discount_total']] as [$sec, $k]) {
+                $a1 = (float) ($w[$sec][$k] ?? 0); $b1 = (float) ($o[$sec][$k] ?? 0);
+                $compared++;
+                $d = abs($a1 - $b1);
+                if ($d > $worst) { $worst = $d; $worstKey = "{$sec}.{$k}"; }
+                ln(sprintf('%-24s wh %18s · odoo %18s · Δ %s', "{$sec}.{$k}",
+                    number_format($a1, 2), number_format($b1, 2), number_format($d, 2)));
+            }
+            // Daily series — every day, not a sample.
+            $dw = (array) ($w['series'] ?? $w['current']['series'] ?? []);
+            $do = (array) ($o['series'] ?? $o['current']['series'] ?? []);
+            if (count($dw) !== count($do)) { $shape++; ln(sprintf('series days wh %d · odoo %d — COUNT MISMATCH', count($dw), count($do))); }
+            $sd = 0.0;
+            foreach ($do as $day => $v) {
+                if (!array_key_exists($day, $dw)) { $shape++; continue; }
+                $compared++;
+                $d = abs((float) $v - (float) $dw[$day]);
+                if ($d > $sd) $sd = $d;
+                if ($d > $worst) { $worst = $d; $worstKey = "series[{$day}]"; }
+            }
+            ln(sprintf('%-24s %d days · worst Δ %s', 'daily series', count($do), number_format($sd, 2)));
+            // Top customers — name and amount both.
+            $cw = (array) ($w['top_customers'] ?? []); $co = (array) ($o['top_customers'] ?? []);
+            $cd = 0.0;
+            if (count($cw) !== count($co)) { $shape++; }
+            foreach ($co as $i => $row) {
+                $compared++;
+                $d = abs((float) ($row['revenue'] ?? $row['total'] ?? 0)
+                       - (float) ($cw[$i]['revenue'] ?? $cw[$i]['total'] ?? 0));
+                if ((string) ($row['name'] ?? '') !== (string) ($cw[$i]['name'] ?? '')) $shape++;
+                if ($d > $cd) $cd = $d;
+                if ($d > $worst) { $worst = $d; $worstKey = "customer[{$i}]"; }
+            }
+            ln(sprintf('%-24s %d customers · worst Δ %s', 'top customers', count($co), number_format($cd, 2)));
+            ln();
+            ln(sprintf('%d value comparisons made', $compared));
+            $pass = $compared > 0 && $worst < 0.005 && $shape === 0;
+            ln('GATE: worst variance = ' . number_format($worst, 2) . " ({$worstKey})"
+                . ($shape ? " · {$shape} shape mismatch(es)" : '')
+                . ($compared === 0 ? ' · NOTHING COMPARED' : '')
+                . ' — ' . ($pass ? 'PASS ✅' : 'FAIL ❌'));
+            break;
+
         case 'wccheck':
             // GATE — liquidity trend from the warehouse vs from Odoo. Walks
             // every numeric field of every month rather than a chosen few,
