@@ -76,13 +76,30 @@ final class ProfitLossService
         // 1. Pull every account in classes 6 + 7 once and bucket by code prefix.
         // Single Odoo call — works on any Odoo version (14..19+) because we
         // only use the universally-stable `code` field, never `account_type`.
-        $accounts = $this->odoo->searchRead('account.account',
-            [
-                '|',
-                ['code', '=like', '6%'],
-                ['code', '=like', '7%'],
-            ],
-            ['id', 'code'], []);
+        $accounts = null;
+        if (($whT = $this->whTenantId()) !== null) {
+            try {
+                $accounts = \Illuminate\Support\Facades\DB::table('wh_dim_account')
+                    ->where('tenant_id', $whT)
+                    ->where(function ($q) {
+                        $q->where('code', 'like', '6%')->orWhere('code', 'like', '7%');
+                    })
+                    ->orderBy('code')
+                    ->get(['odoo_id', 'code'])
+                    ->map(fn ($r) => ['id' => (int) $r->odoo_id, 'code' => (string) $r->code])
+                    ->all();
+                if ($accounts === []) $accounts = null;
+            } catch (\Throwable $e) { $accounts = null; }
+        }
+        if ($accounts === null) {
+            $accounts = $this->odoo->searchRead('account.account',
+                [
+                    '|',
+                    ['code', '=like', '6%'],
+                    ['code', '=like', '7%'],
+                ],
+                ['id', 'code'], []);
+        }
         if ($accounts === []) {
             return $this->emptyResult();
         }
@@ -125,6 +142,24 @@ final class ProfitLossService
      *
      * Returns: [account_id => bucket_label] for every classified account.
      */
+    /**
+     * Warehouse GL usable for this tenant, or null to use Odoo.
+     * Shares bi.warehouse_gl with the other GL readers — same table, gated
+     * together, and a nightly reconcile keeps deletions from accumulating.
+     */
+    private function whTenantId(): ?int
+    {
+        if (!config('bi.warehouse_gl', false)) return null;
+        try {
+            $id = (int) (optional(tenant())->id ?? 0);
+            if ($id <= 0) return null;
+            return \Illuminate\Support\Facades\DB::table('wh_fact_gl_line')
+                ->where('tenant_id', $id)->limit(1)->exists() ? $id : null;
+        } catch (\Throwable $e) {
+            return null;
+        }
+    }
+
     private function bucketAccountsByCode(array $accounts): array
     {
         $bucketOf = [];
@@ -177,13 +212,35 @@ final class ProfitLossService
             ['account_id', 'in', $accountIds],
         ];
 
-        // read_group aggregates on the server so we avoid pulling every line.
-        $rows = $this->odoo->callModel('account.move.line', 'read_group', [
-            'domain'  => $domain,
-            'fields'  => ['account_id', 'balance:sum'],
-            'groupby' => ['account_id'],
-            'lazy'    => false,
-        ]);
+        // P3 — same aggregation locally, emitted in read_group's shape so the
+        // bucket-and-sign logic below is untouched. balance is debit - credit
+        // by definition, which is what the sign convention downstream assumes.
+        $rows = null;
+        if (($whT = $this->whTenantId()) !== null) {
+            try {
+                $rows = [];
+                foreach (\Illuminate\Support\Facades\DB::table('wh_fact_gl_line')
+                    ->where('tenant_id', $whT)
+                    ->where('parent_state', 'posted')
+                    ->whereNotNull('gl_date')
+                    ->whereBetween('gl_date', [$from->format('Y-m-d'), $to->format('Y-m-d')])
+                    ->whereIn('account_odoo_id', $accountIds)
+                    ->selectRaw('account_odoo_id AS aid, SUM(debit) - SUM(credit) AS bal')
+                    ->groupBy('account_odoo_id')->get() as $r) {
+                    $rows[] = ['account_id' => [(int) $r->aid, ''], 'balance' => (float) $r->bal];
+                }
+                if ($rows === []) $rows = null;
+            } catch (\Throwable $e) { $rows = null; }
+        }
+        if ($rows === null) {
+            // read_group aggregates on the server so we avoid pulling every line.
+            $rows = $this->odoo->callModel('account.move.line', 'read_group', [
+                'domain'  => $domain,
+                'fields'  => ['account_id', 'balance:sum'],
+                'groupby' => ['account_id'],
+                'lazy'    => false,
+            ]);
+        }
 
         $sums = [
             'revenue' => 0.0,    // class 7 except 79 (credit-positive → negative balance in Odoo)
