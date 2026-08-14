@@ -792,6 +792,69 @@ try {
             ln('GATE: worst variance = ' . number_format($worst, 2) . ' — ' . ($worst < 0.005 ? 'PASS ✅' : 'FAIL ❌'));
             break;
 
+        case 'plmonth':
+            // Isolate ONE month and prefix. parent_state is a parent-derived
+            // field cached on the line: posting a move flips move.state and so
+            // line.parent_state, but does not necessarily bump the LINE's
+            // write_date - which is what the sync watermarks on. A move posted
+            // after its lines were last read would keep a stale state in the
+            // warehouse permanently, and syncing would never correct it.
+            // Comparing with and without the posted filter says whether that
+            // is what is happening.
+            $slug = (string) ($_GET['tenant'] ?? 'kwr');
+            $tenant = App\Models\Tenant::where('slug', $slug)->first();
+            if (!$tenant) { ln("no tenant '{$slug}'"); break; }
+            app(App\Tenancy\TenantContext::class)->set($tenant);
+            $client = App\Odoo\OdooFactory::fromConfig();
+            $year = (int) ($_GET['year'] ?? date('Y'));
+            $mon  = (int) ($_GET['month'] ?? 7);
+            $pref = (string) ($_GET['prefix'] ?? '7');
+            $mStart = sprintf('%04d-%02d-01', $year, $mon);
+            $mEnd   = date('Y-m-t', strtotime($mStart));
+
+            $accts = $client->searchRead('account.account', [['code', '=like', $pref . '%']], ['id', 'code'], []);
+            $ids = array_map(fn ($a) => (int) $a['id'], $accts);
+            ln("== {$slug} · {$year}-{$mon} · prefix {$pref} · " . count($ids) . " accounts ==");
+            if (!$ids) break;
+
+            $og = $client->callModel('account.move.line', 'read_group', [
+                'domain' => [['parent_state', '=', 'posted'], ['date', '>=', $mStart], ['date', '<=', $mEnd],
+                             ['account_id', 'in', $ids]],
+                'fields' => ['balance:sum'], 'groupby' => [], 'lazy' => false,
+            ]);
+            $oBal = (float) (($og[0]['balance'] ?? 0));
+
+            $q = fn () => Illuminate\Support\Facades\DB::table('wh_fact_gl_line')
+                ->where('tenant_id', $tenant->id)
+                ->whereBetween('gl_date', [$mStart, $mEnd])
+                ->whereIn('account_odoo_id', $ids);
+            $wPosted = (float) ($q()->where('parent_state', 'posted')
+                ->selectRaw('SUM(debit) - SUM(credit) AS b')->value('b') ?? 0);
+            $wAny    = (float) ($q()->selectRaw('SUM(debit) - SUM(credit) AS b')->value('b') ?? 0);
+
+            ln(sprintf('odoo   posted            %18s', number_format($oBal, 2)));
+            ln(sprintf('wh     parent_state=posted %16s · Δ vs odoo %s',
+                number_format($wPosted, 2), number_format($wPosted - $oBal, 2)));
+            ln(sprintf('wh     ANY parent_state    %16s · Δ vs odoo %s',
+                number_format($wAny, 2), number_format($wAny - $oBal, 2)));
+            ln();
+            ln('warehouse lines by parent_state:');
+            foreach ($q()->selectRaw("COALESCE(parent_state,'(null)') AS ps, COUNT(*) n,
+                                      SUM(debit) - SUM(credit) AS b")
+                ->groupBy('parent_state')->get() as $r) {
+                ln(sprintf('  %-12s %8s lines · balance %18s',
+                    $r->ps, number_format((int) $r->n), number_format((float) $r->b, 2)));
+            }
+            ln();
+            // Row-count sanity: is the warehouse simply missing lines here?
+            $oCount = $client->searchCount('account.move.line',
+                [['parent_state', '=', 'posted'], ['date', '>=', $mStart], ['date', '<=', $mEnd],
+                 ['account_id', 'in', $ids]]);
+            $wCount = (int) $q()->where('parent_state', 'posted')->count();
+            ln(sprintf('posted line count  odoo %s · warehouse %s · Δ %d',
+                number_format($oCount), number_format($wCount), $wCount - $oCount));
+            break;
+
         case 'placcts':
             // Do the two paths even sum over the same accounts? fetchAccountsInScope
             // is warehouse-backed too, so a difference in the ACCOUNT SET shows up
