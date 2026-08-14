@@ -792,6 +792,25 @@ try {
             ln('GATE: worst variance = ' . number_format($worst, 2) . ' — ' . ($worst < 0.005 ? 'PASS ✅' : 'FAIL ❌'));
             break;
 
+        case 'glreconcile':
+            // Re-check parent_state and existence for a window. Deletion only
+            // happens on a complete scan — see the service note.
+            $slug = (string) ($_GET['tenant'] ?? 'kwr');
+            $tenant = App\Models\Tenant::where('slug', $slug)->first();
+            if (!$tenant) { ln("no tenant '{$slug}'"); break; }
+            app(App\Tenancy\TenantContext::class)->set($tenant);
+            $year = (int) ($_GET['year'] ?? date('Y'));
+            $svc = new App\Services\WarehouseSyncService(App\Odoo\OdooFactory::fromConfig(), $tenant);
+            $svc->setDeadline(microtime(true) + (float) ($_GET['seconds'] ?? 70));
+            $t0 = microtime(true);
+            $r = $svc->reconcileGlState($year . '-01-01', $year . '-12-31');
+            ln(sprintf('%s %d · checked %s · states fixed %s · rows removed %s · %s · %.1fs',
+                $slug, $year, number_format($r['checked']), number_format($r['fixed']),
+                number_format($r['removed']),
+                $r['complete'] ? 'COMPLETE' : 'INCOMPLETE (deadline) — no deletions performed',
+                microtime(true) - $t0));
+            break;
+
         case 'plmonth':
             // Isolate ONE month and prefix. parent_state is a parent-derived
             // field cached on the line: posting a move flips move.state and so
