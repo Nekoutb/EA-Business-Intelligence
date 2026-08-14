@@ -629,7 +629,11 @@ final class ProcurementService
                     ['invoice_date', '<=', $to->format('Y-m-d')],
                 ],
                 ['id', 'name', 'invoice_date', 'partner_id', 'amount_total_signed'],
-                ['limit' => self::FETCH_CAP, 'order' => 'amount_total_signed desc']
+                // ASC, not DESC. amount_total_signed is negative for every
+                // vendor bill (Odoo's payables convention), so 'desc' ranked
+                // the SMALLEST bills first and pushed the biggest maverick
+                // spend to the bottom of a list titled "Top 10".
+                ['limit' => self::FETCH_CAP, 'order' => 'amount_total_signed asc']
             );
             if (empty($bills)) return [];
 
@@ -638,7 +642,7 @@ final class ProcurementService
 
             $unlinked = array_filter($bills, fn ($b) => !isset($linkedSet[$b['id']]));
             $unlinked = array_values($unlinked);
-            // Already sorted desc by amount; just slice.
+            // Sorted largest-spend-first by the query above; just slice.
             return array_map(function ($b) {
                 $partner = is_array($b['partner_id'] ?? null) ? $b['partner_id'][1] : '—';
                 return [
@@ -646,7 +650,11 @@ final class ProcurementService
                     'name'         => (string) ($b['name'] ?? ''),
                     'partner'      => (string) $partner,
                     'invoice_date' => (string) ($b['invoice_date'] ?? ''),
-                    'amount'       => (float) ($b['amount_total_signed'] ?? 0),
+                    // abs() for display, matching how vendor spend is shown
+                    // elsewhere in this service. The raw field is negative on
+                    // every vendor bill, which made ordinary purchases read as
+                    // credit notes on the page.
+                    'amount'       => abs((float) ($b['amount_total_signed'] ?? 0)),
                 ];
             }, array_slice($unlinked, 0, $topN));
         } catch (\Throwable $e) {
