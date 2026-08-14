@@ -469,6 +469,78 @@ try {
             ln('GATE: worst variance = ' . number_format($worstS, 2) . ' — ' . ($worstS < 0.005 ? 'PASS ✅' : 'FAIL ❌'));
             break;
 
+        case 'dashprofile':
+            // Where the cold dashboard's seconds actually go, service by
+            // service. dashtime gives one total, which is enough to know the
+            // page is slow and useless for deciding what to re-point next.
+            $slug = (string) ($_GET['tenant'] ?? 'transatlanticd');
+            $tenant = App\Models\Tenant::where('slug', $slug)->first();
+            if (!$tenant) { ln("no tenant '{$slug}'"); break; }
+            app(App\Tenancy\TenantContext::class)->set($tenant);
+            if (function_exists('ea_cache_clear')) ea_cache_clear();
+            $client = App\Odoo\OdooFactory::fromConfig();
+            $year   = (int) date('Y');
+            $period = ['type' => 'ytd', 'year' => $year];
+            $src    = (string) config_env('REVENUE_SOURCE', 'invoice');
+
+            $timings = [];
+            $time = function (string $label, callable $fn) use (&$timings) {
+                $t0 = microtime(true);
+                try { $out = $fn(); $err = null; }
+                catch (\Throwable $e) { $out = null; $err = get_class($e) . ': ' . $e->getMessage(); }
+                $timings[] = ['label' => $label, 'secs' => microtime(true) - $t0, 'error' => $err];
+                return $out;
+            };
+
+            $rev = $time('RevenueService::analyze',
+                fn () => (new App\Services\RevenueService($client, $src))->analyze(null, $period));
+            $pl = $time('ProfitLossService::analyze',
+                fn () => (new App\Services\ProfitLossService($client))->analyze(null, $period));
+
+            $totalRev = (float) ($rev['current']['total'] ?? 0);
+            $days     = max(1, (int) ($rev['period']['days'] ?? 1));
+            $ccy      = (string) ($rev['currency'] ?? 'XAF');
+
+            $ar = $time('ReceivablesService::analyze',
+                fn () => (new App\Services\ReceivablesService($client))->analyze($totalRev, $days, $ccy));
+            $time('BillingService::reconciliationOnly',
+                fn () => (new App\Services\BillingService($client))->reconciliationOnly(null, $period));
+            $time('DashboardController::buildExtraKpis', function () use ($client, $year) {
+                $m = new ReflectionMethod(App\Http\Controllers\DashboardController::class, 'buildExtraKpis');
+                $m->setAccessible(true);
+                return $m->invoke(app(App\Http\Controllers\DashboardController::class), $client, $year);
+            });
+
+            $totalExp = max(1.0, (float) ($pl['current']['cogs'] ?? 0)
+                + (float) ($pl['current']['opex'] ?? 0) + (float) ($pl['current']['d_and_a'] ?? 0));
+            $totalAr  = (float) ($ar['kpis']['total_ar'] ?? $ar['total_ar'] ?? 0);
+
+            $ap = $time('PayablesService::analyze',
+                fn () => (new App\Services\PayablesService($client))->analyze($totalExp, 365, $ccy));
+            $totalAp = (float) ($ap['kpis']['total_ap'] ?? 0);
+
+            $time('ReceivablesService::dsoRunningSeries',
+                fn () => (new App\Services\ReceivablesService($client))->dsoRunningSeries($totalAr, $totalRev, 365, $year));
+            $time('PayablesService::dpoRunningSeries',
+                fn () => (new App\Services\PayablesService($client))->dpoRunningSeries($totalAp, $totalExp, 365, $year));
+            $time('PLForecastService::analyze',
+                fn () => (new App\Services\PLForecastService($client))->analyze($year));
+            $time('WorkingCapitalService::liquidityTrend',
+                fn () => (new App\Services\WorkingCapitalService($client))->liquidityTrend(12));
+
+            usort($timings, fn ($a, $b) => $b['secs'] <=> $a['secs']);
+            $sum = array_sum(array_column($timings, 'secs'));
+            ln("== cold dashboard profile · {$slug} ==");
+            ln();
+            foreach ($timings as $r) {
+                ln(sprintf('%7.2fs  %5.1f%%  %-38s %s',
+                    $r['secs'], $sum > 0 ? $r['secs'] / $sum * 100 : 0, $r['label'],
+                    $r['error'] ? ('ERR ' . mb_substr($r['error'], 0, 60)) : ''));
+            }
+            ln();
+            ln(sprintf('%7.2fs  total across %d services', $sum, count($timings)));
+            break;
+
         case 'dashtime':
             // P1 outcome measure — cold dashboard compute, cache cleared.
             $slug = (string) ($_GET['tenant'] ?? 'transatlanticd');
