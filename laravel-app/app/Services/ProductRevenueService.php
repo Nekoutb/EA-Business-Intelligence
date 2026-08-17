@@ -123,6 +123,10 @@ final class ProductRevenueService
             'price_effect_xaf'     => 0.0,
             'ytd_actual_revenue'   => 0.0,
             'ytd_budget_revenue'   => 0.0,
+            // Revenue from products carrying actuals but NO budget (containers).
+            // Held separately rather than dropped: it is real revenue and still
+            // has to be disclosed — it just cannot sit inside a variance.
+            'unbudgeted_actual_revenue' => 0.0,
         ];
         $pendingYtdBudgetRev = 0.0;
 
@@ -197,10 +201,24 @@ final class ProductRevenueService
                 $tot['price_effect_xaf']    += $priceEffect;
             } elseif (!$pending && !$hasBudget) {
                 // Containers (typically): actuals exist but no budget was
-                // entered. Revenue still rolls into the tracked total
-                // (we don't want to lose it), but variance is N/A.
+                // entered, so no variance can be computed for them.
+                //
+                // Their revenue is deliberately NOT added to
+                // ytd_actual_revenue. It used to be, which made the tracked
+                // subtotal compare mismatched sets — actual including
+                // containers, budget excluding them, because containers have
+                // no budget to include. The row's own numbers exposed it: on
+                // transatlanticd for Aug 2026 it reported net −133.9M while
+                // its volume effect (−192.8M) and price effect (0.0M) summed
+                // to −192.8M. The 58.9M difference was exactly the container
+                // revenue, and it flattered the gap by that much.
+                //
+                // The revenue is not lost: it stays on each container's own
+                // row, it is carried here as unbudgeted_actual_revenue for
+                // disclosure, and the headline TOTAL is class-70 GL revenue,
+                // which already includes containers along with everything else.
                 $volEffect = 0.0; $priceEffect = 0.0; $netVar = null; $pct = null;
-                $tot['ytd_actual_revenue'] += $ytdActRev;
+                $tot['unbudgeted_actual_revenue'] += $ytdActRev;
             } else {
                 // Pending — budget without actuals.
                 $volEffect = 0.0; $priceEffect = 0.0; $netVar = null; $pct = null;
@@ -232,6 +250,8 @@ final class ProductRevenueService
             ];
         }
 
+        // Like-for-like now: both sides cover exactly the budgeted products, so
+        // this reconciles to volume_effect + price_effect. It did not before.
         $tot['net_variance_xaf'] = $tot['ytd_actual_revenue'] - $tot['ytd_budget_revenue'];
 
         // ── Class 70 period total (Dashboard-comparable HT revenue figure
