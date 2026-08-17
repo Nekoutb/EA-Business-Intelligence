@@ -34,12 +34,26 @@ class CashflowForecastController extends Controller
         $data16w = null;
         $error   = null;
 
+        // Manual overrides the user typed into the Annual Cashflow grid.
+        $tenantId = optional(app(\App\Tenancy\TenantContext::class)->has()
+            ? app(\App\Tenancy\TenantContext::class)->tenant() : null)->id;
+        $overrides = $tenantId
+            ? app(\App\Services\BudgetService::class)->loadCashflowOverrides($tenantId, $year)
+            : [];
+
         // Annual monthly forecast
         try {
             $client = OdooFactory::fromConfig();
+            // The overrides are part of the key. Leaving them out would serve a
+            // grid computed from whatever was saved when the entry was first
+            // written, so an edit would appear to do nothing for the whole TTL
+            // - the same defect the P&L forecast had. Deliberately NOT paired
+            // with ea_cache_clear() on save: that wipes every page for the
+            // tenant and takes slow pages past Cloudflare's ceiling.
+            $oFingerprint = $overrides ? substr(md5(json_encode($overrides)), 0, 10) : 'base';
             $data = ea_cached(
-                "cashflow_forecast_{$year}",
-                fn () => (new CashflowForecastService($client))->analyze($year)
+                "cashflow_forecast_v2_{$year}_{$oFingerprint}",
+                fn () => (new CashflowForecastService($client))->analyze($year, $overrides)
             );
         } catch (\Throwable $e) {
             $error = $e->getMessage();
@@ -178,4 +192,51 @@ class CashflowForecastController extends Controller
             '_zero_state' => true,
         ];
     }
+
+    /**
+     * POST /cashflow-forecast/overrides — persist manual cell entries for the
+     * Annual Cashflow grid.
+     *
+     * Only leaf buckets are accepted. Subtotals, net change and ending cash are
+     * derived in the service and must never be storable: if a total could be
+     * typed independently of its parts, the statement could be made internally
+     * inconsistent, which is exactly what a cashflow is meant to prevent.
+     *
+     * A blank cell removes the override and returns that month to its computed
+     * actual/forecast, so the grid can always be reverted piecemeal.
+     */
+    public function saveOverrides(Request $request)
+    {
+        $ctx = app(\App\Tenancy\TenantContext::class);
+        if (!$ctx->has()) abort(404);
+        $tenant = $ctx->tenant();
+
+        $v = $request->validate([
+            'year'   => ['required', 'integer'],
+            'cells'  => ['nullable', 'array'],
+        ]);
+        $year = max(2018, min((int) (new \DateTimeImmutable())->format('Y') + 2, (int) $v['year']));
+
+        $allowed = \App\Services\CashflowForecastService::EDITABLE_KEYS;
+        $clean   = [];
+        foreach ((array) ($v['cells'] ?? []) as $key => $months) {
+            if (!in_array((string) $key, $allowed, true) || !is_array($months)) continue;
+            foreach ($months as $m => $val) {
+                $m = (int) $m;
+                if ($m < 1 || $m > 12) continue;
+                if ($val === null || $val === '') continue;   // blank clears it
+                if (!is_numeric($val)) continue;
+                $clean[(string) $key][$m] = (float) $val;
+            }
+        }
+
+        app(\App\Services\BudgetService::class)
+            ->saveCashflowOverrides($tenant, $year, $clean, optional($request->user())->id);
+
+        return redirect()->to(tenant_url('/cashflow-forecast?year=' . $year))->with('flash', [
+            'type' => 'success',
+            'msg'  => 'Cashflow inputs saved — subtotals, net change and ending cash recalculated.',
+        ]);
+    }
+
 }

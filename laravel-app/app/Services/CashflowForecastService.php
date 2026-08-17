@@ -84,7 +84,18 @@ final class CashflowForecastService
         $this->odoo = $odoo;
     }
 
-    public function analyze(?int $year = null): array
+    /**
+     * The rows a user may type into. Leaf buckets only — every other row on
+     * the grid (the three section subtotals, Net Change in Cash, Ending Cash
+     * Position) is derived from these and must stay derived, or the statement
+     * could be made to contradict itself.
+     */
+    public const EDITABLE_KEYS = [
+        'customers', 'suppliers', 'employees', 'taxes_other', 'income_tax',
+        'other_operating', 'capex', 'financing',
+    ];
+
+    public function analyze(?int $year = null, array $overrides = []): array
     {
         $today = new \DateTimeImmutable('today');
         $year  = $year ?? (int) $today->format('Y');
@@ -103,6 +114,26 @@ final class CashflowForecastService
             $cy = $cyBuckets[$key] ?? array_fill(1, 12, 0.0);
             $py = $pyBuckets[$key] ?? array_fill(1, 12, 0.0);
             $bucketForecasted[$key] = $this->fillForecast($cy, $py, $thruMonth);
+        }
+
+        // Manual overrides, applied to the LEAF buckets only and BEFORE any
+        // subtotal is computed. That ordering is the whole design: every
+        // subtotal, the net change and the ending-cash running balance are
+        // derived downstream, so they re-derive from the edited figures for
+        // free and can never disagree with the rows above them.
+        //
+        // Only months the user actually typed are replaced; everything else
+        // keeps its computed actual or forecast, so an override is a targeted
+        // correction rather than a wholesale replacement of the year.
+        $overridden = [];
+        foreach ($overrides as $key => $byMonth) {
+            if (!isset($bucketForecasted[$key]) || !is_array($byMonth)) continue;
+            foreach ($byMonth as $m => $v) {
+                $m = (int) $m;
+                if ($m < 1 || $m > 12 || $v === null || $v === '') continue;
+                $bucketForecasted[$key][$m] = (float) $v;
+                $overridden[$key][$m] = true;
+            }
         }
 
         // Build the rendered rows: leaf buckets + subtotals + cumulative ending cash.
@@ -159,6 +190,7 @@ final class CashflowForecastService
         $rows[] = ['key' => 'ending_cash', 'label' => 'Ending Cash Position', 'kind' => 'subtotal', 'colour' => 'sage',  'monthly' => $endingCash];
 
         return [
+            'overridden'   => $overridden,
             'currency'     => 'XAF',
             'year'         => $year,
             'thru_month'   => $thruMonth,

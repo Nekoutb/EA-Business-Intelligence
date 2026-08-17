@@ -396,26 +396,58 @@
                         @foreach ($lines as $line)
                             @php
                                 $isSubtotal = $line['kind'] === 'subtotal';
+                                // Editable exactly when the service calls the row a leaf.
+                                // Subtotals, Net Change and Ending Cash stay derived - a
+                                // typed total could contradict the cells above it.
+                                $editable = !$isSubtotal
+                                    && in_array($line['key'], App\Services\CashflowForecastService::EDITABLE_KEYS, true);
                                 $bg   = $isSubtotal ? 'bg-[#fcfbf8]' : 'bg-white';
                                 $font = $isSubtotal ? 'font-bold' : 'font-medium';
                                 $total = array_sum($line['monthly']);
                             @endphp
-                            <tr class="{{ $bg }} hover:bg-[#faf8f5] transition-colors">
+                            <tr class="{{ $bg }} hover:bg-[#faf8f5] transition-colors"
+                                data-cf-row="{{ $line['key'] }}"
+                                data-cf-kind="{{ $isSubtotal ? 'subtotal' : 'leaf' }}">
                                 <td class="text-left pl-4 pr-2 py-1.5 sticky left-0 {{ $bg }} z-10 w-[20rem] {{ $font }} text-[#1e3d44]">{{ $line['label'] }}</td>
                                 @foreach ($months as $m)
                                     @php
                                         $isActual = !$m['is_forecast'];
                                         $colour   = $isActual ? $actualText : $budgetText;
                                         $val      = $line['monthly'][$m['num']] ?? null;
+                                        $isEdited = isset($data['overridden'][$line['key']][$m['num']]);
                                     @endphp
-                                    <td class="text-right tabular-nums px-2 py-1.5 {{ $colour }} {{ $font }}">{{ $fmtM($val) }}</td>
+                                    @if ($editable)
+                                        <td class="px-1 py-1 {{ $isEdited ? 'bg-[#fff8e6]' : '' }}">
+                                            <input type="number" step="any" form="cf-overrides"
+                                                   name="cells[{{ $line['key'] }}][{{ $m['num'] }}]"
+                                                   value="{{ $val === null ? '' : round((float) $val, 0) }}"
+                                                   data-cf-cell="{{ $m['num'] }}"
+                                                   title="{{ $isEdited ? 'Manual entry - clear the box to return to the computed figure' : 'Computed - type to override' }}"
+                                                   class="w-full text-right tabular-nums bg-transparent border border-transparent hover:border-[#d9d4ca] focus:border-brand-500 focus:bg-white rounded px-1 py-0.5 {{ $colour }} {{ $font }}">
+                                        </td>
+                                    @else
+                                        <td class="text-right tabular-nums px-2 py-1.5 {{ $colour }} {{ $font }}" data-cf-cell="{{ $m['num'] }}">{{ $fmtM($val) }}</td>
+                                    @endif
                                 @endforeach
-                                <td class="text-right tabular-nums px-2 py-1.5 {{ $font }} text-[#1e3d44] border-l border-[#e8e4de]">{{ $fmtM($total) }}</td>
+                                <td class="text-right tabular-nums px-2 py-1.5 {{ $font }} text-[#1e3d44] border-l border-[#e8e4de]" data-cf-total>{{ $fmtM($total) }}</td>
                             </tr>
                         @endforeach
                     </tbody>
                 </table>
             </div>
+            <form id="cf-overrides" method="POST" action="{{ tenant_url('/cashflow-forecast/overrides') }}"
+                  class="px-4 py-2.5 border-t border-[#e8e4de] bg-white flex items-center justify-between gap-3 flex-wrap">
+                @csrf
+                <input type="hidden" name="year" value="{{ $year }}">
+                <div class="text-[10.5px] text-[#7c7466]">
+                    Type into any line above to plan it manually. Subtotals, <strong>Net Change in Cash</strong> and
+                    <strong>Ending Cash Position</strong> recalculate as you type and cannot be edited directly.
+                    Clear a box to return that month to the computed figure.
+                </div>
+                <button type="submit" class="text-[11px] font-semibold text-white bg-brand-600 hover:bg-brand-700 rounded-lg px-3 py-2 shadow-sm transition flex-shrink-0">
+                    Save cashflow inputs
+                </button>
+            </form>
             <div class="px-4 py-2.5 border-t border-[#e8e4de] bg-[#faf8f5] text-[10.5px] text-[#7c7466]">
                 Direct-method cashflow. Each line tracks actual cash movements (Class 5 — banques + caisse) categorised by the dominant counter-account on the move: customers (41) / suppliers (40) / employees (42, 64) / taxes (43, 44) / income tax (89) / capex (Class 2) / financing (Class 1). Forecast = SMLY (same month last year) per bucket with trailing-3-month fallback.
             </div>
@@ -423,4 +455,87 @@
     @endif
 
 </div> {{-- /.cf-page-wrap --}}
+
+{{-- Live recalculation while typing. The server recomputes authoritatively on
+     save; this only keeps the derived rows honest as the user edits, so the
+     grid never displays a subtotal that disagrees with the cells above it.
+     Section membership mirrors CashflowForecastService. --}}
+<script>
+(function () {
+  var OP  = ['customers','suppliers','employees','taxes_other','income_tax','other_operating'];
+  var INV = ['capex'];
+  var FIN = ['financing'];
+  var opening = {{ (float) ($data['opening_cash'] ?? 0) }};
+
+  function rowEl(k) { return document.querySelector('[data-cf-row="' + k + '"]'); }
+
+  function cellVal(k, m) {
+    var r = rowEl(k); if (!r) { return 0; }
+    var c = r.querySelector('[data-cf-cell="' + m + '"]');
+    if (!c) { return 0; }
+    if (c.tagName === 'INPUT') {
+      var v = parseFloat(c.value);
+      return isFinite(v) ? v : 0;
+    }
+    return 0;
+  }
+
+  function sum(keys, m) {
+    var t = 0;
+    for (var i = 0; i < keys.length; i++) { t += cellVal(keys[i], m); }
+    return t;
+  }
+
+  function fmtM(v) {
+    var m = v / 1e6;
+    if (Math.abs(m) < 0.05) { return '0'; }
+    return m < 0 ? '(' + Math.abs(m).toFixed(1) + ')' : m.toFixed(1);
+  }
+
+  function setRow(key, vals) {
+    var r = rowEl(key); if (!r) { return; }
+    var tot = 0;
+    for (var m = 1; m <= 12; m++) {
+      var c = r.querySelector('[data-cf-cell="' + m + '"]');
+      if (c && c.tagName !== 'INPUT') { c.textContent = fmtM(vals[m]); }
+      tot += vals[m];
+    }
+    var t = r.querySelector('[data-cf-total]');
+    if (t) { t.textContent = fmtM(tot); }
+  }
+
+  function recalc() {
+    var op = {}, inv = {}, fin = {}, net = {}, end = {}, run = opening;
+    for (var m = 1; m <= 12; m++) {
+      op[m]  = sum(OP, m);
+      inv[m] = sum(INV, m);
+      fin[m] = sum(FIN, m);
+      net[m] = op[m] + inv[m] + fin[m];
+      run   += net[m];
+      end[m] = run;
+    }
+    setRow('op_cf', op);
+    setRow('inv_cf', inv);
+    setRow('fin_cf', fin);
+    setRow('net_change', net);
+    setRow('ending_cash', end);
+
+    var leaves = OP.concat(INV).concat(FIN);
+    for (var i = 0; i < leaves.length; i++) {
+      var r = rowEl(leaves[i]); if (!r) { continue; }
+      var tot = 0;
+      for (var mm = 1; mm <= 12; mm++) { tot += cellVal(leaves[i], mm); }
+      var t = r.querySelector('[data-cf-total]');
+      if (t) { t.textContent = fmtM(tot); }
+    }
+  }
+
+  document.addEventListener('input', function (e) {
+    if (e.target && e.target.getAttribute && e.target.getAttribute('form') === 'cf-overrides') {
+      recalc();
+    }
+  });
+})();
+</script>
+
 @endsection
