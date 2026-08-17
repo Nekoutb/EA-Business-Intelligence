@@ -507,6 +507,114 @@ try {
             ln('GATE: worst variance = ' . number_format($worstS, 2) . ' — ' . ($worstS < 0.005 ? 'PASS ✅' : 'FAIL ❌'));
             break;
 
+        case 'prodtrace':
+            // Do invoice lines actually carry product references we could map
+            // collections by? Collections are attributed today by matching 706
+            // ACCOUNT names, which only covers containers - everything sold as
+            // a product (BULDOOZER, CAMION, OOG, VEHICULE IMPORT) has no
+            // account of its own, so its cash is invisible on the Treasury
+            // page. If product_id is populated on the invoice lines, mapping by
+            // product works for every stream regardless of account naming.
+            //
+            // ?terms=BULDOOZER,CAMION,OOG,VEHICULE  (comma separated, ILIKE)
+            $slug = (string) ($_GET['tenant'] ?? 'transatlanticd');
+            $tenant = App\Models\Tenant::where('slug', $slug)->first();
+            if (!$tenant) { ln("no tenant '{$slug}'"); break; }
+            app(App\Tenancy\TenantContext::class)->set($tenant);
+            $client = App\Odoo\OdooFactory::fromConfig();
+            $yr  = (int) ($_GET['year'] ?? date('Y'));
+            $terms = array_filter(array_map('trim', explode(',',
+                (string) ($_GET['terms'] ?? 'BULDOOZER,CAMION,OOG,VEHICULE'))));
+
+            ln("== product references on invoice lines · {$slug} · {$yr} ==");
+            ln();
+
+            // 1) Which products match the client's names?
+            $prodDom = [];
+            for ($i = 0; $i < count($terms) - 1; $i++) $prodDom[] = '|';
+            foreach ($terms as $t) $prodDom[] = ['name', 'ilike', $t];
+            $prods = $client->searchRead('product.product', $prodDom, ['id', 'name', 'default_code'], ['limit' => 200]);
+            ln(sprintf('products matching [%s]: %s', implode(', ', $terms), number_format(count($prods))));
+            foreach (array_slice($prods, 0, 25) as $pr) {
+                ln(sprintf('  id %-8s %-14s %s', $pr['id'],
+                    (string) ($pr['default_code'] ?: '-'), mb_substr((string) $pr['name'], 0, 50)));
+            }
+            if (!$prods) { ln('  (none - the names may differ in Odoo)'); break; }
+            ln();
+
+            // 2) Do posted customer-invoice lines reference them, and where does
+            //    the revenue land?
+            $pids = array_map(fn ($x) => (int) $x['id'], $prods);
+            $rows = $client->callModel('account.move.line', 'read_group', [
+                'domain' => [
+                    ['move_id.move_type', '=', 'out_invoice'],
+                    ['parent_state', '=', 'posted'],
+                    ['product_id', 'in', $pids],
+                    ['date', '>=', $yr . '-01-01'], ['date', '<=', $yr . '-12-31'],
+                ],
+                'fields'  => ['price_subtotal:sum'],
+                'groupby' => ['product_id'],
+                'lazy'    => false,
+            ]);
+            ln('invoiced revenue YTD by product (posted customer invoices):');
+            $tot = 0.0;
+            foreach ((array) $rows as $r) {
+                $nm = is_array($r['product_id'] ?? null) ? (string) $r['product_id'][1] : '?';
+                $amt = (float) ($r['price_subtotal'] ?? 0);
+                $tot += $amt;
+                ln(sprintf('  %-46s %16s  (%s lines)', mb_substr($nm, 0, 46),
+                    number_format($amt, 2), number_format((int) ($r['__count'] ?? 0))));
+            }
+            ln(sprintf('  %-46s %16s', 'TOTAL', number_format($tot, 2)));
+            if (!$rows) ln('  (no posted invoice lines reference these products)');
+            ln();
+
+            // 3) Which revenue accounts do those lines post to? This says
+            //    whether account-name matching could ever have caught them.
+            $acc = $client->callModel('account.move.line', 'read_group', [
+                'domain' => [
+                    ['move_id.move_type', '=', 'out_invoice'],
+                    ['parent_state', '=', 'posted'],
+                    ['product_id', 'in', $pids],
+                    ['date', '>=', $yr . '-01-01'], ['date', '<=', $yr . '-12-31'],
+                ],
+                'fields'  => ['price_subtotal:sum'],
+                'groupby' => ['account_id'],
+                'lazy'    => false,
+            ]);
+            ln('revenue accounts these product lines post to:');
+            foreach ((array) $acc as $r) {
+                $nm = is_array($r['account_id'] ?? null) ? (string) $r['account_id'][1] : '?';
+                ln(sprintf('  %-56s %16s', mb_substr($nm, 0, 56),
+                    number_format((float) ($r['price_subtotal'] ?? 0), 2)));
+            }
+            ln();
+
+            // 4) Coverage: how much of ALL invoiced revenue carries ANY product?
+            $withProd = $client->callModel('account.move.line', 'read_group', [
+                'domain' => [
+                    ['move_id.move_type', '=', 'out_invoice'], ['parent_state', '=', 'posted'],
+                    ['product_id', '!=', false],
+                    ['date', '>=', $yr . '-01-01'], ['date', '<=', $yr . '-12-31'],
+                ],
+                'fields' => ['price_subtotal:sum'], 'groupby' => [], 'lazy' => false,
+            ]);
+            $noProd = $client->callModel('account.move.line', 'read_group', [
+                'domain' => [
+                    ['move_id.move_type', '=', 'out_invoice'], ['parent_state', '=', 'posted'],
+                    ['product_id', '=', false], ['display_type', '=', false],
+                    ['date', '>=', $yr . '-01-01'], ['date', '<=', $yr . '-12-31'],
+                ],
+                'fields' => ['price_subtotal:sum'], 'groupby' => [], 'lazy' => false,
+            ]);
+            $wp = (float) (($withProd[0]['price_subtotal'] ?? 0));
+            $np = (float) (($noProd[0]['price_subtotal'] ?? 0));
+            ln('coverage of product-based mapping across ALL invoice lines:');
+            ln(sprintf('  lines WITH a product    %16s', number_format($wp, 2)));
+            ln(sprintf('  lines WITHOUT a product %16s', number_format($np, 2)));
+            ln(sprintf('  %% mappable by product   %15.1f%%', ($wp + $np) > 0 ? 100 * $wp / ($wp + $np) : 0));
+            break;
+
         case 'colcheck':
             // Treasury collections by stream, traced from the cash side.
             // Reports what the page shows AND an independent invoice-first
