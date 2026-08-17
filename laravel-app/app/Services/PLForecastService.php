@@ -611,8 +611,13 @@ final class PLForecastService
         $nfM       = $hasSplit
             ? (float) ($A['interest_income_monthly'] ?? 0) - (float) ($A['interest_expense_monthly'] ?? 0)
             : (float) $A['net_financial_monthly'];
+        // Per-side magnitudes for the separate targets. With only a combined
+        // figure saved (pre-split settings), put it on whichever side its sign
+        // implies so the total still reconciles.
+        $finIncomeM  = $hasSplit ? (float) ($A['interest_income_monthly']  ?? 0) : max(0.0, $nfM);
+        $finExpenseM = $hasSplit ? (float) ($A['interest_expense_monthly'] ?? 0) : abs(min(0.0, $nfM));
 
-        $target = ['revenue'=>[], 'direct_costs'=>[], 'opex'=>[], 'depreciation'=>[], 'net_financial'=>[], 'income_tax'=>[]];
+        $target = ['revenue'=>[], 'direct_costs'=>[], 'opex'=>[], 'depreciation'=>[], 'fin_revenue'=>[], 'fin_expense'=>[], 'income_tax'=>[]];
         foreach ($fc as $m) {
             $rev  = (float) $tRev[$m];
             // Per-month gross margin: a deterministic value inside the band when
@@ -632,29 +637,48 @@ final class PLForecastService
             $target['direct_costs'][$m]  = $dir;
             $target['opex'][$m]          = $opx;
             $target['depreciation'][$m]  = $da;
-            $target['net_financial'][$m] = $nfn;
+            // Targeted SEPARATELY, which is what lets a financial assumption
+            // actually land. As one combined 'net_financial' group it mixed
+            // signs (77 income positive, 67 expense negative), so the scaling
+            // step below refused to touch it whenever the historical base was
+            // ~0 - and a user entering an interest expense saw nothing change.
+            // Split, each group is single-sign and safe to write.
+            $target['fin_revenue'][$m]   = $finIncomeM;
+            $target['fin_expense'][$m]   = -$finExpenseM;
             $target['income_tax'][$m]    = $tax;
         }
 
         // ── Group account ids, then scale base forecast months to target ──
-        $groupAccts = ['revenue'=>[], 'direct_costs'=>[], 'opex'=>[], 'depreciation'=>[], 'net_financial'=>[], 'income_tax'=>[]];
+        $groupAccts = ['revenue'=>[], 'direct_costs'=>[], 'opex'=>[], 'depreciation'=>[], 'fin_revenue'=>[], 'fin_expense'=>[], 'income_tax'=>[]];
         foreach ($accountVectors as $aid => $av) {
-            $grp = $groupOf($av['line']);
+            $grp = (string) ($av['line'] ?? '');
             if (isset($groupAccts[$grp])) $groupAccts[$grp][] = $aid;
         }
 
-        // Income tax is DERIVED (rate × PBT). If the tenant has no class-89
-        // accounts in the GL, there's nothing for the scaling step to land on,
-        // so the tax line would stay flat at zero however the rate is set.
-        // Add a synthetic holder (zero actuals) so the computed forecast shows.
-        if (empty($groupAccts['income_tax'])) {
-            $accountVectors['__synth_income_tax'] = [
-                'line'    => 'income_tax',
-                'code'    => '89',
-                'name'    => 'Income tax (computed)',
+        // Every group needs somewhere for its target to land. A line with no
+        // accounts in the GL - no class-89, no 67x, no 77x - has nothing for
+        // the scaling step below to write into, so that assumption would stay
+        // flat at zero no matter what the user typed. A synthetic holder with
+        // zero actuals gives it a home without touching real account detail.
+        $synthMeta = [
+            'revenue'      => ['7',  'Revenue (computed)'],
+            'direct_costs' => ['60', 'Direct costs (computed)'],
+            'opex'         => ['6',  'Operating expenses (computed)'],
+            'depreciation' => ['68', 'Depreciation & amortisation (computed)'],
+            'fin_revenue'  => ['77', 'Financial income (computed)'],
+            'fin_expense'  => ['67', 'Financial expense (computed)'],
+            'income_tax'   => ['89', 'Income tax (computed)'],
+        ];
+        foreach ($synthMeta as $grp => [$code, $label]) {
+            if (!empty($groupAccts[$grp])) continue;
+            $key = '__synth_' . $grp;
+            $accountVectors[$key] = [
+                'line'    => $grp,
+                'code'    => $code,
+                'name'    => $label,
                 'monthly' => array_fill(1, 12, 0.0),
             ];
-            $groupAccts['income_tax'][] = '__synth_income_tax';
+            $groupAccts[$grp][] = $key;
         }
 
         foreach ($target as $grp => $monthsTarget) {
@@ -666,10 +690,14 @@ final class PLForecastService
                 if (abs($base) > 1.0) {
                     $scale = $tv / $base;
                     foreach ($aids as $aid) $accountVectors[$aid]['monthly'][$m] *= $scale;
-                } elseif (count($aids) > 0 && $grp !== 'net_financial') {
-                    // Base ~0 for a single-sign line — split equally so the
-                    // target still shows. (Net financial is mixed-sign, so we
-                    // leave its SMLY base rather than risk flipping a sign.)
+                } elseif (count($aids) > 0) {
+                    // Base ~0 — split the target equally so it still shows.
+                    // Safe for every group now that financial income and
+                    // expense are separate: each carries one sign, so writing
+                    // the target cannot flip an account the wrong way.
+                    // net_financial used to be excluded here for exactly that
+                    // reason, which is why an entered interest expense silently
+                    // did nothing when there was no historical base.
                     $each = $tv / count($aids);
                     foreach ($aids as $aid) $accountVectors[$aid]['monthly'][$m] = $each;
                 }
