@@ -1623,6 +1623,9 @@ Route::prefix('t/{tenant}')
                 Route::post('/pl-forecast/commentary', [PLForecastController::class, 'saveCommentary'])->middleware('module:pl_forecast');
                 Route::post('/pl-forecast/assumptions', [PLForecastController::class, 'saveAssumptions'])->middleware('module:pl_forecast');
                 Route::get('/cashflow-forecast',   [CashflowForecastController::class,   'index'])->middleware('module:cashflow_forecast');
+                // Manual cell entries on the Annual Cashflow grid. Same module
+                // gate as the page itself.
+                Route::post('/cashflow-forecast/overrides', [CashflowForecastController::class, 'saveOverrides'])->middleware('module:cashflow_forecast');
                 Route::get('/investment-analysis', [InvestmentAnalysisController::class, 'index'])->middleware('module:investment_analysis');
                 // Budget Upload — gated by its own module key now that the
                 // sidebar has a dedicated nav entry. Default=true in the

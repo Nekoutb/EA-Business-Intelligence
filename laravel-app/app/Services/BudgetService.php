@@ -242,6 +242,39 @@ final class BudgetService
     }
 
     /**
+     * Manual cashflow overrides for the Annual Cashflow grid.
+     *
+     * Shape: ['customers' => [1 => 12345.0, ...], 'capex' => [...]] — only
+     * the LEAF buckets, only the months the user actually typed in. Anything
+     * absent falls through to the computed actual/forecast, so an override is
+     * a targeted correction rather than a wholesale replacement.
+     *
+     * Stored in tenant_budgets.data under 'cashflow_overrides', alongside the
+     * budget and the P&L assumptions — no separate table.
+     *
+     * @return array<string, array<int, float>>
+     */
+    public function loadCashflowOverrides(int $tenantId, int $year): array
+    {
+        $row = TenantBudget::where('tenant_id', $tenantId)->where('year', $year)->first();
+        if (!$row) return [];
+        $o = $row->data['cashflow_overrides'] ?? null;
+        return is_array($o) ? $o : [];
+    }
+
+    /** Persist cashflow overrides without disturbing anything else in data. */
+    public function saveCashflowOverrides(Tenant $tenant, int $year, array $overrides, ?int $userId = null): TenantBudget
+    {
+        $row = TenantBudget::firstOrNew(['tenant_id' => $tenant->id, 'year' => $year]);
+        $existing = (array) ($row->data ?? []);
+        $existing['cashflow_overrides'] = $overrides;
+        $row->data = $existing;
+        if ($userId) $row->uploaded_by = $userId;
+        $row->save();
+        return $row;
+    }
+
+    /**
      * Dashboard efficiency-KPI budget targets the user types in on the
      * dashboard's "KPI Targets & Trends" panel. Stored as flat annual
      * targets (one number each) so the dashboard can draw a horizontal
