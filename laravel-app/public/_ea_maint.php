@@ -927,6 +927,65 @@ try {
                 microtime(true) - $t0));
             break;
 
+        case 'acctmonths':
+            // Every account under a prefix, with all 12 monthly balances, from
+            // ODOO directly. Deliberately does NOT filter on parent_state: an
+            // entry sitting in draft is exactly the kind of thing a posted-only
+            // query hides, and "the amount is there but the report shows zero"
+            // is usually one of those two.
+            $slug = (string) ($_GET['tenant'] ?? 'kwr');
+            $tenant = App\Models\Tenant::where('slug', $slug)->first();
+            if (!$tenant) { ln("no tenant '{$slug}'"); break; }
+            app(App\Tenancy\TenantContext::class)->set($tenant);
+            $client = App\Odoo\OdooFactory::fromConfig();
+            $pref = (string) ($_GET['prefix'] ?? '67');
+            $year = (int) ($_GET['year'] ?? date('Y'));
+
+            $accts = $client->searchRead('account.account',
+                [['code', '=like', $pref . '%']], ['id', 'code', 'name'], ['order' => 'code asc']);
+            ln("== {$slug} · accounts '{$pref}%' · {$year} ==");
+            ln(sprintf('%d accounts in the chart', count($accts)));
+            if (!$accts) break;
+            $ids = array_map(fn ($a) => (int) $a['id'], $accts);
+            $nameOf = [];
+            foreach ($accts as $a) $nameOf[(int) $a['id']] = [(string) $a['code'], (string) ($a['name'] ?? '')];
+
+            foreach ([['posted only', [['parent_state', '=', 'posted']]], ['ANY state', []]] as [$lbl, $extra]) {
+                $rows = $client->callModel('account.move.line', 'read_group', [
+                    'domain'  => array_merge($extra, [
+                        ['account_id', 'in', $ids],
+                        ['date', '>=', $year . '-01-01'], ['date', '<=', $year . '-12-31'],
+                    ]),
+                    'fields'  => ['balance:sum'], 'groupby' => ['account_id', 'date:month'], 'lazy' => false,
+                ]);
+                $by = [];
+                foreach ((array) $rows as $r) {
+                    if (!is_array($r['account_id'] ?? null)) continue;
+                    $aid = (int) $r['account_id'][0];
+                    $mk  = null;
+                    foreach (['date', 'date:month'] as $rk) {
+                        if (isset($r['__range'][$rk]['from'])) { $mk = (int) substr((string) $r['__range'][$rk]['from'], 5, 2); break; }
+                    }
+                    if ($mk === null) continue;
+                    $by[$aid][$mk] = ($by[$aid][$mk] ?? 0.0) + (float) ($r['balance'] ?? 0);
+                }
+                ln();
+                ln("-- {$lbl} · accounts with any movement --");
+                if (!$by) { ln('   (none)'); continue; }
+                foreach ($by as $aid => $months) {
+                    [$code, $name] = $nameOf[$aid] ?? ['?', '?'];
+                    $tot = array_sum($months);
+                    ln(sprintf('  %-12s %-38s total %16s', $code, mb_substr($name, 0, 38), number_format($tot, 2)));
+                    $parts = [];
+                    foreach ($months as $mk => $v) {
+                        if (abs($v) < 0.005) continue;
+                        $parts[] = sprintf('%s %s', date('M', mktime(0, 0, 0, $mk, 1)), number_format($v, 2));
+                    }
+                    if ($parts) ln('       ' . implode(' · ', $parts));
+                }
+            }
+            break;
+
         case 'plmonth':
             // Isolate ONE month and prefix. parent_state is a parent-derived
             // field cached on the line: posting a move flips move.state and so
