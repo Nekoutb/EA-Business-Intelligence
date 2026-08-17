@@ -507,6 +507,60 @@ try {
             ln('GATE: worst variance = ' . number_format($worstS, 2) . ' — ' . ($worstS < 0.005 ? 'PASS ✅' : 'FAIL ❌'));
             break;
 
+        case 'colcheck':
+            // Treasury collections by stream, traced from the cash side.
+            // Reports what the page shows AND an independent invoice-first
+            // total for the same month, so "collections look wrong" can be
+            // split into: no cash arrived, cash arrived but was not attributed
+            // to a stream, or the stream is absent from the model entirely.
+            $slug = (string) ($_GET['tenant'] ?? 'transatlanticd');
+            $tenant = App\Models\Tenant::where('slug', $slug)->first();
+            if (!$tenant) { ln("no tenant '{$slug}'"); break; }
+            app(App\Tenancy\TenantContext::class)->set($tenant);
+            $client = App\Odoo\OdooFactory::fromConfig();
+            $mon = (int) ($_GET['month'] ?? date('n'));
+            $yr  = (int) ($_GET['year'] ?? date('Y'));
+
+            $r = app(App\Services\CollectionsByStreamService::class)
+                ->analyze(null, ['type' => 'mtd', 'year' => $yr, 'month' => $mon]);
+
+            ln("== collections by stream · {$slug} · {$yr}-{$mon} ==");
+            ln(sprintf('%-34s %18s %18s', 'stream', 'HT', 'TTC'));
+            $sumHt = 0.0;
+            foreach ((array) ($r['streams'] ?? []) as $st) {
+                $ht = (float) ($st['sel_ht'] ?? 0); $sumHt += $ht;
+                ln(sprintf('%-34s %18s %18s',
+                    mb_substr((string) $st['label'], 0, 34),
+                    number_format($ht, 2), number_format((float) ($st['sel_ttc'] ?? 0), 2)));
+            }
+            ln(sprintf('%-34s %18s', 'STREAM TOTAL (HT)', number_format($sumHt, 2)));
+            foreach (['unmatched', 'other'] as $k) {
+                if (isset($r[$k])) {
+                    ln(sprintf('%-34s %18s %18s', strtoupper($k),
+                        number_format((float) ($r[$k]['sel_ht'] ?? 0), 2),
+                        number_format((float) ($r[$k]['sel_ttc'] ?? 0), 2)));
+                }
+            }
+            if (!empty($r['unmatched']['accounts'])) {
+                ln();
+                ln('unmatched 70x accounts seen:');
+                foreach (array_slice((array) $r['unmatched']['accounts'], 0, 15) as $a) ln('  ' . $a);
+            }
+
+            ln();
+            ln('== independent check: invoices MARKED PAID with a settlement this month ==');
+            $mStart = sprintf('%04d-%02d-01', $yr, $mon);
+            $mEnd   = date('Y-m-t', strtotime($mStart));
+            $paid = $client->searchRead('account.move',
+                [['move_type', '=', 'out_invoice'], ['state', '=', 'posted'],
+                 ['payment_state', 'in', ['paid', 'in_payment', 'reversed']]],
+                ['id', 'name', 'invoice_date', 'amount_untaxed_signed', 'amount_total_signed'],
+                ['limit' => 8000]);
+            ln(sprintf('customer invoices currently in a paid state: %s', number_format(count($paid))));
+            ln('(the page attributes CASH settled in the month, which is not the same set —');
+            ln(' an invoice paid in instalments contributes to each month it was paid in)');
+            break;
+
         case 'pocheck':
             // Which field actually carries the negative, and what excluding it
             // does to PO compliance. amount_total_signed is negative for EVERY
