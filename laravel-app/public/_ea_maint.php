@@ -724,7 +724,13 @@ try {
             $tenant = App\Models\Tenant::where('slug', $slug)->first();
             if (!$tenant) { ln("no tenant '{$slug}'"); break; }
             app(App\Tenancy\TenantContext::class)->set($tenant);
-            if (function_exists('ea_cache_clear')) ea_cache_clear();
+            // NO ea_cache_clear() here. It was pointless — every call below
+            // invokes a service DIRECTLY and never reads ea_cached — and it was
+            // actively harmful: ea_cache_clear() bumps the tenant's cache
+            // version, invalidating EVERY page for that tenant at once. Running
+            // this repeatedly on 17 Aug 2026 left transatlanticd cold, and with
+            // gl-quality at 9.1 min and billing at 5 min uncached, visitors got
+            // Cloudflare 524s until the ~35-minute warm sweep caught up.
             $client = App\Odoo\OdooFactory::fromConfig();
             $year   = (int) date('Y');
             $period = ['type' => 'ytd', 'year' => $year];
@@ -789,12 +795,34 @@ try {
             break;
 
         case 'dashtime':
-            // P1 outcome measure — cold dashboard compute, cache cleared.
+            // Dashboard build time.
+            //
+            // Measures the WARM path by default. Cold timing needs &cold=1 and
+            // is genuinely destructive in production: ea_cache_clear() bumps the
+            // tenant's cache version, so EVERY page for that tenant goes cold at
+            // once, not just the dashboard. The warm sweep then takes ~35 minutes
+            // to rebuild transatlanticd, and pages that cannot finish inside
+            // Cloudflare's ~100s ceiling — gl-quality at 9.1 min, billing at
+            // 5 min, treasury at 4.3 min — serve 524s to real visitors for that
+            // whole window. Repeated cold runs on 17 Aug 2026 did exactly that.
+            //
+            // Warm timing is also the more honest number: it is what a user
+            // actually experiences, since every page is meant to be served from
+            // the warmer's cache.
             $slug = (string) ($_GET['tenant'] ?? 'transatlanticd');
             $tenant = App\Models\Tenant::where('slug', $slug)->first();
             if (!$tenant) { ln("no tenant '{$slug}'"); break; }
             app(App\Tenancy\TenantContext::class)->set($tenant);
-            if (function_exists('ea_cache_clear')) ea_cache_clear();
+            $cold = !empty($_GET['cold']);
+            if ($cold) {
+                ln('⚠ COLD MODE — clearing this tenant\'s ENTIRE page cache.');
+                ln('  Visitors may hit 524s until the warm sweep rebuilds (~35 min on transatlanticd).');
+                ln();
+                if (function_exists('ea_cache_clear')) ea_cache_clear();
+            } else {
+                ln('(warm path — pass &cold=1 to force a cold build, which wipes the tenant cache)');
+                ln();
+            }
             $req = Illuminate\Http\Request::create('/t/' . $slug, 'GET', ['period' => (string) ($_GET['period'] ?? 'ytd')]);
             app()->instance('request', $req);
             try { $s = app('session')->driver(); $s->start(); $req->setLaravelSession($s); } catch (\Throwable $e) {}
