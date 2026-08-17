@@ -521,7 +521,9 @@ try {
             $mon = (int) ($_GET['month'] ?? date('n'));
             $yr  = (int) ($_GET['year'] ?? date('Y'));
 
-            $r = app(App\Services\CollectionsByStreamService::class)
+            // Constructed explicitly, matching how the controller builds it —
+            // this service is not container-bound.
+            $r = (new App\Services\CollectionsByStreamService($client, new App\Services\GLRevenueService($client)))
                 ->analyze(null, ['type' => 'mtd', 'year' => $yr, 'month' => $mon]);
 
             ln("== collections by stream · {$slug} · {$yr}-{$mon} ==");
