@@ -511,6 +511,24 @@
               <td class="{{ $tot['price_effect_xaf'] < 0 ? 'vn' : 'vp' }}">{{ $fmtSigned($tot['price_effect_xaf']) }}</td>
               <td class="{{ $tot['net_variance_xaf'] < 0 ? 'vn' : 'vp' }}">{{ $fmtSigned($tot['net_variance_xaf']) }}</td>
             </tr>
+
+            {{-- Unbudgeted revenue, disclosed rather than hidden. Containers
+                 carry actuals but no budget, so they cannot appear in a
+                 variance — including them in the tracked actual (as this page
+                 used to) compared them against a budget that excluded them and
+                 understated the gap. They remain revenue, and the headline
+                 TOTAL above is class-70 GL, which already counts them. --}}
+            @if (($tot['unbudgeted_actual_revenue'] ?? 0) > 0)
+              <tr class="total-row" style="background:#f9fafb;">
+                <td style="font-style:italic;font-size:11px;color:#374151;">↳ Unbudgeted · {{ $totalLabel }} <span style="font-weight:400;color:#6b7280;">(containers — revenue tracked, no budget set)</span></td>
+                <td colspan="6"></td>
+                <td style="color:#6b7280;">—</td>
+                <td>{{ number_format($tot['unbudgeted_actual_revenue'] / 1e6, 1) }}</td>
+                <td colspan="4" style="font-style:italic;color:#6b7280;font-size:10px;text-align:left;padding-left:12px;">
+                  no budget — excluded from the variance above
+                </td>
+              </tr>
+            @endif
           </tbody>
         </table>
       </div>
