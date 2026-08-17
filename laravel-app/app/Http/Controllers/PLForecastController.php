@@ -52,7 +52,17 @@ class PLForecastController extends Controller
             // show Jan–Dec + year total; MTD shows Jan..selected month + a
             // period total (the view truncates columns). The data is identical
             // across views, so the cache key only varies by year.
-            $cacheKey = "pl_forecast_v3_{$year}";
+            // The assumptions MUST be part of the key. Without them the page
+            // served a forecast computed from whatever settings were saved
+            // when the entry was first written, for the whole 6-hour TTL - so
+            // changing the revenue target and saving appeared to do nothing,
+            // which is exactly the "revenue isn't working" report. A
+            // fingerprint means any edit lands on a fresh key and recomputes
+            // on the next view; the superseded entry just expires.
+            $aFingerprint = $forecastAssumptions
+                ? substr(md5(json_encode($forecastAssumptions)), 0, 10)
+                : 'default';
+            $cacheKey = "pl_forecast_v4_{$year}_{$aFingerprint}";
             $data = ea_cached($cacheKey, function () use ($client, $year, $forecastAssumptions) {
                 return (new PLForecastService($client))->analyze($year, null, $forecastAssumptions);
             });
@@ -186,6 +196,8 @@ class PLForecastController extends Controller
             'opex_pct_of_revenue'    => ['nullable', 'numeric'],
             'da_monthly'             => ['nullable', 'numeric'],
             'net_financial_monthly'  => ['nullable', 'numeric'],
+            'interest_income_monthly'  => ['nullable', 'numeric'],
+            'interest_expense_monthly' => ['nullable', 'numeric'],
             'tax_method'             => ['nullable', 'in:rate,fixed,none'],
             'tax_rate_pct'           => ['nullable', 'numeric'],
             'tax_monthly'            => ['nullable', 'numeric'],
@@ -213,6 +225,10 @@ class PLForecastController extends Controller
             ],
             'da_monthly'            => max(0.0, $num('da_monthly')),
             'net_financial_monthly' => $num('net_financial_monthly'),
+            // Both positive magnitudes; the service nets them. No step or
+            // ceiling clamp - the user knows their own interest figures.
+            'interest_income_monthly'  => max(0.0, $num('interest_income_monthly')),
+            'interest_expense_monthly' => max(0.0, $num('interest_expense_monthly')),
             'tax' => [
                 'method'   => $v['tax_method'] ?? 'rate',
                 'rate_pct' => max(0.0, min(100.0, $num('tax_rate_pct', 33.0))),
@@ -221,8 +237,19 @@ class PLForecastController extends Controller
         ];
 
         app(BudgetService::class)->saveAssumptions($tenant, $year, $assumptions, optional($request->user())->id);
-        // Bust the per-tenant P&L cache so the forecast recomputes now.
-        if (function_exists('ea_cache_clear')) ea_cache_clear();
+        // Deliberately NOT calling ea_cache_clear() here.
+        //
+        // It does not clear the forecast - it bumps the tenant's cache version
+        // and invalidates EVERY page they have. Saving settings therefore left
+        // the whole site cold, and pages that cannot rebuild inside
+        // Cloudflare's ~100s ceiling (gl-quality 9.1 min, billing 5 min,
+        // treasury 4.3 min, measured 17 Aug 2026) served 524s until the warm
+        // sweep caught up. Editing forecast assumptions must not take the rest
+        // of the site down.
+        //
+        // It is also redundant now: the page cache key carries a fingerprint of
+        // the assumptions, so saving different settings lands on a different
+        // key and recomputes by itself.
 
         return redirect()->to(tenant_url('/pl-forecast?view=full_year&year=' . $year))->with('flash', [
             'type' => 'success',

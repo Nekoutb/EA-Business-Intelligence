@@ -181,16 +181,16 @@
                             <option value="run_rate"      {{ $A['revenue']['method']==='run_rate'?'selected':'' }}>Flat monthly run-rate</option>
                         </select>
                         <label class="block text-[10.5px] text-[#7c7466] mb-1">Revenue target for forecast period (XAF)</label>
-                        <input type="number" step="1000000" name="revenue_annual_target" value="{{ (int) $A['revenue']['annual_target'] }}" class="w-full border border-[#d9d4ca] rounded px-2 py-1 mb-0.5 tabular-nums">
+                        <input type="number" step="any" name="revenue_annual_target" value="{{ (int) $A['revenue']['annual_target'] }}" class="w-full border border-[#d9d4ca] rounded px-2 py-1 mb-0.5 tabular-nums">
                         <div class="text-[10px] text-[#a09d95] mb-2">≈ {{ $mfmt($A['revenue']['annual_target']) }} total · with the "split evenly" method, divided equally across the {{ $fcLabel }} months</div>
                         <label class="block text-[10.5px] text-[#7c7466] mb-1">YoY growth % <span class="text-[#bcb6ab]">(growth method)</span></label>
-                        <input type="number" step="0.1" name="revenue_growth_pct" value="{{ $A['revenue']['growth_pct'] }}" class="w-full border border-[#d9d4ca] rounded px-2 py-1 tabular-nums mb-2">
+                        <input type="number" step="any" name="revenue_growth_pct" value="{{ $A['revenue']['growth_pct'] }}" class="w-full border border-[#d9d4ca] rounded px-2 py-1 tabular-nums mb-2">
                         <label class="block text-[10.5px] text-[#7c7466] mb-1">Monthly variation band (XAF/mo) <span class="text-[#bcb6ab]">— optional, avoids a flat line</span></label>
                         <div class="grid grid-cols-2 gap-2">
                             <div><span class="block text-[9.5px] text-[#a09d95] mb-0.5">Lower</span>
-                                <input type="number" step="1000000" name="revenue_lower" value="{{ (int) ($A['revenue']['lower'] ?? 0) }}" class="w-full border border-[#d9d4ca] rounded px-2 py-1 tabular-nums"></div>
+                                <input type="number" step="any" name="revenue_lower" value="{{ (int) ($A['revenue']['lower'] ?? 0) }}" class="w-full border border-[#d9d4ca] rounded px-2 py-1 tabular-nums"></div>
                             <div><span class="block text-[9.5px] text-[#a09d95] mb-0.5">Upper</span>
-                                <input type="number" step="1000000" name="revenue_upper" value="{{ (int) ($A['revenue']['upper'] ?? 0) }}" class="w-full border border-[#d9d4ca] rounded px-2 py-1 tabular-nums"></div>
+                                <input type="number" step="any" name="revenue_upper" value="{{ (int) ($A['revenue']['upper'] ?? 0) }}" class="w-full border border-[#d9d4ca] rounded px-2 py-1 tabular-nums"></div>
                         </div>
                         <div class="text-[9.5px] text-[#a09d95] mt-0.5">Months spread randomly within the band; the total still equals the target. Leave 0/0 for an even split.</div>
                     </div>
@@ -199,14 +199,14 @@
                     <div class="border border-[#e8e4de] rounded-lg p-3">
                         <div class="font-semibold text-[#1e3d44] mb-2">Margin &amp; operating expenses</div>
                         <label class="block text-[10.5px] text-[#7c7466] mb-1">Gross margin %</label>
-                        <input type="number" step="0.1" name="gross_margin_pct" value="{{ $A['gross_margin_pct'] }}" class="w-full border border-[#d9d4ca] rounded px-2 py-1 mb-0.5 tabular-nums">
+                        <input type="number" step="any" name="gross_margin_pct" value="{{ $A['gross_margin_pct'] }}" class="w-full border border-[#d9d4ca] rounded px-2 py-1 mb-0.5 tabular-nums">
                         <div class="text-[10px] text-[#a09d95] mb-2">default {{ number_format((float) ($def['gross_margin_pct'] ?? 0), 1) }}% (trailing actual)</div>
                         <label class="block text-[10.5px] text-[#7c7466] mb-1">GM% band <span class="text-[#bcb6ab]">— optional, e.g. 80–85</span></label>
                         <div class="grid grid-cols-2 gap-2 mb-0.5">
                             <div><span class="block text-[9.5px] text-[#a09d95] mb-0.5">Lower %</span>
-                                <input type="number" step="0.1" name="gross_margin_lower_pct" value="{{ $A['gross_margin_lower_pct'] ?? 0 }}" class="w-full border border-[#d9d4ca] rounded px-2 py-1 tabular-nums"></div>
+                                <input type="number" step="any" name="gross_margin_lower_pct" value="{{ $A['gross_margin_lower_pct'] ?? 0 }}" class="w-full border border-[#d9d4ca] rounded px-2 py-1 tabular-nums"></div>
                             <div><span class="block text-[9.5px] text-[#a09d95] mb-0.5">Upper %</span>
-                                <input type="number" step="0.1" name="gross_margin_upper_pct" value="{{ $A['gross_margin_upper_pct'] ?? 0 }}" class="w-full border border-[#d9d4ca] rounded px-2 py-1 tabular-nums"></div>
+                                <input type="number" step="any" name="gross_margin_upper_pct" value="{{ $A['gross_margin_upper_pct'] ?? 0 }}" class="w-full border border-[#d9d4ca] rounded px-2 py-1 tabular-nums"></div>
                         </div>
                         <div class="text-[9.5px] text-[#a09d95] mb-2">When set, each forecast month's GM% varies within the band (else the single % above is used flat).</div>
                         <label class="block text-[10.5px] text-[#7c7466] mb-1">OpEx method</label>
@@ -216,11 +216,11 @@
                         </select>
                         <div class="grid grid-cols-3 gap-2">
                             <div><label class="block text-[10.5px] text-[#7c7466] mb-1">XAF/mo</label>
-                                <input type="number" step="100000" name="opex_monthly" value="{{ (int) $A['opex']['monthly'] }}" class="w-full border border-[#d9d4ca] rounded px-2 py-1 tabular-nums"></div>
+                                <input type="number" step="any" name="opex_monthly" value="{{ (int) $A['opex']['monthly'] }}" class="w-full border border-[#d9d4ca] rounded px-2 py-1 tabular-nums"></div>
                             <div><label class="block text-[10.5px] text-[#7c7466] mb-1">Infl %</label>
-                                <input type="number" step="0.1" name="opex_inflation_pct" value="{{ $A['opex']['inflation_pct'] }}" class="w-full border border-[#d9d4ca] rounded px-2 py-1 tabular-nums"></div>
+                                <input type="number" step="any" name="opex_inflation_pct" value="{{ $A['opex']['inflation_pct'] }}" class="w-full border border-[#d9d4ca] rounded px-2 py-1 tabular-nums"></div>
                             <div><label class="block text-[10.5px] text-[#7c7466] mb-1">% of rev</label>
-                                <input type="number" step="0.1" name="opex_pct_of_revenue" value="{{ $A['opex']['pct_of_revenue'] }}" class="w-full border border-[#d9d4ca] rounded px-2 py-1 tabular-nums"></div>
+                                <input type="number" step="any" name="opex_pct_of_revenue" value="{{ $A['opex']['pct_of_revenue'] }}" class="w-full border border-[#d9d4ca] rounded px-2 py-1 tabular-nums"></div>
                         </div>
                         <div class="text-[10px] text-[#a09d95] mt-1">default {{ $mfmt($def['opex']['monthly'] ?? null) }}/mo</div>
                     </div>
@@ -229,9 +229,18 @@
                     <div class="border border-[#e8e4de] rounded-lg p-3">
                         <div class="font-semibold text-[#1e3d44] mb-2">D&amp;A · Financial · Tax</div>
                         <label class="block text-[10.5px] text-[#7c7466] mb-1">Depreciation &amp; amortisation / month (XAF)</label>
-                        <input type="number" step="100000" name="da_monthly" value="{{ (int) $A['da_monthly'] }}" class="w-full border border-[#d9d4ca] rounded px-2 py-1 mb-2 tabular-nums">
-                        <label class="block text-[10.5px] text-[#7c7466] mb-1">Net financial result / month (XAF · − if a cost)</label>
-                        <input type="number" step="100000" name="net_financial_monthly" value="{{ (int) $A['net_financial_monthly'] }}" class="w-full border border-[#d9d4ca] rounded px-2 py-1 mb-2 tabular-nums">
+                        <input type="number" step="any" name="da_monthly" value="{{ (int) $A['da_monthly'] }}" class="w-full border border-[#d9d4ca] rounded px-2 py-1 mb-2 tabular-nums">
+                        {{-- Financial result, entered as its two real drivers. Both are
+                             POSITIVE amounts; the forecast nets them (income minus
+                             expense). This was a single combined figure that had to be
+                             typed negative to mean a cost - easy to get backwards, and
+                             it hid which side was moving. Defaults come from actuals in
+                             77xx and 67xx respectively. --}}
+                        <label class="block text-[10.5px] text-[#7c7466] mb-1">Interest &amp; financial income / month (XAF &middot; account 77xx)</label>
+                        <input type="number" step="any" min="0" name="interest_income_monthly" value="{{ (int) ($A['interest_income_monthly'] ?? 0) }}" class="w-full border border-[#d9d4ca] rounded px-2 py-1 mb-2 tabular-nums">
+                        <label class="block text-[10.5px] text-[#7c7466] mb-1">Interest &amp; financial expense / month (XAF &middot; account 67xx)</label>
+                        <input type="number" step="any" min="0" name="interest_expense_monthly" value="{{ (int) ($A['interest_expense_monthly'] ?? 0) }}" class="w-full border border-[#d9d4ca] rounded px-2 py-1 mb-1 tabular-nums">
+                        <div class="text-[10px] text-[#8a8578] mb-2">Enter both as positive figures &mdash; the forecast reports income minus expense as &ldquo;Net financial result&rdquo;.</div>
                         <label class="block text-[10.5px] text-[#7c7466] mb-1">Income tax</label>
                         <select name="tax_method" class="w-full border border-[#d9d4ca] rounded px-2 py-1 text-[12px] mb-2 bg-white">
                             <option value="rate"  {{ $A['tax']['method']==='rate'?'selected':'' }}>Effective rate % on profit</option>
@@ -240,9 +249,9 @@
                         </select>
                         <div class="grid grid-cols-2 gap-2">
                             <div><label class="block text-[10.5px] text-[#7c7466] mb-1">Rate %</label>
-                                <input type="number" step="0.5" name="tax_rate_pct" value="{{ $A['tax']['rate_pct'] }}" class="w-full border border-[#d9d4ca] rounded px-2 py-1 tabular-nums"></div>
+                                <input type="number" step="any" name="tax_rate_pct" value="{{ $A['tax']['rate_pct'] }}" class="w-full border border-[#d9d4ca] rounded px-2 py-1 tabular-nums"></div>
                             <div><label class="block text-[10.5px] text-[#7c7466] mb-1">Or fixed/mo</label>
-                                <input type="number" step="100000" name="tax_monthly" value="{{ (int) $A['tax']['monthly'] }}" class="w-full border border-[#d9d4ca] rounded px-2 py-1 tabular-nums"></div>
+                                <input type="number" step="any" name="tax_monthly" value="{{ (int) $A['tax']['monthly'] }}" class="w-full border border-[#d9d4ca] rounded px-2 py-1 tabular-nums"></div>
                         </div>
                     </div>
                 </div>

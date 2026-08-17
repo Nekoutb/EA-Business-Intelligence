@@ -491,7 +491,19 @@ final class PLForecastService
 
         // ── Line actuals (Jan..thru), signed, from the base vectors ──
         $lineActual = ['revenue'=>0.0,'direct_costs'=>0.0,'opex'=>0.0,'depreciation'=>0.0,'net_financial'=>0.0,'income_tax'=>0.0];
+        // Interest income (77x) and interest expense (67x) are ALSO tracked
+        // separately. They net into one figure on the statement, but the user
+        // budgets them as two distinct decisions - what deposits should earn,
+        // and what the debt will cost - so the settings expose both and the
+        // defaults have to be seeded from each side independently.
+        $finActual = ['fin_revenue' => 0.0, 'fin_expense' => 0.0];
         foreach ($accountVectors as $av) {
+            $lineName = (string) ($av['line'] ?? '');
+            if (array_key_exists($lineName, $finActual)) {
+                for ($m = 1; $m <= $thruMonth; $m++) {
+                    $finActual[$lineName] += (float) ($av['monthly'][$m] ?? 0);
+                }
+            }
             $grp = $groupOf($av['line']);
             if (!array_key_exists($grp, $lineActual)) continue;
             for ($m = 1; $m <= $thruMonth; $m++) {
@@ -534,6 +546,13 @@ final class PLForecastService
             'opex'                  => ['method' => 'fixed', 'monthly' => round($opexMonthlyDef, 0), 'inflation_pct' => 0.0, 'pct_of_revenue' => round($opexPctDef, 1)],
             'da_monthly'            => round($daMonthlyDef, 0),
             'net_financial_monthly' => round($netFinMonthlyDef, 0),
+            // Both entered as POSITIVE magnitudes and netted below. Requiring
+            // the user to remember that one of them must be typed negative is
+            // exactly the sign trap that produces silently wrong forecasts.
+            // fin_revenue is stored sign-flipped (credit-normal) so it is
+            // already positive; fin_expense is stored negative, so abs() it.
+            'interest_income_monthly'  => $thruMonth >= 1 ? round(max(0.0, $finActual['fin_revenue']) / $thruMonth, 0) : 0.0,
+            'interest_expense_monthly' => $thruMonth >= 1 ? round(abs(min(0.0, $finActual['fin_expense'])) / $thruMonth, 0) : 0.0,
             'tax'                   => ['method' => 'rate', 'rate_pct' => 33.0, 'monthly' => 0.0],
         ];
 
@@ -583,7 +602,15 @@ final class PLForecastService
         $opexFixed = (float) $A['opex']['monthly'] * (1 + (float) $A['opex']['inflation_pct'] / 100.0);
         $opexPct   = (float) $A['opex']['pct_of_revenue'] / 100.0;
         $daM       = (float) $A['da_monthly'];
-        $nfM       = (float) $A['net_financial_monthly'];
+        // Net financial result = interest income - interest expense, both
+        // entered positive. A tenant who saved settings before these two
+        // fields existed falls back to the single combined figure, so their
+        // forecast does not silently change under them on deploy.
+        $hasSplit  = array_key_exists('interest_income_monthly', $A)
+                  || array_key_exists('interest_expense_monthly', $A);
+        $nfM       = $hasSplit
+            ? (float) ($A['interest_income_monthly'] ?? 0) - (float) ($A['interest_expense_monthly'] ?? 0)
+            : (float) $A['net_financial_monthly'];
 
         $target = ['revenue'=>[], 'direct_costs'=>[], 'opex'=>[], 'depreciation'=>[], 'net_financial'=>[], 'income_tax'=>[]];
         foreach ($fc as $m) {
@@ -661,7 +688,8 @@ final class PLForecastService
                 $out[$k] = array_merge($defaults[$k], $saved[$k]);
             }
         }
-        foreach (['gross_margin_pct', 'gross_margin_lower_pct', 'gross_margin_upper_pct', 'da_monthly', 'net_financial_monthly'] as $k) {
+        foreach (['gross_margin_pct', 'gross_margin_lower_pct', 'gross_margin_upper_pct', 'da_monthly',
+                  'net_financial_monthly', 'interest_income_monthly', 'interest_expense_monthly'] as $k) {
             if (array_key_exists($k, $saved) && is_numeric($saved[$k])) {
                 $out[$k] = (float) $saved[$k];
             }
