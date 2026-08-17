@@ -39,11 +39,26 @@ Schedule::command('insights:generate-daily')
 // the app default is UTC.
 //
 // Manual: php artisan reports:send-daily [--date=YYYY-MM-DD] [--tenant=slug] [--to=a@b.com]
-Schedule::command('reports:send-daily')
-    ->dailyAt('08:00')
-    ->timezone('Africa/Douala')
-    ->withoutOverlapping()
-    ->runInBackground();
+//
+// NOT REGISTERED HERE — deliberately. This report is driven by its OWN
+// crontab entry on the server, which redirects to /var/log/kwr-daily-report.log
+// and is the reason its delivery is verifiable day by day.
+//
+// Measured 17 Aug 2026: Laravel's scheduler is NOT running on this box.
+// `schedule:run` is absent from cron, so every task registered in this file
+// has never fired — the offenders scorecard, the warehouse sync, the nightly
+// reconcile. Only the two commands with dedicated crontab entries work: this
+// report and bms:warm.
+//
+// When `schedule:run` is added to cron, everything below comes alive. If this
+// entry were still registered it would then fire from BOTH places at the same
+// minute and clients could receive the digest twice. withoutOverlapping()
+// might absorb that, but "might" is not good enough for mail leaving the
+// building, so the duplicate is removed instead.
+//
+// If the dedicated crontab entry is ever retired, re-register it here:
+//   Schedule::command('reports:send-daily')->dailyAt('08:00')
+//       ->timezone('Africa/Douala')->withoutOverlapping()->runInBackground();
 
 // Receivables Top-Offender Scorecard — DAILY at 08:15 Douala, 15 minutes
 // after the daily digest so the two never contend for the same minute.
