@@ -79,6 +79,44 @@ try {
             ln(tailFile('/var/log/kwr-daily-report.log', $L));
             break;
 
+        case 'offenderslog':
+            // The scorecard's own log. Empty or missing means the scheduled
+            // send has not run since output capture was added — which is the
+            // whole point of capturing it.
+            $p = storage_path('logs/offenders-report.log');
+            ln("== {$p} (tail {$L}) ==");
+            ln(tailFile($p, $L));
+            break;
+
+        case 'schedcheck':
+            // Is Laravel's scheduler actually running on this box?
+            //
+            // This matters more than it looks. The daily digest fires from its
+            // OWN crontab entry, so it would keep working even if
+            // `schedule:run` were absent from cron entirely — while every task
+            // registered in routes/console.php silently never fired. The
+            // offenders scorecard is one of those, so "the daily emails work"
+            // is not evidence that it does.
+            ln('== registered schedule ==');
+            Illuminate\Support\Facades\Artisan::call('schedule:list');
+            ln(rtrim(Illuminate\Support\Facades\Artisan::output()));
+            ln();
+            ln('== evidence the scheduler runs ==');
+            // bms:warehouse-sync exists ONLY as a Laravel-scheduled task, at
+            // minutes 7/22/37/52. If last_run_at lands on one of those and
+            // nobody triggered it by hand, the scheduler is alive.
+            foreach (Illuminate\Support\Facades\DB::table('wh_sync_state')
+                ->orderBy('tenant_id')->orderBy('model')->get() as $st) {
+                $t = (string) ($st->last_run_at ?? '');
+                $min = $t !== '' ? (int) substr($t, 14, 2) : -1;
+                ln(sprintf('  tenant %-4s %-20s last_run_at %-20s %s',
+                    $st->tenant_id, $st->model, $t !== '' ? $t : '—',
+                    in_array($min, [7, 22, 37, 52], true) ? '← scheduled minute' : ''));
+            }
+            ln();
+            ln('server now: ' . date('Y-m-d H:i:s') . ' (' . date_default_timezone_get() . ')');
+            break;
+
         case 'sendreport':
             // Remote catch-up trigger for the Kissywears daily report.
             // ?date=YYYY-MM-DD (the report day, i.e. the "prior day" the

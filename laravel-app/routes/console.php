@@ -45,14 +45,25 @@ Schedule::command('reports:send-daily')
     ->withoutOverlapping()
     ->runInBackground();
 
-// Receivables Top-Offender Scorecard — every 3 days at 08:15 Douala (just
-// after the daily digest, so the two never contend for the same minute).
+// Receivables Top-Offender Scorecard — DAILY at 08:15 Douala, 15 minutes
+// after the daily digest so the two never contend for the same minute.
 // Recipients live in config/daily_report.php ('offenders').
+//
+// Was every third day-of-month; the client asked for it every day (17 Aug
+// 2026). The old cron also read '15 7' (07:15) while the comment claimed
+// 08:15 — dailyAt() now states the intended time once, in one place.
+//
+// Output is captured. Previously this ran with runInBackground() and no
+// output target, which discards stdout entirely: there was no way to tell
+// whether a send had happened, succeeded or failed, and the log had nothing
+// in it to check. The daily digest is verifiable precisely because its cron
+// entry redirects to a file, so this one gets the same treatment.
 Schedule::command('reports:send-offenders')
-    ->cron('15 7 */3 * *')
+    ->dailyAt('08:15')
     ->timezone('Africa/Douala')
     ->withoutOverlapping()
-    ->runInBackground();
+    ->runInBackground()
+    ->appendOutputTo(storage_path('logs/offenders-report.log'));
 
 // P2 — warehouse sync. Incremental: each model resumes from its watermark,
 // so a run only carries what changed. Every 15 minutes, offset from the
