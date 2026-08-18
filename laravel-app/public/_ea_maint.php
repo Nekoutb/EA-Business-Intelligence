@@ -572,6 +572,40 @@ try {
             }
             ln();
 
+            // 1c-pre) terms=* lists the TOP class-7 accounts by YTD revenue
+            //     instead of name-matching. The decisive view when a term
+            //     matches nothing: if the revenue is booked under an
+            //     unrelated account name, it is in this list and the client
+            //     will recognise it on sight.
+            if (in_array('*', $terms, true)) {
+                $accs = $client->searchRead('account.account', [['code', '=like', '7%']], ['id', 'code', 'name'], ['limit' => 300]);
+                $byId = [];
+                foreach ($accs as $a) $byId[(int) $a['id']] = $a;
+                $g = $client->callModel('account.move.line', 'read_group', [
+                    'domain' => [
+                        ['account_id', 'in', array_map(fn ($x) => (int) $x['id'], $accs)],
+                        ['parent_state', '=', 'posted'],
+                        ['date', '>=', $yr . '-01-01'], ['date', '<=', $yr . '-12-31'],
+                    ],
+                    'fields' => ['credit:sum', 'debit:sum'], 'groupby' => ['account_id'], 'lazy' => false,
+                ]);
+                $rows2 = [];
+                foreach ((array) $g as $r) {
+                    $aid = is_array($r['account_id'] ?? null) ? (int) $r['account_id'][0] : 0;
+                    $net = (float) ($r['credit'] ?? 0) - (float) ($r['debit'] ?? 0);
+                    if ($aid && abs($net) > 0.005) $rows2[] = [$aid, $net];
+                }
+                usort($rows2, fn ($a, $b) => $b[1] <=> $a[1]);
+                ln(sprintf('ALL class-7 accounts with %d YTD movement, largest first:', $yr));
+                foreach (array_slice($rows2, 0, 40) as [$aid, $net]) {
+                    $a = $byId[$aid] ?? ['code' => '?', 'name' => '?'];
+                    ln(sprintf('    %-10s %-52s %16s',
+                        (string) $a['code'], mb_substr((string) $a['name'], 0, 52), number_format($net, 2)));
+                }
+                ln();
+                break;
+            }
+
             // 1c) The terms as ACCOUNT names. This tenant books each revenue
             //     type to its own named 706 sub-account - that is exactly how
             //     the container streams attribute - so terms read off real
