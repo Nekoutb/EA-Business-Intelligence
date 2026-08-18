@@ -74,7 +74,7 @@ final class CollectionsByStreamService
                 $accIndex[$id] = ['name' => (string) ($a['name'] ?? ''), 'code' => (string) ($a['code'] ?? '')];
             }
         }
-        $match         = $this->gl->matchAccountsToProducts(['accounts' => $accIndex, 'by_account_month' => []]);
+        $match         = $this->gl->matchAccountsToProducts(['accounts' => $accIndex, 'by_account_month' => []], $year ?? null);
         $assigned      = (array) ($match['assigned'] ?? []);
         $redistributed = (array) ($match['redistributed'] ?? []);
 
@@ -147,7 +147,11 @@ final class CollectionsByStreamService
         $mkMonths = fn () => array_fill(1, $months, 0.0);
         $streams  = [];
         foreach ($products as $p) {
-            if (($p['revenue_source'] ?? null) !== 'gl_706_named') continue;
+            // gl_706_named streams attribute by their own named accounts.
+            // scan_tariff streams (vehicles, wood) have no accounts of their
+            // own but DO receive shares of the 706100 catch-all under the
+            // scan-mix redistribution - so they need rows here to land in.
+            if (!in_array((string) ($p['revenue_source'] ?? ''), ['gl_706_named', 'scan_tariff'], true)) continue;
             $streams[(string) $p['key']] = [
                 'key' => (string) $p['key'], 'label' => (string) ($p['label'] ?? $p['key']),
                 'category' => (string) ($p['category'] ?? 'other_cargo'),
@@ -158,10 +162,15 @@ final class CollectionsByStreamService
         $unmatched = ['ht' => $mkMonths(), 'ttc' => $mkMonths(), 'accounts' => []];
         $other     = ['ht' => $mkMonths(), 'ttc' => $mkMonths()];
 
-        $routeShares = function (int $aid) use ($assigned, $redistributed): array {
+        $routeShares = function (int $aid, int $mo) use ($assigned, $redistributed): array {
             $pk = $assigned[$aid] ?? null;
             if ($pk !== null) return [(string) $pk => 1.0];
-            $targets = (array) ($redistributed[$aid]['targets'] ?? []);
+            // Month-specific shares first (scan-mix rules vary by month);
+            // static shares as the fallback shape.
+            $byMonth = $redistributed[$aid]['targets_by_month'] ?? null;
+            $targets = is_array($byMonth) && isset($byMonth[$mo])
+                ? (array) $byMonth[$mo]
+                : (array) ($redistributed[$aid]['targets'] ?? []);
             return $targets !== [] ? array_map('floatval', $targets) : [];
         };
 
@@ -181,7 +190,7 @@ final class CollectionsByStreamService
             foreach ($inf['mix'] as $aid => $sub) {
                 $frac = $sub / $invHt;              // this account's share of the invoice HT
                 if ($frac == 0.0) continue;
-                $shares = $routeShares((int) $aid);
+                $shares = $routeShares((int) $aid, (int) $mo);
                 if ($shares === []) {
                     $unmatched['ht'][$mo]  += $htAmt * $frac;
                     $unmatched['ttc'][$mo] += $ttcAmt * $frac;

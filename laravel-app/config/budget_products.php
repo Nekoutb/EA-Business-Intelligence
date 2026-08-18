@@ -280,21 +280,40 @@ return [
     'revenue_redistribute' => [
         [
             // 706100 "Services vendus dans la Région" — TSD's catch-all
-            // regional services account. Accounting direction (2026-05):
-            //   75% imports (split 50/50 between 40' and 20' = 37.5% each)
-            //   25% exports (split 50/50 between 40' and 20' = 12.5% each)
-            // Empty containers + OOG get no share (they have their own
-            // dedicated accounts).
-            'description'  => "706100 — Services vendus dans la Région (catch-all → containers)",
+            // regional services account, 771.55M YTD 2026 and the single
+            // largest revenue account (44% of class 7).
+            //
+            // Superseded (2026-08-18): the May 2026 direction split it
+            // 75/25 across container streams, which force-attributed ALL
+            // of it to containers. Investigation showed vehicle and wood
+            // billing exists nowhere else in the chart — no product, no
+            // invoice-line label, no named account (the scan vocabulary
+            // BULDOOZER / CAMION / VEHICULE lives only in
+            // aw_vehicule.vehicule) — so this account is where that money
+            // has to be, and the fixed split both inflated containers and
+            // hid vehicles entirely from Treasury collections.
+            //
+            // scan_mix splits each MONTH of 706100 in proportion to that
+            // month's scanned operational value across the listed products
+            // (qty × tariff, the same basis as the Product Revenue page),
+            // so attribution follows what was actually scanned and can be
+            // verified against the scan system. Months with no scans fall
+            // back to the old static container split. The clean long-term
+            // fix stays: book each cargo type to its own named 706x
+            // sub-account, and direct matching takes over automatically.
+            'description'  => "706100 — Services vendus dans la Région (catch-all → monthly scan mix)",
+            'mode'         => 'scan_mix',
+            'mix_products' => ['cars', 'trucks', 'heavy_machinery', 'wood'],
             'source_match' => [
                 'code_equals' => '706100',
             ],
-            'targets' => [
+            'fallback_targets' => [
                 'container_import_40' => 0.375,
                 'container_import_20' => 0.375,
                 'container_export_40' => 0.125,
                 'container_export_20' => 0.125,
             ],
+            'targets' => [],
         ],
     ],
 ];

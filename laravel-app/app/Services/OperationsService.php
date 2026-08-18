@@ -186,6 +186,73 @@ final class OperationsService
     }
 
     /**
+     * Per-product operational scan VALUE by month for one calendar year:
+     *
+     *   ['cars' => [1..12 => XAF], 'trucks' => [...],
+     *    'heavy_machinery' => [...], 'wood' => [...]]
+     *
+     * Same two grouped queries and the same tariff constants as
+     * scanRevenueByMonth - this is that figure split by product instead of
+     * summed. Built for the 706100 scan-mix redistribution: the catch-all
+     * account's cash is split by what was actually scanned in the month,
+     * so the shares always tie back to the operational data the client
+     * can verify against the scan system.
+     */
+    public function scanMixByProductMonth(int $year): array
+    {
+        $out = [
+            'cars'            => array_fill(1, 12, 0.0),
+            'trucks'          => array_fill(1, 12, 0.0),
+            'heavy_machinery' => array_fill(1, 12, 0.0),
+            'wood'            => array_fill(1, 12, 0.0),
+        ];
+        $window = [
+            ['scanned', '=', true],
+            ['scanned_date', '>=', $year . '-01-01 00:00:00'],
+            ['scanned_date', '<=', $year . '-12-31 23:59:59'],
+        ];
+
+        try {
+            $rows = $this->odoo->callModel('aw_vehicule.vehicule', 'read_group', [
+                'domain'  => $window,
+                'fields'  => [],
+                'groupby' => ['scanned_date:month', 'cylinders'],
+                'lazy'    => false,
+            ]);
+            foreach ((array) $rows as $r) {
+                $m = $this->monthOfGroup($r, 'scanned_date');
+                if ($m === null) continue;
+                $cyl   = $r['cylinders'] ?? null;
+                $cyl   = is_array($cyl) ? (int) ($cyl[0] ?? 0) : (int) $cyl;
+                $count = (int) ($r['__count'] ?? 0);
+                // Cylinder buckets mirror scanRevenueByMonth exactly.
+                [$key, $price] = match ($cyl) {
+                    8       => ['trucks',          self::PRICE_HT_CAMION],
+                    12      => ['heavy_machinery', self::PRICE_HT_BULLDOZE],
+                    default => ['cars',            self::PRICE_HT_VOITURE],
+                };
+                $out[$key][$m] += $count * $price;
+            }
+        } catch (\Throwable $e) { /* vehicles contribute 0 */ }
+
+        try {
+            $rows = $this->odoo->callModel('aw_bois.bois', 'read_group', [
+                'domain'  => $window,
+                'fields'  => [],
+                'groupby' => ['scanned_date:month', 'cargo_id'],
+                'lazy'    => false,
+            ]);
+            foreach ((array) $rows as $r) {
+                $m = $this->monthOfGroup($r, 'scanned_date');
+                if ($m === null || empty($r['cargo_id']) || $r['cargo_id'] === false) continue;
+                $out['wood'][$m] += self::PRICE_HT_WOOD_PER_TRUCK;
+            }
+        } catch (\Throwable $e) { /* wood contributes 0 */ }
+
+        return $out;
+    }
+
+    /**
      * Month number from a read_group row. Odoo reports the bucket either as
      * a __range (preferred — unambiguous) or as a localised label string.
      */
