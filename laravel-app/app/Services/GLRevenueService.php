@@ -381,7 +381,7 @@ class GLRevenueService
      * First-match-wins for direct matching. Redistribution runs after,
      * so it only picks up accounts that didn't match any product directly.
      */
-    public function matchAccountsToProducts(array $class70): array
+    public function matchAccountsToProducts(array $class70, ?int $year = null): array
     {
         $accounts       = (array) ($class70['accounts'] ?? []);
         $byAccountMonth = (array) ($class70['by_account_month'] ?? []);
@@ -427,6 +427,44 @@ class GLRevenueService
         foreach ((array) config('budget_products.revenue_redistribute', []) as $rule) {
             $sourceMatch = (array) ($rule['source_match'] ?? []);
             $targets     = (array) ($rule['targets'] ?? []);
+            $mode        = (string) ($rule['mode'] ?? 'static');
+
+            // scan_mix: shares come from the month's operational scan values
+            // rather than a fixed percentage guess. Each month of the source
+            // account is split in proportion to what was actually scanned
+            // that month across the listed products, so the attribution ties
+            // back to data the client can verify in the scan system. A month
+            // with no scans falls back to the rule's static shares.
+            $targetsByMonth = null;
+            if ($mode === 'scan_mix') {
+                $mixProducts = array_map('strval', (array) ($rule['mix_products'] ?? []));
+                $fallback    = (array) ($rule['fallback_targets'] ?? $targets);
+                $mix = (new OperationsService($this->odoo))
+                    ->scanMixByProductMonth($year ?? (int) date('Y'));
+                $targetsByMonth = [];
+                $annual = [];
+                for ($m = 1; $m <= 12; $m++) {
+                    $vals = [];
+                    $sum  = 0.0;
+                    foreach ($mixProducts as $pk) {
+                        $v = (float) ($mix[$pk][$m] ?? 0.0);
+                        if ($v > 0) { $vals[$pk] = $v; $sum += $v; }
+                    }
+                    if ($sum > 0) {
+                        $shares = [];
+                        foreach ($vals as $pk => $v) $shares[$pk] = $v / $sum;
+                        $targetsByMonth[$m] = $shares;
+                    } else {
+                        $targetsByMonth[$m] = $fallback;
+                    }
+                    foreach ($targetsByMonth[$m] as $pk => $sh) {
+                        $annual[$pk] = ($annual[$pk] ?? 0.0) + $sh / 12.0;
+                    }
+                }
+                // Keep 'targets' as the annual average so anything still
+                // reading the static shape degrades gracefully.
+                $targets = $annual !== [] ? $annual : $targets;
+            }
             if (empty($targets)) continue;
 
             foreach (array_keys($unmatched) as $accountId) {
@@ -436,15 +474,17 @@ class GLRevenueService
 
                 unset($unmatched[$accountId]);
                 $redistributed[$accountId] = [
-                    'description' => (string) ($rule['description'] ?? ''),
-                    'targets'     => $targets,
+                    'description'      => (string) ($rule['description'] ?? ''),
+                    'targets'          => $targets,
+                    'targets_by_month' => $targetsByMonth,
                 ];
 
                 $monthly = $byAccountMonth[$accountId] ?? array_fill(1, 12, 0.0);
-                foreach ($targets as $targetKey => $share) {
-                    $matched[(string) $targetKey] ??= array_fill(1, 12, 0.0);
-                    for ($m = 1; $m <= 12; $m++) {
-                        $matched[(string) $targetKey][$m] += (float) ($monthly[$m] ?? 0) * (float) $share;
+                for ($m = 1; $m <= 12; $m++) {
+                    $shares = $targetsByMonth[$m] ?? $targets;
+                    foreach ($shares as $targetKey => $share) {
+                        $matched[(string) $targetKey] ??= array_fill(1, 12, 0.0);
+                        $matched[(string) $targetKey][$m] += ((float) ($monthly[$m] ?? 0.0)) * (float) $share;
                     }
                 }
             }
