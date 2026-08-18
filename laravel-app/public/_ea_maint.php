@@ -507,6 +507,53 @@ try {
             ln('GATE: worst variance = ' . number_format($worstS, 2) . ' — ' . ($worstS < 0.005 ? 'PASS ✅' : 'FAIL ❌'));
             break;
 
+        case 'scancheck':
+            // GATE - the Product Revenue page's scanned total and the Billing
+            // section's Expected figure are the same qty x tariff computation
+            // through two different code paths. The client's requirement is
+            // that they be IDENTICAL; this proves it month by month instead
+            // of asserting it.
+            $slug = (string) ($_GET['tenant'] ?? 'transatlanticd');
+            $tenant = App\Models\Tenant::where('slug', $slug)->first();
+            if (!$tenant) { ln("no tenant '{$slug}'"); break; }
+            app(App\Tenancy\TenantContext::class)->set($tenant);
+            $client = App\Odoo\OdooFactory::fromConfig();
+            $yr = (int) ($_GET['year'] ?? date('Y'));
+
+            $ops = new App\Services\OperationsService($client);
+            $expected = $ops->scanRevenueByMonth(
+                new DateTimeImmutable($yr . '-01-01'),
+                new DateTimeImmutable($yr . '-12-31'));
+
+            $pr = (new App\Services\ProductRevenueService(
+                app(App\Services\BudgetService::class),
+                new App\Services\ProductVolumeService($client),
+                new App\Services\GLRevenueService($client)
+            ))->analyze($tenant, $yr);
+            $scanned = array_fill(1, 12, 0.0);
+            foreach ((array) ($pr['products'] ?? []) as $prod) {
+                foreach ((array) ($prod['actual_revenue'] ?? []) as $i => $v) {
+                    if ($v === null) continue;
+                    $m = $i + 1;   // actual_revenue is 0-indexed via array_values
+                    if ($m >= 1 && $m <= 12) $scanned[$m] += (float) $v;
+                }
+            }
+
+            ln("== scanned (product page) vs Expected (billing) · {$slug} · {$yr} ==");
+            ln(sprintf('%-6s %18s %18s %14s', 'month', 'product scanned', 'billing expected', 'delta'));
+            $worst = 0.0;
+            for ($m = 1; $m <= 12; $m++) {
+                $a = $scanned[$m]; $b = (float) ($expected[$m] ?? 0.0);
+                $d = $a - $b;
+                $worst = max($worst, abs($d));
+                if (abs($a) < 0.005 && abs($b) < 0.005) continue;
+                ln(sprintf('%-6s %18s %18s %14s', $m,
+                    number_format($a, 2), number_format($b, 2), number_format($d, 2)));
+            }
+            ln();
+            ln('GATE: worst monthly delta = ' . number_format($worst, 2) . ' - ' . ($worst < 0.005 ? 'PASS ✅' : 'FAIL ❌'));
+            break;
+
         case 'prodtrace':
             // Do invoice lines actually carry product references we could map
             // collections by? Collections are attributed today by matching 706
