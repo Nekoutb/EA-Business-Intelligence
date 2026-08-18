@@ -67,6 +67,16 @@ class ProductVolumeService
             if ($opsKey) {
                 $opsMap[(string) $opsKey] = (string) $product['key'];
             }
+            // Extra ops categories folding into the same product. Exists for
+            // vehicles_unclassified -> cars: scanned vehicles with no
+            // cylinders value are real cars (analyzer PR #37/39 sampled
+            // TOYOTA Corolla / RAV / Yaris) and the Billing "Expected" figure
+            // already prices them at the Voiture rate - leaving them out of
+            // the page's Cars volume made scanned revenue run below Billing
+            // by exactly their value (33.15M in Aug 2026, gate scancheck).
+            foreach ((array) ($product['ops_keys_extra'] ?? []) as $extra) {
+                $opsMap[(string) $extra] = (string) $product['key'];
+            }
         }
 
         // 12 monthly scanRevenueBreakdown calls. Each call returns the
@@ -89,7 +99,9 @@ class ProductVolumeService
             foreach ((array) ($breakdown['categories'] ?? []) as $opsKey => $row) {
                 if (!isset($opsMap[(string) $opsKey])) continue;
                 $productKey = $opsMap[(string) $opsKey];
-                $result[$productKey][$m] = (int) ($row['count'] ?? 0);
+                // += because several ops categories can feed one product
+                // (voiture + vehicles_unclassified both land in cars).
+                $result[$productKey][$m] = (int) ($result[$productKey][$m] ?? 0) + (int) ($row['count'] ?? 0);
             }
         }
 

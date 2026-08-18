@@ -187,6 +187,12 @@ return [
             'operational_tariff' => 50_000,
             'actuals_source'     => 'odoo',
             'ops_key'            => 'voiture',
+            // Scanned vehicles with NO cylinders value in Odoo. Confirmed
+            // real cars by sampling; priced at the Voiture rate everywhere
+            // (Billing Expected, collections scan-mix), so they belong in
+            // this product's volume too - otherwise the page's scanned
+            // revenue runs permanently below the Billing section.
+            'ops_keys_extra'     => ['vehicles_unclassified'],
             'revenue_source'     => 'scan_tariff',
         ],
         [
