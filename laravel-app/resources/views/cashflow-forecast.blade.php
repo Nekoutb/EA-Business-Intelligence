@@ -332,7 +332,7 @@
 <div class="mt-2 mb-3 flex items-center gap-3">
     <div class="bg-slate-900 text-white text-[10px] uppercase tracking-widest font-bold rounded px-2 py-1 shrink-0">02</div>
     <div>
-        <h2 class="text-base font-bold text-slate-900">Annual Cashflow · {{ $year }}</h2>
+        <h2 class="text-base font-bold text-slate-900">Annual Cashflow · {{ $year }} <span class="text-[11px] font-semibold text-slate-500">· XAF millions</span></h2>
         <p class="text-[11px] text-slate-500">Monthly direct method · SMLY forecast for forward months · strategic / board context</p>
     </div>
 </div>
@@ -420,7 +420,7 @@
                                         <td class="px-1 py-1 {{ $isEdited ? 'bg-[#fff8e6]' : '' }}">
                                             <input type="number" step="any" form="cf-overrides"
                                                    name="cells[{{ $line['key'] }}][{{ $m['num'] }}]"
-                                                   value="{{ $val === null ? '' : round((float) $val, 0) }}"
+                                                   value="{{ $val === null ? '' : round((float) $val / 1e6, 1) }}"
                                                    data-cf-cell="{{ $m['num'] }}"
                                                    title="{{ $isEdited ? 'Manual entry - clear the box to return to the computed figure' : 'Computed - type to override' }}"
                                                    class="w-full text-right tabular-nums bg-transparent border border-transparent hover:border-[#d9d4ca] focus:border-brand-500 focus:bg-white rounded px-1 py-0.5 {{ $colour }} {{ $font }}">
@@ -440,6 +440,7 @@
                 @csrf
                 <input type="hidden" name="year" value="{{ $year }}">
                 <div class="text-[10.5px] text-[#7c7466]">
+                    All figures in <strong>millions of XAF</strong> — type 400 for 400,000,000.
                     Type into any line above to plan it manually. Subtotals, <strong>Net Change in Cash</strong> and
                     <strong>Ending Cash Position</strong> recalculate as you type and cannot be edited directly.
                     Clear a box to return that month to the computed figure.
@@ -474,8 +475,9 @@
     var c = r.querySelector('[data-cf-cell="' + m + '"]');
     if (!c) { return 0; }
     if (c.tagName === 'INPUT') {
+      // Inputs are typed in MILLIONS of XAF; derived rows work in raw XAF.
       var v = parseFloat(c.value);
-      return isFinite(v) ? v : 0;
+      return isFinite(v) ? v * 1e6 : 0;
     }
     return 0;
   }

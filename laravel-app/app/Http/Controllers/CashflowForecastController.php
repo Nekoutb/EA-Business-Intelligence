@@ -226,7 +226,9 @@ class CashflowForecastController extends Controller
                 if ($m < 1 || $m > 12) continue;
                 if ($val === null || $val === '') continue;   // blank clears it
                 if (!is_numeric($val)) continue;
-                $clean[(string) $key][$m] = (float) $val;
+                // Grid inputs are in MILLIONS of XAF (400 means 400,000,000);
+                // overrides are stored raw so the service needs no special case.
+                $clean[(string) $key][$m] = (float) $val * 1e6;
             }
         }
 
