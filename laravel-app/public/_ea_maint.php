@@ -571,7 +571,35 @@ try {
                 }
             }
             ln();
-            if (!$prods) { ln('  (no PRODUCT records - if labels above carry the revenue, map by label)'); break; }
+
+            // 1c) The terms as ACCOUNT names. This tenant books each revenue
+            //     type to its own named 706 sub-account - that is exactly how
+            //     the container streams attribute - so terms read off real
+            //     invoices that match neither products nor line labels most
+            //     plausibly name accounts the stream registry does not know
+            //     about yet. If these exist, the fix is registry entries, not
+            //     a new mapping mechanism.
+            foreach ($terms as $t) {
+                $accs = $client->searchRead('account.account',
+                    [['name', 'ilike', $t], ['code', '=like', '7%']],
+                    ['id', 'code', 'name'], ['limit' => 40]);
+                ln(sprintf('class-7 accounts named like "%s": %s', $t, number_format(count($accs))));
+                foreach ($accs as $a) {
+                    $g = $client->callModel('account.move.line', 'read_group', [
+                        'domain' => [
+                            ['account_id', '=', (int) $a['id']],
+                            ['parent_state', '=', 'posted'],
+                            ['date', '>=', $yr . '-01-01'], ['date', '<=', $yr . '-12-31'],
+                        ],
+                        'fields' => ['credit:sum', 'debit:sum'], 'groupby' => [], 'lazy' => false,
+                    ]);
+                    $cr = (float) (($g[0]['credit'] ?? 0)) - (float) (($g[0]['debit'] ?? 0));
+                    ln(sprintf('    %-10s %-46s YTD revenue %16s',
+                        (string) $a['code'], mb_substr((string) $a['name'], 0, 46), number_format($cr, 2)));
+                }
+            }
+            ln();
+            if (!$prods) { ln('  (no PRODUCT records - see labels/accounts above for where the terms live)'); break; }
             ln();
 
             // 2) Do posted customer-invoice lines reference them, and where does
