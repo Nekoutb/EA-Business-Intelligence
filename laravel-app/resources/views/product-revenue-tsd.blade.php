@@ -158,6 +158,12 @@
       $tot      = $analysis['totals']['tracked'];
       $pendingYtd = (float) ($analysis['totals']['pending_ytd_budget_revenue'] ?? 0);
       $class70Ytd = (float) ($analysis['totals']['class70_ytd_revenue'] ?? 0);
+      // SCANNED basis (client direction, 18 Aug 2026): the page's actuals are
+      // what the operation scanned - vehicles/wood at qty x tariff, containers
+      // at their named scanning accounts - NOT the billed class-70 total.
+      // class-70 stays on the page as the billed reference so the un-invoiced
+      // gap between the two is visible instead of hidden.
+      $scannedAct = (float) ($tot['ytd_actual_revenue'] ?? 0) + (float) ($tot['unbudgeted_actual_revenue'] ?? 0);
       $glDiag     = $analysis['gl_diagnostic'] ?? ['matched' => [], 'unmatched' => []];
       $todayMonth = (int) $analysis['today_month'];
 
@@ -227,9 +233,9 @@
          collapse to a single month. --}}
     <div class="prt-strip">
       <div class="prt-strip__c">
-        <div class="prt-strip__l">Revenue ({{ $isMtd ? 'MTD' : 'YTD' }} · HT)</div>
-        <div class="prt-strip__v">{{ $fmtMShort($class70Ytd) }}<span class="u">XAF</span></div>
-        <div class="prt-strip__m">{{ $rangeShort }} · Σ class 70 · matches Dashboard (HT)</div>
+        <div class="prt-strip__l">Revenue ({{ $isMtd ? 'MTD' : 'YTD' }} · Scanned)</div>
+        <div class="prt-strip__v">{{ $fmtMShort($scannedAct) }}<span class="u">XAF</span></div>
+        <div class="prt-strip__m">{{ $rangeShort }} · scan qty × tariff + scanning accounts · billed (cl.70): {{ $fmtMShort($class70Ytd) }}</div>
       </div>
       <div class="prt-strip__c">
         <div class="prt-strip__l">Revenue ({{ $isMtd ? 'MTD' : 'YTD' }} · Budget)</div>
@@ -240,11 +246,11 @@
         <div class="prt-strip__l">Net Revenue Gap</div>
         @php
           // Gap measured against the FULL budget (not just the tracked
-          // subset) — matches the user's mental model of "did we earn
-          // what we planned?". Negative means behind plan; positive
-          // means ahead. ACT here is class 70 GL total, which includes
-          // any invoiced revenue regardless of product attribution.
-          $netGap = $class70Ytd - $allBudgetRev;
+          // subset). ACT is the SCANNED basis - what the operation
+          // actually processed - per the client's direction (18 Aug 2026);
+          // billed class-70 is disclosed separately so uninvoiced scans
+          // surface as a visible difference rather than distorting this gap.
+          $netGap = $scannedAct - $allBudgetRev;
           $netPct = $allBudgetRev > 0 ? 100 * $netGap / $allBudgetRev : 0;
         @endphp
         <div class="prt-strip__v {{ $netGap < 0 ? 'is-neg' : 'is-pos' }}">
@@ -472,13 +478,13 @@
                 ? strtoupper((new \DateTimeImmutable(sprintf('%04d-%02d-01', $year, $endMonth)))->format('M Y'))
                 : 'YTD · ' . $monthsInRange . ' MO';
               // Headline BUD = full budget (tracked + pending Other Cargo).
-              // Headline ACT = the class-70 GL total — same number the
-              // Dashboard shows. ACT here is invoice-based revenue across
-              // every class-70 account, so it covers Other Cargo too
-              // (whenever those invoices get raised — currently sparse
-              // because the operational source isn't wired yet).
+              // Headline ACT = SCANNED revenue (the row basis), so the total
+              // row ties to the column above it. Billed class-70 GL is shown
+              // on its own reference row below the subtotals.
               $headlineBud = $allBudgetRev;
-              $headlineAct = $class70Ytd;
+              // Scanned basis: the headline ACT is the sum of the product rows
+              // above it, so the total finally ties to its own column.
+              $headlineAct = $scannedAct;
               $headlineGap = $headlineAct - $headlineBud;
             @endphp
 
@@ -529,6 +535,20 @@
                 </td>
               </tr>
             @endif
+
+            {{-- Billed reference — the class-70 GL total the Dashboard shows.
+                 The difference against the scanned headline is scan activity
+                 that has not (yet) been invoiced: the leakage figure. --}}
+            <tr class="total-row" style="background:#f9fafb;">
+              <td style="font-style:italic;font-size:11px;color:#374151;">↳ Billed per GL · {{ $totalLabel }} <span style="font-weight:400;color:#6b7280;">(Σ class 70 · matches Dashboard)</span></td>
+              <td colspan="6"></td>
+              <td style="color:#6b7280;">—</td>
+              <td>{{ number_format($class70Ytd / 1e6, 1) }}</td>
+              <td class="{{ ($class70Ytd - $headlineAct) < 0 ? 'vn' : 'vp' }}">{{ $fmtSigned($class70Ytd - $headlineAct) }}</td>
+              <td colspan="3" style="font-style:italic;color:#6b7280;font-size:10px;text-align:left;padding-left:12px;">
+                vs scanned — negative = scanned but not invoiced
+              </td>
+            </tr>
           </tbody>
         </table>
       </div>
@@ -619,7 +639,7 @@
           </table>
         </div>
         <div class="v5-card__f">
-          <b>Reading:</b> Class-70 YTD ({{ $fmtMShort($class70Ytd) }} XAF) reconciles to the Dashboard headline (HT); redistributed and unmatched accounts are listed above.
+          <b>Reading:</b> Actuals on this page are the SCANNED basis (qty × tariff / scanning accounts). Billed class-70 YTD ({{ $fmtMShort($class70Ytd) }} XAF) reconciles to the Dashboard headline (HT) and is disclosed on the "Billed per GL" row; redistributed and unmatched accounts are listed above.
         </div>
       </div>
     @endif
