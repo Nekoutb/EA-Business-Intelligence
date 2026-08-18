@@ -539,7 +539,39 @@ try {
                 ln(sprintf('  id %-8s %-14s %s', $pr['id'],
                     (string) ($pr['default_code'] ?: '-'), mb_substr((string) $pr['name'], 0, 50)));
             }
-            if (!$prods) { ln('  (none - the names may differ in Odoo)'); break; }
+            ln();
+
+            // 1b) The same terms as free-text LINE LABELS. Odoo accepts invoice
+            //     lines typed by hand with no product_id at all, and the client
+            //     reads these names off real invoices - so if products come up
+            //     empty, the labels are where the terms live. Grouping by label
+            //     shows the exact spellings in use and what each is worth.
+            foreach ($terms as $t) {
+                $g = $client->callModel('account.move.line', 'read_group', [
+                    'domain' => [
+                        ['move_id.move_type', '=', 'out_invoice'],
+                        ['parent_state', '=', 'posted'],
+                        ['name', 'ilike', $t],
+                        ['date', '>=', $yr . '-01-01'], ['date', '<=', $yr . '-12-31'],
+                    ],
+                    'fields'  => ['price_subtotal:sum'],
+                    'groupby' => ['name'],
+                    'lazy'    => false,
+                ]);
+                $g = (array) $g;
+                $sum = 0.0; foreach ($g as $r) $sum += (float) ($r['price_subtotal'] ?? 0);
+                ln(sprintf('line labels containing "%s": %s distinct · %s YTD',
+                    $t, number_format(count($g)), number_format($sum, 2)));
+                usort($g, fn ($a, $b) => (float) ($b['price_subtotal'] ?? 0) <=> (float) ($a['price_subtotal'] ?? 0));
+                foreach (array_slice($g, 0, 8) as $r) {
+                    ln(sprintf('    %-52s %14s  (%s lines)',
+                        mb_substr((string) ($r['name'] ?? '?'), 0, 52),
+                        number_format((float) ($r['price_subtotal'] ?? 0), 2),
+                        number_format((int) ($r['__count'] ?? 0))));
+                }
+            }
+            ln();
+            if (!$prods) { ln('  (no PRODUCT records - if labels above carry the revenue, map by label)'); break; }
             ln();
 
             // 2) Do posted customer-invoice lines reference them, and where does
