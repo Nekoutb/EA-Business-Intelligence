@@ -152,19 +152,21 @@ final class ProductRevenueService
                 // qty: scanned volume from ops (same for both sources)
                 $actualQty = $this->actualVector($volumes[$key] ?? [], $todayMonth);
 
-                if ($revenueSource === 'gl_706_named') {
-                    // Revenue from matched 706 accounts. Price = rev / qty
-                    // per month (the user's explicit ask: actual unit price
-                    // = revenue ÷ quantities). For months where qty == 0
-                    // but revenue exists (rare — invoicing precedes scan),
-                    // we surface revenue with a null price to avoid
-                    // dividing by zero.
-                    $glMonthly = (array) ($glRevenuePerProduct[$key] ?? array_fill(1, 12, 0.0));
-                    [$actualRevenue, $actualPrice] = $this->revenuePriceFromGL($glMonthly, $actualQty, $todayMonth);
-                } else {
-                    // scan_tariff: rev = qty × operational_tariff, price = tariff.
-                    [$actualRevenue, $actualPrice] = $this->revenuePriceFromTariff($actualQty, $operationalTariff, $todayMonth);
-                }
+                // SCANNED basis for every product (client direction, 18 Aug
+                // 2026): revenue = qty x the unit selling price AT SCAN TIME.
+                // Containers carry an operational tariff of ZERO since May
+                // 2026, so they show scanned volume with no revenue - "even
+                // though containers are scanned, there is no revenue as they
+                // are scanned at unit selling price of Zero". This makes the
+                // page's scanned total IDENTICAL BY CONSTRUCTION to the
+                // Billing section's Expected figure, which is the same
+                // qty x tariff computation in OperationsService.
+                //
+                // gl_706_named still governs COLLECTIONS attribution (the
+                // named scanning accounts) - it no longer values rows here.
+                // Billed revenue stays visible on the "Billed per GL"
+                // reference row.
+                [$actualRevenue, $actualPrice] = $this->revenuePriceFromTariff($actualQty, $operationalTariff, $todayMonth);
             }
 
             // Period figures (sum each month from startMonth..endMonth).

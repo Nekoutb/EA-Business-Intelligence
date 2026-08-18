@@ -235,7 +235,7 @@
       <div class="prt-strip__c">
         <div class="prt-strip__l">Revenue ({{ $isMtd ? 'MTD' : 'YTD' }} · Scanned)</div>
         <div class="prt-strip__v">{{ $fmtMShort($scannedAct) }}<span class="u">XAF</span></div>
-        <div class="prt-strip__m">{{ $rangeShort }} · scan qty × tariff + scanning accounts · billed (cl.70): {{ $fmtMShort($class70Ytd) }}</div>
+        <div class="prt-strip__m">{{ $rangeShort }} · scan qty × tariff (= Billing "Expected") · billed (cl.70): {{ $fmtMShort($class70Ytd) }}</div>
       </div>
       <div class="prt-strip__c">
         <div class="prt-strip__l">Revenue ({{ $isMtd ? 'MTD' : 'YTD' }} · Budget)</div>
