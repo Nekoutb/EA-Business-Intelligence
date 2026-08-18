@@ -418,12 +418,12 @@
                                     @endphp
                                     @if ($editable)
                                         <td class="px-1 py-1 {{ $isEdited ? 'bg-[#fff8e6]' : '' }}">
-                                            <input type="number" step="any" form="cf-overrides"
+                                            <input type="number" step="1" inputmode="numeric" form="cf-overrides"
                                                    name="cells[{{ $line['key'] }}][{{ $m['num'] }}]"
-                                                   value="{{ $val === null ? '' : round((float) $val / 1e6, 1) }}"
+                                                   value="{{ $val === null ? '' : (int) round((float) $val / 1e6) }}"
                                                    data-cf-cell="{{ $m['num'] }}"
                                                    title="{{ $isEdited ? 'Manual entry - clear the box to return to the computed figure' : 'Computed - type to override' }}"
-                                                   class="w-full text-right tabular-nums bg-transparent border border-transparent hover:border-[#d9d4ca] focus:border-brand-500 focus:bg-white rounded px-1 py-0.5 {{ $colour }} {{ $font }}">
+                                                   class="cf-cell-input w-full text-right tabular-nums bg-transparent border border-transparent hover:border-[#d9d4ca] focus:border-brand-500 focus:bg-white rounded px-1 py-0.5 {{ $colour }} {{ $font }}">
                                         </td>
                                     @else
                                         <td class="text-right tabular-nums px-2 py-1.5 {{ $colour }} {{ $font }}" data-cf-cell="{{ $m['num'] }}">{{ $fmtM($val) }}</td>
@@ -461,6 +461,14 @@
      save; this only keeps the derived rows honest as the user edits, so the
      grid never displays a subtotal that disagrees with the cells above it.
      Section membership mirrors CashflowForecastService. --}}
+{{-- Grid inputs must be typographically invisible: identical size and
+     weight to the computed cells around them, no spinner chrome. --}}
+<style>
+  .cf-cell-input { font-size: 11.5px; line-height: 1.4; font-family: inherit; }
+  .cf-cell-input::-webkit-outer-spin-button,
+  .cf-cell-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+  .cf-cell-input { -moz-appearance: textfield; appearance: textfield; }
+</style>
 <script>
 (function () {
   var OP  = ['customers','suppliers','employees','taxes_other','income_tax','other_operating'];
@@ -489,9 +497,12 @@
   }
 
   function fmtM(v) {
+    // Mirror the server-side formatter exactly: whole millions with
+    // thousands separators, negatives in parentheses.
     var m = v / 1e6;
-    if (Math.abs(m) < 0.05) { return '0'; }
-    return m < 0 ? '(' + Math.abs(m).toFixed(1) + ')' : m.toFixed(1);
+    if (Math.abs(m) < 0.5) { return '0'; }
+    var t = Math.round(Math.abs(m)).toLocaleString('en-US');
+    return m < 0 ? '(' + t + ')' : t;
   }
 
   function setRow(key, vals) {
