@@ -88,6 +88,23 @@
               for ($i = 1; $i <= $maxCol; $i++) $s += (float) ($monthly[$i] ?? 0);
               return $s;
           };
+          // Margin total = ratio of TOTALS over the visible window, never an
+          // average of monthly percentages. A near-zero-revenue month can put
+          // its own margin at -800%, and a simple average lets that one month
+          // drag the year negative while the actual year P&L is profitable —
+          // reported on the Net Margin row, Dec 2026. Numerator per margin
+          // row; denominator is always revenue.
+          $byKey = [];
+          foreach ($lines ?? ($data['lines'] ?? []) as $__l) { $byKey[$__l['key'] ?? ''] = $__l; }
+          $marginNum = ['gross_margin' => 'gross_profit', 'ebitda_margin' => 'ebitda',
+                        'ebit_margin' => 'ebit', 'net_margin' => 'net_result'];
+          $marginTotalPct = function (string $key) use (&$byKey, $marginNum, &$colTotal) {
+              $numKey = $marginNum[$key] ?? null;
+              if ($numKey === null || !isset($byKey[$numKey], $byKey['revenue'])) return null;
+              $den = $colTotal($byKey['revenue']['monthly'] ?? []);
+              if (abs($den) < 0.001) return null;
+              return 100.0 * $colTotal($byKey[$numKey]['monthly'] ?? []) / $den;
+          };
           $colAvg = function ($monthly) use ($maxCol) {
               $vals = [];
               for ($i = 1; $i <= $maxCol; $i++) if (($monthly[$i] ?? null) !== null) $vals[] = (float) $monthly[$i];
@@ -360,7 +377,7 @@
                                     @endif
                                 @endforeach
                                 <td class="text-right tabular-nums px-2 py-1.5 {{ $style['font'] }} text-[#1e3d44] border-l border-[#e8e4de]">
-                                    {{ $isMarginRow ? $fmtPct($colAvg($line['monthly'])) : $fmtM($colTotal($line['monthly'])) }}
+                                    {{ $isMarginRow ? $fmtPct($marginTotalPct($line['key']) ?? $colAvg($line['monthly'])) : $fmtM($colTotal($line['monthly'])) }}
                                 </td>
                             </tr>
                             @if ($isExpandable)
