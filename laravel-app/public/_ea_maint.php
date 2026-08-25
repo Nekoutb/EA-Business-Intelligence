@@ -132,6 +132,57 @@ try {
             ln('exit=' . $code);
             break;
 
+        case 'erpdiscover':
+            // Read-only discovery of a tenant's external ERP database
+            // (non-Odoo direct-DB tenants): lists relations + columns in
+            // the configured schema so the report sync can be mapped
+            // without provider round-trips. ?tenant=<slug> (defaults to
+            // the first tenant that has ERP_DB_HOST configured).
+            $slug = (string) ($_GET['tenant'] ?? '');
+            if ($slug !== '') {
+                $tenant = App\Models\Tenant::where('slug', $slug)->first();
+            } else {
+                $row = Illuminate\Support\Facades\DB::table('tenant_settings')->where('key', 'ERP_DB_HOST')->first();
+                $tenant = $row ? App\Models\Tenant::find($row->tenant_id) : null;
+            }
+            if (!$tenant) { ln('no tenant with ERP_DB_HOST configured (or unknown slug)'); break; }
+            ln("tenant: {$tenant->id} / {$tenant->slug} / {$tenant->name}");
+
+            app(App\Tenancy\TenantContext::class)->set($tenant);
+            $cfg = App\Services\ErpDbConnectionTester::connectionConfig();
+            config(['database.connections.erp_discover' => $cfg]);
+            $erp = Illuminate\Support\Facades\DB::connection('erp_discover');
+            $schema = trim((string) config_env('ERP_DB_SCHEMA', 'public')) ?: 'public';
+            ln("connected: {$cfg['driver']} {$cfg['host']}:{$cfg['port']}/{$cfg['database']} schema={$schema}");
+            ln();
+
+            $rels = $erp->select(
+                "select c.relname as name, c.relkind as kind, coalesce(c.reltuples, -1)::bigint as est_rows
+                 from pg_class c join pg_namespace n on n.oid = c.relnamespace
+                 where n.nspname = ? and c.relkind in ('r','v','m','f','p') order by c.relname", [$schema]);
+            $kinds = ['r' => 'table', 'v' => 'view', 'm' => 'matview', 'f' => 'foreign', 'p' => 'partitioned'];
+            ln('== ' . count($rels) . " relations in \"{$schema}\" ==");
+            foreach ($rels as $t) {
+                ln(sprintf('%-42s %-11s ~%s rows', $t->name, $kinds[$t->kind] ?? $t->kind, number_format(max(0, (int) $t->est_rows))));
+            }
+
+            ln();
+            ln('== columns ==');
+            $cols = $erp->select(
+                "select table_name, column_name, data_type, is_nullable
+                 from information_schema.columns where table_schema = ?
+                 order by table_name, ordinal_position", [$schema]);
+            $byTable = [];
+            foreach ($cols as $c) {
+                $byTable[$c->table_name][] = $c->column_name . ':' . $c->data_type . ($c->is_nullable === 'YES' ? '?' : '');
+            }
+            foreach ($byTable as $tbl => $list) {
+                ln();
+                ln("[{$tbl}]");
+                ln('  ' . implode("\n  ", $list));
+            }
+            break;
+
         case 'whsync':
             // Run the warehouse sync for one tenant. &full=1 for a backfill.
             $args = ['--tenant' => (string) ($_GET['tenant'] ?? 'kwr')];
