@@ -86,24 +86,64 @@
             {{-- Integration Section --}}
             @if (!empty($integration) && !($integration['skip_integration'] ?? false))
                 <div class="border-b border-slate-200 pb-5">
-                    <h3 class="font-semibold text-slate-900 text-sm mb-3">Odoo Integration</h3>
+                    @php
+                        $erpType  = $integration['ERP_TYPE'] ?? 'odoo';
+                        $erpLabel = \App\Http\Controllers\Admin\TenantController::ERP_TYPES[$erpType] ?? $erpType;
+                        if ($erpType === 'other' && !empty($integration['ERP_NAME'])) {
+                            $erpLabel = $integration['ERP_NAME'] . ' (Other)';
+                        }
+                    @endphp
+                    <h3 class="font-semibold text-slate-900 text-sm mb-3">ERP Integration</h3>
                     <dl class="space-y-2 text-sm">
                         <div class="flex justify-between">
-                            <dt class="text-slate-600">URL:</dt>
-                            <dd class="font-mono text-slate-900 text-xs break-all">{{ $integration['ODOO_URL'] ?? '—' }}</dd>
+                            <dt class="text-slate-600">ERP system:</dt>
+                            <dd class="text-slate-900">{{ $erpLabel }}</dd>
                         </div>
-                        <div class="flex justify-between">
-                            <dt class="text-slate-600">Database:</dt>
-                            <dd class="text-slate-900">{{ $integration['ODOO_DB'] ?? '—' }}</dd>
-                        </div>
-                        <div class="flex justify-between">
-                            <dt class="text-slate-600">Username:</dt>
-                            <dd class="text-slate-900">{{ $integration['ODOO_USERNAME'] ?? '—' }}</dd>
-                        </div>
-                        <div class="flex justify-between">
-                            <dt class="text-slate-600">Protocol:</dt>
-                            <dd class="text-slate-900 font-mono">{{ $integration['ODOO_PROTOCOL'] ?? 'json2' }}</dd>
-                        </div>
+                        @if ($erpType === 'odoo')
+                            <div class="flex justify-between">
+                                <dt class="text-slate-600">URL:</dt>
+                                <dd class="font-mono text-slate-900 text-xs break-all">{{ $integration['ODOO_URL'] ?? '—' }}</dd>
+                            </div>
+                            <div class="flex justify-between">
+                                <dt class="text-slate-600">Database:</dt>
+                                <dd class="text-slate-900">{{ $integration['ODOO_DB'] ?? '—' }}</dd>
+                            </div>
+                            <div class="flex justify-between">
+                                <dt class="text-slate-600">Username:</dt>
+                                <dd class="text-slate-900">{{ $integration['ODOO_USERNAME'] ?? '—' }}</dd>
+                            </div>
+                            <div class="flex justify-between">
+                                <dt class="text-slate-600">Protocol:</dt>
+                                <dd class="text-slate-900 font-mono">{{ $integration['ODOO_PROTOCOL'] ?? 'json2' }}</dd>
+                            </div>
+                        @else
+                            <div class="flex justify-between">
+                                <dt class="text-slate-600">Engine:</dt>
+                                <dd class="text-slate-900 font-mono">{{ $integration['ERP_DB_DRIVER'] ?? '—' }}</dd>
+                            </div>
+                            <div class="flex justify-between">
+                                <dt class="text-slate-600">Host:</dt>
+                                <dd class="font-mono text-slate-900 text-xs break-all">{{ $integration['ERP_DB_HOST'] ?? '—' }}:{{ $integration['ERP_DB_PORT'] ?? '—' }}</dd>
+                            </div>
+                            <div class="flex justify-between">
+                                <dt class="text-slate-600">Database:</dt>
+                                <dd class="text-slate-900">{{ $integration['ERP_DB_DATABASE'] ?? '—' }}</dd>
+                            </div>
+                            <div class="flex justify-between">
+                                <dt class="text-slate-600">Username:</dt>
+                                <dd class="text-slate-900">{{ $integration['ERP_DB_USERNAME'] ?? '—' }}</dd>
+                            </div>
+                            @if (!empty($integration['ERP_DB_SCHEMA']))
+                                <div class="flex justify-between">
+                                    <dt class="text-slate-600">Schema:</dt>
+                                    <dd class="text-slate-900 font-mono">{{ $integration['ERP_DB_SCHEMA'] }}</dd>
+                                </div>
+                            @endif
+                            <div class="flex justify-between">
+                                <dt class="text-slate-600">SSL mode:</dt>
+                                <dd class="text-slate-900 font-mono">{{ $integration['ERP_DB_SSLMODE'] ?? 'prefer' }}</dd>
+                            </div>
+                        @endif
                     </dl>
                 </div>
             @endif

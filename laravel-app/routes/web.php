@@ -259,6 +259,7 @@ Route::prefix('admin')->group(function () {
         Route::get ('/tenants/{tenant}/settings',           [AdminTenantController::class, 'showSettings']);
         Route::post('/tenants/{tenant}/settings',           [AdminTenantController::class, 'saveSettings']);
         Route::post('/tenants/{tenant}/settings/test-odoo', [AdminTenantController::class, 'testOdoo']);
+        Route::post('/tenants/{tenant}/settings/test-erp-db', [AdminTenantController::class, 'testErpDb']);
         Route::post('/tenants/{tenant}/rename',      [AdminTenantController::class, 'rename']);
         Route::post('/tenants/{tenant}/suspend',     [AdminTenantController::class, 'suspend']);
         Route::post('/tenants/{tenant}/activate',    [AdminTenantController::class, 'activate']);

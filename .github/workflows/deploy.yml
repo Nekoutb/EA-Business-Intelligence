@@ -95,6 +95,14 @@ jobs:
             fi
             a2enmod rewrite ssl headers >/dev/null 2>&1 || true
 
+            # Direct-database ERP connections (non-Odoo tenants) need the
+            # PostgreSQL PDO driver. The php install above only runs on a
+            # fresh box, so install the extension idempotently here.
+            if ! php -m | grep -q pdo_pgsql; then
+              apt-get install -y php-pgsql
+              systemctl reload apache2 || true
+            fi
+
             # ==================== PHP TUNING (apache mod_php) ====================
             # The default php.ini for mod_php sets memory_limit=128M and
             # max_execution_time=30 — too tight for our audit pages

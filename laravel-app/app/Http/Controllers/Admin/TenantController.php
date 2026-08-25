@@ -34,8 +34,21 @@ class TenantController extends Controller
      * (/t/{slug}/settings), not in the super-admin override view.
      */
     private const SETTING_FIELDS = [
+        'ERP_TYPE', 'ERP_NAME',
         'ODOO_URL', 'ODOO_DB', 'ODOO_USERNAME', 'ODOO_API_KEY', 'ODOO_PROTOCOL',
+        'ERP_DB_DRIVER', 'ERP_DB_HOST', 'ERP_DB_PORT', 'ERP_DB_DATABASE',
+        'ERP_DB_USERNAME', 'ERP_DB_PASSWORD', 'ERP_DB_SSLMODE', 'ERP_DB_SCHEMA',
         'REVENUE_SOURCE', 'APP_BRAND',
+    ];
+
+    /** ERP systems selectable in the integration UI. 'other' unlocks a free-text name. */
+    public const ERP_TYPES = [
+        'odoo'      => 'Odoo (web API)',
+        'sage'      => 'Sage',
+        'sap'       => 'SAP Business One',
+        'dynamics'  => 'Microsoft Dynamics',
+        'quickbooks'=> 'QuickBooks',
+        'other'     => 'Other',
     ];
 
     public function index(Request $request)
@@ -223,13 +236,32 @@ class TenantController extends Controller
 
                 $rules = ['skip_integration' => ['nullable', 'boolean']];
                 if ($needsOdoo && !$request->has('skip_integration')) {
-                    $rules = [
-                        'ODOO_URL'      => ['required', 'url'],
-                        'ODOO_DB'       => ['required', 'string'],
-                        'ODOO_USERNAME' => ['required', 'string'],
-                        'ODOO_API_KEY'  => ['required', 'string'],
-                        'ODOO_PROTOCOL' => ['required', 'in:json2,jsonrpc,xmlrpc'],
-                    ];
+                    $erpType = (string) $request->input('ERP_TYPE', 'odoo');
+                    $rules   = ['ERP_TYPE' => ['required', Rule::in(array_keys(self::ERP_TYPES))]];
+
+                    if ($erpType === 'odoo') {
+                        $rules += [
+                            'ODOO_URL'      => ['required', 'url'],
+                            'ODOO_DB'       => ['required', 'string'],
+                            'ODOO_USERNAME' => ['required', 'string'],
+                            'ODOO_API_KEY'  => ['required', 'string'],
+                            'ODOO_PROTOCOL' => ['required', 'in:json2,jsonrpc,xmlrpc'],
+                        ];
+                    } else {
+                        // Non-Odoo ERPs connect through a direct database
+                        // (usually a BI replica the provider exposes).
+                        $rules += [
+                            'ERP_NAME'        => [$erpType === 'other' ? 'required' : 'nullable', 'string', 'max:191'],
+                            'ERP_DB_DRIVER'   => ['required', Rule::in(\App\Services\ErpDbConnectionTester::DRIVERS)],
+                            'ERP_DB_HOST'     => ['required', 'string', 'max:191'],
+                            'ERP_DB_PORT'     => ['required', 'integer', 'between:1,65535'],
+                            'ERP_DB_DATABASE' => ['required', 'string', 'max:191'],
+                            'ERP_DB_USERNAME' => ['required', 'string', 'max:191'],
+                            'ERP_DB_PASSWORD' => ['required', 'string'],
+                            'ERP_DB_SSLMODE'  => ['nullable', 'in:disable,prefer,require'],
+                            'ERP_DB_SCHEMA'   => ['nullable', 'string', 'max:191'],
+                        ];
+                    }
                 }
 
                 $data = $request->validate($rules);
@@ -362,7 +394,12 @@ class TenantController extends Controller
         // and accesses a possibly-undefined key. Rewritten explicitly.
         $skipIntegration = (bool) ($integration['skip_integration'] ?? false);
         if (!empty($integration) && !$skipIntegration) {
-            foreach (['ODOO_URL', 'ODOO_DB', 'ODOO_USERNAME', 'ODOO_API_KEY', 'ODOO_PROTOCOL'] as $key) {
+            foreach ([
+                'ERP_TYPE', 'ERP_NAME',
+                'ODOO_URL', 'ODOO_DB', 'ODOO_USERNAME', 'ODOO_API_KEY', 'ODOO_PROTOCOL',
+                'ERP_DB_DRIVER', 'ERP_DB_HOST', 'ERP_DB_PORT', 'ERP_DB_DATABASE',
+                'ERP_DB_USERNAME', 'ERP_DB_PASSWORD', 'ERP_DB_SSLMODE', 'ERP_DB_SCHEMA',
+            ] as $key) {
                 if (!empty($integration[$key])) {
                     TenantSetting::create([
                         'tenant_id' => $tenant->id,
@@ -532,6 +569,26 @@ class TenantController extends Controller
             $payload = \App\Services\OdooConnectionTester::testCurrent();
         } finally {
             // Restore prior context so subsequent admin requests aren't tainted.
+            if ($previous) {
+                $ctx->set($previous);
+            }
+        }
+        return response()->json($payload);
+    }
+
+    /**
+     * Probe the tenant's direct-database ERP credentials (non-Odoo ERPs).
+     * Same context-swap dance as testOdoo().
+     */
+    public function testErpDb(Tenant $tenant)
+    {
+        /** @var \App\Tenancy\TenantContext $ctx */
+        $ctx = app(\App\Tenancy\TenantContext::class);
+        $previous = $ctx->has() ? $ctx->tenant() : null;
+        $ctx->set($tenant);
+        try {
+            $payload = \App\Services\ErpDbConnectionTester::testCurrent();
+        } finally {
             if ($previous) {
                 $ctx->set($previous);
             }

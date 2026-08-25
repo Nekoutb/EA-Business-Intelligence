@@ -20,42 +20,117 @@
         // AI provider config is platform-global (managed at /admin/settings/ai),
         // so it's intentionally not exposed on a per-tenant page.
         // Budget benchmarks are tenant-managed on /t/{slug}/settings (not here).
-        $groups = [
-            'Odoo connection'    => ['ODOO_URL','ODOO_DB','ODOO_USERNAME','ODOO_API_KEY','ODOO_PROTOCOL','REVENUE_SOURCE'],
-            'Branding'           => ['APP_BRAND'],
-        ];
+        $erpTypes = \App\Http\Controllers\Admin\TenantController::ERP_TYPES;
+        $erpType  = $values['ERP_TYPE'] !== '' ? $values['ERP_TYPE'] : 'odoo';
     @endphp
 
-    @foreach ($groups as $heading => $keys)
-        <div class="panel p-5">
-            <div class="flex items-center justify-between mb-3">
-                <h2 class="text-sm font-semibold text-slate-900">{{ $heading }}</h2>
-                @if ($heading === 'Odoo connection')
-                    <button type="button" id="ea-admin-test-odoo-btn"
-                            class="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-rose-700 border border-rose-300 hover:border-rose-500 bg-rose-50/40 hover:bg-rose-50 rounded-md px-3 py-1.5 transition disabled:opacity-50 disabled:cursor-not-allowed">
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-                        <span data-label>Test connection</span>
-                    </button>
-                @endif
-            </div>
-            @if ($heading === 'Odoo connection')
-                <div id="ea-admin-test-odoo-result" class="hidden mb-4 px-3 py-2.5 rounded-lg text-[12px] leading-relaxed border" role="status"></div>
-            @endif
-            <div class="grid md:grid-cols-2 gap-4">
-                @foreach ($keys as $k)
-                    @php $isSecret = preg_match('/(KEY|SECRET|PASSWORD|TOKEN)/i', $k); @endphp
-                    <label class="block">
-                        <span class="text-[11px] font-medium text-slate-600 font-mono">{{ $k }}</span>
-                        <input name="{{ $k }}"
-                               type="{{ $isSecret ? 'password' : 'text' }}"
-                               value="{{ $isSecret ? '' : $values[$k] }}"
-                               placeholder="{{ $isSecret && !empty($values['__has_'.$k]) ? '•••• (already set, leave blank to keep)' : '' }}"
-                               class="mt-1 w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono">
-                    </label>
-                @endforeach
-            </div>
+    {{-- ERP system selection: Odoo talks over the web API; every other
+         ERP connects straight to a database the provider exposes. --}}
+    <div class="panel p-5">
+        <h2 class="text-sm font-semibold text-slate-900 mb-3">ERP system</h2>
+        <div class="grid md:grid-cols-2 gap-4">
+            <label class="block">
+                <span class="text-[11px] font-medium text-slate-600 font-mono">ERP_TYPE</span>
+                <select name="ERP_TYPE" id="ea-erp-type"
+                        class="mt-1 w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono">
+                    @foreach ($erpTypes as $key => $label)
+                        <option value="{{ $key }}" {{ $erpType === $key ? 'selected' : '' }}>{{ $label }}</option>
+                    @endforeach
+                </select>
+            </label>
+            <label class="block" data-erp-name-field>
+                <span class="text-[11px] font-medium text-slate-600 font-mono">ERP_NAME <span class="text-slate-400 normal-case">(when "Other")</span></span>
+                <input name="ERP_NAME" type="text" value="{{ $values['ERP_NAME'] }}"
+                       placeholder="e.g. Elimelec custom ERP"
+                       class="mt-1 w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono">
+            </label>
         </div>
-    @endforeach
+    </div>
+
+    {{-- Odoo (web API) connection --}}
+    <div class="panel p-5" data-erp-section="odoo">
+        <div class="flex items-center justify-between mb-3">
+            <h2 class="text-sm font-semibold text-slate-900">Odoo connection</h2>
+            <button type="button" data-test-btn data-test-url="/admin/tenants/{{ $tenant->id }}/settings/test-odoo"
+                    data-test-pending="Pinging Odoo as this tenant…"
+                    class="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-rose-700 border border-rose-300 hover:border-rose-500 bg-rose-50/40 hover:bg-rose-50 rounded-md px-3 py-1.5 transition disabled:opacity-50 disabled:cursor-not-allowed">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                <span data-label>Test connection</span>
+            </button>
+        </div>
+        <div data-test-result class="hidden mb-4 px-3 py-2.5 rounded-lg text-[12px] leading-relaxed border" role="status"></div>
+        <div class="grid md:grid-cols-2 gap-4">
+            @foreach (['ODOO_URL','ODOO_DB','ODOO_USERNAME','ODOO_API_KEY','ODOO_PROTOCOL'] as $k)
+                @php $isSecret = preg_match('/(KEY|SECRET|PASSWORD|TOKEN)/i', $k); @endphp
+                <label class="block">
+                    <span class="text-[11px] font-medium text-slate-600 font-mono">{{ $k }}</span>
+                    <input name="{{ $k }}"
+                           type="{{ $isSecret ? 'password' : 'text' }}"
+                           value="{{ $isSecret ? '' : $values[$k] }}"
+                           placeholder="{{ $isSecret && !empty($values['__has_'.$k]) ? '•••• (already set, leave blank to keep)' : '' }}"
+                           class="mt-1 w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono">
+                </label>
+            @endforeach
+        </div>
+    </div>
+
+    {{-- Direct database connection (any non-Odoo ERP) --}}
+    <div class="panel p-5" data-erp-section="db">
+        <div class="flex items-center justify-between mb-3">
+            <h2 class="text-sm font-semibold text-slate-900">ERP database connection</h2>
+            <button type="button" data-test-btn data-test-url="/admin/tenants/{{ $tenant->id }}/settings/test-erp-db"
+                    data-test-pending="Connecting to the ERP database as this tenant…"
+                    class="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-rose-700 border border-rose-300 hover:border-rose-500 bg-rose-50/40 hover:bg-rose-50 rounded-md px-3 py-1.5 transition disabled:opacity-50 disabled:cursor-not-allowed">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                <span data-label>Test connection</span>
+            </button>
+        </div>
+        <p class="text-[11px] text-slate-500 mb-3">Credentials the ERP provider gave for direct read access (usually a BI replica). SSL mode "require" accepts self-signed certificates.</p>
+        <div data-test-result class="hidden mb-4 px-3 py-2.5 rounded-lg text-[12px] leading-relaxed border" role="status"></div>
+        <div class="grid md:grid-cols-2 gap-4">
+            <label class="block">
+                <span class="text-[11px] font-medium text-slate-600 font-mono">ERP_DB_DRIVER</span>
+                <select name="ERP_DB_DRIVER" class="mt-1 w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono">
+                    @foreach (['pgsql' => 'PostgreSQL', 'mysql' => 'MySQL / MariaDB', 'sqlsrv' => 'SQL Server'] as $d => $label)
+                        <option value="{{ $d }}" {{ ($values['ERP_DB_DRIVER'] ?: 'pgsql') === $d ? 'selected' : '' }}>{{ $label }}</option>
+                    @endforeach
+                </select>
+            </label>
+            @foreach (['ERP_DB_HOST' => 'db.example.com', 'ERP_DB_PORT' => '5432', 'ERP_DB_DATABASE' => '', 'ERP_DB_USERNAME' => '', 'ERP_DB_PASSWORD' => '', 'ERP_DB_SCHEMA' => 'public'] as $k => $ph)
+                @php $isSecret = preg_match('/(KEY|SECRET|PASSWORD|TOKEN)/i', $k); @endphp
+                <label class="block">
+                    <span class="text-[11px] font-medium text-slate-600 font-mono">{{ $k }}</span>
+                    <input name="{{ $k }}"
+                           type="{{ $isSecret ? 'password' : 'text' }}"
+                           value="{{ $isSecret ? '' : $values[$k] }}"
+                           placeholder="{{ $isSecret ? (!empty($values['__has_'.$k]) ? '•••• (already set, leave blank to keep)' : '') : $ph }}"
+                           class="mt-1 w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono">
+                </label>
+            @endforeach
+            <label class="block">
+                <span class="text-[11px] font-medium text-slate-600 font-mono">ERP_DB_SSLMODE</span>
+                <select name="ERP_DB_SSLMODE" class="mt-1 w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono">
+                    @foreach (['prefer' => 'prefer (default)', 'require' => 'require (encrypted, self-signed OK)', 'disable' => 'disable'] as $m => $label)
+                        <option value="{{ $m }}" {{ ($values['ERP_DB_SSLMODE'] ?: 'prefer') === $m ? 'selected' : '' }}>{{ $label }}</option>
+                    @endforeach
+                </select>
+            </label>
+        </div>
+    </div>
+
+    {{-- Shared BI + branding settings --}}
+    <div class="panel p-5">
+        <h2 class="text-sm font-semibold text-slate-900 mb-3">General</h2>
+        <div class="grid md:grid-cols-2 gap-4">
+            @foreach (['REVENUE_SOURCE','APP_BRAND'] as $k)
+                <label class="block">
+                    <span class="text-[11px] font-medium text-slate-600 font-mono">{{ $k }}</span>
+                    <input name="{{ $k }}" type="text" value="{{ $values[$k] }}"
+                           class="mt-1 w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono">
+                </label>
+            @endforeach
+        </div>
+    </div>
 
     <div class="flex justify-end gap-2">
         <a href="/admin/tenants/{{ $tenant->id }}" class="text-sm text-slate-500 hover:text-slate-800 px-3 py-2">Cancel</a>
@@ -67,11 +142,26 @@
 
 <script>
 (function () {
-    const btn   = document.getElementById('ea-admin-test-odoo-btn');
-    const out   = document.getElementById('ea-admin-test-odoo-result');
-    const label = btn?.querySelector('[data-label]');
-    if (!btn || !out) return;
+    // --- Show the connection section that matches the selected ERP ------
+    const typeSelect = document.getElementById('ea-erp-type');
+    const nameField  = document.querySelector('[data-erp-name-field]');
+    function syncSections() {
+        const isOdoo = typeSelect.value === 'odoo';
+        document.querySelectorAll('[data-erp-section]').forEach(el => {
+            const show = (el.dataset.erpSection === 'odoo') === isOdoo;
+            el.classList.toggle('hidden', !show);
+            // Hidden sections are disabled so switching ERP type never
+            // silently rewrites the other connection's stored settings.
+            el.querySelectorAll('input, select').forEach(i => { i.disabled = !show; });
+        });
+        if (nameField) nameField.classList.toggle('hidden', isOdoo);
+    }
+    if (typeSelect) {
+        typeSelect.addEventListener('change', syncSections);
+        syncSections();
+    }
 
+    // --- Connection testers (Odoo API + direct DB share one handler) ----
     // Read the CSRF token from the meta tag (or the form's hidden _token
     // if the meta isn't present). Long-idle pages may end up with a
     // stale token after the Laravel session rotates; the 419 retry
@@ -99,8 +189,8 @@
         return data.token;
     }
 
-    async function postTest(token) {
-        return fetch('/admin/tenants/{{ $tenant->id }}/settings/test-odoo', {
+    async function postTest(url, token) {
+        return fetch(url, {
             method:  'POST',
             headers: {
                 'Accept':       'application/json',
@@ -112,48 +202,54 @@
         });
     }
 
-    btn.addEventListener('click', async () => {
-        btn.disabled = true;
-        if (label) label.textContent = 'Testing…';
-        out.className = 'mb-4 px-3 py-2.5 rounded-lg text-[12px] leading-relaxed border bg-slate-50 border-slate-200 text-slate-700';
-        out.textContent = 'Pinging Odoo as this tenant…';
+    document.querySelectorAll('[data-test-btn]').forEach(btn => {
+        const out   = btn.closest('.panel')?.querySelector('[data-test-result]');
+        const label = btn.querySelector('[data-label]');
+        if (!out) return;
 
-        try {
-            let r = await postTest(currentToken());
+        btn.addEventListener('click', async () => {
+            btn.disabled = true;
+            if (label) label.textContent = 'Testing…';
+            out.className = 'mb-4 px-3 py-2.5 rounded-lg text-[12px] leading-relaxed border bg-slate-50 border-slate-200 text-slate-700';
+            out.textContent = btn.dataset.testPending || 'Testing…';
 
-            // 419 = CSRF token mismatch / page expired. The page was
-            // probably idle long enough for the session to rotate;
-            // grab a fresh token + retry once.
-            if (r.status === 419) {
-                out.textContent = 'Session token expired — refreshing and retrying…';
-                const fresh = await refreshToken();
-                r = await postTest(fresh);
+            try {
+                let r = await postTest(btn.dataset.testUrl, currentToken());
+
+                // 419 = CSRF token mismatch / page expired. The page was
+                // probably idle long enough for the session to rotate;
+                // grab a fresh token + retry once.
+                if (r.status === 419) {
+                    out.textContent = 'Session token expired — refreshing and retrying…';
+                    const fresh = await refreshToken();
+                    r = await postTest(btn.dataset.testUrl, fresh);
+                }
+
+                const data = await r.json();
+                const ok = !!data.ok;
+                out.className = 'mb-4 px-3 py-2.5 rounded-lg text-[12px] leading-relaxed border ' +
+                    (ok
+                        ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                        : 'bg-rose-50 border-rose-200 text-rose-700');
+
+                const lines = [];
+                lines.push((ok ? '✓ ' : '✗ ') + (data.message || (ok ? 'Connected.' : 'Connection failed.')));
+                const meta = [];
+                if (data.protocol)       meta.push('protocol: ' + data.protocol);
+                if (typeof data.latency_ms === 'number') meta.push('latency: ' + data.latency_ms + ' ms');
+                if (data.user_id)        meta.push('user_id: ' + data.user_id);
+                if (data.server_version) meta.push('server: ' + data.server_version);
+                if (meta.length) lines.push(meta.join(' · '));
+                out.textContent = lines.join('  ');
+            } catch (err) {
+                out.className = 'mb-4 px-3 py-2.5 rounded-lg text-[12px] leading-relaxed border bg-rose-50 border-rose-200 text-rose-700';
+                out.textContent = '✗ Browser-side error reaching BMS: ' + (err?.message || err) +
+                    '. Try reloading the page and clicking Test connection again.';
+            } finally {
+                btn.disabled = false;
+                if (label) label.textContent = 'Test connection';
             }
-
-            const data = await r.json();
-            const ok = !!data.ok;
-            out.className = 'mb-4 px-3 py-2.5 rounded-lg text-[12px] leading-relaxed border ' +
-                (ok
-                    ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
-                    : 'bg-rose-50 border-rose-200 text-rose-700');
-
-            const lines = [];
-            lines.push((ok ? '✓ ' : '✗ ') + (data.message || (ok ? 'Connected.' : 'Connection failed.')));
-            const meta = [];
-            if (data.protocol)       meta.push('protocol: ' + data.protocol);
-            if (typeof data.latency_ms === 'number') meta.push('latency: ' + data.latency_ms + ' ms');
-            if (data.user_id)        meta.push('user_id: ' + data.user_id);
-            if (data.server_version) meta.push('server: ' + data.server_version);
-            if (meta.length) lines.push(meta.join(' · '));
-            out.textContent = lines.join('  ');
-        } catch (err) {
-            out.className = 'mb-4 px-3 py-2.5 rounded-lg text-[12px] leading-relaxed border bg-rose-50 border-rose-200 text-rose-700';
-            out.textContent = '✗ Browser-side error reaching BMS: ' + (err?.message || err) +
-                '. Try reloading the page and clicking Test connection again.';
-        } finally {
-            btn.disabled = false;
-            if (label) label.textContent = 'Test connection';
-        }
+        });
     });
 })();
 </script>
