@@ -1504,7 +1504,10 @@ Route::prefix('admin')->group(function () {
 
 /* ── Tenant scope ─────────────────────────────────────────────────────── */
 Route::prefix('t/{tenant}')
-    ->whereAlphaNumeric('tenant')
+    // Slugs are validated as alpha_dash on creation (letters, digits,
+    // dashes, underscores) — the route constraint must accept the same
+    // set, or tenants like "erp-test" 404 on every page.
+    ->where(['tenant' => '[A-Za-z0-9_-]+'])
     ->middleware('tenant.resolve')
     ->group(function () {
 
@@ -1683,6 +1686,7 @@ Route::prefix('t/{tenant}')
                 Route::middleware('tenant.admin')->group(function () {
                     Route::post('/settings',                [SettingsController::class, 'save']);
                     Route::post('/settings/test-odoo',      [SettingsController::class, 'testOdoo']);
+                    Route::post('/settings/test-erp-db',    [SettingsController::class, 'testErpDb']);
                 });
 
                 // Tenant user management — gated to tenant admins (and

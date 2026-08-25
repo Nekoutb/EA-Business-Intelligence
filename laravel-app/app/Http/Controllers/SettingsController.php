@@ -27,8 +27,14 @@ class SettingsController extends Controller
      * platform-global and managed in the super-admin backend.
      */
     private const FIELDS = [
+        // ERP selection (Odoo uses the web API; anything else connects
+        // to a database the ERP/BI provider exposes)
+        'ERP_TYPE', 'ERP_NAME',
         // Odoo connection
         'ODOO_URL', 'ODOO_DB', 'ODOO_USERNAME', 'ODOO_API_KEY', 'ODOO_PROTOCOL',
+        // Direct ERP database connection (non-Odoo ERPs)
+        'ERP_DB_DRIVER', 'ERP_DB_HOST', 'ERP_DB_PORT', 'ERP_DB_DATABASE',
+        'ERP_DB_USERNAME', 'ERP_DB_PASSWORD', 'ERP_DB_SSLMODE', 'ERP_DB_SCHEMA',
         'REVENUE_SOURCE', 'APP_BRAND',
         // Existing budget benchmarks (kept)
         'BUDGET_MONTHLY_REVENUE', 'BUDGET_MONTHLY_OUTFITS', 'BUDGET_MONTHLY_COGS',
@@ -148,6 +154,15 @@ class SettingsController extends Controller
     {
         $this->requireTenant();
         return response()->json(OdooConnectionTester::testCurrent());
+    }
+
+    /**
+     * Test the saved direct-database ERP credentials (non-Odoo ERPs).
+     */
+    public function testErpDb(): JsonResponse
+    {
+        $this->requireTenant();
+        return response()->json(\App\Services\ErpDbConnectionTester::testCurrent());
     }
 
     /**

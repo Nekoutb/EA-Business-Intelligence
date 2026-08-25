@@ -4,15 +4,38 @@
 
 @section('content')
 <div class="max-w-3xl">
-    <p class="text-xs text-slate-500 mb-4">Per-workspace configuration: company identity, Odoo connection, budget benchmarks. Secrets are encrypted at rest.</p>
+    <p class="text-xs text-slate-500 mb-4">Per-workspace configuration: company identity, ERP connection, budget benchmarks. Secrets are encrypted at rest.</p>
     <form method="POST" action="{{ tenant_url('/settings') }}" enctype="multipart/form-data" class="space-y-6">
         @csrf
 
-        {{-- ── Odoo connection ────────────────────────────────────────── --}}
+        @php $erpType = ($values['ERP_TYPE'] ?? '') !== '' ? $values['ERP_TYPE'] : 'odoo'; @endphp
+
+        {{-- ── ERP system selection ───────────────────────────────────── --}}
         <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+            <h2 class="text-sm font-semibold text-slate-900 mb-1">ERP System</h2>
+            <p class="text-xs text-slate-500 mb-4">Which ERP holds your data. Odoo connects over its web API; every other system connects directly to a database your provider exposes.</p>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                    <label class="block text-xs font-medium text-slate-600 mb-1">ERP system</label>
+                    <select name="ERP_TYPE" id="ea-erp-type" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white">
+                        @foreach (\App\Http\Controllers\Admin\TenantController::ERP_TYPES as $key => $label)
+                            <option value="{{ $key }}" {{ $erpType === $key ? 'selected' : '' }}>{{ $label }}</option>
+                        @endforeach
+                    </select>
+                </div>
+                <div data-erp-name-field>
+                    <label class="block text-xs font-medium text-slate-600 mb-1">ERP name <span class="text-slate-400 font-normal">(when "Other")</span></label>
+                    <input name="ERP_NAME" value="{{ $values['ERP_NAME'] ?? '' }}" placeholder="Name of the ERP system"
+                           class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+                </div>
+            </div>
+        </div>
+
+        {{-- ── Odoo connection ────────────────────────────────────────── --}}
+        <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-6" data-erp-section="odoo">
             <div class="flex items-center justify-between mb-1">
                 <h2 class="text-sm font-semibold text-slate-900">Odoo Connection</h2>
-                <button type="button" id="ea-test-odoo-btn"
+                <button type="button" data-test-btn data-test-url="{{ tenant_url('/settings/test-odoo') }}" data-test-pending="Pinging Odoo…"
                         class="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-indigo-700 border border-indigo-300 hover:border-indigo-500 bg-indigo-50/40 hover:bg-indigo-50 rounded-md px-3 py-1.5 transition disabled:opacity-50 disabled:cursor-not-allowed">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
                     <span data-label>Test connection</span>
@@ -21,7 +44,7 @@
             <p class="text-xs text-slate-500 mb-4">Credentials used to pull data from your Odoo instance.</p>
 
             {{-- Test result panel — populated by JS --}}
-            <div id="ea-test-odoo-result" class="hidden mb-4 px-3 py-2.5 rounded-lg text-[12px] leading-relaxed border" role="status"></div>
+            <div data-test-result class="hidden mb-4 px-3 py-2.5 rounded-lg text-[12px] leading-relaxed border" role="status"></div>
 
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div class="md:col-span-2">
@@ -59,6 +82,74 @@
                     <select name="REVENUE_SOURCE" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white">
                         @foreach (['invoice' => 'Customer Invoices', 'sale' => 'Sales Orders', 'pos' => 'POS Orders'] as $v => $l)
                           <option value="{{ $v }}" {{ $values['REVENUE_SOURCE'] === $v ? 'selected' : '' }}>{{ $l }}</option>
+                        @endforeach
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        {{-- ── ERP database connection (any non-Odoo ERP) ─────────────── --}}
+        <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-6" data-erp-section="db">
+            <div class="flex items-center justify-between mb-1">
+                <h2 class="text-sm font-semibold text-slate-900">ERP Database Connection</h2>
+                <button type="button" data-test-btn data-test-url="{{ tenant_url('/settings/test-erp-db') }}" data-test-pending="Connecting to the ERP database…"
+                        class="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-indigo-700 border border-indigo-300 hover:border-indigo-500 bg-indigo-50/40 hover:bg-indigo-50 rounded-md px-3 py-1.5 transition disabled:opacity-50 disabled:cursor-not-allowed">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                    <span data-label>Test connection</span>
+                </button>
+            </div>
+            <p class="text-xs text-slate-500 mb-4">Credentials your ERP provider gave for direct read access (usually a BI replica). SSL mode "require" accepts self-signed certificates.</p>
+
+            <div data-test-result class="hidden mb-4 px-3 py-2.5 rounded-lg text-[12px] leading-relaxed border" role="status"></div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                    <label class="block text-xs font-medium text-slate-600 mb-1">Database engine</label>
+                    <select name="ERP_DB_DRIVER" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white">
+                        @foreach (['pgsql' => 'PostgreSQL', 'mysql' => 'MySQL / MariaDB', 'sqlsrv' => 'SQL Server'] as $v => $l)
+                            <option value="{{ $v }}" {{ (($values['ERP_DB_DRIVER'] ?? '') !== '' ? $values['ERP_DB_DRIVER'] : 'pgsql') === $v ? 'selected' : '' }}>{{ $l }}</option>
+                        @endforeach
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-slate-600 mb-1">Host</label>
+                    <input name="ERP_DB_HOST" value="{{ $values['ERP_DB_HOST'] ?? '' }}" placeholder="db.example.com"
+                           class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm font-mono">
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-slate-600 mb-1">Port</label>
+                    <input name="ERP_DB_PORT" value="{{ $values['ERP_DB_PORT'] ?? '' }}" placeholder="5432"
+                           class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm font-mono">
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-slate-600 mb-1">Database</label>
+                    <input name="ERP_DB_DATABASE" value="{{ $values['ERP_DB_DATABASE'] ?? '' }}"
+                           class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm font-mono">
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-slate-600 mb-1">Username</label>
+                    <input name="ERP_DB_USERNAME" value="{{ $values['ERP_DB_USERNAME'] ?? '' }}"
+                           class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm font-mono">
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-slate-600 mb-1">
+                        Password <span class="text-slate-400 font-normal">(leave blank to keep current)</span>
+                    </label>
+                    <input name="ERP_DB_PASSWORD" type="password"
+                           placeholder="{{ !empty($values['__has_ERP_DB_PASSWORD']) ? '•••• stored (leave blank to keep)' : '••••••••••••' }}"
+                           autocomplete="off"
+                           class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm font-mono">
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-slate-600 mb-1">Schema <span class="text-slate-400 font-normal">(optional)</span></label>
+                    <input name="ERP_DB_SCHEMA" value="{{ $values['ERP_DB_SCHEMA'] ?? '' }}" placeholder="public"
+                           class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm font-mono">
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-slate-600 mb-1">SSL mode</label>
+                    <select name="ERP_DB_SSLMODE" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white">
+                        @foreach (['prefer' => 'prefer (default)', 'require' => 'require (encrypted, self-signed OK)', 'disable' => 'disable'] as $v => $l)
+                            <option value="{{ $v }}" {{ (($values['ERP_DB_SSLMODE'] ?? '') !== '' ? $values['ERP_DB_SSLMODE'] : 'prefer') === $v ? 'selected' : '' }}>{{ $l }}</option>
                         @endforeach
                     </select>
                 </div>
@@ -362,10 +453,24 @@
 @push('scripts')
 <script>
 (function () {
-    const btn   = document.getElementById('ea-test-odoo-btn');
-    const out   = document.getElementById('ea-test-odoo-result');
-    const label = btn?.querySelector('[data-label]');
-    if (!btn || !out) return;
+    // ── Show the connection panel that matches the selected ERP ──────
+    const typeSelect = document.getElementById('ea-erp-type');
+    const nameField  = document.querySelector('[data-erp-name-field]');
+    function syncSections() {
+        const isOdoo = typeSelect.value === 'odoo';
+        document.querySelectorAll('[data-erp-section]').forEach(el => {
+            const show = (el.dataset.erpSection === 'odoo') === isOdoo;
+            el.classList.toggle('hidden', !show);
+            // Hidden panels are disabled so switching ERP type never
+            // silently rewrites the other connection's stored settings.
+            el.querySelectorAll('input, select').forEach(i => { i.disabled = !show; });
+        });
+        if (nameField) nameField.classList.toggle('hidden', isOdoo);
+    }
+    if (typeSelect) {
+        typeSelect.addEventListener('change', syncSections);
+        syncSections();
+    }
 
     // Read the CSRF token from the meta tag (or the form's hidden _token
     // if the meta isn't present). The page renders it at load time;
@@ -396,9 +501,9 @@
         return data.token;
     }
 
-    // POST the test request with a given token. Returns the raw Response.
-    async function postTestOdoo(token) {
-        return fetch(@json(tenant_url('/settings/test-odoo')), {
+    // POST a test request to the given endpoint. Returns the raw Response.
+    async function postTest(url, token) {
+        return fetch(url, {
             method:  'POST',
             headers: {
                 'Accept':       'application/json',
@@ -410,49 +515,56 @@
         });
     }
 
-    btn.addEventListener('click', async () => {
-        btn.disabled = true;
-        if (label) label.textContent = 'Testing…';
-        out.className = 'mb-4 px-3 py-2.5 rounded-lg text-[12px] leading-relaxed border bg-slate-50 border-slate-200 text-slate-700';
-        out.textContent = 'Pinging Odoo…';
+    // One handler for both testers (Odoo API + direct ERP database).
+    document.querySelectorAll('[data-test-btn]').forEach(btn => {
+        const out   = btn.closest('[data-erp-section]')?.querySelector('[data-test-result]');
+        const label = btn.querySelector('[data-label]');
+        if (!out) return;
 
-        try {
-            // Attempt 1: use the token that was rendered into the page.
-            let r = await postTestOdoo(currentToken());
+        btn.addEventListener('click', async () => {
+            btn.disabled = true;
+            if (label) label.textContent = 'Testing…';
+            out.className = 'mb-4 px-3 py-2.5 rounded-lg text-[12px] leading-relaxed border bg-slate-50 border-slate-200 text-slate-700';
+            out.textContent = btn.dataset.testPending || 'Testing…';
 
-            // 419 = CSRF token mismatch / page expired. Most commonly
-            // means the page was idle long enough for the session to
-            // rotate. We grab a fresh token + retry once.
-            if (r.status === 419) {
-                out.textContent = 'Session token expired — refreshing and retrying…';
-                const fresh = await refreshToken();
-                r = await postTestOdoo(fresh);
+            try {
+                // Attempt 1: use the token that was rendered into the page.
+                let r = await postTest(btn.dataset.testUrl, currentToken());
+
+                // 419 = CSRF token mismatch / page expired. Most commonly
+                // means the page was idle long enough for the session to
+                // rotate. We grab a fresh token + retry once.
+                if (r.status === 419) {
+                    out.textContent = 'Session token expired — refreshing and retrying…';
+                    const fresh = await refreshToken();
+                    r = await postTest(btn.dataset.testUrl, fresh);
+                }
+
+                const data = await r.json();
+                const ok = !!data.ok;
+                out.className = 'mb-4 px-3 py-2.5 rounded-lg text-[12px] leading-relaxed border ' +
+                    (ok
+                        ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                        : 'bg-rose-50 border-rose-200 text-rose-700');
+
+                const lines = [];
+                lines.push((ok ? '✓ ' : '✗ ') + (data.message || (ok ? 'Connected.' : 'Connection failed.')));
+                const meta = [];
+                if (data.protocol)       meta.push('protocol: ' + data.protocol);
+                if (typeof data.latency_ms === 'number') meta.push('latency: ' + data.latency_ms + ' ms');
+                if (data.user_id)        meta.push('user_id: ' + data.user_id);
+                if (data.server_version) meta.push('server: ' + data.server_version);
+                if (meta.length) lines.push(meta.join(' · '));
+                out.textContent = lines.join('  ');
+            } catch (err) {
+                out.className = 'mb-4 px-3 py-2.5 rounded-lg text-[12px] leading-relaxed border bg-rose-50 border-rose-200 text-rose-700';
+                out.textContent = '✗ Browser-side error reaching BMS: ' + (err?.message || err) +
+                    '. Try reloading the page and clicking Test connection again.';
+            } finally {
+                btn.disabled = false;
+                if (label) label.textContent = 'Test connection';
             }
-
-            const data = await r.json();
-            const ok = !!data.ok;
-            out.className = 'mb-4 px-3 py-2.5 rounded-lg text-[12px] leading-relaxed border ' +
-                (ok
-                    ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
-                    : 'bg-rose-50 border-rose-200 text-rose-700');
-
-            const lines = [];
-            lines.push((ok ? '✓ ' : '✗ ') + (data.message || (ok ? 'Connected.' : 'Connection failed.')));
-            const meta = [];
-            if (data.protocol)       meta.push('protocol: ' + data.protocol);
-            if (typeof data.latency_ms === 'number') meta.push('latency: ' + data.latency_ms + ' ms');
-            if (data.user_id)        meta.push('user_id: ' + data.user_id);
-            if (data.server_version) meta.push('server: ' + data.server_version);
-            if (meta.length) lines.push(meta.join(' · '));
-            out.textContent = lines.join('  ');
-        } catch (err) {
-            out.className = 'mb-4 px-3 py-2.5 rounded-lg text-[12px] leading-relaxed border bg-rose-50 border-rose-200 text-rose-700';
-            out.textContent = '✗ Browser-side error reaching BMS: ' + (err?.message || err) +
-                '. Try reloading the page and clicking Test connection again.';
-        } finally {
-            btn.disabled = false;
-            if (label) label.textContent = 'Test connection';
-        }
+        });
     });
 })();
 </script>
