@@ -9,6 +9,15 @@ final class OdooFactory
 {
     public static function fromConfig(?string $protocolOverride = null): OdooClient
     {
+        // Non-Odoo workspaces (direct ERP database) get a null client so
+        // controller-level construction never fails; warehouse-backed pages
+        // work normally and only a live RPC call reports the situation.
+        $erpType = strtolower((string) config_env('ERP_TYPE', 'odoo'));
+        if ($erpType !== '' && $erpType !== 'odoo') {
+            $name = trim((string) config_env('ERP_NAME', '')) ?: strtoupper($erpType);
+            return new NullOdooClient($name);
+        }
+
         $url  = (string) config_env('ODOO_URL', '');
         $db   = (string) config_env('ODOO_DB', '');
         $user = (string) config_env('ODOO_USERNAME', '');

@@ -54,6 +54,24 @@ class WarehouseSync extends Command
                 $this->line("→ {$tenant->slug}" . ($full ? ' (full backfill)' : ''));
                 try {
                     app(TenantContext::class)->set($tenant);
+
+                    // Direct-database ERP tenants (ERP_TYPE != odoo) sync
+                    // through their own service; the Odoo path below would
+                    // only ever see a NullOdooClient.
+                    $erpType = strtolower((string) config_env('ERP_TYPE', 'odoo'));
+                    if ($erpType !== '' && $erpType !== 'odoo') {
+                        if (trim((string) config_env('ERP_DB_HOST', '')) === '') {
+                            $this->line('   skipped: non-Odoo ERP without database credentials');
+                            continue;
+                        }
+                        $res = (new \App\Services\ErpDbSyncService($tenant))->syncAll(function (string $model, array $r) {
+                            $this->line(sprintf('   %-20s %8s rows %7.1fs %s',
+                                $model, number_format($r['rows']), $r['seconds'], $r['error'] ?? ''));
+                        });
+                        foreach ($res as $r) if ($r['error']) $failed++;
+                        continue;
+                    }
+
                     $svc = new WarehouseSyncService(OdooFactory::fromConfig(), $tenant);
                     $budget = (float) $this->option('seconds');
                     $res = $svc->syncAll($full, function (string $model, array $r) {
