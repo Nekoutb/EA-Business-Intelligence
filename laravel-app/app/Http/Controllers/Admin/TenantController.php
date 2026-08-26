@@ -377,6 +377,21 @@ class TenantController extends Controller
             ]);
         }
 
+        // Sector-specific dashboard defaults: a bundle may disable KPI
+        // cards that make no sense for its sector (outfit metrics outside
+        // fashion). Rows are created disabled so the registry default in
+        // config/dashboard_kpis.php no longer applies for those keys; the
+        // super admin can still re-enable per tenant.
+        if ($industry) {
+            $bundle = config("industries.bundles.{$industry->key}", []);
+            foreach ((array) ($bundle['dashboard_kpis']['disabled'] ?? []) as $kpiKey) {
+                \App\Models\TenantDashboardKpi::firstOrCreate(
+                    ['tenant_id' => $tenant->id, 'kpi_key' => $kpiKey],
+                    ['enabled' => false, 'enabled_by' => $adminUserId]
+                );
+            }
+        }
+
         // Bootstrap an owner user
         User::create([
             'tenant_id' => $tenant->id,

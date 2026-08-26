@@ -66,6 +66,36 @@ return [
             'sort_order'  => 80,
             'active'      => true,
         ],
+
+        // ── Sectors of activity (2026-08): segment tenants whose reports
+        //    differ structurally — fashion (Kissywears), logistics service
+        //    provider (Elimelec), container scanning (Transatlantic).
+        //    The sector drives module defaults AND dashboard-KPI defaults
+        //    (outfit metrics only make sense for fashion).
+        [
+            'key'         => 'fashion',
+            'name'        => 'Fashion',
+            'description' => 'Apparel retail & production — outfit-level revenue, discount and cost metrics',
+            'icon'        => 'M16 3l4 4-2 3-2-1v12H8V9L6 10 4 7l4-4c.7 1.2 2.2 2 4 2s3.3-.8 4-2z',
+            'sort_order'  => 90,
+            'active'      => true,
+        ],
+        [
+            'key'         => 'logistics_services',
+            'name'        => 'Logistics Service Provider',
+            'description' => 'Customs clearing, freight forwarding, transit — dossier-based operations',
+            'icon'        => 'M9 17a2 2 0 11-4 0 2 2 0 014 0zM19 17a2 2 0 11-4 0 2 2 0 014 0zM13 16V6a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h1m8-1a1 1 0 01-1 1H9m4-1V8a1 1 0 011-1h2.586a1 1 0 01.707.293l3.414 3.414a1 1 0 01.293.707V16a1 1 0 01-1 1h-1m-6-1a1 1 0 001 1h1',
+            'sort_order'  => 100,
+            'active'      => true,
+        ],
+        [
+            'key'         => 'container_scanning',
+            'name'        => 'Container Scanning',
+            'description' => 'Port scanning operations — vessel calls, containers handled, scan revenue',
+            'icon'        => 'M3 7v10a2 2 0 002 2h14a2 2 0 002-2V7M3 7l9-4 9 4M3 7h18M7 11h2m6 0h2M7 15h2m6 0h2',
+            'sort_order'  => 110,
+            'active'      => true,
+        ],
     ],
 
     'bundles' => [
@@ -238,6 +268,69 @@ return [
                 'vat_invoice_compliance' => ['default' => true, 'required' => false],
                 'monthly_tax_return'     => ['default' => true, 'required' => false],
                 'tax_calendar'           => ['default' => false, 'required' => false],
+            ],
+        ],
+
+        // ── Sector bundles ─────────────────────────────────────────────
+        // These may carry an extra 'dashboard_kpis' key:
+        //   'dashboard_kpis' => ['disabled' => [<kpi keys off by default>]]
+        // Applied at tenant creation (TenantController@store) on top of the
+        // registry defaults in config/dashboard_kpis.php. Outfit metrics
+        // (RpO, OpD, DpOT, CpO, product tables) only exist for fashion.
+
+        'fashion' => [
+            'services' => ['business_intelligence', 'financial_reporting'],
+            'modules'  => [
+                'dashboard'           => ['default' => true,  'required' => true],
+                'revenue'             => ['default' => true,  'required' => false],
+                'product_revenue_tsd' => ['default' => true,  'required' => false],
+                'customer_insights'   => ['default' => true,  'required' => false],
+                'receivables'         => ['default' => true,  'required' => false],
+                'treasury'            => ['default' => true,  'required' => false],
+                'billing'             => ['default' => true,  'required' => false],
+                'profit_loss'         => ['default' => true,  'required' => false],
+                'inventory'           => ['default' => false, 'required' => false],
+                'gl_quality'          => ['default' => false, 'required' => false],
+            ],
+        ],
+
+        'logistics_services' => [
+            'services' => ['business_intelligence'],
+            'modules'  => [
+                'dashboard'           => ['default' => true,  'required' => true],
+                'revenue'             => ['default' => true,  'required' => false],
+                'customer_insights'   => ['default' => true,  'required' => false],
+                'receivables'         => ['default' => true,  'required' => false],
+                'billing'             => ['default' => false, 'required' => false],
+                // The Logistics Operations pages (dossiers, workflow,
+                // volumes, billing & advances — approved Elimelec plan)
+                // default TRUE here once their module keys ship.
+                'product_revenue_tsd' => ['default' => false, 'required' => false],
+                'inventory'           => ['default' => false, 'required' => false],
+                'operations'          => ['default' => false, 'required' => false],
+            ],
+            'dashboard_kpis' => [
+                'disabled' => ['rpo', 'opd', 'dpot', 'cpo', 'top_profitable_products'],
+            ],
+        ],
+
+        'container_scanning' => [
+            'services' => ['business_intelligence'],
+            'modules'  => [
+                'dashboard'           => ['default' => true,  'required' => true],
+                // The existing Operations page (vessel calls, containers,
+                // scan revenue — built for Transatlantic) IS the scanning
+                // sector's operations module.
+                'operations'          => ['default' => true,  'required' => true],
+                'revenue'             => ['default' => true,  'required' => false],
+                'receivables'         => ['default' => true,  'required' => false],
+                'treasury'            => ['default' => false, 'required' => false],
+                'customer_insights'   => ['default' => false, 'required' => false],
+                'product_revenue_tsd' => ['default' => false, 'required' => false],
+                'inventory'           => ['default' => false, 'required' => false],
+            ],
+            'dashboard_kpis' => [
+                'disabled' => ['rpo', 'opd', 'dpot', 'cpo', 'top_profitable_products'],
             ],
         ],
     ],
