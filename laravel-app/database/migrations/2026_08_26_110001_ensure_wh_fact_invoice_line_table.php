@@ -9,9 +9,11 @@ use Illuminate\Support\Facades\Schema;
  *
  * Production has 2026_08_12_100001 marked as run but no
  * wh_fact_invoice_line table (discovered 2026-08-26 when the Elimelec
- * ERP sync tried to fill it) — most plausibly the table was dropped in
- * an ops intervention after the migration ran. Same definition, same
- * hasTable guard, so environments that do have it are untouched.
+ * ERP sync tried to fill it). Root cause: the auto-generated name of the
+ * (tenant_id, account_odoo_id, invoice_date) index is 66 chars — past
+ * MySQL's 64-char identifier limit — so the CREATE always failed on
+ * MySQL while succeeding on SQLite dev boxes. Same definition but with
+ * short explicit index names; hasTable guard leaves healthy envs alone.
  */
 return new class extends Migration
 {
@@ -32,10 +34,10 @@ return new class extends Migration
                 $t->decimal('discount', 8, 4)->default(0);
                 $t->decimal('price_subtotal', 18, 2)->default(0);
                 $t->dateTime('write_date')->nullable();
-                $t->unique(['tenant_id', 'odoo_id']);
-                $t->index(['tenant_id', 'invoice_date']);
-                $t->index(['tenant_id', 'account_odoo_id', 'invoice_date']);
-                $t->index(['tenant_id', 'move_odoo_id']);
+                $t->unique(['tenant_id', 'odoo_id'], 'wfil_tenant_odoo_uq');
+                $t->index(['tenant_id', 'invoice_date'], 'wfil_tenant_date_ix');
+                $t->index(['tenant_id', 'account_odoo_id', 'invoice_date'], 'wfil_tenant_acct_date_ix');
+                $t->index(['tenant_id', 'move_odoo_id'], 'wfil_tenant_move_ix');
             });
         }
     }

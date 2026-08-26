@@ -108,10 +108,14 @@ return new class extends Migration
                 $t->decimal('discount', 8, 4)->default(0);
                 $t->decimal('price_subtotal', 18, 2)->default(0);
                 $t->dateTime('write_date')->nullable();
-                $t->unique(['tenant_id', 'odoo_id']);
-                $t->index(['tenant_id', 'invoice_date']);
-                $t->index(['tenant_id', 'account_odoo_id', 'invoice_date']);
-                $t->index(['tenant_id', 'move_odoo_id']);
+                // Explicit index names: the auto-generated name for the
+                // 3-column index is 66 chars, past MySQL's 64-char limit —
+                // this CREATE silently never succeeded on MySQL until the
+                // 2026_08_26 repair migration.
+                $t->unique(['tenant_id', 'odoo_id'], 'wfil_tenant_odoo_uq');
+                $t->index(['tenant_id', 'invoice_date'], 'wfil_tenant_date_ix');
+                $t->index(['tenant_id', 'account_odoo_id', 'invoice_date'], 'wfil_tenant_acct_date_ix');
+                $t->index(['tenant_id', 'move_odoo_id'], 'wfil_tenant_move_ix');
             });
         }
     }
