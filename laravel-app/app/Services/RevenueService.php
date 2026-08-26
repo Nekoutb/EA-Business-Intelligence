@@ -225,10 +225,33 @@ final class RevenueService
                     ->get() as $r) {
                     $partnerMonths[(int) $r->pid][(string) $r->ym] = true;
                 }
+
+                // Line metrics (outfits = product-line count, discounts)
+                // from the warehouse too, when this tenant's lines are
+                // synced — for direct-DB tenants there is no live Odoo to
+                // fall back to, and one throw below used to blank the
+                // whole page. Odoo tenants without line rows keep the
+                // live path unchanged.
+                if (\Illuminate\Support\Facades\DB::table('wh_fact_invoice_line')
+                        ->where('tenant_id', $whT)->limit(1)->exists()) {
+                    $la = \Illuminate\Support\Facades\DB::table('wh_fact_invoice_line')
+                        ->where('tenant_id', $whT)
+                        ->whereIn('move_type', ['out_invoice', 'out_refund'])
+                        ->whereBetween('invoice_date', [$from->format('Y-m-d'), $to->format('Y-m-d')])
+                        ->selectRaw('COUNT(*) n,
+                                     SUM(CASE WHEN discount > 0 THEN price_unit * quantity * discount / 100 ELSE 0 END) disc_amt,
+                                     SUM(CASE WHEN discount > 0 THEN 1 ELSE 0 END) disc_n')
+                        ->first();
+                    $whLineMetrics = [
+                        'outfits'            => (int) ($la->n ?? 0),
+                        'total_discount'     => (float) ($la->disc_amt ?? 0),
+                        'discounted_outfits' => (int) ($la->disc_n ?? 0),
+                    ];
+                }
             } catch (\Throwable $e) {
                 // Drop every partial aggregate — inheriting half a result is
                 // how a fallback path silently reports wrong totals.
-                unset($total, $series, $orderIds, $partnerRevenue, $partnerNames, $partnerOrders, $partnerMonths);
+                unset($total, $series, $orderIds, $partnerRevenue, $partnerNames, $partnerOrders, $partnerMonths, $whLineMetrics);
                 \Illuminate\Support\Facades\Log::warning('revenue warehouse aggregate failed, using Odoo', [
                     'error' => $e->getMessage(),
                 ]);
@@ -353,7 +376,11 @@ final class RevenueService
         $outfits = 0;
         $totalDiscount = 0.0;
         $discountedOutfits = 0;
-        if ($lineModel !== null) {
+        if (isset($whLineMetrics)) {
+            $outfits           = $whLineMetrics['outfits'];
+            $totalDiscount     = $whLineMetrics['total_discount'];
+            $discountedOutfits = $whLineMetrics['discounted_outfits'];
+        } elseif ($lineModel !== null) {
             $lineDomain = $orderIds !== []
                 ? [[$lineParentField, 'in', $orderIds]]
                 : $lineScope;
@@ -416,8 +443,12 @@ final class RevenueService
                 $allLines = [];
             }
 
-            // Fetch lines with discount data to compute discount metrics
+            // Fetch lines with discount data to compute discount metrics.
+            // Guarded: a failure here (e.g. no live source on a direct-DB
+            // tenant) degrades these metrics to zero instead of taking the
+            // whole page down.
             if ($allLines !== null) {
+            try {
             $lineOffset = 0;
             $lineBatch  = 1000;
             $allLines   = [];
@@ -430,6 +461,12 @@ final class RevenueService
                 }
                 $lineOffset += $lineBatch;
             } while (count($lBatch) === $lineBatch);
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning('revenue line row-fetch failed, metrics degrade to zero', [
+                    'error' => $e->getMessage(),
+                ]);
+                $allLines = [];
+            }
 
             $outfits = count($allLines);
 
@@ -510,6 +547,7 @@ final class RevenueService
      */
     public function topProducts(array $analysis, int $limit = 5): array
     {
+        if ($this->odoo instanceof \App\Odoo\NullOdooClient) return [];
         $docIds = $analysis['doc_ids_cy'] ?? [];
         $scope  = (array) ($analysis['line_scope_cy'] ?? []);
         if ($docIds === [] && $scope === []) {
@@ -683,6 +721,9 @@ final class RevenueService
      */
     public function productProfitability(array $analysis, int $limit = 5): array
     {
+        if ($this->odoo instanceof \App\Odoo\NullOdooClient) {
+            return ['most_profitable' => [], 'least_profitable' => []];
+        }
         $docIds = $analysis['doc_ids_cy'] ?? [];
         $scope  = (array) ($analysis['line_scope_cy'] ?? []);
         if ($docIds === [] && $scope === []) {
@@ -795,6 +836,7 @@ final class RevenueService
      */
     public function topDiscountedProducts(array $analysis, int $limit = 5): array
     {
+        if ($this->odoo instanceof \App\Odoo\NullOdooClient) return [];
         $docIds = $analysis['doc_ids_cy'] ?? [];
         $scope  = (array) ($analysis['line_scope_cy'] ?? []);
         if ($docIds === [] && $scope === []) {

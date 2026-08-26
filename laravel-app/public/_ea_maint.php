@@ -1780,7 +1780,15 @@ try {
             try {
                 $resp = app()->call([app((string) $def['controller']), 'index']);
                 $html = ($resp instanceof Illuminate\Contracts\Support\Renderable) ? $resp->render() : '(non-view response: ' . get_class($resp) . ')';
+                // &html=1 dumps the full page (for offline snapshots);
+                // &grep=needle counts occurrences (content assertions —
+                // RENDER OK alone can hide an in-page error banner).
+                if (!empty($_GET['html'])) { echo (string) $html; break; }
                 ln("RENDER OK — {$slug}/{$want} — " . strlen((string) $html) . ' bytes');
+                if (isset($_GET['grep']) && $_GET['grep'] !== '') {
+                    $needle = (string) $_GET['grep'];
+                    ln('grep "' . $needle . '": ' . substr_count((string) $html, $needle) . ' occurrence(s)');
+                }
             } catch (\Throwable $e) {
                 ln("RENDER FAILED — {$slug}/{$want}");
                 ln('  ' . get_class($e) . ': ' . $e->getMessage());
