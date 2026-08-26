@@ -2,6 +2,10 @@
 @section('title', ($profMode ?? false) ? 'Profitability' : 'Profit & Loss')
 @section('page-title', ($profMode ?? false) ? 'Profitability' : 'Profit & Loss')
 @section('content')
+{{-- Logistics sector: unit economics + débours reconciliation, computed
+     from the dossier warehouse. Rendered above the classic sections and
+     independent of the Odoo-based analysis (which logistics tenants lack). --}}
+@includeWhen(!empty($logistics), 'logistics.profitability-section', ['logistics' => $logistics ?? null])
 @if ($profMode ?? false)
     {{-- ====================== PROFITABILITY ======================
          Rendered through this (already-compiled) P&L view on purpose: the

@@ -277,6 +277,41 @@ return [
             'status'  => 'live',
         ],
         [
+            // Logistics Operations (dossier-based sector, e.g. Elimelec):
+            // clearing-file throughput, backlog and aging.
+            'key'     => 'logistics_dossiers',
+            'service' => 'business_intelligence',
+            'label'   => 'Dossiers',
+            'url'     => '/logistics/dossiers',
+            'active'  => 'logistics_dossiers',
+            'icon'    => 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z',
+            'default' => false,
+            'core'    => false,
+            'status'  => 'live',
+        ],
+        [
+            'key'     => 'logistics_workflow',
+            'service' => 'business_intelligence',
+            'label'   => 'Workflow',
+            'url'     => '/logistics/workflow',
+            'active'  => 'logistics_workflow',
+            'icon'    => 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4',
+            'default' => false,
+            'core'    => false,
+            'status'  => 'live',
+        ],
+        [
+            'key'     => 'logistics_volumes',
+            'service' => 'business_intelligence',
+            'label'   => 'Volumes',
+            'url'     => '/logistics/volumes',
+            'active'  => 'logistics_volumes',
+            'icon'    => 'M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4',
+            'default' => false,
+            'core'    => false,
+            'status'  => 'live',
+        ],
+        [
             // Billing — invoice issuance lens (volume, time-to-invoice on
             // shipment basis, credit-note rate). Complements Receivables
             // (which lives in the collection lens). Universally applicable

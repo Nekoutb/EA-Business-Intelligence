@@ -54,6 +54,9 @@ final class ErpDbSyncService
             'erp:clients'       => fn () => $this->syncClients(),
             'erp:invoices'      => fn () => $this->syncInvoices(),
             'erp:invoice_lines' => fn () => $this->syncInvoiceLines(),
+            'erp:dossiers'      => fn () => $this->syncDossiers(),
+            'erp:advances'      => fn () => $this->syncAdvances(),
+            'erp:validations'   => fn () => $this->syncValidations(),
         ] as $model => $fn) {
             $t0 = microtime(true);
             try {
@@ -107,7 +110,7 @@ final class ErpDbSyncService
         // open balance (the payment fact tables are barely populated —
         // ~5 rows vs 1,255 invoices as of discovery).
         $rows = DB::connection($this->connection)->select(
-            'select f.cle_facture, f.code_facture, f.reference, f.cle_client, f.jour_facture,
+            'select f.cle_facture, f.code_facture, f.reference, f.cle_client, f.cle_dossier, f.jour_facture,
                     f.montant_ht, f.montant_ttc, f.montant_encaisse, f.reste_du,
                     c.delai_paiement_jours
              from fait_facture_generique f
@@ -116,6 +119,7 @@ final class ErpDbSyncService
 
         $this->ensureKeys('invoice', array_map(fn ($f) => (string) $f->cle_facture, $rows));
         $this->ensureKeys('partner', array_map(fn ($f) => (string) ($f->cle_client ?? ''), $rows));
+        $this->ensureKeys('dossier', array_map(fn ($f) => (string) ($f->cle_dossier ?? ''), $rows));
 
         $batch = [];
         $seen  = [];
@@ -143,6 +147,7 @@ final class ErpDbSyncService
                 'invoice_date'     => $date,
                 'invoice_date_due' => $due,
                 'partner_odoo_id'  => $f->cle_client !== null ? $this->keyId('partner', (string) $f->cle_client) : null,
+                'dossier_odoo_id'  => $f->cle_dossier !== null ? $this->keyId('dossier', (string) $f->cle_dossier) : null,
                 'amount_untaxed'   => (float) ($f->montant_ht ?? 0),
                 'amount_total'     => (float) ($f->montant_ttc ?? 0),
                 'amount_residual'  => $residual,
@@ -151,7 +156,7 @@ final class ErpDbSyncService
         }
         $this->flush('wh_fact_invoice', $batch, [
             'name', 'move_type', 'state', 'payment_state', 'invoice_date', 'invoice_date_due',
-            'partner_odoo_id', 'amount_untaxed', 'amount_total', 'amount_residual', 'write_date',
+            'partner_odoo_id', 'dossier_odoo_id', 'amount_untaxed', 'amount_total', 'amount_residual', 'write_date',
         ]);
         $this->prune('wh_fact_invoice', $seen);
         return count($batch);
@@ -160,7 +165,7 @@ final class ErpDbSyncService
     private function syncInvoiceLines(): int
     {
         $rows = DB::connection($this->connection)->select(
-            'select cle_ligne_facture, cle_facture, jour_facture, categorie,
+            'select cle_ligne_facture, cle_facture, jour_facture, categorie, libelle, est_debours,
                     quantite, prix_unitaire_ht, montant_ht
              from fait_facture_generique_ligne'
         );
@@ -190,14 +195,154 @@ final class ErpDbSyncService
                 'price_unit'      => (float) ($l->prix_unitaire_ht ?? 0),
                 'discount'        => 0,
                 'price_subtotal'  => (float) ($l->montant_ht ?? 0),
+                'is_debours'      => (bool) ($l->est_debours ?? false),
+                'label'           => $l->libelle !== null ? mb_substr((string) $l->libelle, 0, 96) : null,
                 'write_date'      => now(),
             ];
         }
         $this->flush('wh_fact_invoice_line', $batch, [
             'move_odoo_id', 'account_odoo_id', 'product_odoo_id', 'invoice_date',
-            'move_type', 'quantity', 'price_unit', 'discount', 'price_subtotal', 'write_date',
+            'move_type', 'quantity', 'price_unit', 'discount', 'price_subtotal',
+            'is_debours', 'label', 'write_date',
         ]);
         $this->prune('wh_fact_invoice_line', $seen);
+        return count($batch);
+    }
+
+    // ── Logistics facts (dossier-based tenants) ─────────────────────────
+
+    private function syncDossiers(): int
+    {
+        $rows = DB::connection($this->connection)->select(
+            'select f.cle_dossier, f.code_dossier, f.cle_client, f.jour_ouverture, f.jour_cloture,
+                    f.est_clos, f.est_suspendu, f.delai_traitement_jours, f.delai_facturation_jours,
+                    f.poids_net, f.nombre_conteneurs, f.nombre_colis, f.valeur_marchandise,
+                    f.regime_douanier, f.incoterm, f.type_embarquement, f.importateur,
+                    c.raison_sociale client_name, t.nom type_name, p.nom port_name, e.nom_complet employee_name
+             from fait_dossier_transit f
+             left join dim_client c on c.cle_client = f.cle_client
+             left join dim_type_dossier t on t.cle_type_dossier = f.cle_type_dossier
+             left join dim_port p on p.cle_port = f.cle_port
+             left join dim_employe e on e.cle_employe = f.cle_employe_suiveur'
+        );
+        $this->ensureKeys('dossier', array_map(fn ($r) => (string) $r->cle_dossier, $rows));
+        $this->ensureKeys('partner', array_map(fn ($r) => (string) ($r->cle_client ?? ''), $rows));
+
+        $batch = []; $seen = [];
+        foreach ($rows as $r) {
+            $id = $this->keyId('dossier', (string) $r->cle_dossier);
+            $seen[] = $id;
+            $batch[] = [
+                'tenant_id'        => $this->tenant->id,
+                'odoo_id'          => $id,
+                'code'             => $r->code_dossier !== null ? substr((string) $r->code_dossier, 0, 64) : null,
+                'partner_odoo_id'  => $r->cle_client !== null ? $this->keyId('partner', (string) $r->cle_client) : null,
+                'client_name'      => $r->client_name !== null ? mb_substr((string) $r->client_name, 0, 191) : null,
+                'type_name'        => $r->type_name !== null ? mb_substr((string) $r->type_name, 0, 128) : null,
+                'port_name'        => $r->port_name !== null ? mb_substr((string) $r->port_name, 0, 128) : null,
+                'employee_name'    => $r->employee_name !== null ? mb_substr((string) $r->employee_name, 0, 128) : null,
+                'opened_date'      => $r->jour_ouverture ? substr((string) $r->jour_ouverture, 0, 10) : null,
+                'closed_date'      => $r->jour_cloture ? substr((string) $r->jour_cloture, 0, 10) : null,
+                'is_closed'        => (bool) ($r->est_clos ?? false),
+                'is_suspended'     => (bool) ($r->est_suspendu ?? false),
+                'lead_days'        => $r->delai_traitement_jours,
+                'billing_lag_days' => $r->delai_facturation_jours,
+                'weight_kg'        => $r->poids_net,
+                'containers'       => $r->nombre_conteneurs,
+                'packages'         => $r->nombre_colis,
+                'cargo_value'      => $r->valeur_marchandise,
+                'regime'           => $r->regime_douanier !== null ? substr((string) $r->regime_douanier, 0, 64) : null,
+                'incoterm'         => $r->incoterm !== null ? substr((string) $r->incoterm, 0, 32) : null,
+                'embarquement'     => $r->type_embarquement !== null ? substr((string) $r->type_embarquement, 0, 64) : null,
+                'importer'         => $r->importateur !== null ? mb_substr((string) $r->importateur, 0, 191) : null,
+                'write_date'       => now(),
+            ];
+        }
+        $this->flush('wh_fact_dossier', $batch, [
+            'code', 'partner_odoo_id', 'client_name', 'type_name', 'port_name', 'employee_name',
+            'opened_date', 'closed_date', 'is_closed', 'is_suspended', 'lead_days', 'billing_lag_days',
+            'weight_kg', 'containers', 'packages', 'cargo_value', 'regime', 'incoterm', 'embarquement',
+            'importer', 'write_date',
+        ]);
+        $this->prune('wh_fact_dossier', $seen);
+        return count($batch);
+    }
+
+    private function syncAdvances(): int
+    {
+        $rows = DB::connection($this->connection)->select(
+            "select a.cle_ligne_avance, a.cle_dossier, a.libelle_ligne, a.montant,
+                    a.jour_demande, a.jour_decaissement, a.delai_decaissement_jours, a.est_justifiee,
+                    coalesce(s.raison_sociale, nullif(a.nom_beneficiaire,'')) who
+             from fait_avance_frais a
+             left join dim_fournisseur s on s.cle_fournisseur = a.cle_fournisseur
+             where a.est_decaissee"
+        );
+        $this->ensureKeys('advance', array_map(fn ($r) => (string) $r->cle_ligne_avance, $rows));
+        $this->ensureKeys('dossier', array_map(fn ($r) => (string) ($r->cle_dossier ?? ''), $rows));
+
+        $batch = []; $seen = [];
+        foreach ($rows as $r) {
+            $id = $this->keyId('advance', (string) $r->cle_ligne_avance);
+            $seen[] = $id;
+            $batch[] = [
+                'tenant_id'             => $this->tenant->id,
+                'odoo_id'               => $id,
+                'dossier_odoo_id'       => $r->cle_dossier !== null ? $this->keyId('dossier', (string) $r->cle_dossier) : null,
+                'supplier_name'         => $r->who !== null ? mb_substr((string) $r->who, 0, 191) : null,
+                'label'                 => $r->libelle_ligne !== null ? mb_substr((string) $r->libelle_ligne, 0, 96) : null,
+                'amount'                => (float) ($r->montant ?? 0),
+                'requested_date'        => $r->jour_demande ? substr((string) $r->jour_demande, 0, 10) : null,
+                'disbursed_date'        => $r->jour_decaissement ? substr((string) $r->jour_decaissement, 0, 10) : null,
+                'disbursement_lag_days' => $r->delai_decaissement_jours,
+                'is_justified'          => (bool) ($r->est_justifiee ?? false),
+                'write_date'            => now(),
+            ];
+        }
+        $this->flush('wh_fact_advance', $batch, [
+            'dossier_odoo_id', 'supplier_name', 'label', 'amount', 'requested_date',
+            'disbursed_date', 'disbursement_lag_days', 'is_justified', 'write_date',
+        ]);
+        $this->prune('wh_fact_advance', $seen);
+        return count($batch);
+    }
+
+    private function syncValidations(): int
+    {
+        $rows = DB::connection($this->connection)->select(
+            'select v.cle_etape_validation, v.cle_document, v.rang_etape, v.jour_document, v.jour_etape,
+                    v.delai_depuis_precedente_jours, v.delai_total_circuit_jours, v.est_franchie,
+                    td.libelle doc_type, w.nom_circuit circuit
+             from fait_validation v
+             left join dim_type_document_valide td on td.cle_type_document = v.cle_type_document
+             left join dim_etape_workflow w on w.cle_etape_workflow = v.cle_etape_workflow'
+        );
+        $this->ensureKeys('validation', array_map(fn ($r) => (string) $r->cle_etape_validation, $rows));
+
+        $batch = []; $seen = [];
+        foreach ($rows as $r) {
+            $id = $this->keyId('validation', (string) $r->cle_etape_validation);
+            $seen[] = $id;
+            $batch[] = [
+                'tenant_id'     => $this->tenant->id,
+                'odoo_id'       => $id,
+                'doc_key'       => $r->cle_document !== null ? substr((string) $r->cle_document, 0, 96) : null,
+                'doc_type'      => $r->doc_type !== null ? mb_substr((string) $r->doc_type, 0, 96) : null,
+                'circuit'       => $r->circuit !== null ? mb_substr((string) $r->circuit, 0, 96) : null,
+                'rang'          => $r->rang_etape,
+                'doc_date'      => $r->jour_document ? substr((string) $r->jour_document, 0, 10) : null,
+                'step_date'     => $r->jour_etape ? substr((string) $r->jour_etape, 0, 10) : null,
+                'step_lag_days' => $r->delai_depuis_precedente_jours,
+                'total_days'    => $r->delai_total_circuit_jours,
+                'is_passed'     => (bool) ($r->est_franchie ?? false),
+                'write_date'    => now(),
+            ];
+        }
+        $this->flush('wh_fact_validation', $batch, [
+            'doc_key', 'doc_type', 'circuit', 'rang', 'doc_date', 'step_date',
+            'step_lag_days', 'total_days', 'is_passed', 'write_date',
+        ]);
+        $this->prune('wh_fact_validation', $seen);
         return count($batch);
     }
 

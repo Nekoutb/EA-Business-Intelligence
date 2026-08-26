@@ -30,14 +30,26 @@ class ProfitabilityController extends Controller
 
         $data  = null;
         $error = null;
+        $logistics = null;
 
-        try {
-            $client = OdooFactory::fromConfig();
-            $data = ea_cached("profitability_v3_{$year}", function () use ($client, $year, $assumptions) {
-                return (new ProfitabilityService($client))->analyze($year, $assumptions);
-            });
-        } catch (\Throwable $e) {
-            $error = ea_safe_error($e, 'profitability.index', 'Could not load profitability data.');
+        // Logistics-sector tenants: unit economics + débours reconciliation
+        // from the dossier warehouse. The classic per-scan analysis below
+        // needs live Odoo, which these tenants don't have — skip it rather
+        // than render its error banner.
+        if (\App\Services\LogisticsOpsService::available($tenantId)) {
+            $from = new \DateTimeImmutable("{$year}-01-01");
+            $to   = $year === $thisYear ? $today : new \DateTimeImmutable("{$year}-12-31");
+            $logistics = ea_cached("logi_profit_v1_{$year}",
+                fn () => (new \App\Services\LogisticsOpsService((int) $tenantId))->profitability($from, $to));
+        } else {
+            try {
+                $client = OdooFactory::fromConfig();
+                $data = ea_cached("profitability_v3_{$year}", function () use ($client, $year, $assumptions) {
+                    return (new ProfitabilityService($client))->analyze($year, $assumptions);
+                });
+            } catch (\Throwable $e) {
+                $error = ea_safe_error($e, 'profitability.index', 'Could not load profitability data.');
+            }
         }
 
         // Render through the existing (already-compiled) profit-loss view via
@@ -45,11 +57,14 @@ class ProfitabilityController extends Controller
         // (storage/framework/views isn't writable by the web user), so a
         // dedicated profitability.blade.php 500s. Same markup, hosted there.
         return view('profit-loss', [
-            'active'   => 'profitability',
-            'year'     => $year,
-            'data'     => $data,
-            'error'    => $error,
-            'profMode' => true,
+            'active'    => 'profitability',
+            'year'      => $year,
+            'data'      => $data,
+            'error'     => $error,
+            // profMode stays on (the view tolerates null data); logistics
+            // tenants additionally get their section rendered on top.
+            'profMode'  => true,
+            'logistics' => $logistics,
         ]);
     }
 }

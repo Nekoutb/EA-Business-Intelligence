@@ -302,9 +302,11 @@ return [
                 'customer_insights'   => ['default' => true,  'required' => false],
                 'receivables'         => ['default' => true,  'required' => false],
                 'billing'             => ['default' => false, 'required' => false],
-                // The Logistics Operations pages (dossiers, workflow,
-                // volumes, billing & advances — approved Elimelec plan)
-                // default TRUE here once their module keys ship.
+                // Logistics Operations pages — the sector's own service.
+                'logistics_dossiers'  => ['default' => true,  'required' => true],
+                'logistics_workflow'  => ['default' => true,  'required' => false],
+                'logistics_volumes'   => ['default' => true,  'required' => false],
+                'profitability'       => ['default' => true,  'required' => false],
                 'product_revenue_tsd' => ['default' => false, 'required' => false],
                 'inventory'           => ['default' => false, 'required' => false],
                 'operations'          => ['default' => false, 'required' => false],
