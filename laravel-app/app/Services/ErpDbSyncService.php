@@ -209,13 +209,26 @@ final class ErpDbSyncService
                 return $this->keyCache[$entity][$extKey];
             }
         }
-        $id = (int) DB::table('wh_key_map')->insertGetId([
-            'tenant_id'  => $this->tenant->id,
-            'entity'     => $entity,
-            'ext_key'    => substr($extKey, 0, 191),
-            'created_at' => now(),
-            'updated_at' => now(),
-        ]);
+        try {
+            $id = (int) DB::table('wh_key_map')->insertGetId([
+                'tenant_id'  => $this->tenant->id,
+                'entity'     => $entity,
+                'ext_key'    => substr($extKey, 0, 191),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        } catch (\Illuminate\Database\QueryException $e) {
+            // MySQL's collation-insensitive unique index can equate keys the
+            // PHP cache keeps apart ('Debours' vs 'Débours'). Adopt the row
+            // the database considers equal — mapping both spellings to one
+            // surrogate is also the semantically right rollup.
+            $id = (int) DB::table('wh_key_map')
+                ->where('tenant_id', $this->tenant->id)
+                ->where('entity', $entity)
+                ->where('ext_key', substr($extKey, 0, 191))
+                ->value('id');
+            if ($id <= 0) throw $e;
+        }
         return $this->keyCache[$entity][$extKey] = $id;
     }
 
