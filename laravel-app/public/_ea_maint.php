@@ -183,6 +183,39 @@ try {
             }
             break;
 
+        case 'whstats':
+            // Pure-warehouse row counts and invoice totals for one tenant —
+            // no live ERP/Odoo needed, so it works for direct-DB tenants
+            // where the vs-Odoo check ops cannot.
+            $slug = (string) ($_GET['tenant'] ?? '');
+            $tenant = App\Models\Tenant::where('slug', $slug)->first();
+            if (!$tenant) { ln("no tenant '{$slug}'"); break; }
+            $tid = $tenant->id;
+            foreach (['wh_dim_partner', 'wh_dim_account', 'wh_fact_invoice', 'wh_fact_invoice_line', 'wh_key_map'] as $tb) {
+                $n = Illuminate\Support\Facades\DB::table($tb)->where('tenant_id', $tid)->count();
+                ln(sprintf('%-24s %s rows', $tb, number_format($n)));
+            }
+            ln();
+            ln('== wh_fact_invoice by year ==');
+            foreach (Illuminate\Support\Facades\DB::table('wh_fact_invoice')
+                ->where('tenant_id', $tid)->whereNotNull('invoice_date')
+                ->selectRaw('YEAR(invoice_date) y, COUNT(*) n, SUM(amount_untaxed) ht, SUM(amount_total) ttc, SUM(amount_residual) open_ar')
+                ->groupBy('y')->orderBy('y')->get() as $r) {
+                ln(sprintf('%s  n=%-6s HT=%18s  TTC=%18s  open AR=%16s',
+                    $r->y, number_format($r->n), number_format((float) $r->ht, 0),
+                    number_format((float) $r->ttc, 0), number_format((float) $r->open_ar, 0)));
+            }
+            ln();
+            ln('== top 5 partners by open AR ==');
+            foreach (Illuminate\Support\Facades\DB::table('wh_fact_invoice as i')
+                ->leftJoin('wh_dim_partner as p', fn ($j) => $j->on('p.tenant_id', '=', 'i.tenant_id')->on('p.odoo_id', '=', 'i.partner_odoo_id'))
+                ->where('i.tenant_id', $tid)->where('i.amount_residual', '>', 0)
+                ->selectRaw('MAX(p.name) name, SUM(i.amount_residual) ar, COUNT(*) n')
+                ->groupBy('i.partner_odoo_id')->orderByDesc('ar')->limit(5)->get() as $r) {
+                ln(sprintf('%-40s %16s  (%d open)', (string) $r->name, number_format((float) $r->ar, 0), $r->n));
+            }
+            break;
+
         case 'whsync':
             // Run the warehouse sync for one tenant. &full=1 for a backfill.
             $args = ['--tenant' => (string) ($_GET['tenant'] ?? 'kwr')];
