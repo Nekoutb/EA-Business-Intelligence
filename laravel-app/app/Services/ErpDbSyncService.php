@@ -112,9 +112,13 @@ final class ErpDbSyncService
         $rows = DB::connection($this->connection)->select(
             'select f.cle_facture, f.code_facture, f.reference, f.cle_client, f.cle_dossier, f.jour_facture,
                     f.montant_ht, f.montant_ttc, f.montant_encaisse, f.reste_du,
-                    c.delai_paiement_jours
+                    c.delai_paiement_jours, lf.fee_ht
              from fait_facture_generique f
-             left join dim_client c on c.cle_client = f.cle_client'
+             left join dim_client c on c.cle_client = f.cle_client
+             left join (
+               select cle_facture, sum(montant_ht) filter (where est_debours is not true) fee_ht
+               from fait_facture_generique_ligne group by cle_facture
+             ) lf on lf.cle_facture = f.cle_facture'
         );
 
         $this->ensureKeys('invoice', array_map(fn ($f) => (string) $f->cle_facture, $rows));
@@ -148,7 +152,14 @@ final class ErpDbSyncService
                 'invoice_date_due' => $due,
                 'partner_odoo_id'  => $f->cle_client !== null ? $this->keyId('partner', (string) $f->cle_client) : null,
                 'dossier_odoo_id'  => $f->cle_dossier !== null ? $this->keyId('dossier', (string) $f->cle_dossier) : null,
-                'amount_untaxed'   => (float) ($f->montant_ht ?? 0),
+                // REVENUE = the fee commission only. Débours on the invoice
+                // are rebilled out-of-pocket costs, not revenue — so the
+                // warehouse revenue figure (amount_untaxed, read by the
+                // Dashboard / Revenue / Customer Insights pages) carries the
+                // fee portion of the lines. Invoices without lines fall back
+                // to the full HT. TTC and the open balance stay complete:
+                // the client owes débours too.
+                'amount_untaxed'   => (float) ($f->fee_ht ?? $f->montant_ht ?? 0),
                 'amount_total'     => (float) ($f->montant_ttc ?? 0),
                 'amount_residual'  => $residual,
                 'write_date'       => now(),

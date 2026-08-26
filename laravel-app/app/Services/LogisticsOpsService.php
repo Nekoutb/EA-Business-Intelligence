@@ -217,6 +217,141 @@ final class LogisticsOpsService
         return $out;
     }
 
+    /**
+     * Billing page extension — two lag analyses:
+     *  1. File creation → first billing date (per customer, per file).
+     *  2. Débours incurred (advance disbursed) → rebilled to the client,
+     *     matched by NAME within the same file (normalized fuzzy match,
+     *     not exact — 'Transport conventionnel - Kimalé' matches
+     *     'Transport conventionnel QUAI - MAG KIMALE').
+     *
+     * $customer narrows the transaction detail to one client (drill-down).
+     */
+    public function billingLags(?string $customer = null): array
+    {
+        $out = ['file_bill' => null, 'debours' => null];
+        try {
+            // ── 1. file creation → first invoice ─────────────────────
+            $rows = DB::table('wh_fact_dossier as d')
+                ->join('wh_fact_invoice as i', function ($j) {
+                    $j->on('i.tenant_id', '=', 'd.tenant_id')->on('i.dossier_odoo_id', '=', 'd.odoo_id');
+                })
+                ->where('d.tenant_id', $this->tenantId)
+                ->whereNotNull('d.opened_date')->whereNotNull('i.invoice_date')
+                ->selectRaw('d.code, d.client_name, d.opened_date, MIN(i.invoice_date) first_bill')
+                ->groupBy('d.code', 'd.client_name', 'd.opened_date')
+                ->get()
+                ->map(function ($r) {
+                    $r->days = (new \DateTimeImmutable((string) $r->first_bill))
+                        ->diff(new \DateTimeImmutable((string) $r->opened_date))->days;
+                    return $r;
+                });
+
+            $byClient = [];
+            foreach ($rows as $r) {
+                $c = (string) ($r->client_name ?? '?');
+                ($byClient[$c] ??= ['client' => $c, 'n' => 0, 'sum' => 0]);
+                $byClient[$c]['n']++; $byClient[$c]['sum'] += $r->days;
+            }
+            foreach ($byClient as &$c) { $c['avg'] = $c['n'] > 0 ? $c['sum'] / $c['n'] : null; }
+            unset($c);
+            usort($byClient, fn ($a, $b) => ($b['avg'] <=> $a['avg']));
+
+            $out['file_bill'] = [
+                'avg'       => $rows->count() ? $rows->sum('days') / $rows->count() : null,
+                'n'         => $rows->count(),
+                'by_client' => array_values($byClient),
+                'detail'    => $customer !== null
+                    ? $rows->filter(fn ($r) => (string) $r->client_name === $customer)
+                        ->sortByDesc('days')->values()->take(100)->all()
+                    : [],
+            ];
+
+            // ── 2. débours incurred → rebilled (name match per file) ──
+            $advances = DB::table('wh_fact_advance')
+                ->where('tenant_id', $this->tenantId)
+                ->whereNotNull('dossier_odoo_id')->whereNotNull('disbursed_date')
+                ->get(['dossier_odoo_id', 'label', 'amount', 'disbursed_date', 'supplier_name']);
+            $lines = DB::table('wh_fact_invoice_line as l')
+                ->join('wh_fact_invoice as i', function ($j) {
+                    $j->on('i.tenant_id', '=', 'l.tenant_id')->on('i.odoo_id', '=', 'l.move_odoo_id');
+                })
+                ->where('l.tenant_id', $this->tenantId)->where('l.is_debours', true)
+                ->whereNotNull('i.dossier_odoo_id')
+                ->get(['i.dossier_odoo_id', 'l.label', 'l.price_subtotal', 'l.invoice_date', 'i.name as inv']);
+            $meta = DB::table('wh_fact_dossier')->where('tenant_id', $this->tenantId)
+                ->pluck('client_name', 'odoo_id');
+            $codes = DB::table('wh_fact_dossier')->where('tenant_id', $this->tenantId)
+                ->pluck('code', 'odoo_id');
+
+            $norm = function (?string $s): array {
+                $s = mb_strtolower((string) $s);
+                $s = strtr($s, ['é'=>'e','è'=>'e','ê'=>'e','à'=>'a','â'=>'a','î'=>'i','ï'=>'i','ô'=>'o','û'=>'u','ù'=>'u','ç'=>'c']);
+                $s = preg_replace('/[^a-z0-9]+/', ' ', $s);
+                return array_values(array_filter(explode(' ', trim((string) $s)), fn ($t) => mb_strlen($t) >= 4));
+            };
+            $linesByD = [];
+            foreach ($lines as $l) { $linesByD[$l->dossier_odoo_id][] = $l; }
+
+            $pairs = []; $matched = 0; $unmatched = 0; $lagSum = 0.0;
+            foreach ($advances as $a) {
+                $cands = $linesByD[$a->dossier_odoo_id] ?? [];
+                $at = $norm($a->label);
+                $best = null; $bestScore = 0;
+                foreach ($cands as $l) {
+                    $lt = $norm($l->label);
+                    $score = count(array_intersect($at, $lt));
+                    if ($score > $bestScore) { $bestScore = $score; $best = $l; }
+                }
+                if ($best !== null && $bestScore >= 1) {
+                    $days = (int) ((strtotime((string) $best->invoice_date) - strtotime((string) $a->disbursed_date)) / 86400);
+                    $matched++; $lagSum += $days;
+                    $pairs[] = [
+                        'client'      => (string) ($meta[$a->dossier_odoo_id] ?? '?'),
+                        'file'        => (string) ($codes[$a->dossier_odoo_id] ?? $a->dossier_odoo_id),
+                        'adv_label'   => (string) $a->label,
+                        'adv_who'     => (string) ($a->supplier_name ?? '—'),
+                        'adv_date'    => (string) $a->disbursed_date,
+                        'adv_amount'  => (float) $a->amount,
+                        'bill_label'  => (string) $best->label,
+                        'bill_inv'    => (string) $best->inv,
+                        'bill_date'   => (string) $best->invoice_date,
+                        'bill_amount' => (float) $best->price_subtotal,
+                        'days'        => $days,
+                    ];
+                } else {
+                    $unmatched++;
+                }
+            }
+
+            $byClient2 = [];
+            foreach ($pairs as $p) {
+                ($byClient2[$p['client']] ??= ['client' => $p['client'], 'n' => 0, 'sum' => 0]);
+                $byClient2[$p['client']]['n']++; $byClient2[$p['client']]['sum'] += $p['days'];
+            }
+            foreach ($byClient2 as &$c2) { $c2['avg'] = $c2['n'] > 0 ? $c2['sum'] / $c2['n'] : null; }
+            unset($c2);
+            usort($byClient2, fn ($a, $b) => ($b['avg'] <=> $a['avg']));
+
+            $detail = $customer !== null
+                ? array_values(array_filter($pairs, fn ($p) => $p['client'] === $customer))
+                : [];
+            usort($detail, fn ($a, $b) => $b['days'] <=> $a['days']);
+
+            $out['debours'] = [
+                'avg'        => $matched > 0 ? $lagSum / $matched : null,
+                'matched'    => $matched,
+                'unmatched'  => $unmatched,
+                'match_rate' => ($matched + $unmatched) > 0 ? $matched / ($matched + $unmatched) : null,
+                'by_client'  => array_values($byClient2),
+                'detail'     => array_slice($detail, 0, 150),
+            ];
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('logistics billing lags failed', ['error' => $e->getMessage()]);
+        }
+        return $out;
+    }
+
     /** True when this tenant has synced dossier facts (gates the sections). */
     public static function available(?int $tenantId): bool
     {

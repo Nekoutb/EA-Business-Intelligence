@@ -85,12 +85,25 @@ class BillingController extends Controller
             $error = $e->getMessage();
         }
 
+        // Logistics sector: file→bill and débours→recharge lag analyses
+        // from the dossier warehouse. ?lg_customer= narrows the transaction
+        // detail to one client (the drill-down).
+        $logisticsBilling = null;
+        $lgCustomer = trim((string) $request->query('lg_customer', ''));
+        $tenantId = (int) (optional(tenant())->id ?? 0);
+        if (\App\Services\LogisticsOpsService::available($tenantId)) {
+            $logisticsBilling = ea_cached('logi_billing_v1_' . md5($lgCustomer),
+                fn () => (new \App\Services\LogisticsOpsService($tenantId))->billingLags($lgCustomer !== '' ? $lgCustomer : null));
+        }
+
         return view('billing', [
-            'active'      => 'billing',
-            'period'      => $period,
-            'periodLabel' => $periodLabel,
-            'billing'     => $billing,
-            'error'       => $error,
+            'active'           => 'billing',
+            'period'           => $period,
+            'periodLabel'      => $periodLabel,
+            'billing'          => $billing,
+            'error'            => $error,
+            'logisticsBilling' => $logisticsBilling,
+            'lgCustomer'       => $lgCustomer,
         ]);
     }
 

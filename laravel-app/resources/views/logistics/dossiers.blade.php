@@ -1,10 +1,9 @@
 @extends('layouts.app')
 
-@section('page-title', 'Logistics · Dossiers')
+@section('page-title', 'Logistics · Files')
 
 @section('content')
 @include('logistics._style')
-<x-period-filter :period="$period" />
 
 <div class="lg-tiles">
   <div class="lg-tile bad"><div class="l">Open files today</div><div class="v">{{ number_format($data['open_now']) }}</div><div class="s">all vintages</div></div>

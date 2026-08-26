@@ -14,12 +14,10 @@ class LogisticsOpsController extends Controller
 {
     private function ctx(Request $request): array
     {
+        // Period comes ONLY from the sidebar master filter (session-synced);
+        // these pages deliberately carry no filter of their own.
         $today  = new \DateTimeImmutable();
-        $period = [
-            'type'  => $request->query('period', 'ytd'),
-            'year'  => (int) $request->query('year',  $today->format('Y')),
-            'month' => (int) $request->query('month', $today->format('m')),
-        ];
+        $period = current_period();
         [$from, $to, $label] = ea_resolve_period($today, $period);
         $tenantId = (int) (optional(app(TenantContext::class)->has() ? app(TenantContext::class)->tenant() : null)->id ?? 0);
         return [$tenantId, $from, $to, $label, $period];

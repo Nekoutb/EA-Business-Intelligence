@@ -4,7 +4,6 @@
 
 @section('content')
 @include('logistics._style')
-<x-period-filter :period="$period" />
 
 <div class="lg-tiles">
   <div class="lg-tile"><div class="l">Tonnage · {{ $periodLabel }}</div><div class="v">{{ number_format($data['tons']) }} t</div><div class="s">net</div></div>

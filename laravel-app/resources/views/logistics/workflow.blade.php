@@ -4,7 +4,6 @@
 
 @section('content')
 @include('logistics._style')
-<x-period-filter :period="$period" />
 
 <div class="lg-tiles">
   <div class="lg-tile"><div class="l">Documents through circuits</div><div class="v">{{ number_format($data['docs']) }}</div><div class="s">{{ $periodLabel }}</div></div>
