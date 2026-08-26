@@ -226,6 +226,191 @@ try {
             echo json_encode($out, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
             break;
 
+        case 'opsdata':
+            // Read-only 2026 aggregates for the Elimelec Operations report
+            // PREVIEW (design artifact with live numbers). Every query is a
+            // SELECT on the tenant's external BI schema. ?tenant=slug
+            $slug = (string) ($_GET['tenant'] ?? 'elimelec');
+            $tenant = App\Models\Tenant::where('slug', $slug)->first();
+            if (!$tenant) { ln("no tenant '{$slug}'"); break; }
+            app(App\Tenancy\TenantContext::class)->set($tenant);
+            config(['database.connections.erp_ops' => App\Services\ErpDbConnectionTester::connectionConfig()]);
+            $erp = Illuminate\Support\Facades\DB::connection('erp_ops');
+            $J = [];
+
+            // ── ① throughput & backlog ─────────────────────────────
+            $J['open_now']  = (int) $erp->select("select count(*) c from fait_dossier_transit where est_clos = false")[0]->c;
+            $J['suspended'] = (int) $erp->select("select count(*) c from fait_dossier_transit where est_clos = false and est_suspendu = true")[0]->c;
+            $J['backlog_median_age'] = (float) ($erp->select(
+                "select percentile_cont(0.5) within group (order by (current_date - jour_ouverture)) m
+                 from fait_dossier_transit where est_clos = false and jour_ouverture is not null")[0]->m ?? 0);
+            $J['monthly_flow'] = $erp->select(
+                "select m, sum(o) opened, sum(c) closed from (
+                   select to_char(jour_ouverture,'YYYY-MM') m, 1 o, 0 c from fait_dossier_transit where jour_ouverture >= '2026-01-01'
+                   union all
+                   select to_char(jour_cloture,'YYYY-MM') m, 0 o, 1 c from fait_dossier_transit where jour_cloture >= '2026-01-01'
+                 ) x where m is not null group by m order by m");
+            $J['aging'] = $erp->select(
+                "select case when a <= 15 then '0-15' when a <= 30 then '16-30' when a <= 60 then '31-60'
+                             when a <= 90 then '61-90' else '90+' end bucket, count(*) n
+                 from (select (current_date - jour_ouverture) a from fait_dossier_transit
+                       where est_clos = false and jour_ouverture is not null) x
+                 group by 1 order by min(a)");
+            $J['type_port'] = $erp->select(
+                "select coalesce(t.nom,'?') type, coalesce(p.nom,'?') port,
+                        count(*) filter (where f.est_clos = false) open,
+                        count(*) filter (where f.jour_cloture >= '2026-01-01') closed
+                 from fait_dossier_transit f
+                 left join dim_type_dossier t on t.cle_type_dossier = f.cle_type_dossier
+                 left join dim_port p on p.cle_port = f.cle_port
+                 group by 1,2 order by (count(*)) desc limit 10");
+
+            // ── ② lead time (files closed in 2026) ─────────────────
+            $J['leadtime_by_type'] = $erp->select(
+                "select t.nom type, t.delai_traitement_cible target, count(*) n,
+                        percentile_cont(0.5) within group (order by f.delai_traitement_jours) median,
+                        percentile_cont(0.9) within group (order by f.delai_traitement_jours) p90,
+                        avg((f.delai_traitement_jours <= t.delai_traitement_cible)::int) ontime
+                 from fait_dossier_transit f
+                 join dim_type_dossier t on t.cle_type_dossier = f.cle_type_dossier
+                 where f.jour_cloture >= '2026-01-01' and f.delai_traitement_jours is not null
+                 group by 1,2 order by n desc");
+            $J['ontime_monthly'] = $erp->select(
+                "select to_char(f.jour_cloture,'YYYY-MM') m, count(*) n,
+                        avg((f.delai_traitement_jours <= t.delai_traitement_cible)::int) ontime
+                 from fait_dossier_transit f
+                 join dim_type_dossier t on t.cle_type_dossier = f.cle_type_dossier
+                 where f.jour_cloture >= '2026-01-01' and f.delai_traitement_jours is not null
+                 group by 1 order by 1");
+            $J['leadtime_by_employee'] = $erp->select(
+                "select coalesce(e.nom_complet,'?') who, count(*) n,
+                        percentile_cont(0.5) within group (order by f.delai_traitement_jours) median,
+                        avg((f.delai_traitement_jours <= t.delai_traitement_cible)::int) ontime
+                 from fait_dossier_transit f
+                 join dim_type_dossier t on t.cle_type_dossier = f.cle_type_dossier
+                 left join dim_employe e on e.cle_employe = f.cle_employe_suiveur
+                 where f.jour_cloture >= '2026-01-01' and f.delai_traitement_jours is not null
+                 group by 1 having count(*) >= 5 order by median asc limit 10");
+
+            // ── ③ step bottlenecks (steps completed in 2026, top type) ──
+            $J['steps'] = $erp->select(
+                "select d.nom step, d.rang_etape rang, coalesce(td.nom,'?') type, count(*) n,
+                        avg(s.ecart_jours) slip, avg(s.duree_depuis_precedente_jours) dwell,
+                        avg((s.ecart_jours <= 0)::int) ontime, avg(s.est_invalidee::int) rework
+                 from fait_etape_dossier s
+                 join dim_etape_dossier d on d.cle_etape_dossier = s.cle_etape_dossier
+                 left join dim_type_dossier td on td.cle_type_dossier = d.cle_type_dossier
+                 where s.jour_reel >= '2026-01-01'
+                 group by 1,2,3 order by n desc limit 14");
+
+            // ── ④ approval circuits ────────────────────────────────
+            $J['circuits'] = $erp->select(
+                "select coalesce(td.libelle, x.doc) doc, count(*) docs,
+                        percentile_cont(0.5) within group (order by x.total) median_days
+                 from (select v.cle_document, max(v.cle_type_document) doc,
+                              max(v.delai_total_circuit_jours) total
+                       from fait_validation v where v.jour_document >= '2026-01-01'
+                       group by v.cle_document) x
+                 left join dim_type_document_valide td on td.cle_type_document = x.doc
+                 where x.total is not null group by 1 order by docs desc");
+            $J['circuit_steps'] = $erp->select(
+                "select coalesce(w.nom_circuit,'?') circuit, v.rang_etape rang,
+                        avg(v.delai_depuis_precedente_jours) lag, count(*) n
+                 from fait_validation v
+                 left join dim_etape_workflow w on w.cle_etape_workflow = v.cle_etape_workflow
+                 where v.jour_etape >= '2026-01-01' and v.delai_depuis_precedente_jours is not null
+                 group by 1,2 order by 1,2");
+            $J['pending_validations'] = (int) $erp->select(
+                "select count(distinct cle_document) c from fait_validation where est_franchie = false")[0]->c;
+
+            // ── ⑤ volumes (files opened 2026) ──────────────────────
+            $J['vol_monthly'] = $erp->select(
+                "select to_char(jour_ouverture,'YYYY-MM') m, sum(poids_net) tons, sum(nombre_conteneurs) ctn,
+                        sum(nombre_colis) colis, sum(valeur_marchandise) val, count(*) files
+                 from fait_dossier_transit where jour_ouverture >= '2026-01-01' group by 1 order by 1");
+            foreach (['regime_douanier', 'incoterm', 'type_embarquement'] as $ax) {
+                $J['mix_' . $ax] = $erp->select(
+                    "select coalesce({$ax},'—') k, count(*) n, sum(poids_net) tons
+                     from fait_dossier_transit where jour_ouverture >= '2026-01-01'
+                     group by 1 order by n desc limit 8");
+            }
+            $J['top_importers'] = $erp->select(
+                "select coalesce(importateur,'—') k, count(*) n, sum(poids_net) tons, sum(valeur_marchandise) val
+                 from fait_dossier_transit where jour_ouverture >= '2026-01-01'
+                 group by 1 order by tons desc nulls last limit 10");
+
+            // ── ⑥ billing lag / leakage ────────────────────────────
+            $J['unbilled'] = $erp->select(
+                "select count(*) n, sum(f.valeur_marchandise) exposure
+                 from fait_dossier_transit f
+                 where f.est_clos = true and f.jour_cloture <= current_date - 7
+                   and not exists (select 1 from fait_facture_generique i where i.cle_dossier = f.cle_dossier)")[0];
+            $J['unbilled_list'] = $erp->select(
+                "select f.code_dossier code, coalesce(c.raison_sociale,'?') client, coalesce(t.nom,'?') type,
+                        f.jour_cloture closed, (current_date - f.jour_cloture) age, f.valeur_marchandise val
+                 from fait_dossier_transit f
+                 left join dim_client c on c.cle_client = f.cle_client
+                 left join dim_type_dossier t on t.cle_type_dossier = f.cle_type_dossier
+                 where f.est_clos = true and f.jour_cloture <= current_date - 7
+                   and not exists (select 1 from fait_facture_generique i where i.cle_dossier = f.cle_dossier)
+                 order by f.jour_cloture asc limit 10");
+            $J['billing_lag'] = $erp->select(
+                "select t.nom type, t.delai_facturation_cible target, count(*) n,
+                        percentile_cont(0.5) within group (order by f.delai_facturation_jours) median,
+                        avg((f.delai_facturation_jours <= t.delai_facturation_cible)::int) ontime
+                 from fait_dossier_transit f
+                 join dim_type_dossier t on t.cle_type_dossier = f.cle_type_dossier
+                 where f.delai_facturation_jours is not null and f.jour_cloture >= '2026-01-01'
+                 group by 1,2 order by n desc");
+
+            // ── ⑦ advances & profitability ─────────────────────────
+            $J['adv_kpis'] = $erp->select(
+                "select sum(montant) filter (where est_decaissee and not est_justifiee) unjustified,
+                        avg(est_justifiee::int) filter (where est_decaissee) just_rate,
+                        percentile_cont(0.5) within group (order by delai_decaissement_jours) disb_lag,
+                        sum(montant) filter (where cle_dossier is not null) alloc,
+                        sum(montant) total
+                 from fait_avance_frais where jour_demande >= '2026-01-01'")[0];
+            $J['adv_by_rubrique'] = $erp->select(
+                "select coalesce(r.nom,'—') k, sum(a.montant) amt, count(*) n
+                 from fait_avance_frais a
+                 left join dim_rubrique_budgetaire r on r.cle_rubrique = a.cle_rubrique
+                 where a.jour_demande >= '2026-01-01' group by 1 order by amt desc nulls last limit 8");
+            $J['adv_holders'] = $erp->select(
+                "select coalesce(nom_beneficiaire,'—') k, sum(montant) amt, count(*) n
+                 from fait_avance_frais
+                 where est_decaissee and not est_justifiee and jour_demande >= '2026-01-01'
+                 group by 1 order by amt desc nulls last limit 8");
+            $J['dossier_margin'] = $erp->select(
+                "with fee as (
+                   select i.cle_dossier d,
+                          sum(l.montant_ht) filter (where l.est_debours is not true) fees,
+                          sum(l.montant_ht) filter (where l.est_debours is true) deb
+                   from fait_facture_generique i
+                   join fait_facture_generique_ligne l on l.cle_facture = i.cle_facture
+                   where i.cle_dossier is not null group by 1),
+                 adv as (
+                   select cle_dossier d, sum(montant) a from fait_avance_frais
+                   where est_decaissee and cle_dossier is not null group by 1)
+                 select coalesce(fee.d, adv.d) d, f.code_dossier code, coalesce(c.raison_sociale,'?') client,
+                        coalesce(t.nom,'?') type,
+                        coalesce(fee.fees,0) fees, coalesce(fee.deb,0) deb, coalesce(adv.a,0) advances,
+                        coalesce(fee.fees,0) + coalesce(fee.deb,0) - coalesce(adv.a,0) margin
+                 from fee full outer join adv on adv.d = fee.d
+                 left join fait_dossier_transit f on f.cle_dossier = coalesce(fee.d, adv.d)
+                 left join dim_client c on c.cle_client = f.cle_client
+                 left join dim_type_dossier t on t.cle_type_dossier = f.cle_type_dossier
+                 order by margin desc");
+            // Ship only head + tail of the margin ranking (top/bottom 8).
+            $dm = $J['dossier_margin'];
+            $J['margin_top']    = array_slice($dm, 0, 8);
+            $J['margin_bottom'] = array_slice($dm, max(0, count($dm) - 8));
+            $J['margin_count']  = count($dm);
+            unset($J['dossier_margin']);
+
+            echo json_encode($J, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE | JSON_PARTIAL_OUTPUT_ON_ERROR);
+            break;
+
         case 'whstats':
             // Pure-warehouse row counts and invoice totals for one tenant —
             // no live ERP/Odoo needed, so it works for direct-DB tenants
