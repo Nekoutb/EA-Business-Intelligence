@@ -183,6 +183,49 @@ try {
             }
             break;
 
+        case 'erpprofile':
+            // Read-only data profile of a direct-DB tenant's ERP schema:
+            // per table — exact row count and up to N sample rows (values
+            // truncated). JSON output; feeds offline exploration and
+            // report design. ?tenant=slug [&rows=5] [&table=only_this]
+            $slug = (string) ($_GET['tenant'] ?? '');
+            $tenant = App\Models\Tenant::where('slug', $slug)->first();
+            if (!$tenant) { ln("no tenant '{$slug}'"); break; }
+            app(App\Tenancy\TenantContext::class)->set($tenant);
+            config(['database.connections.erp_profile' => App\Services\ErpDbConnectionTester::connectionConfig()]);
+            $erp = Illuminate\Support\Facades\DB::connection('erp_profile');
+            $schema = trim((string) config_env('ERP_DB_SCHEMA', 'public')) ?: 'public';
+            $nRows  = max(1, min(20, (int) ($_GET['rows'] ?? 5)));
+            $onlyT  = preg_replace('/[^a-z0-9_]/', '', (string) ($_GET['table'] ?? ''));
+
+            $tables = $erp->select(
+                "select c.relname as name from pg_class c
+                 join pg_namespace n on n.oid = c.relnamespace
+                 where n.nspname = ? and c.relkind in ('r','v','m','f','p') order by c.relname", [$schema]);
+            $out = [];
+            foreach ($tables as $t) {
+                $tb = (string) $t->name;
+                if ($onlyT !== '' && $tb !== $onlyT) continue;
+                if (!preg_match('/^[a-z0-9_]+$/', $tb)) continue;
+                $q = '"' . $schema . '"."' . $tb . '"';
+                try {
+                    $cnt = (int) ($erp->select("select count(*) c from {$q}")[0]->c ?? 0);
+                    $sample = [];
+                    foreach ($erp->select("select * from {$q} limit {$nRows}") as $row) {
+                        $r = [];
+                        foreach ((array) $row as $k => $v) {
+                            $r[$k] = is_string($v) && mb_strlen($v) > 60 ? mb_substr($v, 0, 57) . '…' : $v;
+                        }
+                        $sample[] = $r;
+                    }
+                    $out[$tb] = ['rows' => $cnt, 'sample' => $sample];
+                } catch (\Throwable $e) {
+                    $out[$tb] = ['rows' => -1, 'error' => $e->getMessage()];
+                }
+            }
+            echo json_encode($out, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
+            break;
+
         case 'whstats':
             // Pure-warehouse row counts and invoice totals for one tenant —
             // no live ERP/Odoo needed, so it works for direct-DB tenants
