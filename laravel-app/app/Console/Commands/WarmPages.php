@@ -161,7 +161,7 @@ class WarmPages extends Command
 
             CacheFreshness::force(true);
             $controller = app((string) $page['controller']);
-            $response   = app()->call([$controller, 'index']);
+            $response   = app()->call([$controller, (string) ($page['action'] ?? 'index')]);
 
             // DO NOT render the view. The datasets are cached by the
             // controller run itself, and rendering from the worker made this

@@ -2115,7 +2115,7 @@ try {
                 session()->flash('flash', ['type' => 'success', 'msg' => 'render-test']);
             }
             try {
-                $resp = app()->call([app((string) $def['controller']), 'index']);
+                $resp = app()->call([app((string) $def['controller']), (string) ($def['action'] ?? 'index')]);
                 $html = ($resp instanceof Illuminate\Contracts\Support\Renderable) ? $resp->render() : '(non-view response: ' . get_class($resp) . ')';
                 // &html=1 dumps the full page (for offline snapshots);
                 // &grep=needle counts occurrences (content assertions —
