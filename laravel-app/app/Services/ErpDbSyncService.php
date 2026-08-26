@@ -77,6 +77,8 @@ final class ErpDbSyncService
             'select cle_client, code_client, raison_sociale, nom_commercial from dim_client'
         );
 
+        $this->ensureKeys('partner', array_map(fn ($c) => (string) $c->cle_client, $rows));
+
         $batch = [];
         $seen  = [];
         foreach ($rows as $c) {
@@ -111,6 +113,9 @@ final class ErpDbSyncService
              from fait_facture_generique f
              left join dim_client c on c.cle_client = f.cle_client'
         );
+
+        $this->ensureKeys('invoice', array_map(fn ($f) => (string) $f->cle_facture, $rows));
+        $this->ensureKeys('partner', array_map(fn ($f) => (string) ($f->cle_client ?? ''), $rows));
 
         $batch = [];
         $seen  = [];
@@ -160,6 +165,10 @@ final class ErpDbSyncService
              from fait_facture_generique_ligne'
         );
 
+        $this->ensureKeys('invoice_line', array_map(fn ($l) => (string) $l->cle_ligne_facture, $rows));
+        $this->ensureKeys('invoice', array_map(fn ($l) => (string) ($l->cle_facture ?? ''), $rows));
+        $this->ensureKeys('category', array_map(fn ($l) => (string) ($l->categorie ?? ''), $rows));
+
         $batch = [];
         $seen  = [];
         foreach ($rows as $l) {
@@ -193,6 +202,45 @@ final class ErpDbSyncService
     }
 
     // ── Plumbing ────────────────────────────────────────────────────────
+
+    /**
+     * Bulk-allocate surrogates for every external key of an entity in three
+     * queries (load, insertOrIgnore missing, reload) instead of one insert
+     * per new key — the per-key path pushed a first full sync past
+     * Cloudflare's ~100s ceiling. insertOrIgnore also absorbs
+     * collation-equal duplicates ('Debours' vs 'Débours') silently; the
+     * reload then maps both spellings to the surviving row.
+     *
+     * @param string[] $extKeys
+     */
+    private function ensureKeys(string $entity, array $extKeys): void
+    {
+        if (!isset($this->keyCache[$entity])) {
+            $this->keyCache[$entity] = DB::table('wh_key_map')
+                ->where('tenant_id', $this->tenant->id)->where('entity', $entity)
+                ->pluck('id', 'ext_key')->map(fn ($v) => (int) $v)->all();
+        }
+        $missing = [];
+        foreach (array_unique($extKeys) as $k) {
+            $k = substr((string) $k, 0, 191);
+            if ($k !== '' && !isset($this->keyCache[$entity][$k])) {
+                $missing[$k] = [
+                    'tenant_id'  => $this->tenant->id,
+                    'entity'     => $entity,
+                    'ext_key'    => $k,
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ];
+            }
+        }
+        if ($missing === []) return;
+        foreach (array_chunk(array_values($missing), self::CHUNK) as $chunk) {
+            DB::table('wh_key_map')->insertOrIgnore($chunk);
+        }
+        $this->keyCache[$entity] = DB::table('wh_key_map')
+            ->where('tenant_id', $this->tenant->id)->where('entity', $entity)
+            ->pluck('id', 'ext_key')->map(fn ($v) => (int) $v)->all();
+    }
 
     /** Stable surrogate integer for an external key (see wh_key_map). */
     private function keyId(string $entity, string $extKey): int
