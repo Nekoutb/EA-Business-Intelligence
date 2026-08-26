@@ -408,6 +408,67 @@ try {
             $J['margin_count']  = count($dm);
             unset($J['dossier_margin']);
 
+            // ── drill-down + finance + profitability detail ────────
+            // File-level list for 2026 (drill target for months, aging,
+            // type×port, importer, shipment mode).
+            $J['files'] = $erp->select(
+                "select f.code_dossier code, coalesce(c.raison_sociale,'?') client, coalesce(t.nom,'?') type,
+                        coalesce(p.nom,'—') port, f.jour_ouverture o, f.est_clos closed,
+                        f.poids_net kg, f.nombre_conteneurs ctn, f.valeur_marchandise val,
+                        coalesce(f.importateur,'—') imp, coalesce(f.type_embarquement,'—') emb
+                 from fait_dossier_transit f
+                 left join dim_client c on c.cle_client = f.cle_client
+                 left join dim_type_dossier t on t.cle_type_dossier = f.cle_type_dossier
+                 left join dim_port p on p.cle_port = f.cle_port
+                 where f.jour_ouverture >= '2026-01-01' order by f.jour_ouverture");
+            // Every invoice (finance page computes monthly revenue, AR and
+            // collections client-side; also the drill target per month/client).
+            $J['invoices'] = $erp->select(
+                "select i.code_facture code, coalesce(c.raison_sociale,'?') client, i.jour_facture d,
+                        i.montant_ht ht, i.montant_ttc ttc, i.montant_tva tva,
+                        i.montant_encaisse enc, i.reste_du rest, i.cle_dossier dossier
+                 from fait_facture_generique i
+                 left join dim_client c on c.cle_client = i.cle_client
+                 order by i.jour_facture");
+            // Fee vs débours revenue split per month (needs the lines).
+            $J['fee_split'] = $erp->select(
+                "select to_char(i.jour_facture,'YYYY-MM') m,
+                        sum(l.montant_ht) filter (where l.est_debours is not true) fees,
+                        sum(l.montant_ht) filter (where l.est_debours is true) deb
+                 from fait_facture_generique i
+                 join fait_facture_generique_ligne l on l.cle_facture = i.cle_facture
+                 where i.jour_facture is not null group by 1 order by 1");
+            // Cash till movements (finance page).
+            $J['cash_monthly'] = $erp->select(
+                "select to_char(jour_operation,'YYYY-MM') m, sum(entree) cin, sum(sortie) cout, count(*) n
+                 from fait_mouvement_caisse where jour_operation >= '2026-01-01' group by 1 order by 1");
+            $J['cash_by_caisse'] = $erp->select(
+                "select coalesce(k.nom,'—') caisse, sum(m.entree) cin, sum(m.sortie) cout, count(*) n
+                 from fait_mouvement_caisse m
+                 left join dim_caisse k on k.cle_caisse = m.cle_caisse
+                 where m.jour_operation >= '2026-01-01' group by 1 order by (sum(m.entree)+sum(m.sortie)) desc");
+            // Full per-dossier margin set (profitability page + drills).
+            $J['margin_all'] = $erp->select(
+                "with fee as (
+                   select i.cle_dossier d,
+                          sum(l.montant_ht) filter (where l.est_debours is not true) fees,
+                          sum(l.montant_ht) filter (where l.est_debours is true) deb
+                   from fait_facture_generique i
+                   join fait_facture_generique_ligne l on l.cle_facture = i.cle_facture
+                   where i.cle_dossier is not null group by 1),
+                 adv as (
+                   select cle_dossier d, sum(montant) a from fait_avance_frais
+                   where est_decaissee and cle_dossier is not null group by 1)
+                 select coalesce(fee.d, adv.d) d, f.code_dossier code, coalesce(c.raison_sociale,'?') client,
+                        coalesce(t.nom,'?') type,
+                        coalesce(fee.fees,0) fees, coalesce(fee.deb,0) deb, coalesce(adv.a,0) advances,
+                        coalesce(fee.fees,0) + coalesce(fee.deb,0) - coalesce(adv.a,0) margin
+                 from fee full outer join adv on adv.d = fee.d
+                 left join fait_dossier_transit f on f.cle_dossier = coalesce(fee.d, adv.d)
+                 left join dim_client c on c.cle_client = f.cle_client
+                 left join dim_type_dossier t on t.cle_type_dossier = f.cle_type_dossier
+                 order by margin desc");
+
             echo json_encode($J, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE | JSON_PARTIAL_OUTPUT_ON_ERROR);
             break;
 
