@@ -944,6 +944,7 @@ final class RevenueService
 
     private function fetchCogsAndSalesDiscounts(\DateTimeImmutable $from, \DateTimeImmutable $to): float
     {
+        try {
         $accounts = $this->odoo->searchRead('account.account',
             ['|', ['code', 'like', '603%'], ['code', 'like', '7019%']],
             ['id', 'code'], []);
@@ -965,6 +966,14 @@ final class RevenueService
         $discounts = $this->sumAccounts($discountIds, $from, $to);
 
         return $cogs + $discounts;
+        } catch (\Throwable $e) {
+            // No live GL source (e.g. direct-DB tenant) — cost base
+            // degrades to zero rather than sinking the whole analysis.
+            \Illuminate\Support\Facades\Log::warning('cogs fetch failed, cost base = 0', [
+                'error' => $e->getMessage(),
+            ]);
+            return 0.0;
+        }
     }
 
     private function sumAccounts(array $accountIds, \DateTimeImmutable $from, \DateTimeImmutable $to): float
