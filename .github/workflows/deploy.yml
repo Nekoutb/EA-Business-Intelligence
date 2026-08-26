@@ -223,6 +223,20 @@ jobs:
             php artisan route:cache
             php artisan view:cache
 
+            # ==================== REMOVE LEGACY CRON DEPLOY ====================
+            # An older architecture pulled git on a 5-minute cron. Its
+            # credentials broke (deploy log: "could not read Username for
+            # https://github.com") and its tree-cleanup kept REVERTING the
+            # files this workflow uploads — deploys after 894b773 were
+            # silently undone within minutes. This workflow is the single
+            # deploy mechanism; drop the legacy entries (the bms:warm worker
+            # and report crons stay).
+            if crontab -l 2>/dev/null | grep -qE 'git pull|git fetch|bms-deploy'; then
+              echo "🧹 Removing legacy git-pull cron entries..."
+              crontab -l | grep -vE 'git pull|git fetch|bms-deploy' | crontab -
+              crontab -l | head -20
+            fi
+
             # ==================== PERMISSIONS ====================
             echo "🔒 Permissions..."
             chown -R www-data:www-data "$REPO_DIR"
