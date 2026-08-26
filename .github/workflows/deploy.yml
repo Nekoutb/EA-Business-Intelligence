@@ -226,8 +226,11 @@ jobs:
             # ==================== PERMISSIONS ====================
             echo "🔒 Permissions..."
             chown -R www-data:www-data "$REPO_DIR"
-            find "$REPO_DIR" -type d -exec chmod 755 {} \;
-            find "$REPO_DIR" -type f -exec chmod 644 {} \;
+            # find exits non-zero when files vanish mid-walk (node_modules
+            # churn from the npm step) — with set -e that killed a deploy
+            # AFTER the app was already updated (run 32933275342). Tolerate.
+            find "$REPO_DIR" -path '*/node_modules' -prune -o -type d -exec chmod 755 {} \; || true
+            find "$REPO_DIR" -path '*/node_modules' -prune -o -type f -exec chmod 644 {} \; || true
             chmod -R 775 "$APP_DIR/storage" "$APP_DIR/bootstrap/cache"
 
             # ==================== APACHE VHOST (HTTP) ====================
