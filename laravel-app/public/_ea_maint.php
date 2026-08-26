@@ -469,6 +469,54 @@ try {
                  left join dim_type_dossier t on t.cle_type_dossier = f.cle_type_dossier
                  order by margin desc");
 
+            // ── unit economics / customer / supplier detail ────────
+            // Invoice LINES with their file + client: powers the per-file
+            // statement (fees vs débours lines) and customer analysis.
+            $J['inv_lines'] = $erp->select(
+                "select i.cle_dossier d, i.code_facture inv, coalesce(c.raison_sociale,'?') c,
+                        l.jour_facture j, left(coalesce(l.libelle,''), 48) lib,
+                        coalesce(l.categorie,'') cat, (l.est_debours is true) deb,
+                        round(coalesce(l.montant_ht,0)) ht
+                 from fait_facture_generique_ligne l
+                 join fait_facture_generique i on i.cle_facture = l.cle_facture
+                 left join dim_client c on c.cle_client = i.cle_client
+                 order by l.jour_facture");
+            // Advance lines with supplier / beneficiary: powers the
+            // per-file cost detail and the débours supplier analysis.
+            $J['adv_lines'] = $erp->select(
+                "select a.cle_dossier d,
+                        coalesce(s.raison_sociale, nullif(a.nom_beneficiaire,''), '—') who,
+                        left(coalesce(a.libelle_ligne,''), 48) lib,
+                        round(coalesce(a.montant,0)) ht,
+                        coalesce(a.jour_decaissement, a.jour_demande) j,
+                        (a.est_justifiee is true) just
+                 from fait_avance_frais a
+                 left join dim_fournisseur s on s.cle_fournisseur = a.cle_fournisseur
+                 where a.est_decaissee order by 5");
+            // Débours/advances aggregated per supplier with their rôle flags.
+            $J['adv_by_supplier'] = $erp->select(
+                "select coalesce(s.raison_sociale, nullif(a.nom_beneficiaire,''), '—') who,
+                        max(case when s.est_transitaire then 'transitaire' when s.est_acconier then 'acconier'
+                                 when s.est_assureur then 'assureur' when s.est_transporteur then 'transporteur'
+                                 when s.cle_fournisseur is not null then 'fournisseur' else 'bénéficiaire' end) role,
+                        count(*) n, round(sum(a.montant)) amt,
+                        round(sum(a.montant) filter (where a.est_justifiee is not true)) unjust,
+                        round(sum(a.montant) filter (where a.cle_dossier is not null)) on_files
+                 from fait_avance_frais a
+                 left join dim_fournisseur s on s.cle_fournisseur = a.cle_fournisseur
+                 where a.est_decaissee
+                 group by 1 order by amt desc limit 30");
+            // EVERY open file (incl. pre-2026) for true backlog aging.
+            $J['open_files_all'] = $erp->select(
+                "select f.code_dossier code, coalesce(c.raison_sociale,'?') client,
+                        coalesce(t.nom,'?') type, coalesce(p.nom,'—') port, f.jour_ouverture o
+                 from fait_dossier_transit f
+                 left join dim_client c on c.cle_client = f.cle_client
+                 left join dim_type_dossier t on t.cle_type_dossier = f.cle_type_dossier
+                 left join dim_port p on p.cle_port = f.cle_port
+                 where f.est_clos = false and f.jour_ouverture is not null
+                 order by f.jour_ouverture");
+
             echo json_encode($J, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE | JSON_PARTIAL_OUTPUT_ON_ERROR);
             break;
 
