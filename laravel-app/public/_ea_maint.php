@@ -2107,8 +2107,9 @@ try {
             // &period=month&year=2026&month=8 overrides the page's default
             // query (and, via RememberPeriod, the session) — lets this op
             // verify the master filter actually reaches a given page.
+            // &lg_customer=Name passes through too (Billing's drill-down).
             $queryOverride = array_merge((array) ($def['query'] ?? []), array_intersect_key(
-                $_GET, array_flip(['period', 'year', 'month'])
+                $_GET, array_flip(['period', 'year', 'month', 'lg_customer'])
             ));
             $req = Illuminate\Http\Request::create('/t/' . $slug, 'GET', $queryOverride);
             app()->instance('request', $req);
