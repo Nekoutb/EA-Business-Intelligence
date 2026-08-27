@@ -528,7 +528,8 @@ try {
             $tenant = App\Models\Tenant::where('slug', $slug)->first();
             if (!$tenant) { ln("no tenant '{$slug}'"); break; }
             $tid = $tenant->id;
-            foreach (['wh_dim_partner', 'wh_dim_account', 'wh_fact_invoice', 'wh_fact_invoice_line', 'wh_key_map'] as $tb) {
+            foreach (['wh_dim_partner', 'wh_dim_account', 'wh_fact_invoice', 'wh_fact_invoice_line', 'wh_fact_gl_line', 'wh_key_map', 'wh_sync_state'] as $tb) {
+                if (!Illuminate\Support\Facades\Schema::hasTable($tb)) { ln(sprintf('%-24s (no table)', $tb)); continue; }
                 $n = Illuminate\Support\Facades\DB::table($tb)->where('tenant_id', $tid)->count();
                 ln(sprintf('%-24s %s rows', $tb, number_format($n)));
             }
