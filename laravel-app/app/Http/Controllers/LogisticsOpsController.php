@@ -46,11 +46,26 @@ class LogisticsOpsController extends Controller
     public function reports(Request $request)
     {
         [$tenantId, $from, $to, $label, $period] = $this->ctx($request);
-        $key  = 'logi_reports_v1_' . md5(json_encode($period));
-        $data = ea_cached($key, fn () => (new LogisticsOpsService($tenantId))->revenueByCustomer($from, $to));
+        $svc  = new LogisticsOpsService($tenantId);
+        $key  = 'logi_reports_v2_' . md5(json_encode($period));
+        $data = ea_cached($key, function () use ($svc, $from, $to) {
+            $summary  = $svc->revenueByCustomer($from, $to);
+            $invoices = $svc->customerInvoices($from, $to);
+            $byClient = [];
+            foreach ($invoices as $inv) { $byClient[$inv['client']][] = $inv; }
+            $summary['invoices_by_client'] = $byClient;
+            return $summary;
+        });
         return view('logistics.reports', [
             'data' => $data, 'active' => 'reports_logistics', 'period' => $period, 'periodLabel' => $label,
         ]);
+    }
+
+    public function oop(Request $request)
+    {
+        [$tenantId] = $this->ctx($request);
+        $data = ea_cached('logi_oop_v1', fn () => (new LogisticsOpsService($tenantId))->oopCompliance());
+        return view('logistics.oop', ['data' => $data, 'active' => 'logistics_oop']);
     }
 
     public function volumes(Request $request)

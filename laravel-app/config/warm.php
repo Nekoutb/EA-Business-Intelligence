@@ -46,6 +46,7 @@ return [
         ['label' => 'logistics-workflow','module' => 'logistics_workflow',    'controller' => \App\Http\Controllers\LogisticsOpsController::class,            'query' => [], 'action' => 'workflow'],
         ['label' => 'logistics-volumes', 'module' => 'logistics_volumes',     'controller' => \App\Http\Controllers\LogisticsOpsController::class,            'query' => [], 'action' => 'volumes'],
         ['label' => 'logistics-reports', 'module' => 'reports_logistics',     'controller' => \App\Http\Controllers\LogisticsOpsController::class,            'query' => [], 'action' => 'reports'],
+        ['label' => 'logistics-oop',     'module' => 'logistics_oop',         'controller' => \App\Http\Controllers\LogisticsOpsController::class,            'query' => [], 'action' => 'oop'],
         ['label' => 'inventory',         'module' => 'inventory',             'controller' => \App\Http\Controllers\InventoryController::class,               'query' => []],
         ['label' => 'reports',           'module' => 'reports',               'controller' => \App\Http\Controllers\InventoryController::class,               'query' => ['view' => 'reports']],
         ['label' => 'customer-insights', 'module' => 'customer_insights',     'controller' => \App\Http\Controllers\CustomerInsightsController::class,        'query' => []],

@@ -393,6 +393,82 @@ final class LogisticsOpsService
         return $out;
     }
 
+    /**
+     * Invoice-level detail for the customer roll-down / drill-down.
+     * Fee revenue only (débours excluded), matching revenueByCustomer().
+     */
+    public function customerInvoices(\DateTimeImmutable $from, \DateTimeImmutable $to, ?string $client = null): array
+    {
+        try {
+            $q = DB::table('wh_fact_invoice as i')
+                ->leftJoin('wh_dim_partner as p', function ($j) {
+                    $j->on('p.tenant_id', '=', 'i.tenant_id')->on('p.odoo_id', '=', 'i.partner_odoo_id');
+                })
+                ->where('i.tenant_id', $this->tenantId)
+                ->whereBetween('i.invoice_date', [$from->format('Y-m-d'), $to->format('Y-m-d')])
+                ->when($client !== null, fn ($q) => $q->where('p.name', $client))
+                ->selectRaw("i.name inv, i.invoice_date d, COALESCE(p.name,'—') client,
+                             i.amount_untaxed fee, i.amount_total ttc, i.amount_residual outstanding")
+                ->orderBy('i.invoice_date');
+            return $q->get()->map(fn ($r) => (array) $r)->all();
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('logistics customer invoices failed', ['error' => $e->getMessage()]);
+            return [];
+        }
+    }
+
+    /**
+     * OOP — Out of Pocket Expense Compliance. Per file: débours incurred
+     * (cash advances) vs débours recharged to the client (fee-lines
+     * excluded), the gap in value and %, and the file's customer.
+     * Gap > 0 = recharged MORE than incurred (client absorbs the excess,
+     * shown green); gap < 0 = recharged LESS (Elimelec absorbs the loss,
+     * shown red). All-time — files outlive any single period.
+     */
+    public function oopCompliance(): array
+    {
+        $out = ['files' => [], 'incurred' => 0.0, 'recharged' => 0.0, 'over_n' => 0, 'under_n' => 0, 'nil_n' => 0];
+        try {
+            $rows = DB::table('wh_fact_dossier as d')
+                ->leftJoin(DB::raw('(select i.tenant_id tid, i.dossier_odoo_id did,
+                        SUM(l.price_subtotal) recharged
+                      from wh_fact_invoice_line l
+                      join wh_fact_invoice i on i.tenant_id = l.tenant_id and i.odoo_id = l.move_odoo_id
+                      where l.is_debours = 1 and i.dossier_odoo_id is not null
+                      group by i.tenant_id, i.dossier_odoo_id) b'),
+                    function ($j) { $j->on('b.tid', '=', 'd.tenant_id')->on('b.did', '=', 'd.odoo_id'); })
+                ->leftJoin(DB::raw('(select tenant_id tid2, dossier_odoo_id did2, SUM(amount) incurred
+                      from wh_fact_advance where dossier_odoo_id is not null group by tenant_id, dossier_odoo_id) a'),
+                    function ($j) { $j->on('a.tid2', '=', 'd.tenant_id')->on('a.did2', '=', 'd.odoo_id'); })
+                ->where('d.tenant_id', $this->tenantId)
+                ->whereRaw('(b.did is not null or a.did2 is not null)')
+                ->selectRaw('d.code, d.client_name, COALESCE(a.incurred,0) incurred, COALESCE(b.recharged,0) recharged,
+                             COALESCE(b.recharged,0) - COALESCE(a.incurred,0) gap')
+                ->orderByRaw('ABS(COALESCE(b.recharged,0) - COALESCE(a.incurred,0)) DESC')
+                ->get();
+
+            $out['incurred']  = (float) $rows->sum('incurred');
+            $out['recharged'] = (float) $rows->sum('recharged');
+            $out['files'] = $rows->map(function ($r) {
+                $gap = (float) $r->gap;
+                $pct = $r->incurred > 0 ? 100.0 * $gap / (float) $r->incurred : ($gap > 0 ? null : 0.0);
+                return [
+                    'code' => (string) $r->code, 'client' => (string) $r->client_name,
+                    'incurred' => (float) $r->incurred, 'recharged' => (float) $r->recharged,
+                    'gap' => $gap, 'gap_pct' => $pct,
+                ];
+            })->all();
+            foreach ($out['files'] as $f) {
+                if (abs($f['gap']) < 1) $out['nil_n']++;
+                elseif ($f['gap'] > 0) $out['over_n']++;
+                else $out['under_n']++;
+            }
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('logistics oop compliance failed', ['error' => $e->getMessage()]);
+        }
+        return $out;
+    }
+
     /** True when this tenant has synced dossier facts (gates the sections). */
     public static function available(?int $tenantId): bool
     {

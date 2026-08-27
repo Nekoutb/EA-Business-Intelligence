@@ -302,6 +302,17 @@ return [
             'status'  => 'live',
         ],
         [
+            'key'     => 'logistics_oop',
+            'service' => 'business_intelligence',
+            'label'   => 'OOP Compliance',
+            'url'     => '/logistics/oop',
+            'active'  => 'logistics_oop',
+            'icon'    => 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-1 9l-3 3-1.5-1.5',
+            'default' => false,
+            'core'    => false,
+            'status'  => 'live',
+        ],
+        [
             'key'     => 'reports_logistics',
             'service' => 'business_intelligence',
             // Admin-facing name (module registry key: reports_logistics);
