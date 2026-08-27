@@ -440,7 +440,8 @@ final class LogisticsOpsService
      */
     public function unbilledRevenue(\DateTimeImmutable $from, \DateTimeImmutable $to): array
     {
-        $out = ['count' => 0, 'files' => [], 'total_debours_billed' => 0.0, 'total_advances' => 0.0];
+        $out = ['count' => 0, 'files' => [], 'by_client' => [], 'detail' => [],
+                'total_debours_billed' => 0.0, 'total_advances' => 0.0];
         try {
             $f = $from->format('Y-m-d'); $t = $to->format('Y-m-d');
 
@@ -472,6 +473,43 @@ final class LogisticsOpsService
             $meta = DB::table('wh_fact_dossier')->where('tenant_id', $this->tenantId)->whereIn('odoo_id', $ids)
                 ->get(['odoo_id', 'code', 'client_name', 'type_name', 'opened_date'])->keyBy('odoo_id');
 
+            // Per-transaction detail for the file-level drilldown: every
+            // advance (incurred) and every invoice line (issued) on these
+            // files, all-time — a file's reconciliation isn't bounded by
+            // the period that made it "active" and worth reviewing.
+            $advItems = DB::table('wh_fact_advance')->where('tenant_id', $this->tenantId)
+                ->whereIn('dossier_odoo_id', $ids)
+                ->get(['dossier_odoo_id', 'label', 'supplier_name', 'amount', 'disbursed_date']);
+            $invItems = DB::table('wh_fact_invoice_line as l')
+                ->join('wh_fact_invoice as i', function ($j) {
+                    $j->on('i.tenant_id', '=', 'l.tenant_id')->on('i.odoo_id', '=', 'l.move_odoo_id');
+                })
+                ->where('l.tenant_id', $this->tenantId)->whereIn('i.dossier_odoo_id', $ids)
+                ->get(['i.dossier_odoo_id', 'l.label', 'i.name as inv', 'l.invoice_date', 'l.price_subtotal']);
+
+            $invByD = [];
+            foreach ($invItems as $it) { $invByD[$it->dossier_odoo_id][] = $it; }
+
+            $detailByD = [];
+            foreach ($advItems as $a) {
+                $at = $this->normalizeExpenseWords($a->label);
+                $matched = false;
+                foreach (($invByD[$a->dossier_odoo_id] ?? []) as $li) {
+                    if (count(array_intersect($at, $this->normalizeExpenseWords($li->label))) >= 1) { $matched = true; break; }
+                }
+                $detailByD[$a->dossier_odoo_id]['incurred'][] = [
+                    'label' => (string) $a->label, 'who' => (string) ($a->supplier_name ?? '—'),
+                    'date' => (string) $a->disbursed_date, 'amount' => (float) $a->amount,
+                    'matched' => $matched,
+                ];
+            }
+            foreach ($invItems as $li) {
+                $detailByD[$li->dossier_odoo_id]['invoiced'][] = [
+                    'inv' => (string) $li->inv, 'label' => (string) $li->label,
+                    'date' => (string) $li->invoice_date, 'amount' => (float) $li->price_subtotal,
+                ];
+            }
+
             foreach ($ids as $id) {
                 $fee = (float) ($feeSub[$id]->fees ?? 0);
                 if (abs($fee) > 0.5) continue;
@@ -479,14 +517,30 @@ final class LogisticsOpsService
                 $deb = (float) ($feeSub[$id]->deb ?? 0);
                 $adv = (float) ($advSub[$id]->amt ?? 0);
                 $out['files'][] = [
-                    'code' => (string) $m->code, 'client' => (string) $m->client_name,
+                    'id' => (string) $id, 'code' => (string) $m->code, 'client' => (string) $m->client_name,
                     'type' => (string) $m->type_name, 'opened' => (string) $m->opened_date,
                     'debours_billed' => $deb, 'advances' => $adv,
+                ];
+                $out['detail'][(string) $id] = [
+                    'incurred' => $detailByD[$id]['incurred'] ?? [],
+                    'invoiced' => $detailByD[$id]['invoiced'] ?? [],
                 ];
                 $out['total_debours_billed'] += $deb; $out['total_advances'] += $adv;
             }
             $out['count'] = count($out['files']);
             usort($out['files'], fn ($a, $b) => $b['advances'] <=> $a['advances']);
+
+            // Per-client summary — shown first; files (and their
+            // transaction detail) only render once a client is expanded.
+            $byC = [];
+            foreach ($out['files'] as $r) {
+                ($byC[$r['client']] ??= ['client' => $r['client'], 'n' => 0, 'deb' => 0.0, 'adv' => 0.0]);
+                $byC[$r['client']]['n']++;
+                $byC[$r['client']]['deb'] += $r['debours_billed'];
+                $byC[$r['client']]['adv'] += $r['advances'];
+            }
+            usort($byC, fn ($a, $b) => $b['adv'] <=> $a['adv']);
+            $out['by_client'] = array_values($byC);
         } catch (\Throwable $e) {
             \Illuminate\Support\Facades\Log::warning('logistics unbilled revenue failed', ['error' => $e->getMessage()]);
         }
