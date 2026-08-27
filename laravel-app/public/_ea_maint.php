@@ -2104,9 +2104,16 @@ try {
                 if (($p['label'] ?? '') === $want) { $def = $p; break; }
             }
             if (!$def) { ln("no page '{$want}' in config/warm.php"); break; }
-            $req = Illuminate\Http\Request::create('/t/' . $slug, 'GET', (array) ($def['query'] ?? []));
+            // &period=month&year=2026&month=8 overrides the page's default
+            // query (and, via RememberPeriod, the session) — lets this op
+            // verify the master filter actually reaches a given page.
+            $queryOverride = array_merge((array) ($def['query'] ?? []), array_intersect_key(
+                $_GET, array_flip(['period', 'year', 'month'])
+            ));
+            $req = Illuminate\Http\Request::create('/t/' . $slug, 'GET', $queryOverride);
             app()->instance('request', $req);
             try { $s = app('session')->driver(); $s->start(); $req->setLaravelSession($s); } catch (\Throwable $e) {}
+            try { (new App\Http\Middleware\RememberPeriod())->handle($req, fn ($r) => new Illuminate\Http\Response()); } catch (\Throwable $e) {}
             $u = App\Models\User::where('tenant_id', $tenant->id)->orderBy('id')->first();
             if ($u) { try { Illuminate\Support\Facades\Auth::login($u); } catch (\Throwable $e) {} }
             // Put a flash in the session to exercise the toast path too
