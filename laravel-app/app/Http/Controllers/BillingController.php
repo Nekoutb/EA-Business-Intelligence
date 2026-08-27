@@ -102,7 +102,10 @@ class BillingController extends Controller
                 fn () => $svc->billingLags($periodFrom, $periodTo, $lgCustomer !== '' ? $lgCustomer : null));
             $unbilledDebours = ea_cached('logi_unbilled_deb_v1_' . md5(json_encode($period)),
                 fn () => $svc->unbilledDebours($periodFrom, $periodTo));
-            $unbilledRevenue = ea_cached('logi_unbilled_rev_v1_' . md5(json_encode($period)),
+            // v2: unbilledRevenue() gained 'by_client' + 'detail' keys for
+            // the client -> file -> transaction drilldown. Old v1 cache
+            // entries lack them, which rendered the summary table empty.
+            $unbilledRevenue = ea_cached('logi_unbilled_rev_v2_' . md5(json_encode($period)),
                 fn () => $svc->unbilledRevenue($periodFrom, $periodTo));
         }
 
