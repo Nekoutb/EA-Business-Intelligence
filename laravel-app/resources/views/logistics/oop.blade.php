@@ -31,7 +31,11 @@
     <tr><th></th><th>File</th><th>Customer</th><th class="num">Débours incurred (XAF)</th>
         <th class="num">Débours recharged (XAF)</th><th class="num">Gap (XAF)</th><th class="num">Gap %</th></tr>
     @forelse ($f as $r)
-      @php $over = $r['gap'] >= 0; $d = $det[$r['id']] ?? ['incurred' => [], 'recharged' => []]; @endphp
+      @php
+        $over = $r['gap'] >= 0;
+        $d = $det[$r['id']] ?? [];
+        $d += ['incurred' => [], 'recharged' => []];
+      @endphp
       <tr class="lg-roll-row" data-target="oop-{{ $r['id'] }}" data-q="{{ mb_strtolower($r['code'] . ' ' . $r['client']) }}" style="cursor:pointer">
         <td><span class="lg-arrow">▸</span></td>
         <td>{{ $r['code'] }}</td><td>{{ $r['client'] }}</td>

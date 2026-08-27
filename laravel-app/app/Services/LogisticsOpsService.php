@@ -508,7 +508,10 @@ final class LogisticsOpsService
                     ];
                 }
                 foreach ($rows as $r) {
-                    $out['detail'][(string) $r->odoo_id] = $detail[$r->odoo_id] ?? ['incurred' => [], 'recharged' => []];
+                    $out['detail'][(string) $r->odoo_id] = [
+                        'incurred'  => $detail[$r->odoo_id]['incurred'] ?? [],
+                        'recharged' => $detail[$r->odoo_id]['recharged'] ?? [],
+                    ];
                 }
             }
         } catch (\Throwable $e) {
