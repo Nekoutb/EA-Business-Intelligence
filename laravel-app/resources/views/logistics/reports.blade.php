@@ -25,11 +25,11 @@
 <div class="lg-card">
   <h3>Revenue per customer · {{ $periodLabel }} <span style="float:right;font-weight:500;text-transform:none;letter-spacing:0;color:#7c7466;font-size:11px">click ▸ to expand · click a header to sort</span></h3>
   @php $rmax = collect($c)->max('revenue') ?: 1; @endphp
-  <div class="lg-scroll"><table class="lg-dt sortable" id="rlTable">
+  <div class="lg-scroll"><table class="lg-dt sortable cell-select" id="rlTable">
     <tr><th></th><th>Customer</th><th></th><th class="num">Invoices</th><th class="num">Fee revenue (XAF)</th>
         <th class="num">% of total</th><th class="num">Cumulative %</th></tr>
     @forelse ($c as $i => $r)
-      <tr class="lg-roll-row" data-target="rl-{{ $i }}" style="cursor:pointer">
+      <tr class="lg-roll-row" data-target="rl-{{ $i }}">
         <td><span class="lg-arrow">▸</span></td>
         <td>{{ $r['client'] }}</td>
         <td><span class="bar" style="display:block"><i style="width:{{ max(2, (int) (100 * $r['revenue'] / $rmax)) }}%"></i></span></td>
@@ -40,7 +40,7 @@
       </tr>
       <tr id="rl-{{ $i }}" class="lg-roll-detail" style="display:none">
         <td colspan="7" style="padding:0 10px 12px 34px;background:#faf8f4">
-          <table class="lg-dt sortable" style="font-size:11.5px">
+          <table class="lg-dt sortable cell-select" style="font-size:11.5px">
             <tr><th>Invoice</th><th>Date</th><th class="num">Fee (XAF)</th><th class="num">TTC (XAF)</th><th class="num">Outstanding (XAF)</th></tr>
             @foreach (($byInv[$r['client']] ?? []) as $inv)
               <tr><td>{{ $inv['inv'] }}</td><td>{{ $inv['d'] }}</td>
@@ -70,4 +70,5 @@ the fee portion of each invoice's lines. Débours (out-of-pocket costs rebilled 
 excluded. Figures follow the master period filter and match the Dashboard's revenue.</div>
 
 @include('logistics._interactive')
+@include('logistics._cellselect')
 @endsection

@@ -315,9 +315,14 @@ return [
         [
             'key'     => 'reports_logistics',
             'service' => 'business_intelligence',
-            // Admin-facing name (module registry key: reports_logistics);
-            // replaces the generic Reports page for logistics workspaces.
-            'label'   => 'Reports_Logistics',
+            // 'label' is what admin screens show (module toggles, tenant
+            // create wizard) — kept as "Reports_Logistics" so it's never
+            // confused with the generic 'reports' module in that context.
+            // 'nav_label' overrides ONLY the tenant-facing sidebar entry,
+            // where it should read plainly as "Reports" (see
+            // layouts/app.blade.php's nav loop).
+            'label'     => 'Reports_Logistics',
+            'nav_label' => 'Reports',
             'url'     => '/logistics/reports',
             'active'  => 'reports_logistics',
             'icon'    => 'M9 17v-6m4 6V7m4 10v-4M5 5h14a2 2 0 012 2v12a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2z',

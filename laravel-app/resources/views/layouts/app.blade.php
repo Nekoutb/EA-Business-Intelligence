@@ -616,7 +616,7 @@
                        @if($active === $module['active']) aria-current="page" @endif
                        class="ea-nav__i {{ $active === $module['active'] ? 'is-active' : '' }} {{ $moduleSoon ? 'is-soon' : '' }}">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="{{ $module['icon'] }}"/></svg>
-                        <span class="ea-nav__i-l">{{ $module['label'] }}</span>
+                        <span class="ea-nav__i-l">{{ $module['nav_label'] ?? $module['label'] }}</span>
                         @if ($moduleSoon)<span class="ea-nav__b">Soon</span>@endif
                     </a>
                   @endforeach

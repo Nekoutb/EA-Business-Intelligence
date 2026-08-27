@@ -32,9 +32,9 @@
         <span class="bar"><i style="width:{{ max(2, (int) (100 * (float) $r->t / $emax)) }}%"></i></span>
         <span class="n">{{ number_format((float) $r->t) }} t</span></div>
     @endforeach
-    <h3 style="margin-top:16px">Named importers</h3>
-    <div class="lg-scroll"><table class="lg-dt">
-      <tr><th>Importer</th><th>Files</th><th>Tonnes</th></tr>
+    <h3 style="margin-top:16px">Named importers <span style="float:right;font-weight:500;text-transform:none;letter-spacing:0;color:#7c7466;font-size:11px">click a header to sort</span></h3>
+    <div class="lg-scroll"><table class="lg-dt sortable cell-select">
+      <tr><th>Importer</th><th class="num">Files</th><th class="num">Tonnes</th></tr>
       @forelse ($data['importers'] as $r)
         <tr><td>{{ $r->k }}</td><td class="num">{{ number_format($r->n) }}</td><td class="num">{{ number_format((float) $r->t) }}</td></tr>
       @empty
@@ -47,4 +47,7 @@
 @if ($data['capture_note'])
   <div class="lg-note"><b>Capture gap.</b> {{ $data['capture_note'] }}</div>
 @endif
+
+@include('logistics._interactive')
+@include('logistics._cellselect')
 @endsection

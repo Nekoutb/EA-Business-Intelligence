@@ -1,6 +1,9 @@
 {{-- Shared behavior for the Logistics report tables:
-     - .lg-roll-row / .lg-roll-detail: click a row to expand its paired
-       detail row (data-target = detail row id).
+     - .lg-roll-row / .lg-roll-detail: click the row's ▸ arrow to expand
+       its paired detail row (data-target = detail row id). The trigger is
+       the arrow cell specifically (not the whole row) so a table can also
+       use cell-select (_cellselect.blade.php) without the two features
+       fighting over clicks.
      - table.sortable: click any non-empty header to sort by that column
        (numeric columns sort largest-first on the initial click; text
        columns sort A-Z). Roll-row/roll-detail pairs move together so an
@@ -8,7 +11,9 @@
 <script>
 (function () {
   document.querySelectorAll('.lg-roll-row').forEach(function (row) {
-    row.addEventListener('click', function () {
+    var trigger = row.querySelector('.lg-arrow') || row;
+    trigger.addEventListener('click', function (e) {
+      e.stopPropagation();
       var t = document.getElementById(row.dataset.target);
       if (!t) return;
       var open = t.style.display !== 'none';

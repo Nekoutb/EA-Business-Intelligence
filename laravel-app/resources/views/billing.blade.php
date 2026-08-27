@@ -62,7 +62,10 @@
         $billingKpis = $billing['kpis'] ?? [];
     @endphp
 
-    @foreach ($proposedKpis as $section)
+    {{-- "Issuance & Quality" is built around Odoo-derived scanning metrics
+         (time-to-invoice vs a scanned cargo date) that don't exist for a
+         direct-database logistics tenant — skip it there. --}}
+    @foreach (($logisticsBilling ?? null) ? [] : $proposedKpis as $section)
         <div class="mb-7">
             <div class="flex items-center gap-2 mb-3">
                 <div class="w-1 h-4 rounded bg-brand-400"></div>

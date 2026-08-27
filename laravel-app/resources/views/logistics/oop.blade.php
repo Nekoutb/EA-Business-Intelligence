@@ -36,7 +36,7 @@
         $d = $det[$r['id']] ?? [];
         $d += ['incurred' => [], 'recharged' => []];
       @endphp
-      <tr class="lg-roll-row" data-target="oop-{{ $r['id'] }}" data-q="{{ mb_strtolower($r['code'] . ' ' . $r['client']) }}" style="cursor:pointer">
+      <tr class="lg-roll-row" data-target="oop-{{ $r['id'] }}" data-q="{{ mb_strtolower($r['code'] . ' ' . $r['client']) }}">
         <td><span class="lg-arrow">▸</span></td>
         <td>{{ $r['code'] }}</td><td>{{ $r['client'] }}</td>
         <td class="num">{{ number_format($r['incurred']) }}</td>
