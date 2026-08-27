@@ -117,6 +117,52 @@ try {
             ln('server now: ' . date('Y-m-d H:i:s') . ' (' . date_default_timezone_get() . ')');
             break;
 
+        case 'cachecheck':
+            // Does the shared cache actually hold what the warm worker
+            // should have written for this tenant's dashboard? Checks the
+            // exact keys DashboardController::index() reads for the given
+            // period (default ytd, current year/month — same defaults the
+            // controller and config/warm.php's 'dashboard' entry use).
+            $slug = (string) ($_GET['tenant'] ?? '');
+            $tenant = App\Models\Tenant::where('slug', $slug)->first();
+            if (!$tenant) { ln("no tenant '{$slug}'"); break; }
+            app(App\Tenancy\TenantContext::class)->set($tenant);
+            $today = new DateTime();
+            $type  = (string) ($_GET['period'] ?? 'ytd');
+            $year  = (int) ($_GET['year'] ?? $today->format('Y'));
+            $month = (int) ($_GET['month'] ?? $today->format('m'));
+            $cacheTag = "{$type}_{$year}_{$month}";
+            $prefix = ea_cache_prefix();
+            ln("tenant: {$tenant->id} / {$slug} — cacheTag={$cacheTag}");
+            ln("prefix: {$prefix}");
+            $store = Illuminate\Support\Facades\Cache::getFacadeRoot();
+            foreach (["revenue_ht_v1_{$cacheTag}", "pl_{$cacheTag}", "ar_{$cacheTag}",
+                      "recon_{$cacheTag}", "dash_kpi_running_v1_{$cacheTag}"] as $key) {
+                $full = $prefix . $key;
+                $hit = $store->get($full);
+                if (is_array($hit) && array_key_exists('__at', $hit)) {
+                    ln(sprintf('%-32s HIT  computed_at=%s', $key, date('H:i:s', $hit['__at'])));
+                } elseif ($hit !== null) {
+                    ln(sprintf('%-32s HIT  (legacy, no timestamp)', $key));
+                } else {
+                    ln(sprintf('%-32s MISS', $key));
+                }
+            }
+            // Raw DB row check — bypasses the Cache facade entirely, in case
+            // the configured store isn't actually 'database'.
+            ln('');
+            ln('cache config store: ' . config('cache.default'));
+            if (Illuminate\Support\Facades\Schema::hasTable('cache')) {
+                $row = Illuminate\Support\Facades\DB::table('cache')
+                    ->where('key', 'like', "%{$cacheTag}%")->where('key', 'like', "%t{$tenant->id}%")
+                    ->select('key', 'expiration')->limit(10)->get();
+                ln('matching rows in `cache` table: ' . $row->count());
+                foreach ($row as $r) {
+                    ln('  ' . $r->key . '  expires=' . date('Y-m-d H:i:s', $r->expiration));
+                }
+            }
+            break;
+
         case 'warmnow':
             // Priority warm pass for one tenant (e.g. right after its first
             // Odoo/ERP connection or warehouse backfill), rather than
