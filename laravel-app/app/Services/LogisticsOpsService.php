@@ -419,30 +419,44 @@ final class LogisticsOpsService
 
     /**
      * OOP — Out of Pocket Expense Compliance. Per file: débours incurred
-     * (cash advances) vs débours recharged to the client (fee-lines
-     * excluded), the gap in value and %, and the file's customer.
-     * Gap > 0 = recharged MORE than incurred (client absorbs the excess,
-     * shown green); gap < 0 = recharged LESS (Elimelec absorbs the loss,
-     * shown red). All-time — files outlive any single period.
+     * (cash advances disbursed in the period) vs débours recharged to the
+     * client (débours-flagged lines billed in the period), the gap in
+     * value and %, and the file's customer. Gap > 0 = recharged MORE than
+     * incurred (client absorbs the excess, shown green); gap < 0 =
+     * recharged LESS (Elimelec absorbs the loss, shown red).
+     *
+     * Period-scoped like the rest of the sector's pages — the master
+     * filter drives which transactions count. Also returns per-file
+     * transaction detail (the underlying incurred/recharged line items)
+     * for the drill-down.
      */
-    public function oopCompliance(): array
+    public function oopCompliance(\DateTimeImmutable $from, \DateTimeImmutable $to): array
     {
-        $out = ['files' => [], 'incurred' => 0.0, 'recharged' => 0.0, 'over_n' => 0, 'under_n' => 0, 'nil_n' => 0];
+        $out = ['files' => [], 'incurred' => 0.0, 'recharged' => 0.0, 'over_n' => 0, 'under_n' => 0, 'nil_n' => 0, 'detail' => []];
         try {
+            $f = $from->format('Y-m-d'); $t = $to->format('Y-m-d');
+
+            $debSub = DB::table('wh_fact_invoice_line as l')
+                ->join('wh_fact_invoice as i', function ($j) {
+                    $j->on('i.tenant_id', '=', 'l.tenant_id')->on('i.odoo_id', '=', 'l.move_odoo_id');
+                })
+                ->where('l.tenant_id', $this->tenantId)->where('l.is_debours', true)
+                ->whereNotNull('i.dossier_odoo_id')->whereBetween('l.invoice_date', [$f, $t])
+                ->selectRaw('i.tenant_id as tid, i.dossier_odoo_id as did, SUM(l.price_subtotal) as recharged')
+                ->groupBy('i.tenant_id', 'i.dossier_odoo_id');
+
+            $advSub = DB::table('wh_fact_advance')
+                ->where('tenant_id', $this->tenantId)->whereNotNull('dossier_odoo_id')
+                ->whereBetween('disbursed_date', [$f, $t])
+                ->selectRaw('tenant_id as tid2, dossier_odoo_id as did2, SUM(amount) as incurred')
+                ->groupBy('tenant_id', 'dossier_odoo_id');
+
             $rows = DB::table('wh_fact_dossier as d')
-                ->leftJoin(DB::raw('(select i.tenant_id tid, i.dossier_odoo_id did,
-                        SUM(l.price_subtotal) recharged
-                      from wh_fact_invoice_line l
-                      join wh_fact_invoice i on i.tenant_id = l.tenant_id and i.odoo_id = l.move_odoo_id
-                      where l.is_debours = 1 and i.dossier_odoo_id is not null
-                      group by i.tenant_id, i.dossier_odoo_id) b'),
-                    function ($j) { $j->on('b.tid', '=', 'd.tenant_id')->on('b.did', '=', 'd.odoo_id'); })
-                ->leftJoin(DB::raw('(select tenant_id tid2, dossier_odoo_id did2, SUM(amount) incurred
-                      from wh_fact_advance where dossier_odoo_id is not null group by tenant_id, dossier_odoo_id) a'),
-                    function ($j) { $j->on('a.tid2', '=', 'd.tenant_id')->on('a.did2', '=', 'd.odoo_id'); })
+                ->leftJoinSub($debSub, 'b', fn ($j) => $j->on('b.tid', '=', 'd.tenant_id')->on('b.did', '=', 'd.odoo_id'))
+                ->leftJoinSub($advSub, 'a', fn ($j) => $j->on('a.tid2', '=', 'd.tenant_id')->on('a.did2', '=', 'd.odoo_id'))
                 ->where('d.tenant_id', $this->tenantId)
                 ->whereRaw('(b.did is not null or a.did2 is not null)')
-                ->selectRaw('d.code, d.client_name, COALESCE(a.incurred,0) incurred, COALESCE(b.recharged,0) recharged,
+                ->selectRaw('d.odoo_id, d.code, d.client_name, COALESCE(a.incurred,0) incurred, COALESCE(b.recharged,0) recharged,
                              COALESCE(b.recharged,0) - COALESCE(a.incurred,0) gap')
                 ->orderByRaw('ABS(COALESCE(b.recharged,0) - COALESCE(a.incurred,0)) DESC')
                 ->get();
@@ -453,15 +467,49 @@ final class LogisticsOpsService
                 $gap = (float) $r->gap;
                 $pct = $r->incurred > 0 ? 100.0 * $gap / (float) $r->incurred : ($gap > 0 ? null : 0.0);
                 return [
-                    'code' => (string) $r->code, 'client' => (string) $r->client_name,
+                    'id' => (string) $r->odoo_id, 'code' => (string) $r->code, 'client' => (string) $r->client_name,
                     'incurred' => (float) $r->incurred, 'recharged' => (float) $r->recharged,
                     'gap' => $gap, 'gap_pct' => $pct,
                 ];
             })->all();
-            foreach ($out['files'] as $f) {
-                if (abs($f['gap']) < 1) $out['nil_n']++;
-                elseif ($f['gap'] > 0) $out['over_n']++;
+            foreach ($out['files'] as $fl) {
+                if (abs($fl['gap']) < 1) $out['nil_n']++;
+                elseif ($fl['gap'] > 0) $out['over_n']++;
                 else $out['under_n']++;
+            }
+
+            // Transaction-level detail for the drill-down, keyed by dossier
+            // odoo id (matches the surrogate the view uses for its target).
+            $ids = $rows->pluck('odoo_id')->all();
+            if ($ids !== []) {
+                $advLines = DB::table('wh_fact_advance')
+                    ->where('tenant_id', $this->tenantId)->whereIn('dossier_odoo_id', $ids)
+                    ->whereBetween('disbursed_date', [$f, $t])
+                    ->get(['dossier_odoo_id', 'label', 'supplier_name', 'amount', 'disbursed_date']);
+                $debLines = DB::table('wh_fact_invoice_line as l')
+                    ->join('wh_fact_invoice as i', function ($j) {
+                        $j->on('i.tenant_id', '=', 'l.tenant_id')->on('i.odoo_id', '=', 'l.move_odoo_id');
+                    })
+                    ->where('l.tenant_id', $this->tenantId)->where('l.is_debours', true)
+                    ->whereIn('i.dossier_odoo_id', $ids)->whereBetween('l.invoice_date', [$f, $t])
+                    ->get(['i.dossier_odoo_id', 'l.label', 'i.name as inv', 'l.price_subtotal', 'l.invoice_date']);
+
+                $detail = [];
+                foreach ($advLines as $a) {
+                    $detail[$a->dossier_odoo_id]['incurred'][] = [
+                        'label' => (string) $a->label, 'who' => (string) ($a->supplier_name ?? '—'),
+                        'date' => (string) $a->disbursed_date, 'amount' => (float) $a->amount,
+                    ];
+                }
+                foreach ($debLines as $l) {
+                    $detail[$l->dossier_odoo_id]['recharged'][] = [
+                        'label' => (string) $l->label, 'inv' => (string) $l->inv,
+                        'date' => (string) $l->invoice_date, 'amount' => (float) $l->price_subtotal,
+                    ];
+                }
+                foreach ($rows as $r) {
+                    $out['detail'][(string) $r->odoo_id] = $detail[$r->odoo_id] ?? ['incurred' => [], 'recharged' => []];
+                }
             }
         } catch (\Throwable $e) {
             \Illuminate\Support\Facades\Log::warning('logistics oop compliance failed', ['error' => $e->getMessage()]);

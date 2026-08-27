@@ -20,8 +20,13 @@
   table.lg-dt { width:100%; border-collapse:collapse; font-size:12.5px; }
   table.lg-dt th, table.lg-dt td { text-align:left; padding:7px 10px; border-bottom:1px solid #efece6; white-space:nowrap; }
   table.lg-dt th { font-size:10px; letter-spacing:.07em; text-transform:uppercase; color:#7c7466; }
-  table.lg-dt td.num { text-align:right; font-variant-numeric:tabular-nums; }
+  table.lg-dt th.num, table.lg-dt td.num { text-align:right; font-variant-numeric:tabular-nums; }
   table.lg-dt td.neg { color:#9a3b2e; } table.lg-dt td.pos { color:#0d6e6e; }
+  table.sortable th { cursor:pointer; user-select:none; }
+  table.sortable th:hover { color:#1e3d44; }
+  table.sortable th.sort-asc::after  { content:' \25B4'; }
+  table.sortable th.sort-desc::after { content:' \25BE'; }
+  .lg-arrow { display:inline-block; width:12px; color:#7c7466; }
   .lg-note { border-left:3px solid #9a3b2e; background:#f8e9e5; border-radius:0 10px 10px 0;
     padding:12px 16px; margin:14px 0; font-size:13px; color:#5c4a44; }
   .lg-note.ok { border-color:#0d6e6e; background:#e3efec; color:#2e5651; }

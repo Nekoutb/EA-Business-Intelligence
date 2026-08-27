@@ -63,9 +63,12 @@ class LogisticsOpsController extends Controller
 
     public function oop(Request $request)
     {
-        [$tenantId] = $this->ctx($request);
-        $data = ea_cached('logi_oop_v1', fn () => (new LogisticsOpsService($tenantId))->oopCompliance());
-        return view('logistics.oop', ['data' => $data, 'active' => 'logistics_oop']);
+        [$tenantId, $from, $to, $label, $period] = $this->ctx($request);
+        $key  = 'logi_oop_v2_' . md5(json_encode($period));
+        $data = ea_cached($key, fn () => (new LogisticsOpsService($tenantId))->oopCompliance($from, $to));
+        return view('logistics.oop', [
+            'data' => $data, 'active' => 'logistics_oop', 'period' => $period, 'periodLabel' => $label,
+        ]);
     }
 
     public function volumes(Request $request)
