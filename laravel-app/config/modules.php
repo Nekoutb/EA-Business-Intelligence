@@ -105,11 +105,12 @@ return [
             'key'     => 'reports',
             'service' => 'business_intelligence',
             'label'   => 'Reports',
-            // Hosted on the cached /inventory route (?view=reports) because a
-            // dedicated /reports route 404s behind this host's frozen route
-            // cache. The clean /reports route is also defined and takes over
-            // automatically once that cache is cleared.
-            'url'     => '/inventory?view=reports',
+            // Direct route. (Was '/inventory?view=reports' while this host's
+            // route cache was frozen — that detour gated Reports behind the
+            // INVENTORY module and 403'd every workspace without it, e.g.
+            // logistics tenants. Deploys rebuild the route cache since
+            // 2026-07-30, so the workaround is obsolete.)
+            'url'     => '/reports',
             'active'  => 'reports',
             'icon'    => 'M8 7V3m8 4V3M3 11h18M5 5h14a2 2 0 012 2v12a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2z',
             'default' => true,
