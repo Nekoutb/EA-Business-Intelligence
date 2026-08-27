@@ -2,6 +2,14 @@
      the OOP Billing Latency Index). Drill-down: click a client to load
      transaction detail (?lg_customer=). --}}
 @include('logistics._style')
+<style>
+  .lg-filechips { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin:10px 0 14px; }
+  .lg-filechips__label { font:600 10px/1.4 -apple-system,sans-serif; letter-spacing:.05em; text-transform:uppercase; color:#7c7466; margin-right:4px; }
+  .lg-filechip { border:1px solid #e8e4de; background:#fff; color:#1e3d44; font:600 11.5px "Consolas",monospace;
+    padding:5px 10px; border-radius:16px; cursor:pointer; }
+  .lg-filechip:hover { border-color:#0d6e6e; }
+  .lg-filechip.active { background:#0d6e6e; border-color:#0d6e6e; color:#fff; }
+</style>
 @php
   $fb = $lg['file_bill'] ?? null;
   $db = $lg['debours'] ?? null;
@@ -53,19 +61,34 @@
 </div>
 
 @if ($lgCustomer !== '')
+  @php
+    $fileCodes = collect($fb['detail'] ?? [])->pluck('code')
+      ->merge(collect($db['detail'] ?? [])->pluck('file'))
+      ->filter()->unique()->sort()->values();
+  @endphp
   <div class="lg-card" id="lg-detail">
     <h3>Transaction detail · {{ $lgCustomer }}
       <a href="{{ request()->fullUrlWithQuery(['lg_customer' => null]) }}" style="float:right;color:#7c7466;font-size:11px">clear ✕</a></h3>
+
+    @if ($fileCodes->count() > 1)
+      <div class="lg-filechips" id="lgFileChips">
+        <span class="lg-filechips__label">Filter by file — click one to isolate it, click again for all:</span>
+        @foreach ($fileCodes as $fc)
+          <button type="button" class="lg-filechip" data-file="{{ $fc }}">{{ $fc }}</button>
+        @endforeach
+      </div>
+    @endif
 
     <h3 style="margin-top:8px">Files → first bill</h3>
     <div class="lg-scroll"><table class="lg-dt sortable cell-select">
       <tr><th>File</th><th>Opened</th><th>First billed</th><th class="num">Days</th></tr>
       @forelse ($fb['detail'] ?? [] as $r)
-        <tr><td>{{ $r->code }}</td><td>{{ $r->opened_date }}</td><td>{{ $r->first_bill }}</td>
+        <tr data-file="{{ $r->code }}"><td>{{ $r->code }}</td><td>{{ $r->opened_date }}</td><td>{{ $r->first_bill }}</td>
           <td class="num {{ $r->days > 30 ? 'neg' : '' }}">{{ number_format($r->days) }}</td></tr>
       @empty
         <tr><td colspan="4" style="color:#7c7466">No billed files for this customer.</td></tr>
       @endforelse
+      <tr class="lg-file-empty" style="display:none"><td colspan="4" style="color:#7c7466">No first-bill record for this file.</td></tr>
     </table></div>
 
     <h3 style="margin-top:16px">Débours incurred on file → recharge on revenue invoice <span style="text-transform:none;letter-spacing:0;color:#7c7466;font-weight:500">(OOP Billing Latency Index detail)</span></h3>
@@ -73,7 +96,7 @@
       <tr><th>File</th><th>Expense on file</th><th>Paid to</th><th>Incurred</th><th class="num">Amount (XAF)</th>
           <th>Recharged as</th><th>Invoice</th><th>Billed</th><th class="num">Amount (XAF)</th><th class="num">Days</th></tr>
       @forelse ($db['detail'] ?? [] as $p)
-        <tr>
+        <tr data-file="{{ $p['file'] }}">
           <td>{{ $p['file'] }}</td>
           <td>{{ $p['adv_label'] }}</td>
           <td>{{ $p['adv_who'] }}</td>
@@ -88,6 +111,7 @@
       @empty
         <tr><td colspan="10" style="color:#7c7466">No name-matched débours pairs for this customer.</td></tr>
       @endforelse
+      <tr class="lg-file-empty" style="display:none"><td colspan="10" style="color:#7c7466">No débours pair for this file.</td></tr>
     </table></div>
     <p style="color:#7c7466;font-size:11.5px;margin:8px 0 0">Matching is by normalized name within the same
     file (shared word of 4+ letters), not exact — negative days mean the débours was billed before the
@@ -149,3 +173,32 @@
 
 @include('logistics._interactive')
 @include('logistics._cellselect')
+<script>
+(function () {
+  var chips = document.querySelectorAll('#lgFileChips .lg-filechip');
+  if (!chips.length) return;
+  var active = null;
+
+  function apply() {
+    document.querySelectorAll('#lg-detail table.lg-dt').forEach(function (table) {
+      var rows = table.querySelectorAll('tr[data-file]');
+      var anyVisible = false;
+      rows.forEach(function (tr) {
+        var show = !active || tr.dataset.file === active;
+        tr.style.display = show ? '' : 'none';
+        if (show) anyVisible = true;
+      });
+      var emptyRow = table.querySelector('tr.lg-file-empty');
+      if (emptyRow) emptyRow.style.display = (rows.length && !anyVisible) ? '' : 'none';
+    });
+  }
+
+  chips.forEach(function (chip) {
+    chip.addEventListener('click', function () {
+      active = (active === chip.dataset.file) ? null : chip.dataset.file;
+      chips.forEach(function (c) { c.classList.toggle('active', c.dataset.file === active); });
+      apply();
+    });
+  });
+})();
+</script>
