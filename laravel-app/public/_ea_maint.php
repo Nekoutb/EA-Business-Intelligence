@@ -117,6 +117,19 @@ try {
             ln('server now: ' . date('Y-m-d H:i:s') . ' (' . date_default_timezone_get() . ')');
             break;
 
+        case 'warmnow':
+            // Priority warm pass for one tenant (e.g. right after its first
+            // Odoo/ERP connection or warehouse backfill), rather than
+            // waiting for the rotation to reach it on its own.
+            // ?tenant=slug [&only=label-substring]
+            $args = ['--tenant' => (string) ($_GET['tenant'] ?? '')];
+            if (!empty($_GET['only'])) $args['--only'] = (string) $_GET['only'];
+            if ($args['--tenant'] === '') { ln('need ?tenant=slug'); break; }
+            $code = Illuminate\Support\Facades\Artisan::call('bms:warm', $args);
+            ln(rtrim(Illuminate\Support\Facades\Artisan::output()));
+            ln('exit=' . $code);
+            break;
+
         case 'sendreport':
             // Remote catch-up trigger for the Kissywears daily report.
             // ?date=YYYY-MM-DD (the report day, i.e. the "prior day" the
