@@ -3,8 +3,11 @@
 
 @section('page-title', 'Billing')
 @section('content')
-    @includeWhen(!empty($logisticsBilling), 'logistics.billing-section',
-        ['lg' => $logisticsBilling ?? null, 'lgCustomer' => $lgCustomer ?? ''])
+    @includeWhen(!empty($logisticsBilling), 'logistics.billing-section', [
+        'lg' => $logisticsBilling ?? null, 'lgCustomer' => $lgCustomer ?? '',
+        'periodLabel' => $periodLabel ?? '', 'unbilledDeb' => $unbilledDebours ?? null,
+        'unbilledRev' => $unbilledRevenue ?? null,
+    ])
     @if ($error)
         <div class="bg-coral-50 border border-coral-200 text-coral-800 rounded-xl p-4 text-sm mb-6">
             <strong>Could not reach Odoo:</strong> {{ $error }}

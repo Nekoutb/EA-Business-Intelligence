@@ -227,17 +227,25 @@ final class LogisticsOpsService
      *
      * $customer narrows the transaction detail to one client (drill-down).
      */
-    public function billingLags(?string $customer = null): array
+    public function billingLags(\DateTimeImmutable $from, \DateTimeImmutable $to, ?string $customer = null): array
     {
         $out = ['file_bill' => null, 'debours' => null];
         try {
-            // ── 1. file creation → first invoice ─────────────────────
+            $f = $from->format('Y-m-d'); $t = $to->format('Y-m-d');
+
+            // ── 1. file creation → first invoice ISSUED IN THE PERIOD ──
+            // The period filters on invoice_date: "August" means files
+            // whose first bill within the selection landed in August, even
+            // if the file itself opened earlier. MIN() is taken only over
+            // in-period invoices, so a file billed again in a later period
+            // doesn't drag an older bill into this window.
             $rows = DB::table('wh_fact_dossier as d')
                 ->join('wh_fact_invoice as i', function ($j) {
                     $j->on('i.tenant_id', '=', 'd.tenant_id')->on('i.dossier_odoo_id', '=', 'd.odoo_id');
                 })
                 ->where('d.tenant_id', $this->tenantId)
                 ->whereNotNull('d.opened_date')->whereNotNull('i.invoice_date')
+                ->whereBetween('i.invoice_date', [$f, $t])
                 ->selectRaw('d.code, d.client_name, d.opened_date, MIN(i.invoice_date) first_bill')
                 ->groupBy('d.code', 'd.client_name', 'd.opened_date')
                 ->get()
@@ -267,56 +275,55 @@ final class LogisticsOpsService
                     : [],
             ];
 
-            // ── 2. débours incurred → rebilled (name match per file) ──
-            $advances = DB::table('wh_fact_advance')
-                ->where('tenant_id', $this->tenantId)
-                ->whereNotNull('dossier_odoo_id')->whereNotNull('disbursed_date')
-                ->get(['dossier_odoo_id', 'label', 'amount', 'disbursed_date', 'supplier_name']);
-            $lines = DB::table('wh_fact_invoice_line as l')
+            // ── 2. débours incurred → rebilled, anchored on BILLS ISSUED
+            // IN THE PERIOD (the recharge line's invoice_date). The
+            // matching advance can predate the period — that's normal:
+            // a cost incurred in June is often only rebilled once the
+            // client invoice goes out in August.
+            $linesInPeriod = DB::table('wh_fact_invoice_line as l')
                 ->join('wh_fact_invoice as i', function ($j) {
                     $j->on('i.tenant_id', '=', 'l.tenant_id')->on('i.odoo_id', '=', 'l.move_odoo_id');
                 })
                 ->where('l.tenant_id', $this->tenantId)->where('l.is_debours', true)
-                ->whereNotNull('i.dossier_odoo_id')
+                ->whereNotNull('i.dossier_odoo_id')->whereBetween('l.invoice_date', [$f, $t])
                 ->get(['i.dossier_odoo_id', 'l.label', 'l.price_subtotal', 'l.invoice_date', 'i.name as inv']);
+
+            $advances = DB::table('wh_fact_advance')
+                ->where('tenant_id', $this->tenantId)
+                ->whereNotNull('dossier_odoo_id')->whereNotNull('disbursed_date')
+                ->get(['dossier_odoo_id', 'label', 'amount', 'disbursed_date', 'supplier_name']);
             $meta = DB::table('wh_fact_dossier')->where('tenant_id', $this->tenantId)
                 ->pluck('client_name', 'odoo_id');
             $codes = DB::table('wh_fact_dossier')->where('tenant_id', $this->tenantId)
                 ->pluck('code', 'odoo_id');
 
-            $norm = function (?string $s): array {
-                $s = mb_strtolower((string) $s);
-                $s = strtr($s, ['é'=>'e','è'=>'e','ê'=>'e','à'=>'a','â'=>'a','î'=>'i','ï'=>'i','ô'=>'o','û'=>'u','ù'=>'u','ç'=>'c']);
-                $s = preg_replace('/[^a-z0-9]+/', ' ', $s);
-                return array_values(array_filter(explode(' ', trim((string) $s)), fn ($t) => mb_strlen($t) >= 4));
-            };
-            $linesByD = [];
-            foreach ($lines as $l) { $linesByD[$l->dossier_odoo_id][] = $l; }
+            $advByD = [];
+            foreach ($advances as $a) { $advByD[$a->dossier_odoo_id][] = $a; }
 
             $pairs = []; $matched = 0; $unmatched = 0; $lagSum = 0.0;
-            foreach ($advances as $a) {
-                $cands = $linesByD[$a->dossier_odoo_id] ?? [];
-                $at = $norm($a->label);
+            foreach ($linesInPeriod as $l) {
+                $cands = $advByD[$l->dossier_odoo_id] ?? [];
+                $lt = $this->normalizeExpenseWords($l->label);
                 $best = null; $bestScore = 0;
-                foreach ($cands as $l) {
-                    $lt = $norm($l->label);
-                    $score = count(array_intersect($at, $lt));
-                    if ($score > $bestScore) { $bestScore = $score; $best = $l; }
+                foreach ($cands as $a) {
+                    $at = $this->normalizeExpenseWords($a->label);
+                    $score = count(array_intersect($lt, $at));
+                    if ($score > $bestScore) { $bestScore = $score; $best = $a; }
                 }
                 if ($best !== null && $bestScore >= 1) {
-                    $days = (int) ((strtotime((string) $best->invoice_date) - strtotime((string) $a->disbursed_date)) / 86400);
+                    $days = (int) ((strtotime((string) $l->invoice_date) - strtotime((string) $best->disbursed_date)) / 86400);
                     $matched++; $lagSum += $days;
                     $pairs[] = [
-                        'client'      => (string) ($meta[$a->dossier_odoo_id] ?? '?'),
-                        'file'        => (string) ($codes[$a->dossier_odoo_id] ?? $a->dossier_odoo_id),
-                        'adv_label'   => (string) $a->label,
-                        'adv_who'     => (string) ($a->supplier_name ?? '—'),
-                        'adv_date'    => (string) $a->disbursed_date,
-                        'adv_amount'  => (float) $a->amount,
-                        'bill_label'  => (string) $best->label,
-                        'bill_inv'    => (string) $best->inv,
-                        'bill_date'   => (string) $best->invoice_date,
-                        'bill_amount' => (float) $best->price_subtotal,
+                        'client'      => (string) ($meta[$l->dossier_odoo_id] ?? '?'),
+                        'file'        => (string) ($codes[$l->dossier_odoo_id] ?? $l->dossier_odoo_id),
+                        'adv_label'   => (string) $best->label,
+                        'adv_who'     => (string) ($best->supplier_name ?? '—'),
+                        'adv_date'    => (string) $best->disbursed_date,
+                        'adv_amount'  => (float) $best->amount,
+                        'bill_label'  => (string) $l->label,
+                        'bill_inv'    => (string) $l->inv,
+                        'bill_date'   => (string) $l->invoice_date,
+                        'bill_amount' => (float) $l->price_subtotal,
                         'days'        => $days,
                     ];
                 } else {
@@ -348,6 +355,140 @@ final class LogisticsOpsService
             ];
         } catch (\Throwable $e) {
             \Illuminate\Support\Facades\Log::warning('logistics billing lags failed', ['error' => $e->getMessage()]);
+        }
+        return $out;
+    }
+
+    /** Shared fuzzy-match tokenizer for débours label matching (name match, not exact). */
+    private function normalizeExpenseWords(?string $s): array
+    {
+        $s = mb_strtolower((string) $s);
+        $s = strtr($s, ['é'=>'e','è'=>'e','ê'=>'e','à'=>'a','â'=>'a','î'=>'i','ï'=>'i','ô'=>'o','û'=>'u','ù'=>'u','ç'=>'c']);
+        $s = preg_replace('/[^a-z0-9]+/', ' ', $s);
+        return array_values(array_filter(explode(' ', trim((string) $s)), fn ($t) => mb_strlen($t) >= 4));
+    }
+
+    /**
+     * Sandbox — Unbilled Débours. Advances DISBURSED in the period that
+     * have never been name-matched to any débours line billed to the
+     * client (searched across all time, since the recharge — if it ever
+     * happens — may land in a later period). A chase-up list: cash paid
+     * out with nothing recovered from the client yet.
+     */
+    public function unbilledDebours(\DateTimeImmutable $from, \DateTimeImmutable $to): array
+    {
+        $out = ['count' => 0, 'total' => 0.0, 'items' => [], 'by_client' => []];
+        try {
+            $advances = DB::table('wh_fact_advance')->where('tenant_id', $this->tenantId)
+                ->whereNotNull('dossier_odoo_id')
+                ->whereBetween('disbursed_date', [$from->format('Y-m-d'), $to->format('Y-m-d')])
+                ->get(['dossier_odoo_id', 'label', 'amount', 'disbursed_date', 'supplier_name']);
+            if ($advances->isEmpty()) return $out;
+
+            $ids = $advances->pluck('dossier_odoo_id')->unique()->all();
+            $lines = DB::table('wh_fact_invoice_line as l')
+                ->join('wh_fact_invoice as i', function ($j) {
+                    $j->on('i.tenant_id', '=', 'l.tenant_id')->on('i.odoo_id', '=', 'l.move_odoo_id');
+                })
+                ->where('l.tenant_id', $this->tenantId)->where('l.is_debours', true)
+                ->whereIn('i.dossier_odoo_id', $ids)
+                ->get(['i.dossier_odoo_id', 'l.label']);
+            $linesByD = [];
+            foreach ($lines as $l) { $linesByD[$l->dossier_odoo_id][] = $l->label; }
+
+            $meta  = DB::table('wh_fact_dossier')->where('tenant_id', $this->tenantId)->whereIn('odoo_id', $ids)->pluck('client_name', 'odoo_id');
+            $codes = DB::table('wh_fact_dossier')->where('tenant_id', $this->tenantId)->whereIn('odoo_id', $ids)->pluck('code', 'odoo_id');
+
+            foreach ($advances as $a) {
+                $at = $this->normalizeExpenseWords($a->label);
+                $found = false;
+                foreach (($linesByD[$a->dossier_odoo_id] ?? []) as $lbl) {
+                    if (count(array_intersect($at, $this->normalizeExpenseWords($lbl))) >= 1) { $found = true; break; }
+                }
+                if ($found) continue;
+                $out['items'][] = [
+                    'client' => (string) ($meta[$a->dossier_odoo_id] ?? '?'),
+                    'file'   => (string) ($codes[$a->dossier_odoo_id] ?? $a->dossier_odoo_id),
+                    'who'    => (string) ($a->supplier_name ?? '—'),
+                    'label'  => (string) $a->label,
+                    'date'   => (string) $a->disbursed_date,
+                    'amount' => (float) $a->amount,
+                ];
+                $out['total'] += (float) $a->amount;
+            }
+            $out['count'] = count($out['items']);
+            usort($out['items'], fn ($x, $y) => $y['amount'] <=> $x['amount']);
+
+            $byC = [];
+            foreach ($out['items'] as $it) {
+                ($byC[$it['client']] ??= ['client' => $it['client'], 'n' => 0, 'amt' => 0.0]);
+                $byC[$it['client']]['n']++; $byC[$it['client']]['amt'] += $it['amount'];
+            }
+            usort($byC, fn ($x, $y) => $y['amt'] <=> $x['amt']);
+            $out['by_client'] = array_values($byC);
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('logistics unbilled debours failed', ['error' => $e->getMessage()]);
+        }
+        return $out;
+    }
+
+    /**
+     * Sandbox — Unbilled Revenue/Commissions. Files with activity in the
+     * period (opened, invoiced, or an advance disbursed) whose all-time
+     * fee revenue is zero — work done or cost incurred with no commission
+     * ever earned on that file.
+     */
+    public function unbilledRevenue(\DateTimeImmutable $from, \DateTimeImmutable $to): array
+    {
+        $out = ['count' => 0, 'files' => [], 'total_debours_billed' => 0.0, 'total_advances' => 0.0];
+        try {
+            $f = $from->format('Y-m-d'); $t = $to->format('Y-m-d');
+
+            $activeIds = DB::table('wh_fact_dossier')->where('tenant_id', $this->tenantId)
+                ->whereBetween('opened_date', [$f, $t])->pluck('odoo_id')
+                ->merge(DB::table('wh_fact_invoice')->where('tenant_id', $this->tenantId)
+                    ->whereNotNull('dossier_odoo_id')->whereBetween('invoice_date', [$f, $t])->pluck('dossier_odoo_id'))
+                ->merge(DB::table('wh_fact_advance')->where('tenant_id', $this->tenantId)
+                    ->whereNotNull('dossier_odoo_id')->whereBetween('disbursed_date', [$f, $t])->pluck('dossier_odoo_id'))
+                ->unique()->values();
+            if ($activeIds->isEmpty()) return $out;
+            $ids = $activeIds->all();
+
+            $feeSub = DB::table('wh_fact_invoice_line as l')
+                ->join('wh_fact_invoice as i', function ($j) {
+                    $j->on('i.tenant_id', '=', 'l.tenant_id')->on('i.odoo_id', '=', 'l.move_odoo_id');
+                })
+                ->where('l.tenant_id', $this->tenantId)->whereIn('i.dossier_odoo_id', $ids)
+                ->selectRaw("i.dossier_odoo_id did,
+                             SUM(CASE WHEN l.is_debours = 1 THEN 0 ELSE l.price_subtotal END) fees,
+                             SUM(CASE WHEN l.is_debours = 1 THEN l.price_subtotal ELSE 0 END) deb")
+                ->groupBy('i.dossier_odoo_id')->get()->keyBy('did');
+
+            $advSub = DB::table('wh_fact_advance')->where('tenant_id', $this->tenantId)
+                ->whereIn('dossier_odoo_id', $ids)
+                ->selectRaw('dossier_odoo_id did, SUM(amount) amt')
+                ->groupBy('dossier_odoo_id')->get()->keyBy('did');
+
+            $meta = DB::table('wh_fact_dossier')->where('tenant_id', $this->tenantId)->whereIn('odoo_id', $ids)
+                ->get(['odoo_id', 'code', 'client_name', 'type_name', 'opened_date'])->keyBy('odoo_id');
+
+            foreach ($ids as $id) {
+                $fee = (float) ($feeSub[$id]->fees ?? 0);
+                if (abs($fee) > 0.5) continue;
+                $m = $meta[$id] ?? null; if (!$m) continue;
+                $deb = (float) ($feeSub[$id]->deb ?? 0);
+                $adv = (float) ($advSub[$id]->amt ?? 0);
+                $out['files'][] = [
+                    'code' => (string) $m->code, 'client' => (string) $m->client_name,
+                    'type' => (string) $m->type_name, 'opened' => (string) $m->opened_date,
+                    'debours_billed' => $deb, 'advances' => $adv,
+                ];
+                $out['total_debours_billed'] += $deb; $out['total_advances'] += $adv;
+            }
+            $out['count'] = count($out['files']);
+            usort($out['files'], fn ($a, $b) => $b['advances'] <=> $a['advances']);
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('logistics unbilled revenue failed', ['error' => $e->getMessage()]);
         }
         return $out;
     }

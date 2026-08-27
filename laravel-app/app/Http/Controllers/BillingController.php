@@ -42,7 +42,7 @@ class BillingController extends Controller
         $month = (int) $request->query('month', $today->format('m'));
         $period = ['type' => $type, 'year' => $year, 'month' => $month];
 
-        [, , $periodLabel] = ea_resolve_period($today, $period);
+        [$periodFrom, $periodTo, $periodLabel] = ea_resolve_period($today, $period);
 
         $billing = null;
         $error   = null;
@@ -85,15 +85,25 @@ class BillingController extends Controller
             $error = $e->getMessage();
         }
 
-        // Logistics sector: file→bill and débours→recharge lag analyses
-        // from the dossier warehouse. ?lg_customer= narrows the transaction
-        // detail to one client (the drill-down).
+        // Logistics sector: file→bill and débours→recharge lag analyses,
+        // plus the unbilled-débours and unbilled-revenue sandboxes, all
+        // driven by the SAME master period filter as the rest of the app
+        // — "August" means bills issued in August. ?lg_customer= narrows
+        // the transaction detail to one client (the drill-down).
         $logisticsBilling = null;
+        $unbilledDebours  = null;
+        $unbilledRevenue  = null;
         $lgCustomer = trim((string) $request->query('lg_customer', ''));
         $tenantId = (int) (optional(tenant())->id ?? 0);
         if (\App\Services\LogisticsOpsService::available($tenantId)) {
-            $logisticsBilling = ea_cached('logi_billing_v1_' . md5($lgCustomer),
-                fn () => (new \App\Services\LogisticsOpsService($tenantId))->billingLags($lgCustomer !== '' ? $lgCustomer : null));
+            $svc = new \App\Services\LogisticsOpsService($tenantId);
+            $cacheTag = md5(json_encode($period) . '|' . $lgCustomer);
+            $logisticsBilling = ea_cached('logi_billing_v2_' . $cacheTag,
+                fn () => $svc->billingLags($periodFrom, $periodTo, $lgCustomer !== '' ? $lgCustomer : null));
+            $unbilledDebours = ea_cached('logi_unbilled_deb_v1_' . md5(json_encode($period)),
+                fn () => $svc->unbilledDebours($periodFrom, $periodTo));
+            $unbilledRevenue = ea_cached('logi_unbilled_rev_v1_' . md5(json_encode($period)),
+                fn () => $svc->unbilledRevenue($periodFrom, $periodTo));
         }
 
         return view('billing', [
@@ -104,6 +114,8 @@ class BillingController extends Controller
             'error'            => $error,
             'logisticsBilling' => $logisticsBilling,
             'lgCustomer'       => $lgCustomer,
+            'unbilledDebours'  => $unbilledDebours,
+            'unbilledRevenue'  => $unbilledRevenue,
         ]);
     }
 
