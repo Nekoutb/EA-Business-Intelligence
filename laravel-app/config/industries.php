@@ -304,6 +304,8 @@ return [
                 'billing'             => ['default' => false, 'required' => false],
                 // Logistics Operations pages — the sector's own service.
                 'logistics_dossiers'  => ['default' => true,  'required' => true],
+                'reports_logistics'   => ['default' => true,  'required' => false],
+                'reports'             => ['default' => false, 'required' => false],
                 'logistics_workflow'  => ['default' => true,  'required' => false],
                 'logistics_volumes'   => ['default' => true,  'required' => false],
                 'profitability'       => ['default' => true,  'required' => false],

@@ -43,6 +43,16 @@ class LogisticsOpsController extends Controller
         ]);
     }
 
+    public function reports(Request $request)
+    {
+        [$tenantId, $from, $to, $label, $period] = $this->ctx($request);
+        $key  = 'logi_reports_v1_' . md5(json_encode($period));
+        $data = ea_cached($key, fn () => (new LogisticsOpsService($tenantId))->revenueByCustomer($from, $to));
+        return view('logistics.reports', [
+            'data' => $data, 'active' => 'reports_logistics', 'period' => $period, 'periodLabel' => $label,
+        ]);
+    }
+
     public function volumes(Request $request)
     {
         [$tenantId, $from, $to, $label, $period] = $this->ctx($request);

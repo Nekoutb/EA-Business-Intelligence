@@ -352,6 +352,47 @@ final class LogisticsOpsService
         return $out;
     }
 
+    /**
+     * Reports_Logistics — revenue per customer for the period.
+     * Revenue is the FEE commission only (warehouse amount_untaxed carries
+     * the fee portion of invoice lines; débours are rebilled costs, not
+     * revenue). Includes each customer's % contribution to total revenue
+     * and the running cumulative share.
+     */
+    public function revenueByCustomer(\DateTimeImmutable $from, \DateTimeImmutable $to): array
+    {
+        $out = ['total' => 0.0, 'customers' => [], 'invoices' => 0];
+        try {
+            $rows = DB::table('wh_fact_invoice as i')
+                ->leftJoin('wh_dim_partner as p', function ($j) {
+                    $j->on('p.tenant_id', '=', 'i.tenant_id')->on('p.odoo_id', '=', 'i.partner_odoo_id');
+                })
+                ->where('i.tenant_id', $this->tenantId)
+                ->whereBetween('i.invoice_date', [$from->format('Y-m-d'), $to->format('Y-m-d')])
+                ->selectRaw("COALESCE(p.name, '—') client, SUM(i.amount_untaxed) revenue, COUNT(*) invoices")
+                ->groupBy('client')->orderByDesc('revenue')->get();
+
+            $total = (float) $rows->sum('revenue');
+            $cum = 0.0;
+            $out['total']    = $total;
+            $out['invoices'] = (int) $rows->sum('invoices');
+            $out['customers'] = $rows->map(function ($r) use ($total, &$cum) {
+                $share = $total > 0 ? 100.0 * (float) $r->revenue / $total : 0.0;
+                $cum += $share;
+                return [
+                    'client'   => (string) $r->client,
+                    'revenue'  => (float) $r->revenue,
+                    'invoices' => (int) $r->invoices,
+                    'share'    => $share,
+                    'cum'      => $cum,
+                ];
+            })->all();
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('logistics revenue by customer failed', ['error' => $e->getMessage()]);
+        }
+        return $out;
+    }
+
     /** True when this tenant has synced dossier facts (gates the sections). */
     public static function available(?int $tenantId): bool
     {
