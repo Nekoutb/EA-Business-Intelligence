@@ -970,6 +970,25 @@ try {
                     number_format((float) $r->ttc, 0), number_format((float) $r->open_ar, 0)));
             }
             ln();
+            foreach ([['wh_fact_gl_line', 'invoice_date'], ['wh_fact_payment', 'payment_date']] as [$tb, $col]) {
+                if (!Illuminate\Support\Facades\Schema::hasTable($tb)) continue;
+                ln("== {$tb} by year ==");
+                foreach (Illuminate\Support\Facades\DB::table($tb)
+                    ->where('tenant_id', $tid)->whereNotNull($col)
+                    ->selectRaw("YEAR({$col}) y, COUNT(*) n")
+                    ->groupBy('y')->orderBy('y')->get() as $r) {
+                    ln(sprintf('  %s  n=%s', $r->y, number_format($r->n)));
+                }
+                ln();
+            }
+            if (Illuminate\Support\Facades\Schema::hasTable('wh_dim_product')) {
+                $withProd = Illuminate\Support\Facades\DB::table('wh_fact_gl_line as l')
+                    ->join('wh_dim_product as p', function ($j) {
+                        $j->on('p.tenant_id', '=', 'l.tenant_id')->on('p.odoo_id', '=', 'l.product_odoo_id');
+                    })->where('l.tenant_id', $tid)->count();
+                ln('gl lines joinable to a synced product: ' . number_format($withProd));
+                ln();
+            }
             ln('== top 5 partners by open AR ==');
             foreach (Illuminate\Support\Facades\DB::table('wh_fact_invoice as i')
                 ->leftJoin('wh_dim_partner as p', fn ($j) => $j->on('p.tenant_id', '=', 'i.tenant_id')->on('p.odoo_id', '=', 'i.partner_odoo_id'))
