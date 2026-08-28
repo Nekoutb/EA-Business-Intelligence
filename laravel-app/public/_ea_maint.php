@@ -247,14 +247,13 @@ try {
             $tenant = App\Models\Tenant::where('slug', $slug)->first();
             if (!$tenant) { ln("no tenant '{$slug}'"); break; }
             $tid = $tenant->id;
-            $DB = Illuminate\Support\Facades\DB;
 
-            $tot = IlluminateSupportFacadesDB::table('wh_fact_gl_line')->where('tenant_id', $tid)->count();
-            $withProd = IlluminateSupportFacadesDB::table('wh_fact_gl_line')->where('tenant_id', $tid)
+            $tot = \Illuminate\Support\Facades\DB::table('wh_fact_gl_line')->where('tenant_id', $tid)->count();
+            $withProd = \Illuminate\Support\Facades\DB::table('wh_fact_gl_line')->where('tenant_id', $tid)
                 ->whereNotNull('product_odoo_id')->count();
-            $withQty = IlluminateSupportFacadesDB::table('wh_fact_gl_line')->where('tenant_id', $tid)
+            $withQty = \Illuminate\Support\Facades\DB::table('wh_fact_gl_line')->where('tenant_id', $tid)
                 ->whereNotNull('product_odoo_id')->where('quantity', '>', 0)->count();
-            $joinable = IlluminateSupportFacadesDB::table('wh_fact_gl_line as l')
+            $joinable = \Illuminate\Support\Facades\DB::table('wh_fact_gl_line as l')
                 ->join('wh_dim_product as p', function ($j) {
                     $j->on('p.tenant_id', '=', 'l.tenant_id')->on('p.odoo_id', '=', 'l.product_odoo_id');
                 })->where('l.tenant_id', $tid)->where('l.quantity', '>', 0)->count();
@@ -265,7 +264,7 @@ try {
             ln(sprintf('  joinable to product dim   %s  <-- usable for volume', number_format($joinable)));
             ln();
 
-            $base = fn () => IlluminateSupportFacadesDB::table('wh_fact_gl_line as l')
+            $base = fn () => \Illuminate\Support\Facades\DB::table('wh_fact_gl_line as l')
                 ->join('wh_dim_product as p', function ($j) {
                     $j->on('p.tenant_id', '=', 'l.tenant_id')->on('p.odoo_id', '=', 'l.product_odoo_id');
                 })
@@ -292,7 +291,7 @@ try {
             ln();
 
             ln('== volume by voyage type (Type_voyage) ==');
-            foreach (IlluminateSupportFacadesDB::table('wh_fact_gl_line as l')
+            foreach (\Illuminate\Support\Facades\DB::table('wh_fact_gl_line as l')
                 ->join('wh_fact_invoice as i', function ($j) {
                     $j->on('i.tenant_id', '=', 'l.tenant_id')->on('i.odoo_id', '=', 'l.move_odoo_id');
                 })
