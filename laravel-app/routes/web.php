@@ -1567,6 +1567,10 @@ Route::prefix('t/{tenant}')
                 Route::get('/billing/slowest-billings-export',
                     [BillingController::class, 'slowestBillingsExport'])->middleware('module:billing');
                 Route::get('/procurement',       [ProcurementController::class, 'index'])->middleware('module:procurement');
+                // Dedicated gated path for the Control Dashboard: the sidebar entry
+                // is its own module, so it must not ride through the procurement gate
+                // (a tenant with only the dashboard enabled would 403).
+                Route::get('/procurement-dashboard', fn () => app(ProcurementController::class)->index(request()->merge(['view' => 'dashboard'])))->middleware('module:procurement_dashboard');
 
                 // ── Post-Retirement Benefits ──────────────────────────────────
                 // SYSCOHADA-compliant Projected Unit Credit valuation of
