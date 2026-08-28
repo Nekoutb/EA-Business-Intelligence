@@ -1,0 +1,58 @@
+name: Restart Services (recovery)
+
+# Manual-only recovery lever. Does NOT deploy code: it connects over SSH,
+# reports what the box is doing, and restarts the web/database services.
+# Added 2026-08-28 after sustained warehouse-sync load took the origin
+# down (Cloudflare 522) and there was no way back in without SSH.
+on:
+  workflow_dispatch:
+    inputs:
+      restart:
+        description: 'Restart apache2 + mysql (yes = restart, no = diagnose only)'
+        required: true
+        default: 'yes'
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Diagnose and restart
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.SERVER_IP }}
+          username: ${{ secrets.SERVER_USER }}
+          password: ${{ secrets.SERVER_PASSWORD }}
+          port: 22
+          command_timeout: 10m
+          script: |
+            echo "===== UPTIME / LOAD ====="
+            uptime
+            echo
+            echo "===== MEMORY ====="
+            free -h
+            echo
+            echo "===== SERVICE STATE ====="
+            systemctl is-active apache2 || true
+            systemctl is-active mysql || true
+            echo
+            echo "===== OOM KILLS (last 40 kernel lines) ====="
+            dmesg -T 2>/dev/null | tail -40 || journalctl -k -n 40 --no-pager || true
+            echo
+            echo "===== TOP MEMORY CONSUMERS ====="
+            ps aux --sort=-%mem | head -12
+            echo
+            if [ "${{ github.event.inputs.restart }}" = "yes" ]; then
+              echo "===== RESTARTING ====="
+              systemctl restart mysql || echo "mysql restart failed"
+              sleep 5
+              systemctl restart apache2 || echo "apache2 restart failed"
+              sleep 5
+              systemctl is-active mysql || true
+              systemctl is-active apache2 || true
+              echo
+              echo "===== LOCAL HTTP CHECK ====="
+              curl -sk -o /dev/null -w "local HTTP %{http_code}\n" --max-time 20 \
+                -H "Host: bms.cm-ea.com" http://127.0.0.1 || echo "local curl failed"
+            else
+              echo "diagnose-only mode; no restart performed"
+            fi
