@@ -203,6 +203,147 @@ try {
             echo json_encode($out, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE | JSON_PARTIAL_OUTPUT_ON_ERROR);
             break;
 
+        case 'odoomodels':
+            // FULL model inventory: every non-transient model registered on
+            // the instance with its record count. Paged (&skip=&take=) so a
+            // large registry can be walked across several requests without
+            // hitting the gateway timeout. ?tenant=slug
+            $slug = (string) ($_GET['tenant'] ?? '');
+            $tenant = App\Models\Tenant::where('slug', $slug)->first();
+            if (!$tenant) { echo json_encode(['error' => "no tenant '{$slug}'"]); break; }
+            app(App\Tenancy\TenantContext::class)->set($tenant);
+            $client = App\Odoo\OdooFactory::fromConfig();
+            $skip = max(0, (int) ($_GET['skip'] ?? 0));
+            $take = max(1, min(400, (int) ($_GET['take'] ?? 200)));
+
+            $all = $client->searchRead('ir.model', [['transient', '=', false]],
+                ['model', 'name'], ['order' => 'model asc']);
+            $slice = array_slice($all, $skip, $take);
+            $out = ['tenant' => $slug, 'total_models' => count($all),
+                    'skip' => $skip, 'take' => $take, 'models' => []];
+            foreach ($slice as $m) {
+                $name = (string) $m['model'];
+                // Skip framework plumbing that can never carry business data.
+                if (preg_match('/^(ir\.|bus\.|base_|report\.|web_|mail\.tracking|iap\.)/', $name)) {
+                    continue;
+                }
+                try {
+                    $out['models'][$name] = [
+                        'label' => (string) ($m['name'] ?? ''),
+                        'count' => $client->searchCount($name, []),
+                    ];
+                } catch (\Throwable $e) {
+                    $out['models'][$name] = ['label' => (string) ($m['name'] ?? ''), 'count' => -1];
+                }
+            }
+            echo json_encode($out, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE | JSON_PARTIAL_OUTPUT_ON_ERROR);
+            break;
+
+        case 'odoodeep':
+            // Deep-dive on specific models: full field list + samples, for a
+            // comma-separated model list. ?tenant=slug&models=a,b,c [&rows=3]
+            $slug = (string) ($_GET['tenant'] ?? '');
+            $tenant = App\Models\Tenant::where('slug', $slug)->first();
+            if (!$tenant) { echo json_encode(['error' => "no tenant '{$slug}'"]); break; }
+            app(App\Tenancy\TenantContext::class)->set($tenant);
+            $client = App\Odoo\OdooFactory::fromConfig();
+            $nRows = max(1, min(8, (int) ($_GET['rows'] ?? 3)));
+            $want = array_filter(array_map('trim', explode(',', (string) ($_GET['models'] ?? ''))));
+            $out = ['tenant' => $slug, 'models' => []];
+            foreach ($want as $model) {
+                $e = [];
+                try { $e['count'] = $client->searchCount($model, []); }
+                catch (\Throwable $ex) { $out['models'][$model] = ['error' => 'not accessible']; continue; }
+                try {
+                    $fields = (array) $client->callModel($model, 'fields_get', [
+                        'allfields' => [], 'attributes' => ['string', 'type', 'relation', 'store'],
+                    ]);
+                    $flat = [];
+                    foreach ($fields as $fn => $meta) {
+                        $flat[$fn] = trim(($meta['type'] ?? '?')
+                            . (!empty($meta['relation']) ? '→' . $meta['relation'] : '')
+                            . ' · ' . ($meta['string'] ?? '')
+                            . (isset($meta['store']) && !$meta['store'] ? ' (computed)' : ''));
+                    }
+                    ksort($flat);
+                    $e['fields'] = $flat; $e['field_count'] = count($flat);
+                } catch (\Throwable $ex) { $e['fields_error'] = mb_substr($ex->getMessage(), 0, 160); }
+                if (($e['count'] ?? 0) > 0) {
+                    try {
+                        $prefer = ['id','name','display_name','code','date','payment_date','date_maturity',
+                                   'state','payment_type','partner_type','amount','amount_total','amount_untaxed',
+                                   'amount_residual','partner_id','journal_id','account_id','move_id','ref',
+                                   'debit','credit','balance','analytic_account_id','product_id','quantity',
+                                   'Type_voyage','aw_cargo_state','type','active'];
+                        $use = array_values(array_intersect($prefer, array_keys($e['fields'] ?? [])));
+                        if ($use === []) $use = ['id'];
+                        $e['sample'] = $client->searchRead($model, [], $use, ['limit' => $nRows]);
+                    } catch (\Throwable $ex) { $e['sample_error'] = mb_substr($ex->getMessage(), 0, 160); }
+                }
+                $out['models'][$model] = $e;
+            }
+            echo json_encode($out, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE | JSON_PARTIAL_OUTPUT_ON_ERROR);
+            break;
+
+        case 'odoodims':
+            // Analytical dimensions: the group-by axes that make reporting
+            // possible. Payments, analytic accounts, withholding journals,
+            // custom cargo fields. ?tenant=slug
+            $slug = (string) ($_GET['tenant'] ?? '');
+            $tenant = App\Models\Tenant::where('slug', $slug)->first();
+            if (!$tenant) { echo json_encode(['error' => "no tenant '{$slug}'"]); break; }
+            app(App\Tenancy\TenantContext::class)->set($tenant);
+            $client = App\Odoo\OdooFactory::fromConfig();
+            $out = ['tenant' => $slug];
+
+            $grp = function (string $model, array $domain, array $groupby, ?string $measure = null)
+                   use ($client) {
+                try {
+                    $fields = $measure ? [$measure] : [];
+                    $rows = (array) $client->callModel($model, 'read_group', [
+                        'domain' => $domain, 'fields' => $fields, 'groupby' => $groupby, 'lazy' => false,
+                    ]);
+                    $o = [];
+                    foreach ($rows as $r) {
+                        $k = [];
+                        foreach ($groupby as $gg) {
+                            $gk = explode(':', $gg)[0];
+                            $v = $r[$gg] ?? $r[$gk] ?? null;
+                            $k[] = is_array($v) ? ($v[1] ?? $v[0]) : ($v === false ? '—' : (string) $v);
+                        }
+                        $o[] = ['k' => implode(' · ', $k), 'n' => (int) ($r['__count'] ?? 0),
+                                'v' => ($measure && isset($r[$measure]) && !is_array($r[$measure])) ? (float) $r[$measure] : null];
+                    }
+                    usort($o, fn ($a, $b) => $b['n'] <=> $a['n']);
+                    return array_slice($o, 0, 40);
+                } catch (\Throwable $e) { return ['error' => mb_substr($e->getMessage(), 0, 200)]; }
+            };
+
+            // Payments — the 107k records the warehouse never captured.
+            $out['payments_by_type']    = $grp('account.payment', [], ['payment_type'], 'amount');
+            $out['payments_by_partner_type'] = $grp('account.payment', [], ['partner_type'], 'amount');
+            $out['payments_by_journal'] = $grp('account.payment', [], ['journal_id'], 'amount');
+            $out['payments_by_year']    = $grp('account.payment', [], ['date:year'], 'amount');
+            $out['payments_by_state']   = $grp('account.payment', [], ['state'], 'amount');
+
+            // Analytic accounts — a whole reporting axis sitting unused.
+            $out['analytic_accounts']   = $grp('account.analytic.line', [], ['account_id'], 'amount');
+            $out['analytic_by_year']    = $grp('account.analytic.line', [], ['date:year'], 'amount');
+
+            // Custom cargo fields on invoices.
+            $out['cargo_type_voyage']   = $grp('account.move', [], ['Type_voyage']);
+            $out['cargo_state']         = $grp('account.move', [], ['aw_cargo_state']);
+
+            // Withholding tax journals + taxes.
+            $out['journals_by_type']    = $grp('account.journal', [], ['type']);
+            $out['taxes_used']          = $grp('account.tax', [], ['type_tax_use']);
+
+            // Ledger by account type — the OHADA classes.
+            $out['gl_by_internal_group'] = $grp('account.move.line', [], ['account_internal_group'], 'balance');
+
+            echo json_encode($out, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE | JSON_PARTIAL_OUTPUT_ON_ERROR);
+            break;
+
         case 'odoocompose':
             // Composition of an Odoo tenant's accounting data: document
             // types, states, journals, per-year volumes, top partners.
