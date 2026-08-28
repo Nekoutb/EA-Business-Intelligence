@@ -22,14 +22,14 @@
         </span>
       @endif
     </h3>
-    @if (array_sum(array_column($data['series'], 'files')) > 0)
-      @include('logistics._evolution', ['series' => $data['series'], 'grain' => $grain])
+    @if (array_sum(array_column($data['series'] ?? [], 'files')) > 0)
+      @include('logistics._evolution', ['series' => $data['series'] ?? [], 'grain' => $grain])
     @else
       <p style="color:#7c7466;font-size:12px">No volume in this window.</p>
     @endif
     <div class="lg-scroll" style="margin-top:12px"><table class="lg-dt sortable cell-select">
       <tr><th>{{ $grain === 'month' ? 'Month' : ($grain === 'week' ? 'Week' : 'Day') }}</th><th class="num">Files</th><th class="num">Tonnes</th><th class="num">Containers</th><th class="num">Packages</th></tr>
-      @foreach ($data['series'] as $r)
+      @foreach (($data['series'] ?? []) as $r)
         @continue($r['files'] === 0)
         <tr><td>{{ $r['bucket'] }}</td><td class="num">{{ number_format($r['files']) }}</td><td class="num">{{ number_format($r['tons']) }}</td><td class="num">{{ number_format($r['containers']) }}</td><td class="num">{{ number_format($r['packages']) }}</td></tr>
       @endforeach
