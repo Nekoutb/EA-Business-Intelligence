@@ -247,7 +247,12 @@ try {
             $tenant = App\Models\Tenant::where('slug', $slug)->first();
             if (!$tenant) { ln("no tenant '{$slug}'"); break; }
             $tid = $tenant->id;
+            // Each section is a heavy scan; all together exceed the Cloudflare
+            // ceiling on a 747k-line tenant, so callers fetch one part at a time.
+            $part = (string) ($_GET['part'] ?? 'all');
+            $want = fn (string $k) => $part === 'all' || $part === $k;
 
+            if ($want('coverage')) {
             $tot = \Illuminate\Support\Facades\DB::table('wh_fact_gl_line')->where('tenant_id', $tid)->count();
             $withProd = \Illuminate\Support\Facades\DB::table('wh_fact_gl_line')->where('tenant_id', $tid)
                 ->whereNotNull('product_odoo_id')->count();
@@ -263,6 +268,7 @@ try {
             ln(sprintf('  with product AND qty>0    %s', number_format($withQty)));
             ln(sprintf('  joinable to product dim   %s  <-- usable for volume', number_format($joinable)));
             ln();
+            }
 
             $base = fn () => \Illuminate\Support\Facades\DB::table('wh_fact_gl_line as l')
                 ->join('wh_dim_product as p', function ($j) {
@@ -270,6 +276,7 @@ try {
                 })
                 ->where('l.tenant_id', $tid)->where('l.quantity', '>', 0);
 
+            if ($want('year')) {
             ln('== volume by year ==');
             foreach ($base()->whereNotNull('l.invoice_date')
                 ->selectRaw('YEAR(l.invoice_date) y, SUM(l.quantity) qty, SUM(l.price_subtotal) rev, COUNT(*) n')
@@ -280,6 +287,8 @@ try {
             }
             ln();
 
+            }
+            if ($want('category')) {
             ln('== volume by container category ==');
             foreach ($base()
                 ->selectRaw("COALESCE(p.category_name,'—') k, SUM(l.quantity) qty, SUM(l.price_subtotal) rev, COUNT(*) n")
@@ -290,6 +299,8 @@ try {
             }
             ln();
 
+            }
+            if ($want('voyage')) {
             ln('== volume by voyage type (Type_voyage) ==');
             foreach (\Illuminate\Support\Facades\DB::table('wh_fact_gl_line as l')
                 ->join('wh_fact_invoice as i', function ($j) {
@@ -306,6 +317,8 @@ try {
             }
             ln();
 
+            }
+            if ($want('customers')) {
             ln('== top customers by volume ==');
             foreach ($base()
                 ->join('wh_fact_invoice as i', function ($j) {
@@ -319,6 +332,7 @@ try {
                 ln(sprintf('  %-40s qty=%-9s revenue=%-16s per-unit=%s',
                     mb_substr($r->k, 0, 38), number_format((float) $r->qty), number_format((float) $r->rev),
                     $r->qty > 0 ? number_format((float) $r->rev / (float) $r->qty) : '—'));
+            }
             }
             break;
 
