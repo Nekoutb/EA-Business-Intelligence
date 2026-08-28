@@ -302,6 +302,23 @@ return [
             'status'  => 'live',
         ],
         [
+            // Container-scanning operations for instances WITHOUT the
+            // aw_cargo.* models (e.g. Transatlantic's ERP_TSA_SIP_PRODUCTION).
+            // Admin sees "Operations_TSA" so it is distinguishable from the
+            // original aw_cargo-based Operations module; the tenant sidebar
+            // shows plain "Operations". Enable whichever fits the instance.
+            'key'       => 'operations_tsa',
+            'service'   => 'business_intelligence',
+            'label'     => 'Operations_TSA',
+            'nav_label' => 'Operations',
+            'url'       => '/operations-tsa',
+            'active'    => 'operations_tsa',
+            'icon'      => 'M3 7v10a2 2 0 002 2h14a2 2 0 002-2V7M3 7l9-4 9 4M3 7h18M7 11h2m6 0h2M7 15h2m6 0h2',
+            'default'   => false,
+            'core'      => false,
+            'status'    => 'live',
+        ],
+        [
             'key'     => 'logistics_oop',
             'service' => 'business_intelligence',
             'label'   => 'OOP Compliance',

@@ -1556,6 +1556,7 @@ Route::prefix('t/{tenant}')
                 Route::get('/logistics/volumes',  [\App\Http\Controllers\LogisticsOpsController::class, 'volumes'])->middleware('module:logistics_volumes');
                 Route::get('/logistics/reports',  [\App\Http\Controllers\LogisticsOpsController::class, 'reports'])->middleware('module:reports_logistics');
                 Route::get('/logistics/oop',       [\App\Http\Controllers\LogisticsOpsController::class, 'oop'])->middleware('module:logistics_oop');
+                Route::get('/operations-tsa',      [\App\Http\Controllers\ScanningOpsController::class, 'index'])->middleware('module:operations_tsa');
                 Route::get('/billing',           [BillingController::class, 'index'])->middleware('module:billing');
                 Route::get('/billing/reconciliation-export',
                     [BillingController::class, 'reconciliationExcel'])->middleware('module:revenue_reconciliation');
