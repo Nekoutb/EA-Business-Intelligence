@@ -203,6 +203,62 @@ try {
             echo json_encode($out, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE | JSON_PARTIAL_OUTPUT_ON_ERROR);
             break;
 
+        case 'odoocompose':
+            // Composition of an Odoo tenant's accounting data: document
+            // types, states, journals, per-year volumes, top partners.
+            // Answers "what can we actually report on?" ?tenant=slug
+            $slug = (string) ($_GET['tenant'] ?? '');
+            $tenant = App\Models\Tenant::where('slug', $slug)->first();
+            if (!$tenant) { echo json_encode(['error' => "no tenant '{$slug}'"]); break; }
+            app(App\Tenancy\TenantContext::class)->set($tenant);
+            $client = App\Odoo\OdooFactory::fromConfig();
+            $out = ['tenant' => $slug];
+
+            $group = function (string $model, array $domain, array $groupby, string $measure = '__count')
+                     use ($client) {
+                try {
+                    $rows = (array) $client->callModel($model, 'read_group', [
+                        'domain' => $domain, 'fields' => [$measure], 'groupby' => $groupby, 'lazy' => false,
+                    ]);
+                    $o = [];
+                    foreach ($rows as $r) {
+                        $k = [];
+                        foreach ($groupby as $g) {
+                            $gk = explode(':', $g)[0];
+                            $v = $r[$g] ?? $r[$gk] ?? null;
+                            $k[] = is_array($v) ? ($v[1] ?? $v[0]) : (string) ($v === false ? '—' : $v);
+                        }
+                        $o[] = ['k' => implode(' · ', $k), 'n' => (int) ($r['__count'] ?? 0),
+                                'v' => isset($r[$measure]) && !is_array($r[$measure]) && $measure !== '__count'
+                                       ? (float) $r[$measure] : null];
+                    }
+                    usort($o, fn ($a, $b) => $b['n'] <=> $a['n']);
+                    return array_slice($o, 0, 40);
+                } catch (\Throwable $e) {
+                    return ['error' => mb_substr($e->getMessage(), 0, 160)];
+                }
+            };
+
+            $out['moves_by_type']    = $group('account.move', [], ['move_type']);
+            $out['moves_by_state']   = $group('account.move', [], ['state']);
+            $out['moves_by_journal'] = $group('account.move', [], ['journal_id']);
+            $out['moves_by_year']    = $group('account.move', [], ['date:year']);
+            $out['invoices_by_year'] = $group('account.move',
+                [['move_type', 'in', ['out_invoice', 'out_refund']], ['state', '=', 'posted']],
+                ['date:year'], 'amount_untaxed');
+            $out['bills_by_year']    = $group('account.move',
+                [['move_type', 'in', ['in_invoice', 'in_refund']], ['state', '=', 'posted']],
+                ['date:year'], 'amount_untaxed');
+            $out['top_customers']    = $group('account.move',
+                [['move_type', '=', 'out_invoice'], ['state', '=', 'posted']],
+                ['partner_id'], 'amount_untaxed');
+            $out['accounts_by_class'] = $group('account.account', [], ['user_type_id']);
+            $out['products_by_cat']   = $group('product.product', [], ['categ_id']);
+            $out['partners_by_type']  = $group('res.partner', [], ['company_type']);
+
+            echo json_encode($out, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE | JSON_PARTIAL_OUTPUT_ON_ERROR);
+            break;
+
         case 'cachecheck':
             // Does the shared cache actually hold what the warm worker
             // should have written for this tenant's dashboard? Checks the
