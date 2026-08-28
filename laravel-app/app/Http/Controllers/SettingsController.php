@@ -35,6 +35,11 @@ class SettingsController extends Controller
         // Direct ERP database connection (non-Odoo ERPs)
         'ERP_DB_DRIVER', 'ERP_DB_HOST', 'ERP_DB_PORT', 'ERP_DB_DATABASE',
         'ERP_DB_USERNAME', 'ERP_DB_PASSWORD', 'ERP_DB_SSLMODE', 'ERP_DB_SCHEMA',
+        // Optional second data source (see App\Services\DataSource)
+        'ERP2_TYPE', 'ERP2_NAME',
+        'ERP2_ODOO_URL', 'ERP2_ODOO_DB', 'ERP2_ODOO_USERNAME', 'ERP2_ODOO_API_KEY', 'ERP2_ODOO_PROTOCOL',
+        'ERP2_DB_DRIVER', 'ERP2_DB_HOST', 'ERP2_DB_PORT', 'ERP2_DB_DATABASE',
+        'ERP2_DB_USERNAME', 'ERP2_DB_PASSWORD', 'ERP2_DB_SSLMODE', 'ERP2_DB_SCHEMA',
         'REVENUE_SOURCE', 'APP_BRAND',
         // Existing budget benchmarks (kept)
         'BUDGET_MONTHLY_REVENUE', 'BUDGET_MONTHLY_OUTFITS', 'BUDGET_MONTHLY_COGS',
@@ -150,19 +155,19 @@ class SettingsController extends Controller
      * Test the saved Odoo credentials — round-trip authentication.
      * Returns JSON for the AJAX caller in the Settings page.
      */
-    public function testOdoo(): JsonResponse
+    public function testOdoo($source = 1): JsonResponse
     {
         $this->requireTenant();
-        return response()->json(OdooConnectionTester::testCurrent());
+        return response()->json(OdooConnectionTester::testCurrent(\App\Services\DataSource::of((int) $source)));
     }
 
     /**
      * Test the saved direct-database ERP credentials (non-Odoo ERPs).
      */
-    public function testErpDb(): JsonResponse
+    public function testErpDb($source = 1): JsonResponse
     {
         $this->requireTenant();
-        return response()->json(\App\Services\ErpDbConnectionTester::testCurrent());
+        return response()->json(\App\Services\ErpDbConnectionTester::testCurrent(\App\Services\DataSource::of((int) $source)));
     }
 
     /**

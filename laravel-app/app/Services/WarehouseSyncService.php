@@ -38,10 +38,38 @@ final class WarehouseSyncService
     /** Rows per database upsert batch. */
     private const CHUNK = 500;
 
+    /** Which of the tenant's data sources this run reads (see DataSource). */
+    private DataSource $source;
+
+    /** Added to every id written — 0 for the primary source. */
+    private int $off = 0;
+
     public function __construct(
         private OdooClient $odoo,
         private Tenant $tenant,
-    ) {}
+        ?DataSource $source = null,
+    ) {
+        $this->source = $source ?? DataSource::primary();
+        $this->off    = $this->source->idOffset();
+    }
+
+    /** Warehouse id for an Odoo record id. */
+    private function id(mixed $raw): int
+    {
+        return (int) $raw + $this->off;
+    }
+
+    /** Warehouse id for an Odoo many2one value ([id, name] or false). */
+    private function ref(mixed $m2o): ?int
+    {
+        return is_array($m2o) ? (int) $m2o[0] + $this->off : null;
+    }
+
+    /** Odoo record id for a warehouse id. */
+    private function raw(mixed $id): int
+    {
+        return (int) $id - $this->off;
+    }
 
     /**
      * Sync every model for this tenant.
@@ -115,12 +143,12 @@ final class WarehouseSyncService
             ['name', 'default_code', 'categ_id', 'detailed_type', 'list_price', 'write_date'],
             fn (array $r) => [
                 'tenant_id'        => $this->tenant->id,
-                'odoo_id'          => (int) $r['id'],
+                'odoo_id'          => $this->id($r['id']),
                 'name'             => mb_substr((string) ($r['name'] ?: ''), 0, 255),
                 'code'             => mb_substr((string) ($r['default_code'] ?: ''), 0, 64) ?: null,
                 'category_name'    => is_array($r['categ_id'] ?? null)
                     ? mb_substr((string) ($r['categ_id'][1] ?? ''), 0, 191) : null,
-                'category_odoo_id' => is_array($r['categ_id'] ?? null) ? (int) $r['categ_id'][0] : null,
+                'category_odoo_id' => $this->ref($r['categ_id'] ?? null),
                 'product_type'     => mb_substr((string) ($r['detailed_type'] ?: ''), 0, 32) ?: null,
                 'list_price'       => (float) ($r['list_price'] ?? 0),
                 'write_date'       => $this->dt($r['write_date'] ?? null),
@@ -136,7 +164,7 @@ final class WarehouseSyncService
                 $name = (string) ($r['name'] ?: '');
                 return [
                     'tenant_id'      => $this->tenant->id,
-                    'odoo_id'        => (int) $r['id'],
+                    'odoo_id'        => $this->id($r['id']),
                     'name'           => mb_substr($name, 0, 191),
                     'code'           => mb_substr((string) ($r['code'] ?: ''), 0, 32) ?: null,
                     'journal_type'   => mb_substr((string) ($r['type'] ?: ''), 0, 32) ?: null,
@@ -156,7 +184,7 @@ final class WarehouseSyncService
             ['name', 'ref', 'is_company', 'write_date'],
             fn (array $r) => [
                 'tenant_id'  => $this->tenant->id,
-                'odoo_id'    => (int) $r['id'],
+                'odoo_id'    => $this->id($r['id']),
                 'name'       => mb_substr((string) ($r['name'] ?: ''), 0, 255),
                 'ref'        => mb_substr((string) ($r['ref'] ?: ''), 0, 64) ?: null,
                 'is_company' => (bool) ($r['is_company'] ?? false),
@@ -173,7 +201,7 @@ final class WarehouseSyncService
                 $code = (string) ($r['code'] ?: '');
                 return [
                     'tenant_id'     => $this->tenant->id,
-                    'odoo_id'       => (int) $r['id'],
+                    'odoo_id'       => $this->id($r['id']),
                     'code'          => mb_substr($code, 0, 32),
                     'name'          => mb_substr((string) ($r['name'] ?: ''), 0, 255),
                     'account_class' => $code !== '' ? substr($code, 0, 1) : null,
@@ -208,7 +236,7 @@ final class WarehouseSyncService
                 }
                 return [
                     'tenant_id'        => $this->tenant->id,
-                    'odoo_id'          => (int) $r['id'],
+                    'odoo_id'          => $this->id($r['id']),
                     'name'             => mb_substr((string) ($r['name'] ?: ''), 0, 64),
                     'move_type'        => (string) ($r['move_type'] ?: ''),
                     'state'            => (string) ($r['state'] ?: ''),
@@ -216,8 +244,8 @@ final class WarehouseSyncService
                     'voyage_type'      => $voyage,
                     'invoice_date'     => $this->d($r['invoice_date'] ?? null),
                     'invoice_date_due' => $this->d($r['invoice_date_due'] ?? null),
-                    'partner_odoo_id'  => is_array($r['partner_id'] ?? null) ? (int) $r['partner_id'][0] : null,
-                    'journal_odoo_id'  => is_array($r['journal_id'] ?? null) ? (int) $r['journal_id'][0] : null,
+                    'partner_odoo_id'  => $this->ref($r['partner_id'] ?? null),
+                    'journal_odoo_id'  => $this->ref($r['journal_id'] ?? null),
                     'amount_untaxed'   => (float) ($r['amount_untaxed_signed'] ?? 0),
                     'amount_total'     => (float) ($r['amount_total_signed'] ?? 0),
                     'amount_residual'  => (float) ($r['amount_residual_signed'] ?? 0),
@@ -243,12 +271,12 @@ final class WarehouseSyncService
              'partner_type', 'state', 'date', 'amount', 'write_date'],
             fn (array $r) => [
                 'tenant_id'       => $this->tenant->id,
-                'odoo_id'         => (int) $r['id'],
+                'odoo_id'         => $this->id($r['id']),
                 'name'            => mb_substr((string) ($r['name'] ?: ''), 0, 64),
                 'ref'             => mb_substr((string) ($r['ref'] ?: ''), 0, 128) ?: null,
-                'partner_odoo_id' => is_array($r['partner_id'] ?? null) ? (int) $r['partner_id'][0] : null,
-                'journal_odoo_id' => is_array($r['journal_id'] ?? null) ? (int) $r['journal_id'][0] : null,
-                'move_odoo_id'    => is_array($r['move_id'] ?? null) ? (int) $r['move_id'][0] : null,
+                'partner_odoo_id' => $this->ref($r['partner_id'] ?? null),
+                'journal_odoo_id' => $this->ref($r['journal_id'] ?? null),
+                'move_odoo_id'    => $this->ref($r['move_id'] ?? null),
                 'payment_type'    => mb_substr((string) ($r['payment_type'] ?: ''), 0, 16) ?: null,
                 'partner_type'    => mb_substr((string) ($r['partner_type'] ?: ''), 0, 16) ?: null,
                 'state'           => mb_substr((string) ($r['state'] ?: ''), 0, 32) ?: null,
@@ -271,9 +299,9 @@ final class WarehouseSyncService
             ['debit_move_id', 'credit_move_id', 'amount', 'max_date', 'write_date'],
             fn (array $r) => [
                 'tenant_id'          => $this->tenant->id,
-                'odoo_id'            => (int) $r['id'],
-                'debit_line_odoo_id' => is_array($r['debit_move_id'] ?? null) ? (int) $r['debit_move_id'][0] : null,
-                'credit_line_odoo_id'=> is_array($r['credit_move_id'] ?? null) ? (int) $r['credit_move_id'][0] : null,
+                'odoo_id'            => $this->id($r['id']),
+                'debit_line_odoo_id' => $this->ref($r['debit_move_id'] ?? null),
+                'credit_line_odoo_id'=> $this->ref($r['credit_move_id'] ?? null),
                 'debit_move_odoo_id' => null,   // resolved post-pull
                 'credit_move_odoo_id'=> null,
                 'amount'             => (float) ($r['amount'] ?? 0),
@@ -330,11 +358,11 @@ final class WarehouseSyncService
         $mv = $r['move_id'] ?? null;
         return [
             'tenant_id'       => $this->tenant->id,
-            'odoo_id'         => (int) $r['id'],
-            'move_odoo_id'    => is_array($mv) ? (int) $mv[0] : null,
-            'account_odoo_id' => is_array($r['account_id'] ?? null) ? (int) $r['account_id'][0] : null,
-            'product_odoo_id' => is_array($r['product_id'] ?? null) ? (int) $r['product_id'][0] : null,
-            'journal_odoo_id' => is_array($r['journal_id'] ?? null) ? (int) $r['journal_id'][0] : null,
+            'odoo_id'         => $this->id($r['id']),
+            'move_odoo_id'    => $this->ref($mv),
+            'account_odoo_id' => $this->ref($r['account_id'] ?? null),
+            'product_odoo_id' => $this->ref($r['product_id'] ?? null),
+            'journal_odoo_id' => $this->ref($r['journal_id'] ?? null),
             // Two dates, on purpose. gl_date is the accounting date as booked
             // and is never rewritten. invoice_date starts as the same value
             // but gets replaced by the parent document's date in
@@ -497,11 +525,13 @@ final class WarehouseSyncService
             $ids = DB::table('wh_fact_gl_line')
                 ->where('tenant_id', $this->tenant->id)
                 ->where(fn ($q) => $q->whereNull('gl_date')->orWhereNull('parent_state')->orWhere('parent_state', ''))
+                ->whereBetween('odoo_id', $this->source->idRange())
                 ->orderBy('odoo_id')
                 ->limit(self::PAGE)
                 ->pluck('odoo_id')
                 ->all();
             if ($ids === []) break;
+            $ids = array_map(fn ($i) => $this->raw($i), $ids);
 
             $recs = $this->odoo->searchRead('account.move.line', [['id', 'in', $ids]],
                 ['id', 'move_id', 'account_id', 'product_id', 'journal_id', 'quantity', 'price_unit',
@@ -527,7 +557,7 @@ final class WarehouseSyncService
             if ($gone !== []) {
                 DB::table('wh_fact_gl_line')
                     ->where('tenant_id', $this->tenant->id)
-                    ->whereIn('odoo_id', $gone)
+                    ->whereIn('odoo_id', array_map(fn ($i) => $this->id($i), $gone))
                     ->delete();
                 $removed += count($gone);
             }
@@ -537,6 +567,7 @@ final class WarehouseSyncService
 
         $left = DB::table('wh_fact_gl_line')
             ->where('tenant_id', $this->tenant->id)
+            ->whereBetween('odoo_id', $this->source->idRange())
             ->where(fn ($q) => $q->whereNull('gl_date')->orWhereNull('parent_state')->orWhere('parent_state', ''))
             ->count();
 
@@ -598,7 +629,7 @@ final class WarehouseSyncService
             foreach (array_chunk($ids, 1000) as $chunk) {
                 $fixed += DB::table('wh_fact_gl_line')
                     ->where('tenant_id', $this->tenant->id)
-                    ->whereIn('odoo_id', $chunk)
+                    ->whereIn('odoo_id', array_map(fn ($i) => $this->id($i), $chunk))
                     ->where(function ($q) use ($st) {
                         $q->where('parent_state', '!=', $st)->orWhereNull('parent_state');
                     })
@@ -613,13 +644,14 @@ final class WarehouseSyncService
         if ($complete) {
             $whIds = DB::table('wh_fact_gl_line')
                 ->where('tenant_id', $this->tenant->id)
+                ->whereBetween('odoo_id', $this->source->idRange())
                 ->whereBetween('gl_date', [$from, $to])
-                ->pluck('odoo_id')->all();
+                ->pluck('odoo_id')->map(fn ($i) => $this->raw($i))->all();
             $gone = array_values(array_diff($whIds, array_keys($state)));
             foreach (array_chunk($gone, 1000) as $chunk) {
                 $removed += DB::table('wh_fact_gl_line')
                     ->where('tenant_id', $this->tenant->id)
-                    ->whereIn('odoo_id', $chunk)
+                    ->whereIn('odoo_id', array_map(fn ($i) => $this->id($i), $chunk))
                     ->delete();
             }
         }
@@ -651,6 +683,7 @@ final class WarehouseSyncService
 
     private function state(string $model): object
     {
+        $model = $this->source->stateModel($model);
         $row = DB::table('wh_sync_state')
             ->where('tenant_id', $this->tenant->id)->where('model', $model)->first();
         if ($row) return $row;
@@ -665,6 +698,7 @@ final class WarehouseSyncService
 
     private function note(string $model, ?string $error): void
     {
+        $model = $this->source->stateModel($model);
         DB::table('wh_sync_state')
             ->where('tenant_id', $this->tenant->id)->where('model', $model)
             ->update(['last_error' => $error, 'updated_at' => now()]);

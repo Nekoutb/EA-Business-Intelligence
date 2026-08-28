@@ -258,8 +258,9 @@ Route::prefix('admin')->group(function () {
                                                      [AdminTenantController::class, 'toggleDashboardKpi']);
         Route::get ('/tenants/{tenant}/settings',           [AdminTenantController::class, 'showSettings']);
         Route::post('/tenants/{tenant}/settings',           [AdminTenantController::class, 'saveSettings']);
-        Route::post('/tenants/{tenant}/settings/test-odoo', [AdminTenantController::class, 'testOdoo']);
-        Route::post('/tenants/{tenant}/settings/test-erp-db', [AdminTenantController::class, 'testErpDb']);
+        // {source} = 1 (default) or 2 for the optional second data source.
+        Route::post('/tenants/{tenant}/settings/test-odoo/{source?}', [AdminTenantController::class, 'testOdoo'])->where('source', '[12]');
+        Route::post('/tenants/{tenant}/settings/test-erp-db/{source?}', [AdminTenantController::class, 'testErpDb'])->where('source', '[12]');
         Route::post('/tenants/{tenant}/rename',      [AdminTenantController::class, 'rename']);
         Route::post('/tenants/{tenant}/suspend',     [AdminTenantController::class, 'suspend']);
         Route::post('/tenants/{tenant}/activate',    [AdminTenantController::class, 'activate']);
@@ -1695,8 +1696,8 @@ Route::prefix('t/{tenant}')
                 Route::get ('/settings',                    [SettingsController::class, 'show']);
                 Route::middleware('tenant.admin')->group(function () {
                     Route::post('/settings',                [SettingsController::class, 'save']);
-                    Route::post('/settings/test-odoo',      [SettingsController::class, 'testOdoo']);
-                    Route::post('/settings/test-erp-db',    [SettingsController::class, 'testErpDb']);
+                    Route::post('/settings/test-odoo/{source?}',   [SettingsController::class, 'testOdoo'])->where('source', '[12]');
+                    Route::post('/settings/test-erp-db/{source?}', [SettingsController::class, 'testErpDb'])->where('source', '[12]');
                 });
 
                 // Tenant user management — gated to tenant admins (and

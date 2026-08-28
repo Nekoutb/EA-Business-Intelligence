@@ -25,9 +25,10 @@ use App\Odoo\OdooFactory;
  */
 final class OdooConnectionTester
 {
-    public static function testCurrent(): array
+    public static function testCurrent(?DataSource $src = null): array
     {
-        $protocol = (string) config_env('ODOO_PROTOCOL', 'jsonrpc');
+        $src ??= DataSource::primary();
+        $protocol = (string) config_env($src->key('ODOO_PROTOCOL'), 'jsonrpc');
 
         $result = [
             'ok'             => false,
@@ -42,7 +43,7 @@ final class OdooConnectionTester
         // "fill these in first" message instead of a stack trace.
         $missing = [];
         foreach (['ODOO_URL' => 'Odoo URL', 'ODOO_DB' => 'Database', 'ODOO_USERNAME' => 'Username', 'ODOO_API_KEY' => 'API Key'] as $key => $label) {
-            if (trim((string) config_env($key, '')) === '') {
+            if (trim((string) config_env($src->key($key), '')) === '') {
                 $missing[] = $label;
             }
         }
@@ -53,7 +54,7 @@ final class OdooConnectionTester
 
         $started = hrtime(true);
         try {
-            $client = OdooFactory::fromConfig();
+            $client = OdooFactory::fromSource($src);
             $uid    = $client->authenticate();
 
             $result['latency_ms'] = (int) round((hrtime(true) - $started) / 1e6);

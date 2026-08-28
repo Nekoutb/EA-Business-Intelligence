@@ -17,6 +17,9 @@ use Illuminate\Support\Facades\Cache;
  * upserted on (tenant, odoo id), so nothing duplicates.
  *
  * Manual: php artisan bms:warehouse-sync [--tenant=slug] [--full]
+ *
+ * A tenant with a second data source (ERP2_* settings) syncs both, one after
+ * the other, into the same tables — see App\Services\DataSource.
  */
 class WarehouseSync extends Command
 {
@@ -55,55 +58,61 @@ class WarehouseSync extends Command
                 try {
                     app(TenantContext::class)->set($tenant);
 
-                    // Direct-database ERP tenants (ERP_TYPE != odoo) sync
-                    // through their own service; the Odoo path below would
-                    // only ever see a NullOdooClient.
-                    $erpType = strtolower((string) config_env('ERP_TYPE', 'odoo'));
-                    if ($erpType !== '' && $erpType !== 'odoo') {
-                        if (trim((string) config_env('ERP_DB_HOST', '')) === '') {
-                            $this->line('   skipped: non-Odoo ERP without database credentials');
+                    // A workspace may feed from two systems (see DataSource):
+                    // each configured source syncs on its own, into the same
+                    // warehouse tables, in its own id space.
+                    foreach (\App\Services\DataSource::all() as $src) {
+                        if (!$src->configured()) continue;
+                        if (!$src->isPrimary()) $this->line("   [{$src->label()}]");
+
+                        // Direct-database ERPs sync through their own service;
+                        // the Odoo path below would only ever see a NullOdooClient.
+                        if (!$src->isOdoo()) {
+                            if (trim((string) config_env($src->key('ERP_DB_HOST'), '')) === '') {
+                                $this->line('   skipped: non-Odoo ERP without database credentials');
+                                continue;
+                            }
+                            $res = (new \App\Services\ErpDbSyncService($tenant, $src))->syncAll(function (string $model, array $r) {
+                                $this->line(sprintf('   %-20s %8s rows %7.1fs %s',
+                                    $model, number_format($r['rows']), $r['seconds'], $r['error'] ?? ''));
+                            });
+                            foreach ($res as $r) if ($r['error']) $failed++;
                             continue;
                         }
-                        $res = (new \App\Services\ErpDbSyncService($tenant))->syncAll(function (string $model, array $r) {
+
+                        $svc = new WarehouseSyncService(OdooFactory::fromSource($src), $tenant, $src);
+                        $budget = (float) $this->option('seconds');
+                        $res = $svc->syncAll($full, function (string $model, array $r) {
                             $this->line(sprintf('   %-20s %8s rows %7.1fs %s',
                                 $model, number_format($r['rows']), $r['seconds'], $r['error'] ?? ''));
-                        });
+                        }, ($this->option('model') ?: null), $budget > 0 ? microtime(true) + $budget : 0.0);
+                        $fixed = $svc->reconcileLineDates();
+                        $this->line("   line dates back-filled: " . number_format($fixed));
+
+                        // Link cash application to its parent documents once the
+                        // GL lines it references are present.
+                        try {
+                            $rm = $svc->resolveReconcileMoves();
+                            if ($rm > 0) $this->line("   reconcile moves resolved: " . number_format($rm));
+                        } catch (\Throwable $e) {
+                            $this->line("   reconcile move resolution skipped: " . $e->getMessage());
+                        }
+
+                        // Deletions and parent-state changes are invisible to an
+                        // upsert-only sync, so they need their own pass. Kept off
+                        // the 15-minute tick — it re-reads a whole year of ids —
+                        // and scheduled nightly instead.
+                        if ($this->option('reconcile')) {
+                            $y = (int) ($this->option('year') ?: date('Y'));
+                            $svc->setDeadline($budget > 0 ? microtime(true) + $budget : 0.0);
+                            $r = $svc->reconcileGlState($y . '-01-01', $y . '-12-31');
+                            $this->line(sprintf('   gl reconcile %d: checked %s · states fixed %s · removed %s · %s',
+                                $y, number_format($r['checked']), number_format($r['fixed']),
+                                number_format($r['removed']),
+                                $r['complete'] ? 'complete' : 'incomplete (no deletions)'));
+                        }
                         foreach ($res as $r) if ($r['error']) $failed++;
-                        continue;
                     }
-
-                    $svc = new WarehouseSyncService(OdooFactory::fromConfig(), $tenant);
-                    $budget = (float) $this->option('seconds');
-                    $res = $svc->syncAll($full, function (string $model, array $r) {
-                        $this->line(sprintf('   %-20s %8s rows %7.1fs %s',
-                            $model, number_format($r['rows']), $r['seconds'], $r['error'] ?? ''));
-                    }, ($this->option('model') ?: null), $budget > 0 ? microtime(true) + $budget : 0.0);
-                    $fixed = $svc->reconcileLineDates();
-                    $this->line("   line dates back-filled: " . number_format($fixed));
-
-                    // Link cash application to its parent documents once the
-                    // GL lines it references are present.
-                    try {
-                        $rm = $svc->resolveReconcileMoves();
-                        if ($rm > 0) $this->line("   reconcile moves resolved: " . number_format($rm));
-                    } catch (\Throwable $e) {
-                        $this->line("   reconcile move resolution skipped: " . $e->getMessage());
-                    }
-
-                    // Deletions and parent-state changes are invisible to an
-                    // upsert-only sync, so they need their own pass. Kept off
-                    // the 15-minute tick — it re-reads a whole year of ids —
-                    // and scheduled nightly instead.
-                    if ($this->option('reconcile')) {
-                        $y = (int) ($this->option('year') ?: date('Y'));
-                        $svc->setDeadline($budget > 0 ? microtime(true) + $budget : 0.0);
-                        $r = $svc->reconcileGlState($y . '-01-01', $y . '-12-31');
-                        $this->line(sprintf('   gl reconcile %d: checked %s · states fixed %s · removed %s · %s',
-                            $y, number_format($r['checked']), number_format($r['fixed']),
-                            number_format($r['removed']),
-                            $r['complete'] ? 'complete' : 'incomplete (no deletions)'));
-                    }
-                    foreach ($res as $r) if ($r['error']) $failed++;
                 } catch (\Throwable $e) {
                     $this->error("   failed: " . $e->getMessage());
                     $failed++;

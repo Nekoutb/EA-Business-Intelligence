@@ -29,9 +29,11 @@ final class ErpDbConnectionTester
     /** Drivers the tester (and the runtime connector) will accept. */
     public const DRIVERS = ['pgsql', 'mysql', 'sqlsrv'];
 
-    public static function testCurrent(): array
+    public static function testCurrent(?DataSource $src = null): array
     {
-        $driver = strtolower(trim((string) config_env('ERP_DB_DRIVER', 'pgsql')));
+        $src ??= DataSource::primary();
+        $k = fn (string $base) => $src->key($base);
+        $driver = strtolower(trim((string) config_env($k('ERP_DB_DRIVER'), 'pgsql')));
 
         $result = [
             'ok'             => false,
@@ -50,7 +52,7 @@ final class ErpDbConnectionTester
         // message instead of a stack trace.
         $missing = [];
         foreach (['ERP_DB_HOST' => 'Host', 'ERP_DB_DATABASE' => 'Database', 'ERP_DB_USERNAME' => 'Username', 'ERP_DB_PASSWORD' => 'Password'] as $key => $label) {
-            if (trim((string) config_env($key, '')) === '') {
+            if (trim((string) config_env($k($key), '')) === '') {
                 $missing[] = $label;
             }
         }
@@ -65,7 +67,7 @@ final class ErpDbConnectionTester
         }
 
         $connection = 'erp_probe_' . bin2hex(random_bytes(4));
-        config(["database.connections.{$connection}" => self::connectionConfig($driver)]);
+        config(["database.connections.{$connection}" => self::connectionConfig($driver, $src)]);
 
         $started = hrtime(true);
         try {
@@ -80,7 +82,7 @@ final class ErpDbConnectionTester
 
             // Confirm the configured schema is actually visible, so a typo
             // in the schema name fails here rather than on the first report.
-            $schema = trim((string) config_env('ERP_DB_SCHEMA', ''));
+            $schema = trim((string) config_env($k('ERP_DB_SCHEMA'), ''));
             if ($schema !== '' && $driver === 'pgsql') {
                 $found = DB::connection($connection)
                     ->select('select 1 from information_schema.schemata where schema_name = ?', [$schema]);
@@ -108,17 +110,19 @@ final class ErpDbConnectionTester
      * Build a Laravel connection config array from the tenant's ERP_DB_*
      * settings. Shared by the tester and (later) the runtime connector.
      */
-    public static function connectionConfig(?string $driver = null): array
+    public static function connectionConfig(?string $driver = null, ?DataSource $src = null): array
     {
-        $driver = $driver ?: strtolower(trim((string) config_env('ERP_DB_DRIVER', 'pgsql')));
+        $src ??= DataSource::primary();
+        $k = fn (string $base) => $src->key($base);
+        $driver = $driver ?: strtolower(trim((string) config_env($k('ERP_DB_DRIVER'), 'pgsql')));
 
         $config = [
             'driver'   => $driver,
-            'host'     => trim((string) config_env('ERP_DB_HOST', '')),
-            'port'     => trim((string) config_env('ERP_DB_PORT', '')) ?: self::defaultPort($driver),
-            'database' => trim((string) config_env('ERP_DB_DATABASE', '')),
-            'username' => trim((string) config_env('ERP_DB_USERNAME', '')),
-            'password' => (string) config_env('ERP_DB_PASSWORD', ''),
+            'host'     => trim((string) config_env($k('ERP_DB_HOST'), '')),
+            'port'     => trim((string) config_env($k('ERP_DB_PORT'), '')) ?: self::defaultPort($driver),
+            'database' => trim((string) config_env($k('ERP_DB_DATABASE'), '')),
+            'username' => trim((string) config_env($k('ERP_DB_USERNAME'), '')),
+            'password' => (string) config_env($k('ERP_DB_PASSWORD'), ''),
             'charset'  => 'utf8',
         ];
 
@@ -126,8 +130,8 @@ final class ErpDbConnectionTester
             // sslmode=require encrypts without verifying the certificate,
             // which is what self-signed ERP servers need ("refuse
             // verify-full" as providers put it).
-            $config['sslmode'] = trim((string) config_env('ERP_DB_SSLMODE', 'prefer')) ?: 'prefer';
-            $schema = trim((string) config_env('ERP_DB_SCHEMA', ''));
+            $config['sslmode'] = trim((string) config_env($k('ERP_DB_SSLMODE'), 'prefer')) ?: 'prefer';
+            $schema = trim((string) config_env($k('ERP_DB_SCHEMA'), ''));
             if ($schema !== '') {
                 $config['search_path'] = $schema;
             }

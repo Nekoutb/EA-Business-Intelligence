@@ -38,6 +38,12 @@ class TenantController extends Controller
         'ODOO_URL', 'ODOO_DB', 'ODOO_USERNAME', 'ODOO_API_KEY', 'ODOO_PROTOCOL',
         'ERP_DB_DRIVER', 'ERP_DB_HOST', 'ERP_DB_PORT', 'ERP_DB_DATABASE',
         'ERP_DB_USERNAME', 'ERP_DB_PASSWORD', 'ERP_DB_SSLMODE', 'ERP_DB_SCHEMA',
+        // Optional second data source — same shape under an ERP2_ prefix
+        // (see App\Services\DataSource).
+        'ERP2_TYPE', 'ERP2_NAME',
+        'ERP2_ODOO_URL', 'ERP2_ODOO_DB', 'ERP2_ODOO_USERNAME', 'ERP2_ODOO_API_KEY', 'ERP2_ODOO_PROTOCOL',
+        'ERP2_DB_DRIVER', 'ERP2_DB_HOST', 'ERP2_DB_PORT', 'ERP2_DB_DATABASE',
+        'ERP2_DB_USERNAME', 'ERP2_DB_PASSWORD', 'ERP2_DB_SSLMODE', 'ERP2_DB_SCHEMA',
         'REVENUE_SOURCE', 'APP_BRAND',
     ];
 
@@ -50,6 +56,41 @@ class TenantController extends Controller
         'quickbooks'=> 'QuickBooks',
         'other'     => 'Other',
     ];
+
+    /** Choices for the optional second data source: the ERP list plus "none". */
+    public static function erp2Types(): array
+    {
+        return ['none' => 'None — single data source'] + self::ERP_TYPES;
+    }
+
+    /**
+     * Validation rules for one data source's connection fields, keyed for
+     * that source (ERP_DB_HOST for source 1, ERP2_DB_HOST for source 2).
+     */
+    public static function sourceRules(string $erpType, \App\Services\DataSource $src): array
+    {
+        $k = fn (string $b) => $src->key($b);
+        if ($erpType === 'odoo') {
+            return [
+                $k('ODOO_URL')      => ['required', 'url'],
+                $k('ODOO_DB')       => ['required', 'string'],
+                $k('ODOO_USERNAME') => ['required', 'string'],
+                $k('ODOO_API_KEY')  => ['required', 'string'],
+                $k('ODOO_PROTOCOL') => ['required', 'in:json2,jsonrpc,xmlrpc'],
+            ];
+        }
+        return [
+            $k('ERP_NAME')        => [$erpType === 'other' ? 'required' : 'nullable', 'string', 'max:191'],
+            $k('ERP_DB_DRIVER')   => ['required', Rule::in(\App\Services\ErpDbConnectionTester::DRIVERS)],
+            $k('ERP_DB_HOST')     => ['required', 'string', 'max:191'],
+            $k('ERP_DB_PORT')     => ['required', 'integer', 'between:1,65535'],
+            $k('ERP_DB_DATABASE') => ['required', 'string', 'max:191'],
+            $k('ERP_DB_USERNAME') => ['required', 'string', 'max:191'],
+            $k('ERP_DB_PASSWORD') => ['required', 'string'],
+            $k('ERP_DB_SSLMODE')  => ['nullable', 'in:disable,prefer,require'],
+            $k('ERP_DB_SCHEMA')   => ['nullable', 'string', 'max:191'],
+        ];
+    }
 
     public function index(Request $request)
     {
@@ -262,6 +303,13 @@ class TenantController extends Controller
                             'ERP_DB_SCHEMA'   => ['nullable', 'string', 'max:191'],
                         ];
                     }
+
+                    // Optional second data source (ERP2_*), validated the same way.
+                    $erp2 = strtolower((string) $request->input('ERP2_TYPE', 'none'));
+                    $rules['ERP2_TYPE'] = ['nullable', Rule::in(array_keys(self::erp2Types()))];
+                    if ($erp2 !== '' && $erp2 !== 'none') {
+                        $rules += self::sourceRules($erp2, \App\Services\DataSource::of(2));
+                    }
                 }
 
                 $data = $request->validate($rules);
@@ -414,6 +462,11 @@ class TenantController extends Controller
                 'ODOO_URL', 'ODOO_DB', 'ODOO_USERNAME', 'ODOO_API_KEY', 'ODOO_PROTOCOL',
                 'ERP_DB_DRIVER', 'ERP_DB_HOST', 'ERP_DB_PORT', 'ERP_DB_DATABASE',
                 'ERP_DB_USERNAME', 'ERP_DB_PASSWORD', 'ERP_DB_SSLMODE', 'ERP_DB_SCHEMA',
+
+                'ERP2_TYPE', 'ERP2_NAME',
+                'ERP2_ODOO_URL', 'ERP2_ODOO_DB', 'ERP2_ODOO_USERNAME', 'ERP2_ODOO_API_KEY', 'ERP2_ODOO_PROTOCOL',
+                'ERP2_DB_DRIVER', 'ERP2_DB_HOST', 'ERP2_DB_PORT', 'ERP2_DB_DATABASE',
+                'ERP2_DB_USERNAME', 'ERP2_DB_PASSWORD', 'ERP2_DB_SSLMODE', 'ERP2_DB_SCHEMA',
             ] as $key) {
                 if (!empty($integration[$key])) {
                     TenantSetting::create([
@@ -574,14 +627,15 @@ class TenantController extends Controller
      * Temporarily binds the tenant context so OdooFactory::fromConfig()
      * reads from THAT tenant's settings (not the request session's).
      */
-    public function testOdoo(Tenant $tenant)
+    public function testOdoo(Tenant $tenant, $source = 1)
     {
+        $src = \App\Services\DataSource::of((int) $source);
         /** @var \App\Tenancy\TenantContext $ctx */
         $ctx = app(\App\Tenancy\TenantContext::class);
         $previous = $ctx->has() ? $ctx->tenant() : null;
         $ctx->set($tenant);
         try {
-            $payload = \App\Services\OdooConnectionTester::testCurrent();
+            $payload = \App\Services\OdooConnectionTester::testCurrent($src);
         } finally {
             // Restore prior context so subsequent admin requests aren't tainted.
             if ($previous) {
@@ -595,14 +649,15 @@ class TenantController extends Controller
      * Probe the tenant's direct-database ERP credentials (non-Odoo ERPs).
      * Same context-swap dance as testOdoo().
      */
-    public function testErpDb(Tenant $tenant)
+    public function testErpDb(Tenant $tenant, $source = 1)
     {
+        $src = \App\Services\DataSource::of((int) $source);
         /** @var \App\Tenancy\TenantContext $ctx */
         $ctx = app(\App\Tenancy\TenantContext::class);
         $previous = $ctx->has() ? $ctx->tenant() : null;
         $ctx->set($tenant);
         try {
-            $payload = \App\Services\ErpDbConnectionTester::testCurrent();
+            $payload = \App\Services\ErpDbConnectionTester::testCurrent($src);
         } finally {
             if ($previous) {
                 $ctx->set($previous);

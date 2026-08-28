@@ -8,7 +8,12 @@
     <form method="POST" action="{{ tenant_url('/settings') }}" enctype="multipart/form-data" class="space-y-6">
         @csrf
 
-        @php $erpType = ($values['ERP_TYPE'] ?? '') !== '' ? $values['ERP_TYPE'] : 'odoo'; @endphp
+        @php
+            $erpType  = ($values['ERP_TYPE'] ?? '') !== '' ? $values['ERP_TYPE'] : 'odoo';
+            $erp2Type = ($values['ERP2_TYPE'] ?? '') !== '' ? $values['ERP2_TYPE'] : 'none';
+            $in  = 'w-full border border-slate-300 rounded-lg px-3 py-2 text-sm';
+            $inM = $in . ' font-mono';
+        @endphp
 
         {{-- ── ERP system selection ───────────────────────────────────── --}}
         <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
@@ -17,13 +22,13 @@
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                     <label class="block text-xs font-medium text-slate-600 mb-1">ERP system</label>
-                    <select name="ERP_TYPE" id="ea-erp-type" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white">
+                    <select name="ERP_TYPE" id="ea-erp-type" data-erp-type-select="1" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white">
                         @foreach (\App\Http\Controllers\Admin\TenantController::ERP_TYPES as $key => $label)
                             <option value="{{ $key }}" {{ $erpType === $key ? 'selected' : '' }}>{{ $label }}</option>
                         @endforeach
                     </select>
                 </div>
-                <div data-erp-name-field>
+                <div data-erp-name-field="1">
                     <label class="block text-xs font-medium text-slate-600 mb-1">ERP name <span class="text-slate-400 font-normal">(when "Other")</span></label>
                     <input name="ERP_NAME" value="{{ $values['ERP_NAME'] ?? '' }}" placeholder="Name of the ERP system"
                            class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
@@ -32,7 +37,7 @@
         </div>
 
         {{-- ── Odoo connection ────────────────────────────────────────── --}}
-        <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-6" data-erp-section="odoo">
+        <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-6" data-erp-section="odoo" data-erp-group="1">
             <div class="flex items-center justify-between mb-1">
                 <h2 class="text-sm font-semibold text-slate-900">Odoo Connection</h2>
                 <button type="button" data-test-btn data-test-url="{{ tenant_url('/settings/test-odoo') }}" data-test-pending="Pinging Odoo…"
@@ -89,7 +94,7 @@
         </div>
 
         {{-- ── ERP database connection (any non-Odoo ERP) ─────────────── --}}
-        <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-6" data-erp-section="db">
+        <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-6" data-erp-section="db" data-erp-group="1">
             <div class="flex items-center justify-between mb-1">
                 <h2 class="text-sm font-semibold text-slate-900">ERP Database Connection</h2>
                 <button type="button" data-test-btn data-test-url="{{ tenant_url('/settings/test-erp-db') }}" data-test-pending="Connecting to the ERP database…"
@@ -150,6 +155,113 @@
                     <select name="ERP_DB_SSLMODE" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white">
                         @foreach (['prefer' => 'prefer (default)', 'require' => 'require (encrypted, self-signed OK)', 'disable' => 'disable'] as $v => $l)
                             <option value="{{ $v }}" {{ (($values['ERP_DB_SSLMODE'] ?? '') !== '' ? $values['ERP_DB_SSLMODE'] : 'prefer') === $v ? 'selected' : '' }}>{{ $l }}</option>
+                        @endforeach
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        {{-- ── Second data source (optional) ──────────────────────────
+             For a workspace that runs two systems side by side: both are
+             synced into the same warehouse and every report combines
+             them (see App\Services\DataSource). Same fields, ERP2_ keys. --}}
+        <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+            <h2 class="text-sm font-semibold text-slate-900 mb-1">Second Data Source <span class="text-slate-400 font-normal">(optional)</span></h2>
+            <p class="text-xs text-slate-500 mb-4">If you run two systems side by side, connect the second one here. Both feed the same reports. Leave as "None" for a single source.</p>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                    <label class="block text-xs font-medium text-slate-600 mb-1">Second system</label>
+                    <select name="ERP2_TYPE" data-erp-type-select="2" class="{{ $in }} bg-white">
+                        @foreach (\App\Http\Controllers\Admin\TenantController::erp2Types() as $key => $label)
+                            <option value="{{ $key }}" {{ $erp2Type === $key ? 'selected' : '' }}>{{ $label }}</option>
+                        @endforeach
+                    </select>
+                </div>
+                <div data-erp-name-field="2">
+                    <label class="block text-xs font-medium text-slate-600 mb-1">System name <span class="text-slate-400 font-normal">(when "Other")</span></label>
+                    <input name="ERP2_NAME" value="{{ $values['ERP2_NAME'] ?? '' }}" placeholder="Name of the second system" class="{{ $in }}">
+                </div>
+            </div>
+        </div>
+
+        <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-6" data-erp-section="odoo" data-erp-group="2">
+            <div class="flex items-center justify-between mb-1">
+                <h2 class="text-sm font-semibold text-slate-900">Second Source · Odoo Connection</h2>
+                <button type="button" data-test-btn data-test-url="{{ tenant_url('/settings/test-odoo/2') }}" data-test-pending="Pinging the second Odoo…"
+                        class="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-indigo-700 border border-indigo-300 hover:border-indigo-500 bg-indigo-50/40 hover:bg-indigo-50 rounded-md px-3 py-1.5 transition disabled:opacity-50 disabled:cursor-not-allowed">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                    <span data-label>Test connection</span>
+                </button>
+            </div>
+            <div data-test-result class="hidden mb-4 px-3 py-2.5 rounded-lg text-[12px] leading-relaxed border" role="status"></div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="md:col-span-2">
+                    <label class="block text-xs font-medium text-slate-600 mb-1">Odoo URL</label>
+                    <input name="ERP2_ODOO_URL" value="{{ $values['ERP2_ODOO_URL'] ?? '' }}" placeholder="https://mycompany.odoo.com" class="{{ $in }}">
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-slate-600 mb-1">Database</label>
+                    <input name="ERP2_ODOO_DB" value="{{ $values['ERP2_ODOO_DB'] ?? '' }}" class="{{ $in }}">
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-slate-600 mb-1">Username</label>
+                    <input name="ERP2_ODOO_USERNAME" value="{{ $values['ERP2_ODOO_USERNAME'] ?? '' }}" class="{{ $in }}">
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-slate-600 mb-1">API key <span class="text-slate-400 font-normal">(leave blank to keep current)</span></label>
+                    <input name="ERP2_ODOO_API_KEY" type="password" autocomplete="off"
+                           placeholder="{{ !empty($values['__has_ERP2_ODOO_API_KEY']) ? '•••• stored (leave blank to keep)' : '••••••••••••' }}" class="{{ $inM }}">
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-slate-600 mb-1">Protocol</label>
+                    <select name="ERP2_ODOO_PROTOCOL" class="{{ $in }} bg-white">
+                        @foreach (['json2' => 'JSON-RPC v2', 'jsonrpc' => 'JSON-RPC', 'xmlrpc' => 'XML-RPC'] as $v => $l)
+                            <option value="{{ $v }}" {{ (($values['ERP2_ODOO_PROTOCOL'] ?? '') ?: 'json2') === $v ? 'selected' : '' }}>{{ $l }}</option>
+                        @endforeach
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-6" data-erp-section="db" data-erp-group="2">
+            <div class="flex items-center justify-between mb-1">
+                <h2 class="text-sm font-semibold text-slate-900">Second Source · Database Connection</h2>
+                <button type="button" data-test-btn data-test-url="{{ tenant_url('/settings/test-erp-db/2') }}" data-test-pending="Connecting to the second database…"
+                        class="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-indigo-700 border border-indigo-300 hover:border-indigo-500 bg-indigo-50/40 hover:bg-indigo-50 rounded-md px-3 py-1.5 transition disabled:opacity-50 disabled:cursor-not-allowed">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                    <span data-label>Test connection</span>
+                </button>
+            </div>
+            <div data-test-result class="hidden mb-4 px-3 py-2.5 rounded-lg text-[12px] leading-relaxed border" role="status"></div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                    <label class="block text-xs font-medium text-slate-600 mb-1">Database engine</label>
+                    <select name="ERP2_DB_DRIVER" class="{{ $in }} bg-white">
+                        @foreach (['pgsql' => 'PostgreSQL', 'mysql' => 'MySQL / MariaDB', 'sqlsrv' => 'SQL Server'] as $v => $l)
+                            <option value="{{ $v }}" {{ (($values['ERP2_DB_DRIVER'] ?? '') ?: 'pgsql') === $v ? 'selected' : '' }}>{{ $l }}</option>
+                        @endforeach
+                    </select>
+                </div>
+                <div><label class="block text-xs font-medium text-slate-600 mb-1">Host</label>
+                    <input name="ERP2_DB_HOST" value="{{ $values['ERP2_DB_HOST'] ?? '' }}" placeholder="db.example.com" class="{{ $inM }}"></div>
+                <div><label class="block text-xs font-medium text-slate-600 mb-1">Port</label>
+                    <input name="ERP2_DB_PORT" value="{{ $values['ERP2_DB_PORT'] ?? '' }}" placeholder="5432" class="{{ $inM }}"></div>
+                <div><label class="block text-xs font-medium text-slate-600 mb-1">Database</label>
+                    <input name="ERP2_DB_DATABASE" value="{{ $values['ERP2_DB_DATABASE'] ?? '' }}" class="{{ $inM }}"></div>
+                <div><label class="block text-xs font-medium text-slate-600 mb-1">Username</label>
+                    <input name="ERP2_DB_USERNAME" value="{{ $values['ERP2_DB_USERNAME'] ?? '' }}" class="{{ $inM }}"></div>
+                <div>
+                    <label class="block text-xs font-medium text-slate-600 mb-1">Password <span class="text-slate-400 font-normal">(leave blank to keep current)</span></label>
+                    <input name="ERP2_DB_PASSWORD" type="password" autocomplete="off"
+                           placeholder="{{ !empty($values['__has_ERP2_DB_PASSWORD']) ? '•••• stored (leave blank to keep)' : '••••••••••••' }}" class="{{ $inM }}">
+                </div>
+                <div><label class="block text-xs font-medium text-slate-600 mb-1">Schema <span class="text-slate-400 font-normal">(optional)</span></label>
+                    <input name="ERP2_DB_SCHEMA" value="{{ $values['ERP2_DB_SCHEMA'] ?? '' }}" placeholder="public" class="{{ $inM }}"></div>
+                <div>
+                    <label class="block text-xs font-medium text-slate-600 mb-1">SSL mode</label>
+                    <select name="ERP2_DB_SSLMODE" class="{{ $in }} bg-white">
+                        @foreach (['prefer' => 'prefer (default)', 'require' => 'require (encrypted, self-signed OK)', 'disable' => 'disable'] as $v => $l)
+                            <option value="{{ $v }}" {{ (($values['ERP2_DB_SSLMODE'] ?? '') ?: 'prefer') === $v ? 'selected' : '' }}>{{ $l }}</option>
                         @endforeach
                     </select>
                 </div>
@@ -453,24 +565,26 @@
 @push('scripts')
 <script>
 (function () {
-    // ── Show the connection panel that matches the selected ERP ──────
-    const typeSelect = document.getElementById('ea-erp-type');
-    const nameField  = document.querySelector('[data-erp-name-field]');
-    function syncSections() {
-        const isOdoo = typeSelect.value === 'odoo';
-        document.querySelectorAll('[data-erp-section]').forEach(el => {
-            const show = (el.dataset.erpSection === 'odoo') === isOdoo;
+    // ── Show the connection panels that match each source's ERP type ─
+    // Group 1 is the primary source, group 2 the optional second one
+    // ("none" hides both of its panels).
+    function syncGroup(sel) {
+        const g = sel.dataset.erpTypeSelect, type = sel.value;
+        const isOdoo = type === 'odoo', off = type === 'none' || type === '';
+        document.querySelectorAll('[data-erp-section][data-erp-group="' + g + '"]').forEach(el => {
+            const show = !off && ((el.dataset.erpSection === 'odoo') === isOdoo);
             el.classList.toggle('hidden', !show);
             // Hidden panels are disabled so switching ERP type never
             // silently rewrites the other connection's stored settings.
             el.querySelectorAll('input, select').forEach(i => { i.disabled = !show; });
         });
-        if (nameField) nameField.classList.toggle('hidden', isOdoo);
+        const nameField = document.querySelector('[data-erp-name-field="' + g + '"]');
+        if (nameField) nameField.classList.toggle('hidden', isOdoo || off);
     }
-    if (typeSelect) {
-        typeSelect.addEventListener('change', syncSections);
-        syncSections();
-    }
+    document.querySelectorAll('[data-erp-type-select]').forEach(sel => {
+        sel.addEventListener('change', () => syncGroup(sel));
+        syncGroup(sel);
+    });
 
     // Read the CSRF token from the meta tag (or the form's hidden _token
     // if the meta isn't present). The page renders it at load time;

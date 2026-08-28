@@ -36,10 +36,14 @@ final class ErpDbSyncService
     /** @var array<string, array<string, int>> entity => ext_key => surrogate */
     private array $keyCache = [];
 
-    public function __construct(private Tenant $tenant)
+    /** Which of the tenant's data sources this run reads (see DataSource). */
+    private DataSource $source;
+
+    public function __construct(private Tenant $tenant, ?DataSource $source = null)
     {
-        $this->connection = 'erp_sync_' . $tenant->id;
-        config(["database.connections.{$this->connection}" => ErpDbConnectionTester::connectionConfig()]);
+        $this->source = $source ?? DataSource::primary();
+        $this->connection = 'erp_sync_' . $tenant->id . '_' . $this->source->n;
+        config(["database.connections.{$this->connection}" => ErpDbConnectionTester::connectionConfig(null, $this->source)]);
     }
 
     /**
@@ -371,6 +375,7 @@ final class ErpDbSyncService
      */
     private function ensureKeys(string $entity, array $extKeys): void
     {
+        $entity = $this->source->keyEntity($entity);
         if (!isset($this->keyCache[$entity])) {
             $this->keyCache[$entity] = DB::table('wh_key_map')
                 ->where('tenant_id', $this->tenant->id)->where('entity', $entity)
@@ -398,9 +403,19 @@ final class ErpDbSyncService
             ->pluck('id', 'ext_key')->map(fn ($v) => (int) $v)->all();
     }
 
-    /** Stable surrogate integer for an external key (see wh_key_map). */
+    /**
+     * Stable surrogate integer for an external key (see wh_key_map), shifted
+     * into this source's id space so it can never collide with ids the
+     * tenant's other source writes.
+     */
     private function keyId(string $entity, string $extKey): int
     {
+        return $this->keyIdRaw($entity, $extKey) + $this->source->idOffset();
+    }
+
+    private function keyIdRaw(string $entity, string $extKey): int
+    {
+        $entity = $this->source->keyEntity($entity);
         if (isset($this->keyCache[$entity][$extKey])) {
             return $this->keyCache[$entity][$extKey];
         }
@@ -453,7 +468,9 @@ final class ErpDbSyncService
      */
     private function prune(string $table, array $keep): void
     {
-        $q = DB::table($table)->where('tenant_id', $this->tenant->id);
+        // Only this source's id space: the other source's rows are not ours to judge.
+        $q = DB::table($table)->where('tenant_id', $this->tenant->id)
+            ->whereBetween('odoo_id', $this->source->idRange());
         if ($keep === []) {
             // An empty source extract is more likely a provider-side reload
             // than a genuine "everything was deleted" — keep existing rows.
@@ -472,7 +489,7 @@ final class ErpDbSyncService
     private function note(string $model, array $result): void
     {
         DB::table('wh_sync_state')->updateOrInsert(
-            ['tenant_id' => $this->tenant->id, 'model' => $model],
+            ['tenant_id' => $this->tenant->id, 'model' => $this->source->stateModel($model)],
             [
                 'last_run_at' => now(),
                 'rows_synced' => (int) $result['rows'],

@@ -2646,6 +2646,10 @@ try {
             foreach ((array) config('warm.pages', []) as $p) {
                 if (($p['label'] ?? '') === $want) { $def = $p; break; }
             }
+            // Two pages outside the warm list, so admin/tenant settings
+            // views can be verified on production like any report page.
+            if (!$def && $want === 'settings')       $def = ['controller' => App\Http\Controllers\SettingsController::class, 'action' => 'show', 'query' => []];
+            if (!$def && $want === 'admin-settings') $def = ['controller' => App\Http\Controllers\Admin\TenantController::class, 'action' => 'showSettings', 'query' => [], 'params' => ['tenant' => $tenant]];
             if (!$def) { ln("no page '{$want}' in config/warm.php"); break; }
             // &period=month&year=2026&month=8 overrides the page's default
             // query (and, via RememberPeriod, the session) — lets this op
@@ -2666,7 +2670,7 @@ try {
                 session()->flash('flash', ['type' => 'success', 'msg' => 'render-test']);
             }
             try {
-                $resp = app()->call([app((string) $def['controller']), (string) ($def['action'] ?? 'index')]);
+                $resp = app()->call([app((string) $def['controller']), (string) ($def['action'] ?? 'index')], (array) ($def['params'] ?? []));
                 $html = ($resp instanceof Illuminate\Contracts\Support\Renderable) ? $resp->render() : '(non-view response: ' . get_class($resp) . ')';
                 // &html=1 dumps the full page (for offline snapshots);
                 // &grep=needle counts occurrences (content assertions —
