@@ -249,12 +249,12 @@ try {
             $tid = $tenant->id;
             $DB = Illuminate\Support\Facades\DB;
 
-            $tot = $DB::table('wh_fact_gl_line')->where('tenant_id', $tid)->count();
-            $withProd = $DB::table('wh_fact_gl_line')->where('tenant_id', $tid)
+            $tot = IlluminateSupportFacadesDB::table('wh_fact_gl_line')->where('tenant_id', $tid)->count();
+            $withProd = IlluminateSupportFacadesDB::table('wh_fact_gl_line')->where('tenant_id', $tid)
                 ->whereNotNull('product_odoo_id')->count();
-            $withQty = $DB::table('wh_fact_gl_line')->where('tenant_id', $tid)
+            $withQty = IlluminateSupportFacadesDB::table('wh_fact_gl_line')->where('tenant_id', $tid)
                 ->whereNotNull('product_odoo_id')->where('quantity', '>', 0)->count();
-            $joinable = $DB::table('wh_fact_gl_line as l')
+            $joinable = IlluminateSupportFacadesDB::table('wh_fact_gl_line as l')
                 ->join('wh_dim_product as p', function ($j) {
                     $j->on('p.tenant_id', '=', 'l.tenant_id')->on('p.odoo_id', '=', 'l.product_odoo_id');
                 })->where('l.tenant_id', $tid)->where('l.quantity', '>', 0)->count();
@@ -265,7 +265,7 @@ try {
             ln(sprintf('  joinable to product dim   %s  <-- usable for volume', number_format($joinable)));
             ln();
 
-            $base = fn () => $DB::table('wh_fact_gl_line as l')
+            $base = fn () => IlluminateSupportFacadesDB::table('wh_fact_gl_line as l')
                 ->join('wh_dim_product as p', function ($j) {
                     $j->on('p.tenant_id', '=', 'l.tenant_id')->on('p.odoo_id', '=', 'l.product_odoo_id');
                 })
@@ -292,7 +292,7 @@ try {
             ln();
 
             ln('== volume by voyage type (Type_voyage) ==');
-            foreach ($DB::table('wh_fact_gl_line as l')
+            foreach (IlluminateSupportFacadesDB::table('wh_fact_gl_line as l')
                 ->join('wh_fact_invoice as i', function ($j) {
                     $j->on('i.tenant_id', '=', 'l.tenant_id')->on('i.odoo_id', '=', 'l.move_odoo_id');
                 })
