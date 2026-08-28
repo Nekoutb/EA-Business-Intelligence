@@ -239,6 +239,88 @@ try {
             echo json_encode($out, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE | JSON_PARTIAL_OUTPUT_ON_ERROR);
             break;
 
+        case 'odooprobe':
+            // Model discovery WITHOUT admin rights: ir.model is usually
+            // restricted, so probe a broad catalogue of known Odoo model
+            // names and report which ones this login can actually read.
+            // ?tenant=slug [&group=finance|sales|stock|hr|crm|other|all]
+            $slug = (string) ($_GET['tenant'] ?? '');
+            $tenant = App\Models\Tenant::where('slug', $slug)->first();
+            if (!$tenant) { echo json_encode(['error' => "no tenant '{$slug}'"]); break; }
+            app(App\Tenancy\TenantContext::class)->set($tenant);
+            $client = App\Odoo\OdooFactory::fromConfig();
+
+            $catalogue = [
+                'finance' => [
+                    'account.move', 'account.move.line', 'account.account', 'account.journal',
+                    'account.payment', 'account.payment.method', 'account.payment.term',
+                    'account.tax', 'account.tax.group', 'account.fiscal.position',
+                    'account.analytic.account', 'account.analytic.line', 'account.analytic.group',
+                    'account.asset', 'account.bank.statement', 'account.bank.statement.line',
+                    'account.reconcile.model', 'account.full.reconcile', 'account.partial.reconcile',
+                    'account.account.type', 'account.group', 'account.incoterms',
+                    'account.cash.rounding', 'account.invoice.report', 'account.report',
+                ],
+                'sales' => [
+                    'sale.order', 'sale.order.line', 'sale.report', 'crm.team',
+                    'product.product', 'product.template', 'product.category', 'product.pricelist',
+                    'product.pricelist.item', 'product.attribute', 'product.supplierinfo',
+                    'uom.uom', 'uom.category',
+                ],
+                'purchase' => [
+                    'purchase.order', 'purchase.order.line', 'purchase.report',
+                    'purchase.requisition',
+                ],
+                'stock' => [
+                    'stock.picking', 'stock.picking.type', 'stock.move', 'stock.move.line',
+                    'stock.quant', 'stock.location', 'stock.warehouse', 'stock.lot',
+                    'stock.production.lot', 'stock.valuation.layer', 'stock.scrap',
+                ],
+                'partners' => [
+                    'res.partner', 'res.partner.category', 'res.partner.bank', 'res.partner.title',
+                    'res.company', 'res.currency', 'res.currency.rate', 'res.country', 'res.users',
+                    'res.groups', 'res.bank',
+                ],
+                'hr' => [
+                    'hr.employee', 'hr.department', 'hr.job', 'hr.contract', 'hr.leave',
+                    'hr.leave.type', 'hr.attendance', 'hr.expense', 'hr.expense.sheet',
+                    'hr.payslip', 'hr.applicant',
+                ],
+                'crm' => [
+                    'crm.lead', 'crm.stage', 'crm.lost.reason', 'calendar.event',
+                ],
+                'project' => [
+                    'project.project', 'project.task', 'project.task.type', 'account.analytic.tag',
+                ],
+                'cargo' => [
+                    'aw_cargo.cargo', 'aw_cargo.stopover', 'aw_cargo.equipment', 'aw_cargo.vessel',
+                    'aw_cargo.container', 'aw_cargo.bl', 'aw_cargo.declaration', 'aw_cargo.scan',
+                    'aw_vehicule.vehicule', 'aw_cargo.operation', 'aw_cargo.client',
+                    'aw_cargo.tarif', 'aw_cargo.facture', 'aw_cargo.voyage', 'aw_cargo.port',
+                ],
+                'other' => [
+                    'mail.message', 'mail.activity', 'ir.attachment', 'documents.document',
+                    'fleet.vehicle', 'maintenance.equipment', 'survey.survey', 'website.page',
+                    'sign.request', 'helpdesk.ticket', 'repair.order', 'mrp.production',
+                ],
+            ];
+            $group = (string) ($_GET['group'] ?? 'all');
+            $out = ['tenant' => $slug, 'groups' => []];
+            foreach ($catalogue as $gname => $models) {
+                if ($group !== 'all' && $group !== $gname) continue;
+                foreach ($models as $model) {
+                    try {
+                        $out['groups'][$gname][$model] = ['count' => $client->searchCount($model, [])];
+                    } catch (\Throwable $e) {
+                        $msg = $e->getMessage();
+                        $out['groups'][$gname][$model] = ['count' => -1,
+                            'why' => str_contains($msg, 'does not exist') ? 'not installed' : 'no access'];
+                    }
+                }
+            }
+            echo json_encode($out, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE | JSON_PARTIAL_OUTPUT_ON_ERROR);
+            break;
+
         case 'odoodeep':
             // Deep-dive on specific models: full field list + samples, for a
             // comma-separated model list. ?tenant=slug&models=a,b,c [&rows=3]
