@@ -239,6 +239,90 @@ try {
             echo json_encode($out, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE | JSON_PARTIAL_OUTPUT_ON_ERROR);
             break;
 
+        case 'volcheck':
+            // What VOLUME data does a tenant actually have, and how complete
+            // is it? Coverage first (a metric computed on 12% of rows is a
+            // trap), then the axes volume can be cut by.
+            $slug = (string) ($_GET['tenant'] ?? '');
+            $tenant = App\Models\Tenant::where('slug', $slug)->first();
+            if (!$tenant) { ln("no tenant '{$slug}'"); break; }
+            $tid = $tenant->id;
+            $DB = Illuminate\Support\Facades\DB;
+
+            $tot = $DB::table('wh_fact_gl_line')->where('tenant_id', $tid)->count();
+            $withProd = $DB::table('wh_fact_gl_line')->where('tenant_id', $tid)
+                ->whereNotNull('product_odoo_id')->count();
+            $withQty = $DB::table('wh_fact_gl_line')->where('tenant_id', $tid)
+                ->whereNotNull('product_odoo_id')->where('quantity', '>', 0)->count();
+            $joinable = $DB::table('wh_fact_gl_line as l')
+                ->join('wh_dim_product as p', function ($j) {
+                    $j->on('p.tenant_id', '=', 'l.tenant_id')->on('p.odoo_id', '=', 'l.product_odoo_id');
+                })->where('l.tenant_id', $tid)->where('l.quantity', '>', 0)->count();
+            ln('== coverage ==');
+            ln(sprintf('  gl lines total            %s', number_format($tot)));
+            ln(sprintf('  with a product            %s (%s%%)', number_format($withProd), $tot ? round(100*$withProd/$tot) : 0));
+            ln(sprintf('  with product AND qty>0    %s', number_format($withQty)));
+            ln(sprintf('  joinable to product dim   %s  <-- usable for volume', number_format($joinable)));
+            ln();
+
+            $base = fn () => $DB::table('wh_fact_gl_line as l')
+                ->join('wh_dim_product as p', function ($j) {
+                    $j->on('p.tenant_id', '=', 'l.tenant_id')->on('p.odoo_id', '=', 'l.product_odoo_id');
+                })
+                ->where('l.tenant_id', $tid)->where('l.quantity', '>', 0);
+
+            ln('== volume by year ==');
+            foreach ($base()->whereNotNull('l.invoice_date')
+                ->selectRaw('YEAR(l.invoice_date) y, SUM(l.quantity) qty, SUM(l.price_subtotal) rev, COUNT(*) n')
+                ->groupBy('y')->orderBy('y')->get() as $r) {
+                ln(sprintf('  %s  qty=%-10s revenue=%-18s lines=%-8s per-unit=%s',
+                    $r->y, number_format((float) $r->qty), number_format((float) $r->rev),
+                    number_format($r->n), $r->qty > 0 ? number_format((float) $r->rev / (float) $r->qty) : '—'));
+            }
+            ln();
+
+            ln('== volume by container category ==');
+            foreach ($base()
+                ->selectRaw("COALESCE(p.category_name,'—') k, SUM(l.quantity) qty, SUM(l.price_subtotal) rev, COUNT(*) n")
+                ->groupBy('k')->orderByDesc('qty')->limit(14)->get() as $r) {
+                ln(sprintf('  %-34s qty=%-10s revenue=%-18s per-unit=%s',
+                    mb_substr($r->k, 0, 32), number_format((float) $r->qty), number_format((float) $r->rev),
+                    $r->qty > 0 ? number_format((float) $r->rev / (float) $r->qty) : '—'));
+            }
+            ln();
+
+            ln('== volume by voyage type (Type_voyage) ==');
+            foreach ($DB::table('wh_fact_gl_line as l')
+                ->join('wh_fact_invoice as i', function ($j) {
+                    $j->on('i.tenant_id', '=', 'l.tenant_id')->on('i.odoo_id', '=', 'l.move_odoo_id');
+                })
+                ->where('l.tenant_id', $tid)->where('l.quantity', '>', 0)
+                ->whereNotNull('l.product_odoo_id')
+                ->selectRaw("COALESCE(NULLIF(i.voyage_type,''),'(unset)') k, SUM(l.quantity) qty,
+                             SUM(l.price_subtotal) rev, COUNT(*) n")
+                ->groupBy('k')->orderByDesc('qty')->get() as $r) {
+                ln(sprintf('  %-22s qty=%-10s revenue=%-18s per-unit=%s',
+                    $r->k, number_format((float) $r->qty), number_format((float) $r->rev),
+                    $r->qty > 0 ? number_format((float) $r->rev / (float) $r->qty) : '—'));
+            }
+            ln();
+
+            ln('== top customers by volume ==');
+            foreach ($base()
+                ->join('wh_fact_invoice as i', function ($j) {
+                    $j->on('i.tenant_id', '=', 'l.tenant_id')->on('i.odoo_id', '=', 'l.move_odoo_id');
+                })
+                ->leftJoin('wh_dim_partner as pt', function ($j) {
+                    $j->on('pt.tenant_id', '=', 'i.tenant_id')->on('pt.odoo_id', '=', 'i.partner_odoo_id');
+                })
+                ->selectRaw("COALESCE(pt.name,'—') k, SUM(l.quantity) qty, SUM(l.price_subtotal) rev")
+                ->groupBy('k')->orderByDesc('qty')->limit(10)->get() as $r) {
+                ln(sprintf('  %-40s qty=%-9s revenue=%-16s per-unit=%s',
+                    mb_substr($r->k, 0, 38), number_format((float) $r->qty), number_format((float) $r->rev),
+                    $r->qty > 0 ? number_format((float) $r->rev / (float) $r->qty) : '—'));
+            }
+            break;
+
         case 'odooprobe':
             // Model discovery WITHOUT admin rights: ir.model is usually
             // restricted, so probe a broad catalogue of known Odoo model
