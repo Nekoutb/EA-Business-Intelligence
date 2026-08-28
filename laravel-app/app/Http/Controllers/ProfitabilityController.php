@@ -36,10 +36,13 @@ class ProfitabilityController extends Controller
         // from the dossier warehouse. The classic per-scan analysis below
         // needs live Odoo, which these tenants don't have — skip it rather
         // than render its error banner.
+        $periodLabel = null;
         if (\App\Services\LogisticsOpsService::available($tenantId)) {
-            $from = new \DateTimeImmutable("{$year}-01-01");
-            $to   = $year === $thisYear ? $today : new \DateTimeImmutable("{$year}-12-31");
-            $logistics = ea_cached("logi_profit_v1_{$year}",
+            // Driven by the sidebar master filter (session-synced), like the
+            // other logistics pages — YTD, month-to-date or a specific month.
+            $period = current_period();
+            [$from, $to, $periodLabel] = ea_resolve_period($today, $period);
+            $logistics = ea_cached('logi_profit_v2_' . md5(json_encode($period)),
                 fn () => (new \App\Services\LogisticsOpsService((int) $tenantId))->profitability($from, $to));
         } else {
             try {
@@ -65,6 +68,7 @@ class ProfitabilityController extends Controller
             // tenants additionally get their section rendered on top.
             'profMode'  => true,
             'logistics' => $logistics,
+            'periodLabel' => $periodLabel,
         ]);
     }
 }

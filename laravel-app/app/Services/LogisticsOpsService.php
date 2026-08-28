@@ -653,6 +653,87 @@ final class LogisticsOpsService
     }
 
     /**
+     * Open receivables split into commission fees and débours, aged from the
+     * billing date — both what the client owes in total and how much of it
+     * is out-of-pocket money Elimelec has already paid on the client's
+     * behalf (the part whose collection is a cash-flow matter, not a margin).
+     *
+     * An invoice's open balance is one number in the source, so it is split
+     * in the proportion of the invoice's own fee/débours lines: an invoice
+     * 20% fee / 80% débours with 1m outstanding is carried as 200k fee AR and
+     * 800k débours AR. Invoices without lines count entirely as fee.
+     *
+     * Ageing = days between the invoice date and $asOf, in 0-30 / 31-60 /
+     * 61-90 / >90 buckets, with the per-customer and per-invoice detail the
+     * drill-down needs.
+     */
+    public function receivables(\DateTimeImmutable $asOf): array
+    {
+        $out = ['as_of' => $asOf->format('Y-m-d'), 'total' => 0.0, 'fee' => 0.0, 'deb' => 0.0, 'n' => 0,
+                'buckets' => [], 'customers' => []];
+        $labels = ['0-30' => [0, 30], '31-60' => [31, 60], '61-90' => [61, 90], '>90' => [91, PHP_INT_MAX]];
+        foreach ($labels as $k => $_) $out['buckets'][$k] = ['fee' => 0.0, 'deb' => 0.0, 'total' => 0.0, 'n' => 0];
+        try {
+            $debSub = DB::table('wh_fact_invoice_line')
+                ->where('tenant_id', $this->tenantId)->where('is_debours', true)
+                ->selectRaw('tenant_id as tid, move_odoo_id as mid, SUM(price_subtotal) as deb')
+                ->groupBy('tenant_id', 'move_odoo_id');
+
+            $rows = DB::table('wh_fact_invoice as i')
+                ->leftJoin('wh_dim_partner as p', function ($j) {
+                    $j->on('p.tenant_id', '=', 'i.tenant_id')->on('p.odoo_id', '=', 'i.partner_odoo_id');
+                })
+                ->leftJoinSub($debSub, 'b', fn ($j) => $j->on('b.tid', '=', 'i.tenant_id')->on('b.mid', '=', 'i.odoo_id'))
+                ->where('i.tenant_id', $this->tenantId)
+                ->where('i.move_type', 'out_invoice')
+                ->where('i.amount_residual', '>', 0.005)
+                ->whereNotNull('i.invoice_date')
+                ->where('i.invoice_date', '<=', $asOf->format('Y-m-d'))
+                ->selectRaw("i.name inv, i.invoice_date d, i.invoice_date_due due, COALESCE(p.name,'—') client,
+                             i.amount_untaxed fee, COALESCE(b.deb,0) deb, i.amount_total ttc, i.amount_residual residual")
+                ->orderBy('i.invoice_date')
+                ->get();
+
+            $cust = [];
+            foreach ($rows as $r) {
+                $fee = (float) $r->fee; $deb = (float) $r->deb; $res = (float) $r->residual;
+                $ht  = $fee + $deb;
+                $feeShare = $ht > 0 ? $res * $fee / $ht : $res;
+                $debShare = $res - $feeShare;
+                $age = (int) $asOf->setTime(0, 0)->diff(new \DateTimeImmutable((string) $r->d))->days;
+                $bucket = '>90';
+                foreach ($labels as $k => [$lo, $hi]) { if ($age >= $lo && $age <= $hi) { $bucket = $k; break; } }
+
+                $out['total'] += $res; $out['fee'] += $feeShare; $out['deb'] += $debShare; $out['n']++;
+                $b = &$out['buckets'][$bucket];
+                $b['fee'] += $feeShare; $b['deb'] += $debShare; $b['total'] += $res; $b['n']++;
+                unset($b);
+
+                $c = (string) $r->client;
+                if (!isset($cust[$c])) {
+                    $cust[$c] = ['client' => $c, 'fee' => 0.0, 'deb' => 0.0, 'total' => 0.0, 'n' => 0,
+                                 'buckets' => array_fill_keys(array_keys($labels), ['fee' => 0.0, 'deb' => 0.0, 'total' => 0.0]),
+                                 'invoices' => []];
+                }
+                $cust[$c]['fee'] += $feeShare; $cust[$c]['deb'] += $debShare; $cust[$c]['total'] += $res; $cust[$c]['n']++;
+                $cust[$c]['buckets'][$bucket]['fee'] += $feeShare;
+                $cust[$c]['buckets'][$bucket]['deb'] += $debShare;
+                $cust[$c]['buckets'][$bucket]['total'] += $res;
+                $cust[$c]['invoices'][] = [
+                    'inv' => (string) $r->inv, 'date' => (string) $r->d, 'due' => $r->due ? (string) $r->due : null,
+                    'age' => $age, 'bucket' => $bucket, 'fee_billed' => $fee, 'deb_billed' => $deb,
+                    'ttc' => (float) $r->ttc, 'fee' => $feeShare, 'deb' => $debShare, 'total' => $res,
+                ];
+            }
+            usort($cust, fn ($a, $b) => $b['total'] <=> $a['total']);
+            $out['customers'] = array_values($cust);
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('logistics receivables failed', ['error' => $e->getMessage()]);
+        }
+        return $out;
+    }
+
+    /**
      * OOP — Out of Pocket Expense Compliance. Per file: débours incurred
      * (cash advances disbursed in the period) vs débours recharged to the
      * client (débours-flagged lines billed in the period), the gap in

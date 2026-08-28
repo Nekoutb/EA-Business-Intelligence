@@ -42,7 +42,17 @@ class ReceivablesController extends Controller
             });
         } catch (\Throwable $e) { $error = $e->getMessage(); }
 
+        // Logistics sector: open AR split into commission fees vs débours,
+        // aged from the billing date, from the invoice warehouse.
+        $logistics = null;
+        $tenantId  = (int) (optional(app(\App\Tenancy\TenantContext::class)->has() ? app(\App\Tenancy\TenantContext::class)->tenant() : null)->id ?? 0);
+        if (\App\Services\LogisticsOpsService::available($tenantId)) {
+            $logistics = ea_cached('logi_ar_v1_' . $asOf->format('Y-m-d'),
+                fn () => (new \App\Services\LogisticsOpsService($tenantId))->receivables($asOf));
+        }
+
         return view('receivables', [
+            'logistics'   => $logistics,
             'data'        => $data,
             'error'       => $error,
             'active'      => 'receivables',

@@ -89,6 +89,9 @@
 
 @section('content')
 
+{{-- Logistics sector: fees vs débours split + ageing, from the invoice warehouse --}}
+@includeWhen(!empty($logistics), 'logistics.receivables-section', ['logistics' => $logistics ?? null])
+
 @if ($error)
   <div class="ar-error">
     <strong>Error:</strong> {{ $error }} ·

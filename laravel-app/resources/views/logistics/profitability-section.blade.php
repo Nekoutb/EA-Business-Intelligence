@@ -8,9 +8,9 @@
 @endphp
 
 <div class="lg-card">
-  <h3>Unit economics · YTD</h3>
+  <h3>Unit economics · {{ $periodLabel ?? 'YTD' }}</h3>
   <div class="lg-tiles" style="margin:0">
-    <div class="lg-tile good"><div class="l">Fee revenue · YTD</div><div class="v">{{ number_format($u['fees'] ?? 0) }}</div>
+    <div class="lg-tile good"><div class="l">Fee revenue · period</div><div class="v">{{ number_format($u['fees'] ?? 0) }}</div>
       <div class="s">XAF — débours are rebilled costs, not revenue · {{ number_format($u['tons'] ?? 0) }} t handled</div></div>
     <div class="lg-tile good"><div class="l">Fees / container</div><div class="v">{{ $unit($u['fees_per_ctn'] ?? null) }}</div>
       <div class="s">{{ number_format($u['containers'] ?? 0) }} containers</div></div>
