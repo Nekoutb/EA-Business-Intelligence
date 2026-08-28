@@ -74,10 +74,17 @@ class LogisticsOpsController extends Controller
     public function volumes(Request $request)
     {
         [$tenantId, $from, $to, $label, $period] = $this->ctx($request);
-        $key  = 'logi_volumes_v1_' . md5(json_encode($period));
-        $data = ea_cached($key, fn () => (new LogisticsOpsService($tenantId))->volumes($from, $to));
+        // Yearly windows chart the evolution per month. Monthly windows let
+        // the report user choose daily or weekly buckets (?g=day|week) —
+        // the one page-level switch these pages carry, since it changes
+        // the chart's resolution rather than the period.
+        $monthly = in_array((string) ($period['type'] ?? 'ytd'), ['mtd', 'month'], true);
+        $grain   = $monthly ? ($request->query('g') === 'week' ? 'week' : 'day') : 'month';
+        $key  = 'logi_volumes_v2_' . md5(json_encode($period)) . '_' . $grain;
+        $data = ea_cached($key, fn () => (new LogisticsOpsService($tenantId))->volumes($from, $to, $grain));
         return view('logistics.volumes', [
             'data' => $data, 'active' => 'logistics_volumes', 'period' => $period, 'periodLabel' => $label,
+            'grain' => $grain, 'grainChoice' => $monthly,
         ]);
     }
 }

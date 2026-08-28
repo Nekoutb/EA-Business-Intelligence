@@ -102,10 +102,41 @@ final class LogisticsOpsService
     }
 
     /** Page 3 — Volumes: tonnage, containers, mix, importers. */
-    public function volumes(\DateTimeImmutable $from, \DateTimeImmutable $to): array
+    /**
+     * Continuous bucket keys for the evolution chart, keyed exactly like the
+     * DATE_FORMAT expression the query groups by, with a short display label.
+     *
+     * @return array<string, string> bucket => label
+     */
+    public static function buckets(\DateTimeImmutable $from, \DateTimeImmutable $to, string $grain): array
+    {
+        $out = [];
+        $cur = $from->setTime(0, 0);
+        $end = $to->setTime(0, 0);
+        if ($grain === 'day') {
+            for (; $cur <= $end; $cur = $cur->modify('+1 day')) {
+                $out[$cur->format('Y-m-d')] = $cur->format('j');
+            }
+        } elseif ($grain === 'week') {
+            for (; $cur <= $end; $cur = $cur->modify('+1 day')) {
+                $k = $cur->format('o-\WW');
+                if (!isset($out[$k])) $out[$k] = 'W' . $cur->format('W');
+            }
+        } else {
+            for ($cur = $cur->modify('first day of this month'); $cur <= $end; $cur = $cur->modify('first day of next month')) {
+                $out[$cur->format('Y-m')] = $cur->format('M');
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * @param string $grain evolution bucket: month (yearly windows), day or week (monthly windows)
+     */
+    public function volumes(\DateTimeImmutable $from, \DateTimeImmutable $to, string $grain = 'month'): array
     {
         $out = ['tons' => 0.0, 'containers' => 0, 'packages' => 0, 'cargo_value' => 0.0,
-                'monthly' => [], 'embarquement' => [], 'importers' => [], 'capture_note' => null];
+                'series' => [], 'grain' => $grain, 'embarquement' => [], 'importers' => [], 'capture_note' => null];
         try {
             $win = fn () => $this->d()->whereBetween('opened_date', [$from->format('Y-m-d'), $to->format('Y-m-d')]);
 
@@ -120,10 +151,19 @@ final class LogisticsOpsService
                     . 'those mix views stay hidden until the fields are captured in the source system.';
             }
 
-            foreach ($this->d()->whereNotNull('opened_date')->where('opened_date', '>=', $from->format('Y-01-01'))
-                ->selectRaw("DATE_FORMAT(opened_date, '%Y-%m') m, SUM(weight_kg)/1000 t, SUM(containers) c")
-                ->groupBy('m')->orderBy('m')->get() as $r) {
-                $out['monthly'][$r->m] = ['tons' => round((float) $r->t), 'containers' => (int) $r->c];
+            // Evolution of tonnage / containers / packages across the window.
+            // Yearly windows bucket per month; monthly windows per day or ISO
+            // week. Empty buckets are kept so the chart's x-axis is continuous.
+            $fmt = match ($grain) { 'day' => '%Y-%m-%d', 'week' => '%x-W%v', default => '%Y-%m' };
+            $got = [];
+            foreach ($win()->whereNotNull('opened_date')
+                ->selectRaw("DATE_FORMAT(opened_date, '{$fmt}') b, SUM(weight_kg)/1000 t, SUM(containers) c, SUM(packages) p, COUNT(*) n")
+                ->groupBy('b')->get() as $r) {
+                $got[$r->b] = ['tons' => round((float) $r->t, 1), 'containers' => (int) $r->c, 'packages' => (int) $r->p, 'files' => (int) $r->n];
+            }
+            foreach (self::buckets($from, $to, $grain) as $b => $label) {
+                $out['series'][] = ['bucket' => $b, 'label' => $label]
+                    + ($got[$b] ?? ['tons' => 0.0, 'containers' => 0, 'packages' => 0, 'files' => 0]);
             }
 
             $out['embarquement'] = $win()

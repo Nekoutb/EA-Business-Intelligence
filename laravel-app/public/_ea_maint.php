@@ -2652,7 +2652,7 @@ try {
             // verify the master filter actually reaches a given page.
             // &lg_customer=Name passes through too (Billing's drill-down).
             $queryOverride = array_merge((array) ($def['query'] ?? []), array_intersect_key(
-                $_GET, array_flip(['period', 'year', 'month', 'lg_customer'])
+                $_GET, array_flip(['period', 'year', 'month', 'lg_customer', 'g'])
             ));
             $req = Illuminate\Http\Request::create('/t/' . $slug, 'GET', $queryOverride);
             app()->instance('request', $req);
