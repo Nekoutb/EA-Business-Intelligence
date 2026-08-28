@@ -117,6 +117,92 @@ try {
             ln('server now: ' . date('Y-m-d H:i:s') . ' (' . date_default_timezone_get() . ')');
             break;
 
+        case 'odooprofile':
+            // Read-only profile of an Odoo-connected tenant: for each model
+            // of interest, the record count, the field list, and a few
+            // sample records. The API-side equivalent of `erpprofile` (which
+            // introspects a direct Postgres schema). ?tenant=slug [&rows=3]
+            $slug = (string) ($_GET['tenant'] ?? '');
+            $tenant = App\Models\Tenant::where('slug', $slug)->first();
+            if (!$tenant) { echo json_encode(['error' => "no tenant '{$slug}'"]); break; }
+            app(App\Tenancy\TenantContext::class)->set($tenant);
+            $client = App\Odoo\OdooFactory::fromConfig();
+            $nRows = max(1, min(10, (int) ($_GET['rows'] ?? 3)));
+
+            // Models worth profiling for a BI/reporting conversation, grouped
+            // by the business question they answer.
+            $models = [
+                'res.partner'            => 'Customers & suppliers',
+                'account.move'           => 'Invoices / bills / journal entries',
+                'account.move.line'      => 'GL lines (the ledger itself)',
+                'account.account'        => 'Chart of accounts',
+                'account.journal'        => 'Journals (bank, cash, sales…)',
+                'account.payment'        => 'Payments received / sent',
+                'product.product'        => 'Products & services',
+                'product.category'       => 'Product categories',
+                'sale.order'             => 'Sales orders',
+                'sale.order.line'        => 'Sales order lines',
+                'purchase.order'         => 'Purchase orders',
+                'purchase.order.line'    => 'Purchase order lines',
+                'stock.picking'          => 'Deliveries / receipts',
+                'stock.move'             => 'Stock moves',
+                'stock.quant'            => 'Stock on hand',
+                'hr.employee'            => 'Employees',
+                'project.project'        => 'Projects',
+                'project.task'           => 'Tasks',
+                'crm.lead'               => 'CRM leads / opportunities',
+                'res.currency'           => 'Currencies',
+                'res.company'            => 'Companies',
+            ];
+            $only = (string) ($_GET['model'] ?? '');
+
+            $out = ['tenant' => $slug, 'name' => $tenant->name, 'models' => []];
+            foreach ($models as $model => $purpose) {
+                if ($only !== '' && $only !== $model) continue;
+                $entry = ['purpose' => $purpose];
+                try {
+                    $entry['count'] = $client->searchCount($model, []);
+                } catch (\Throwable $e) {
+                    $entry['available'] = false;
+                    $entry['note'] = 'model not installed / not accessible';
+                    $out['models'][$model] = $entry;
+                    continue;
+                }
+                $entry['available'] = true;
+                try {
+                    $fields = (array) $client->callModel($model, 'fields_get', [
+                        'allfields' => [],
+                        'attributes' => ['string', 'type'],
+                    ]);
+                    $flat = [];
+                    foreach ($fields as $fname => $meta) {
+                        $flat[$fname] = ($meta['type'] ?? '?') . ' · ' . ($meta['string'] ?? '');
+                    }
+                    ksort($flat);
+                    $entry['fields'] = $flat;
+                    $entry['field_count'] = count($flat);
+                } catch (\Throwable $e) {
+                    $entry['fields_error'] = mb_substr($e->getMessage(), 0, 200);
+                }
+                if (($entry['count'] ?? 0) > 0 && empty($_GET['nosample'])) {
+                    try {
+                        // A small, safe field subset for the sample so the
+                        // payload stays readable (full list is in 'fields').
+                        $prefer = ['id', 'name', 'display_name', 'date', 'date_order', 'invoice_date',
+                                   'state', 'move_type', 'partner_id', 'amount_total', 'amount_untaxed',
+                                   'product_id', 'quantity', 'price_unit', 'debit', 'credit', 'code'];
+                        $use = array_values(array_intersect($prefer, array_keys($entry['fields'] ?? [])));
+                        if ($use === []) $use = ['id'];
+                        $entry['sample'] = $client->searchRead($model, [], $use, ['limit' => $nRows]);
+                    } catch (\Throwable $e) {
+                        $entry['sample_error'] = mb_substr($e->getMessage(), 0, 200);
+                    }
+                }
+                $out['models'][$model] = $entry;
+            }
+            echo json_encode($out, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE | JSON_PARTIAL_OUTPUT_ON_ERROR);
+            break;
+
         case 'cachecheck':
             // Does the shared cache actually hold what the warm worker
             // should have written for this tenant's dashboard? Checks the
