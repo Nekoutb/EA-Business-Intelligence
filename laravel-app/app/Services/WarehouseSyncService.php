@@ -53,10 +53,15 @@ final class WarehouseSyncService
         $this->deadline = $deadline;
         $out = [];
         foreach ([
-            'res.partner'            => fn () => $this->syncPartners($full),
-            'account.account'        => fn () => $this->syncAccounts($full),
-            'account.move'           => fn () => $this->syncInvoices($full),
-            'account.move.line'      => fn () => $this->syncGlLines($full),
+            // Dimensions first so facts resolve against a populated set.
+            'res.partner'               => fn () => $this->syncPartners($full),
+            'account.account'           => fn () => $this->syncAccounts($full),
+            'account.journal'           => fn () => $this->syncJournals($full),
+            'product.product'           => fn () => $this->syncProducts($full),
+            'account.move'              => fn () => $this->syncInvoices($full),
+            'account.move.line'         => fn () => $this->syncGlLines($full),
+            'account.payment'           => fn () => $this->syncPayments($full),
+            'account.partial.reconcile' => fn () => $this->syncReconciles($full),
         ] as $model => $fn) {
             if ($onlyModel !== null && $onlyModel !== $model) continue;
             $t0 = microtime(true);
@@ -73,7 +78,77 @@ final class WarehouseSyncService
         return $out;
     }
 
+    /**
+     * Field names available on a model, cached per run.
+     *
+     * Tenants run different Odoo versions and carry different custom
+     * modules — Transatlantic has a Type_voyage field on account.move that
+     * no other tenant has. Asking for a field the instance doesn't define
+     * makes Odoo reject the ENTIRE read, so optional fields must be probed
+     * before they are requested. Returns [] when the probe itself fails,
+     * which makes hasField() answer false and the caller skip the field.
+     *
+     * @var array<string, list<string>>
+     */
+    private array $fieldCache = [];
+
+    private function hasField(string $model, string $field): bool
+    {
+        if (!array_key_exists($model, $this->fieldCache)) {
+            try {
+                $f = (array) $this->odoo->callModel($model, 'fields_get', [
+                    'allfields' => [], 'attributes' => ['type'],
+                ]);
+                $this->fieldCache[$model] = array_keys($f);
+            } catch (\Throwable $e) {
+                $this->fieldCache[$model] = [];
+            }
+        }
+        return in_array($field, $this->fieldCache[$model], true);
+    }
+
     // ── Dimensions ──────────────────────────────────────────────────────
+
+    private function syncProducts(bool $full): int
+    {
+        return $this->pull('product.product', $full,
+            ['name', 'default_code', 'categ_id', 'detailed_type', 'list_price', 'write_date'],
+            fn (array $r) => [
+                'tenant_id'        => $this->tenant->id,
+                'odoo_id'          => (int) $r['id'],
+                'name'             => mb_substr((string) ($r['name'] ?: ''), 0, 255),
+                'code'             => mb_substr((string) ($r['default_code'] ?: ''), 0, 64) ?: null,
+                'category_name'    => is_array($r['categ_id'] ?? null)
+                    ? mb_substr((string) ($r['categ_id'][1] ?? ''), 0, 191) : null,
+                'category_odoo_id' => is_array($r['categ_id'] ?? null) ? (int) $r['categ_id'][0] : null,
+                'product_type'     => mb_substr((string) ($r['detailed_type'] ?: ''), 0, 32) ?: null,
+                'list_price'       => (float) ($r['list_price'] ?? 0),
+                'write_date'       => $this->dt($r['write_date'] ?? null),
+            ],
+            'wh_dim_product');
+    }
+
+    private function syncJournals(bool $full): int
+    {
+        return $this->pull('account.journal', $full,
+            ['name', 'code', 'type', 'write_date'],
+            function (array $r) {
+                $name = (string) ($r['name'] ?: '');
+                return [
+                    'tenant_id'      => $this->tenant->id,
+                    'odoo_id'        => (int) $r['id'],
+                    'name'           => mb_substr($name, 0, 191),
+                    'code'           => mb_substr((string) ($r['code'] ?: ''), 0, 32) ?: null,
+                    'journal_type'   => mb_substr((string) ($r['type'] ?: ''), 0, 32) ?: null,
+                    // Withholding tax is booked in dedicated journals whose
+                    // names carry "RETENUE A LA SOURCE" (per client). The
+                    // flag is what makes a withholding report possible at all.
+                    'is_withholding' => (bool) preg_match('/retenue\s*(a|à)\s*la\s*source|withhold/i', $name),
+                    'write_date'     => $this->dt($r['write_date'] ?? null),
+                ];
+            },
+            'wh_dim_journal');
+    }
 
     private function syncPartners(bool $full): int
     {
@@ -112,28 +187,122 @@ final class WarehouseSyncService
 
     private function syncInvoices(bool $full): int
     {
-        return $this->pull('account.move', $full,
-            ['name', 'move_type', 'state', 'payment_state', 'invoice_date', 'invoice_date_due',
-             'partner_id', 'amount_untaxed_signed', 'amount_total_signed', 'amount_residual_signed', 'write_date'],
-            fn (array $r) => [
-                'tenant_id'        => $this->tenant->id,
-                'odoo_id'          => (int) $r['id'],
-                'name'             => mb_substr((string) ($r['name'] ?: ''), 0, 64),
-                'move_type'        => (string) ($r['move_type'] ?: ''),
-                'state'            => (string) ($r['state'] ?: ''),
-                'payment_state'    => (string) ($r['payment_state'] ?: ''),
-                'invoice_date'     => $this->d($r['invoice_date'] ?? null),
-                'invoice_date_due' => $this->d($r['invoice_date_due'] ?? null),
-                'partner_odoo_id'  => is_array($r['partner_id'] ?? null) ? (int) $r['partner_id'][0] : null,
-                'amount_untaxed'   => (float) ($r['amount_untaxed_signed'] ?? 0),
-                'amount_total'     => (float) ($r['amount_total_signed'] ?? 0),
-                'amount_residual'  => (float) ($r['amount_residual_signed'] ?? 0),
-                'write_date'       => $this->dt($r['write_date'] ?? null),
-            ],
+        // Type_voyage is Transatlantic's custom domestique/transit split.
+        // Probed, never assumed: requesting it on an instance that lacks it
+        // would make Odoo reject the whole read and break every tenant.
+        $hasVoyage = $this->hasField('account.move', 'Type_voyage');
+
+        $fields = ['name', 'move_type', 'state', 'payment_state', 'invoice_date', 'invoice_date_due',
+                   'partner_id', 'journal_id', 'amount_untaxed_signed', 'amount_total_signed',
+                   'amount_residual_signed', 'write_date'];
+        if ($hasVoyage) $fields[] = 'Type_voyage';
+
+        return $this->pull('account.move', $full, $fields,
+            function (array $r) use ($hasVoyage) {
+                $voyage = null;
+                if ($hasVoyage) {
+                    $v = $r['Type_voyage'] ?? null;
+                    // Selection fields read back as false when unset.
+                    $voyage = ($v === false || $v === null || $v === '')
+                        ? null : mb_substr((string) $v, 0, 32);
+                }
+                return [
+                    'tenant_id'        => $this->tenant->id,
+                    'odoo_id'          => (int) $r['id'],
+                    'name'             => mb_substr((string) ($r['name'] ?: ''), 0, 64),
+                    'move_type'        => (string) ($r['move_type'] ?: ''),
+                    'state'            => (string) ($r['state'] ?: ''),
+                    'payment_state'    => (string) ($r['payment_state'] ?: ''),
+                    'voyage_type'      => $voyage,
+                    'invoice_date'     => $this->d($r['invoice_date'] ?? null),
+                    'invoice_date_due' => $this->d($r['invoice_date_due'] ?? null),
+                    'partner_odoo_id'  => is_array($r['partner_id'] ?? null) ? (int) $r['partner_id'][0] : null,
+                    'journal_odoo_id'  => is_array($r['journal_id'] ?? null) ? (int) $r['journal_id'][0] : null,
+                    'amount_untaxed'   => (float) ($r['amount_untaxed_signed'] ?? 0),
+                    'amount_total'     => (float) ($r['amount_total_signed'] ?? 0),
+                    'amount_residual'  => (float) ($r['amount_residual_signed'] ?? 0),
+                    'write_date'       => $this->dt($r['write_date'] ?? null),
+                ];
+            },
             'wh_fact_invoice',
             // Customer + supplier documents only; journal entries are not
             // invoice facts and would distort every count.
             [['move_type', 'in', ['out_invoice', 'out_refund', 'in_invoice', 'in_refund']]]);
+    }
+
+    /**
+     * Customer/supplier payments. Separate from the GL because a payment is
+     * a business event in its own right: collections, DSO and cash
+     * application all key off it, and the GL line alone cannot say which
+     * journal received the money or whether it was inbound or outbound.
+     */
+    private function syncPayments(bool $full): int
+    {
+        return $this->pull('account.payment', $full,
+            ['name', 'ref', 'partner_id', 'journal_id', 'move_id', 'payment_type',
+             'partner_type', 'state', 'date', 'amount', 'write_date'],
+            fn (array $r) => [
+                'tenant_id'       => $this->tenant->id,
+                'odoo_id'         => (int) $r['id'],
+                'name'            => mb_substr((string) ($r['name'] ?: ''), 0, 64),
+                'ref'             => mb_substr((string) ($r['ref'] ?: ''), 0, 128) ?: null,
+                'partner_odoo_id' => is_array($r['partner_id'] ?? null) ? (int) $r['partner_id'][0] : null,
+                'journal_odoo_id' => is_array($r['journal_id'] ?? null) ? (int) $r['journal_id'][0] : null,
+                'move_odoo_id'    => is_array($r['move_id'] ?? null) ? (int) $r['move_id'][0] : null,
+                'payment_type'    => mb_substr((string) ($r['payment_type'] ?: ''), 0, 16) ?: null,
+                'partner_type'    => mb_substr((string) ($r['partner_type'] ?: ''), 0, 16) ?: null,
+                'state'           => mb_substr((string) ($r['state'] ?: ''), 0, 32) ?: null,
+                'payment_date'    => $this->d($r['date'] ?? null),
+                'amount'          => (float) ($r['amount'] ?? 0),
+                'write_date'      => $this->dt($r['write_date'] ?? null),
+            ],
+            'wh_fact_payment');
+    }
+
+    /**
+     * Cash application — which credit cleared which debit, and for how much.
+     * Stored at LINE level because that is how Odoo models it; the parent
+     * moves are resolved afterwards from wh_fact_gl_line (see
+     * resolveReconcileMoves), which avoids a second round-trip per row.
+     */
+    private function syncReconciles(bool $full): int
+    {
+        return $this->pull('account.partial.reconcile', $full,
+            ['debit_move_id', 'credit_move_id', 'amount', 'max_date', 'write_date'],
+            fn (array $r) => [
+                'tenant_id'          => $this->tenant->id,
+                'odoo_id'            => (int) $r['id'],
+                'debit_line_odoo_id' => is_array($r['debit_move_id'] ?? null) ? (int) $r['debit_move_id'][0] : null,
+                'credit_line_odoo_id'=> is_array($r['credit_move_id'] ?? null) ? (int) $r['credit_move_id'][0] : null,
+                'debit_move_odoo_id' => null,   // resolved post-pull
+                'credit_move_odoo_id'=> null,
+                'amount'             => (float) ($r['amount'] ?? 0),
+                'max_date'           => $this->d($r['max_date'] ?? null),
+                'write_date'         => $this->dt($r['write_date'] ?? null),
+            ],
+            'wh_fact_reconcile');
+    }
+
+    /**
+     * Fill wh_fact_reconcile's parent-move columns from the GL lines already
+     * in the warehouse. Set-based, idempotent, and only touches rows whose
+     * move is still unknown — so it costs nothing once caught up.
+     */
+    public function resolveReconcileMoves(): int
+    {
+        $fixed = 0;
+        foreach ([['debit_line_odoo_id', 'debit_move_odoo_id'],
+                  ['credit_line_odoo_id', 'credit_move_odoo_id']] as [$lineCol, $moveCol]) {
+            $fixed += DB::table('wh_fact_reconcile as r')
+                ->join('wh_fact_gl_line as l', function ($j) use ($lineCol) {
+                    $j->on('l.tenant_id', '=', 'r.tenant_id')->on('l.odoo_id', '=', 'r.' . $lineCol);
+                })
+                ->where('r.tenant_id', $this->tenant->id)
+                ->whereNull('r.' . $moveCol)
+                ->whereNotNull('l.move_odoo_id')
+                ->update(['r.' . $moveCol => DB::raw('l.move_odoo_id')]);
+        }
+        return $fixed;
     }
 
     /**

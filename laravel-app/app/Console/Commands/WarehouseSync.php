@@ -81,6 +81,15 @@ class WarehouseSync extends Command
                     $fixed = $svc->reconcileLineDates();
                     $this->line("   line dates back-filled: " . number_format($fixed));
 
+                    // Link cash application to its parent documents once the
+                    // GL lines it references are present.
+                    try {
+                        $rm = $svc->resolveReconcileMoves();
+                        if ($rm > 0) $this->line("   reconcile moves resolved: " . number_format($rm));
+                    } catch (\Throwable $e) {
+                        $this->line("   reconcile move resolution skipped: " . $e->getMessage());
+                    }
+
                     // Deletions and parent-state changes are invisible to an
                     // upsert-only sync, so they need their own pass. Kept off
                     // the 15-minute tick — it re-reads a whole year of ids —
