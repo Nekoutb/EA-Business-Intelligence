@@ -81,9 +81,9 @@
     @endif
   </div>
   <div class="lg-card">
-    <h3>Files opened · {{ $data['grain'] === 'month' ? 'per month' : 'per day' }}</h3>
-    @php $max = max(array_map(fn ($r) => $r['n'], $data['series'] ?: [['n' => 1]])) ?: 1; @endphp
-    @forelse (array_filter($data['series'], fn ($r) => $r['n'] > 0) as $r)
+    <h3>Files opened · {{ ($data['grain'] ?? 'month') === 'month' ? 'per month' : 'per day' }}</h3>
+    @php $max = max(array_map(fn ($r) => $r['n'], ($data['series'] ?? []) ?: [['n' => 1]])) ?: 1; @endphp
+    @forelse (array_filter($data['series'] ?? [], fn ($r) => $r['n'] > 0) as $r)
       <div class="lg-brow"><span class="k">{{ $r['bucket'] }}</span>
         <span class="bar"><i style="width:{{ max(2, (int) (100 * $r['n'] / $max)) }}%"></i></span>
         <span class="n">{{ number_format($r['n']) }} files</span></div>
@@ -96,14 +96,14 @@
 <div class="lg-card">
   <h3>Backlog ageing · open files as of {{ $tdy['as_of'] ?? '' }} <span style="float:right;font-weight:500;text-transform:none;letter-spacing:0;color:#7c7466;font-size:11px">click a bucket, then a customer</span></h3>
   <div class="lg-tiles" style="margin:0 0 10px">
-    @foreach ($data['cum'] as $k => $n)
+    @foreach (($data['cum'] ?? []) as $k => $n)
       <div class="lg-tile bad"><div class="l">{{ $k }} days</div><div class="v">{{ number_format($n) }}</div>
         <div class="s">{{ $data['open_now'] > 0 ? number_format(100 * $n / $data['open_now']) . '% of open' : '' }}</div></div>
     @endforeach
   </div>
   <div class="lg-scroll"><table class="lg-dt dd cell-select" id="lg-backlog">
     <tr><th>Age bucket / customer / file</th><th class="num">Files</th><th class="num">Share</th><th>Type</th><th>Port</th><th>Opened</th><th class="num">Age</th><th>Follow-up</th></tr>
-    @foreach ($data['aging'] as $k => $n)
+    @foreach (($data['aging'] ?? []) as $k => $n)
       @php $bi = $loop->index; @endphp
       <tr class="lvl1" data-b="{{ $bi }}">
         <td><span class="lg-arrow">▸</span> {{ $k }} days</td>
@@ -136,7 +136,7 @@
   <h3>Files opened in period by type × port</h3>
   <div class="lg-scroll"><table class="lg-dt sortable cell-select">
     <tr><th>File type</th><th>Port</th><th class="num">Still open</th><th class="num">Opened</th></tr>
-    @forelse ($data['type_port'] as $r)
+    @forelse (($data['type_port'] ?? []) as $r)
       <tr><td>{{ $r->type }}</td><td>{{ $r->port }}</td>
         <td class="num">{{ number_format($r->open_n) }}</td><td class="num">{{ number_format($r->total) }}</td></tr>
     @empty
