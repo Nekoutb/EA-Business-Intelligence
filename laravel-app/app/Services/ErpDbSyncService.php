@@ -115,6 +115,7 @@ final class ErpDbSyncService
         // ~5 rows vs 1,255 invoices as of discovery).
         $rows = DB::connection($this->connection)->select(
             'select f.cle_facture, f.code_facture, f.reference, f.cle_client, f.cle_dossier, f.jour_facture,
+                    f.date_sortie, f.date_depot, f.date_retour_recu,
                     f.montant_ht, f.montant_ttc, f.montant_encaisse, f.reste_du,
                     c.delai_paiement_jours, lf.fee_ht
              from fait_facture_generique f
@@ -154,6 +155,9 @@ final class ErpDbSyncService
                 'payment_state'    => $residual <= 0.005 ? 'paid' : ($collected > 0.005 ? 'partial' : 'not_paid'),
                 'invoice_date'     => $date,
                 'invoice_date_due' => $due,
+                'sent_date'        => $f->date_sortie ? substr((string) $f->date_sortie, 0, 10) : null,
+                'deposited_date'   => $f->date_depot ? substr((string) $f->date_depot, 0, 10) : null,
+                'receipt_date'     => $f->date_retour_recu ? substr((string) $f->date_retour_recu, 0, 10) : null,
                 'partner_odoo_id'  => $f->cle_client !== null ? $this->keyId('partner', (string) $f->cle_client) : null,
                 'dossier_odoo_id'  => $f->cle_dossier !== null ? $this->keyId('dossier', (string) $f->cle_dossier) : null,
                 // REVENUE = the fee commission only. Débours on the invoice
@@ -171,6 +175,7 @@ final class ErpDbSyncService
         }
         $this->flush('wh_fact_invoice', $batch, [
             'name', 'move_type', 'state', 'payment_state', 'invoice_date', 'invoice_date_due',
+            'sent_date', 'deposited_date', 'receipt_date',
             'partner_odoo_id', 'dossier_odoo_id', 'amount_untaxed', 'amount_total', 'amount_residual', 'write_date',
         ]);
         $this->prune('wh_fact_invoice', $seen);
@@ -230,6 +235,7 @@ final class ErpDbSyncService
     {
         $rows = DB::connection($this->connection)->select(
             'select f.cle_dossier, f.code_dossier, f.cle_client, f.jour_ouverture, f.jour_cloture,
+                    f.date_debut_facturation, f.date_suspension,
                     f.est_clos, f.est_suspendu, f.delai_traitement_jours, f.delai_facturation_jours,
                     f.poids_net, f.nombre_conteneurs, f.nombre_colis, f.valeur_marchandise,
                     f.regime_douanier, f.incoterm, f.type_embarquement, f.importateur,
@@ -258,6 +264,8 @@ final class ErpDbSyncService
                 'employee_name'    => $r->employee_name !== null ? mb_substr((string) $r->employee_name, 0, 128) : null,
                 'opened_date'      => $r->jour_ouverture ? substr((string) $r->jour_ouverture, 0, 10) : null,
                 'closed_date'      => $r->jour_cloture ? substr((string) $r->jour_cloture, 0, 10) : null,
+                'billing_start_date' => $r->date_debut_facturation ? substr((string) $r->date_debut_facturation, 0, 10) : null,
+                'suspended_date'   => $r->date_suspension ? substr((string) $r->date_suspension, 0, 10) : null,
                 'is_closed'        => (bool) ($r->est_clos ?? false),
                 'is_suspended'     => (bool) ($r->est_suspendu ?? false),
                 'lead_days'        => $r->delai_traitement_jours,
@@ -275,7 +283,7 @@ final class ErpDbSyncService
         }
         $this->flush('wh_fact_dossier', $batch, [
             'code', 'partner_odoo_id', 'client_name', 'type_name', 'port_name', 'employee_name',
-            'opened_date', 'closed_date', 'is_closed', 'is_suspended', 'lead_days', 'billing_lag_days',
+            'opened_date', 'closed_date', 'billing_start_date', 'suspended_date', 'is_closed', 'is_suspended', 'lead_days', 'billing_lag_days',
             'weight_kg', 'containers', 'packages', 'cargo_value', 'regime', 'incoterm', 'embarquement',
             'importer', 'write_date',
         ]);

@@ -203,6 +203,141 @@ final class LogisticsOpsService
         return $out;
     }
 
+    /** Lifecycle stages, in order, with the two dates each one spans. */
+    public const STAGES = [
+        'open_to_request'   => ['File opened → first débours requested', 'date_ouverture → date_demande'],
+        'request_to_cash'   => ['Débours requested → cash paid out',      'date_demande → date_decaissement'],
+        'cash_to_billed'    => ['Cash paid out → débours billed',         'date_decaissement → date_facture (débours line)'],
+        'open_to_billstart' => ['File opened → billing opened',           'date_ouverture → date_debut_facturation'],
+        'open_to_invoice'   => ['File opened → first invoice',            'date_ouverture → date_facture'],
+        'invoice_to_deposit'=> ['Invoice issued → deposited with client', 'date_facture → date_depot'],
+        'invoice_to_due'    => ['Invoice issued → due',                   'date_facture → + payment terms'],
+        'open_to_close'     => ['File opened → closed',                   'date_ouverture → date_cloture'],
+    ];
+
+    /**
+     * Stage latency: for every file opened in the window, the days spent in
+     * each step of the lifecycle, then averaged over all files, per
+     * customer, and listed per file. A stage is null for a file when either
+     * of its dates is missing, and the averages only count files that have
+     * it — so "n" beside each average says how much of the population it
+     * describes. Customer and file filters narrow the population.
+     */
+    public function stageLatency(\DateTimeImmutable $from, \DateTimeImmutable $to, ?string $customer = null, ?string $file = null): array
+    {
+        $keys = array_keys(self::STAGES);
+        $out = ['files_total' => 0, 'stages' => [], 'customers' => [], 'files' => [], 'customer_list' => [],
+                'filter' => ['customer' => $customer, 'file' => $file], 'pending' => []];
+        foreach (self::STAGES as $k => [$label, $fields]) {
+            $out['stages'][$k] = ['label' => $label, 'fields' => $fields, 'avg' => null, 'median' => null, 'n' => 0];
+        }
+        try {
+            $f = $from->format('Y-m-d'); $t = $to->format('Y-m-d');
+            $hasBill = \Illuminate\Support\Facades\Schema::hasColumn('wh_fact_dossier', 'billing_start_date');
+            $hasDep  = \Illuminate\Support\Facades\Schema::hasColumn('wh_fact_invoice', 'deposited_date');
+
+            $dq = $this->d()->whereBetween('opened_date', [$f, $t])->whereNotNull('opened_date');
+            if ($customer !== null && $customer !== '') $dq->where('client_name', $customer);
+            if ($file !== null && $file !== '') $dq->where('code', 'like', '%' . $file . '%');
+            $cols = ['odoo_id', 'code', 'client_name', 'opened_date', 'closed_date'];
+            if ($hasBill) $cols[] = 'billing_start_date';
+            $dossiers = $dq->orderBy('opened_date')->get($cols);
+            $out['customer_list'] = $this->d()->whereBetween('opened_date', [$f, $t])->whereNotNull('client_name')
+                ->distinct()->orderBy('client_name')->pluck('client_name')->all();
+            if ($dossiers->isEmpty()) return $out;
+            $ids = $dossiers->pluck('odoo_id')->all();
+
+            // Advances per file: first request, and per-advance request→cash.
+            $adv = DB::table('wh_fact_advance')->where('tenant_id', $this->tenantId)->whereIn('dossier_odoo_id', $ids)
+                ->get(['dossier_odoo_id', 'requested_date', 'disbursed_date']);
+            $firstReq = []; $reqCash = []; $disb = [];
+            foreach ($adv as $a) {
+                $d = $a->dossier_odoo_id;
+                if ($a->requested_date && (!isset($firstReq[$d]) || $a->requested_date < $firstReq[$d])) $firstReq[$d] = $a->requested_date;
+                if ($a->requested_date && $a->disbursed_date) $reqCash[$d][] = $this->days($a->requested_date, $a->disbursed_date);
+                if ($a->disbursed_date) $disb[$d][] = $a->disbursed_date;
+            }
+            // Invoices per file: first invoice, its due date, deposit date.
+            $icols = ['dossier_odoo_id', 'invoice_date', 'invoice_date_due'];
+            if ($hasDep) $icols[] = 'deposited_date';
+            $inv = DB::table('wh_fact_invoice')->where('tenant_id', $this->tenantId)->whereIn('dossier_odoo_id', $ids)
+                ->whereNotNull('invoice_date')->orderBy('invoice_date')->get($icols);
+            $firstInv = [];
+            foreach ($inv as $i) { if (!isset($firstInv[$i->dossier_odoo_id])) $firstInv[$i->dossier_odoo_id] = $i; }
+            // Débours invoice lines per file (dates), for cash→billed.
+            $debDates = [];
+            foreach (DB::table('wh_fact_invoice_line as l')
+                ->join('wh_fact_invoice as i', fn ($j) => $j->on('i.tenant_id', '=', 'l.tenant_id')->on('i.odoo_id', '=', 'l.move_odoo_id'))
+                ->where('l.tenant_id', $this->tenantId)->where('l.is_debours', true)->whereIn('i.dossier_odoo_id', $ids)
+                ->whereNotNull('l.invoice_date')->orderBy('l.invoice_date')->get(['i.dossier_odoo_id', 'l.invoice_date']) as $l) {
+                $debDates[$l->dossier_odoo_id][] = $l->invoice_date;
+            }
+
+            $avg = fn (array $v) => $v ? array_sum($v) / count($v) : null;
+            $all = array_fill_keys($keys, []);
+            $cust = [];
+            foreach ($dossiers as $d) {
+                $id = $d->odoo_id; $st = array_fill_keys($keys, null);
+                if (isset($firstReq[$id]))   $st['open_to_request'] = $this->days($d->opened_date, $firstReq[$id]);
+                if (!empty($reqCash[$id]))   $st['request_to_cash'] = $avg($reqCash[$id]);
+                if (!empty($disb[$id]) && !empty($debDates[$id])) {
+                    $lags = [];
+                    foreach ($disb[$id] as $dd) { foreach ($debDates[$id] as $bd) { if ($bd >= $dd) { $lags[] = $this->days($dd, $bd); break; } } }
+                    if ($lags) $st['cash_to_billed'] = $avg($lags);
+                }
+                if ($hasBill && $d->billing_start_date) $st['open_to_billstart'] = $this->days($d->opened_date, $d->billing_start_date);
+                if (isset($firstInv[$id])) {
+                    $fi = $firstInv[$id];
+                    $st['open_to_invoice'] = $this->days($d->opened_date, $fi->invoice_date);
+                    if ($fi->invoice_date_due) $st['invoice_to_due'] = $this->days($fi->invoice_date, $fi->invoice_date_due);
+                    if ($hasDep && $fi->deposited_date) $st['invoice_to_deposit'] = $this->days($fi->invoice_date, $fi->deposited_date);
+                }
+                if ($d->closed_date) $st['open_to_close'] = $this->days($d->opened_date, $d->closed_date);
+
+                $last = max(array_filter([$d->opened_date, $d->closed_date, $firstInv[$id]->invoice_date ?? null, !empty($disb[$id]) ? max($disb[$id]) : null]));
+                $row = ['code' => (string) $d->code, 'client' => (string) ($d->client_name ?: '—'), 'opened' => (string) $d->opened_date,
+                        'closed' => $d->closed_date ? (string) $d->closed_date : null, 'stages' => $st, 'journey' => $this->days($d->opened_date, $last)];
+                $out['files'][] = $row;
+                foreach ($keys as $k) if ($st[$k] !== null) $all[$k][] = $st[$k];
+                $c = $row['client'];
+                $cust[$c] ??= ['client' => $c, 'n' => 0, 'stages' => array_fill_keys($keys, []), 'journey' => []];
+                $cust[$c]['n']++; $cust[$c]['journey'][] = $row['journey'];
+                foreach ($keys as $k) if ($st[$k] !== null) $cust[$c]['stages'][$k][] = $st[$k];
+            }
+            $out['files_total'] = count($out['files']);
+            foreach ($keys as $k) {
+                $v = $all[$k]; sort($v);
+                $out['stages'][$k]['n'] = count($v);
+                $out['stages'][$k]['avg'] = $avg($v) !== null ? round($avg($v), 1) : null;
+                $out['stages'][$k]['median'] = $v ? $v[(int) floor(count($v) / 2)] : null;
+            }
+            foreach ($cust as $c => $row) {
+                $agg = ['client' => $c, 'n' => $row['n'], 'journey' => round($avg($row['journey']), 1), 'stages' => [], 'worst' => null];
+                $worstRatio = 0;
+                foreach ($keys as $k) {
+                    $a = $avg($row['stages'][$k]);
+                    $agg['stages'][$k] = $a !== null ? round($a, 1) : null;
+                    $ref = $out['stages'][$k]['avg'];
+                    if ($a !== null && $ref) { $r = $a / $ref; if ($r > $worstRatio) { $worstRatio = $r; $agg['worst'] = $k; } }
+                }
+                $agg['worst_ratio'] = round($worstRatio, 2);
+                $out['customers'][] = $agg;
+            }
+            usort($out['customers'], fn ($x, $y) => $y['journey'] <=> $x['journey']);
+            usort($out['files'], fn ($x, $y) => $y['journey'] <=> $x['journey']);
+            if (!$hasBill) $out['pending'][] = 'open_to_billstart';
+            if (!$hasDep)  $out['pending'][] = 'invoice_to_deposit';
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('logistics stage latency failed', ['error' => $e->getMessage()]);
+        }
+        return $out;
+    }
+
+    private function days(string $a, string $b): int
+    {
+        return (int) (new \DateTimeImmutable(substr($a, 0, 10)))->diff(new \DateTimeImmutable(substr($b, 0, 10)))->format('%r%a');
+    }
+
     /** Page 3 — Volumes: tonnage, containers, mix, importers. */
     /**
      * Continuous bucket keys for the evolution chart, keyed exactly like the

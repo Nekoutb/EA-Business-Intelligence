@@ -40,8 +40,14 @@ class LogisticsOpsController extends Controller
         [$tenantId, $from, $to, $label, $period] = $this->ctx($request);
         $key  = 'logi_workflow_v1_' . md5(json_encode($period));
         $data = ea_cached($key, fn () => (new LogisticsOpsService($tenantId))->workflow($from, $to));
+        // Stage latency across the file lifecycle, narrowed by the page's own
+        // customer / file filters on top of the master period.
+        $customer = trim((string) $request->query('lg_customer', '')) ?: null;
+        $file     = trim((string) $request->query('lg_file', '')) ?: null;
+        $skey  = 'logi_stages_v1_' . md5(json_encode([$period, $customer, $file]));
+        $stages = ea_cached($skey, fn () => (new LogisticsOpsService($tenantId))->stageLatency($from, $to, $customer, $file));
         return view('logistics.workflow', [
-            'data' => $data, 'active' => 'logistics_workflow', 'period' => $period, 'periodLabel' => $label,
+            'data' => $data, 'stages' => $stages, 'active' => 'logistics_workflow', 'period' => $period, 'periodLabel' => $label,
         ]);
     }
 
