@@ -209,6 +209,13 @@ return [
             'default'     => false,
         ],
         [
+            'key'         => 'logi_unbilled_debours',
+            'label'       => 'Unbilled débours',
+            'description' => 'Débours disbursed in the period with no matching débours line on the file\'s invoices: value, number of transactions, files and clients.',
+            'section'     => 'logistics',
+            'default'     => false,
+        ],
+        [
             'key'         => 'logi_volume_trend',
             'label'       => 'Logistics volume trend',
             'description' => 'Line graphs of tonnage, containers and packages across the period (per month for yearly views, per day for monthly ones).',

@@ -284,16 +284,14 @@
       $weeklyBudget = $monthBudget > 0 ? array_fill(0, 4, $monthBudget / 4.0) : [0, 0, 0, 0];
   }
 
-  // Helpers for pretty number formatting in the strip.
+  // Every money figure on the dashboard reads in MILLIONS of the
+  // currency, whatever its size, so cells and cards compare at a glance
+  // (a 2.4 bn balance next to a 310 m one no longer switches units).
   $shortNum = function (float $v) {
-      $a = abs($v);
-      if ($a >= 1_000_000) return number_format($v / 1_000_000, 2);
-      if ($a >= 1_000)     return number_format($v / 1_000, 0);
-      return number_format($v, 0);
+      return number_format($v / 1_000_000, abs($v) >= 100_000_000 ? 0 : 1);
   };
   $shortUnit = function (float $v, string $ccy = 'XAF') {
-      $a = abs($v);
-      return ($a >= 1_000_000 ? 'M ' : ($a >= 1_000 ? 'K ' : '')) . $ccy;
+      return 'M ' . $ccy;
   };
 
   // Strip metrics — fall back gracefully if PL is missing.
@@ -426,7 +424,7 @@
 
     {{-- Row 1 · Cumulative Revenue (span 7) — gated on `revenue_ytd` --}}
     @if ($kpiOn('revenue_ytd'))
-    <div class="v5-card span-7">
+    <div class="v5-card span-6">
         <div class="v5-card__h">
             <div>
                 @if ($isMtd)
@@ -482,7 +480,7 @@
 
     {{-- Row 1 · Margin Waterfall (span 5) — gated on any margin-layer KPI --}}
     @if ($kpiOn('gross_profit') || $kpiOn('ebitda') || $kpiOn('net_profit') || $kpiOn('opex'))
-    <div class="v5-card span-5">
+    <div class="v5-card span-6">
         <div class="v5-card__h">
             <div>
                 <div class="v5-card__t">Margin Waterfall</div>
@@ -727,7 +725,7 @@
         if (!is_numeric($v)) return '—';
         return match ($kpi['fmt'] ?? 'pct') {
             'days'  => number_format((float) $v, 0) . ' d',
-            'money' => ea_money_short((float) $v, $kpi['ccy'] ?? $ccy),
+            'money' => $shortNum((float) $v) . ' ' . $shortUnit((float) $v, $kpi['ccy'] ?? $ccy),
             default => number_format((float) $v, 1) . '%',
         };
     };
@@ -832,12 +830,10 @@
     axisPointer: { type: 'shadow', shadowStyle: { color: 'rgba(13,110,110,0.04)' } }
   };
 
+  // Money axes read in millions everywhere, matching the cards and strip.
   function fmt(v) {
     if (v == null) return '—';
-    const a = Math.abs(v);
-    if (a >= 1e6) return (v / 1e6).toFixed(1).replace(/\.0$/, '') + 'M';
-    if (a >= 1e3) return (v / 1e3).toFixed(0) + 'K';
-    return v.toString();
+    return (v / 1e6).toFixed(Math.abs(v) >= 1e8 ? 0 : 1).replace(/\.0$/, '') + 'M';
   }
   /* Harmonised 1-decimal formatter — used everywhere on the unit-
      economics small multiples so prior/current bars line up
@@ -1232,5 +1228,47 @@
 })();
 </script>
 @endpush
+
+{{-- ── Expand any card to fill the screen ──────────────────────────
+     Every .v5-card (logistics cards included) gets a ⤢ button in its
+     header; clicking it, or pressing Esc, toggles a fixed full-screen
+     overlay. Charts get a resize event so ECharts redraws to the new box. --}}
+<style>
+  .v5-card { position: relative; }
+  .v5-xp { position: absolute; top: 6px; right: 8px; width: 22px; height: 22px; border: 1px solid var(--border, #e5e7eb); border-radius: 6px; background: var(--surface, #fff); color: var(--text-subtle, #6b7280); font-size: 12px; line-height: 20px; text-align: center; cursor: pointer; opacity: .55; transition: opacity .15s; }
+  .v5-card:hover .v5-xp, .v5-card--max .v5-xp { opacity: 1; }
+  .v5-card--max { position: fixed !important; inset: 14px; z-index: 80; overflow: auto; padding: 18px 22px; box-shadow: 0 20px 60px rgba(0,0,0,.25); }
+  .v5-card--max .v5-card__t { font-size: 16px; } .v5-card--max .v5-card__sub { font-size: 12px; }
+  .v5-card--max .v5-card__b { min-height: 60vh; }
+  .v5-card--max .lgd-tile .v { font-size: 30px; } .v5-card--max .lgd-tile .l { font-size: 11px; } .v5-card--max .lgd-tile .s { font-size: 12px; }
+  .v5-backdrop { position: fixed; inset: 0; z-index: 79; background: rgba(15, 23, 42, .45); }
+</style>
+<script>
+(function () {
+  let open = null, backdrop = null;
+  function close() {
+    if (!open) return;
+    open.classList.remove('v5-card--max'); open.querySelector('.v5-xp').textContent = '⤢';
+    open = null; if (backdrop) { backdrop.remove(); backdrop = null; }
+    document.body.style.overflow = '';
+    window.dispatchEvent(new Event('resize'));
+  }
+  function expand(card) {
+    if (open === card) return close();
+    close();
+    open = card; card.classList.add('v5-card--max'); card.querySelector('.v5-xp').textContent = '✕';
+    backdrop = document.createElement('div'); backdrop.className = 'v5-backdrop'; backdrop.addEventListener('click', close);
+    document.body.appendChild(backdrop); document.body.style.overflow = 'hidden';
+    window.dispatchEvent(new Event('resize'));
+    setTimeout(() => window.dispatchEvent(new Event('resize')), 60);
+  }
+  document.querySelectorAll('.v5-card').forEach(card => {
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'v5-xp'; b.title = 'Expand to full screen'; b.textContent = '⤢';
+    b.addEventListener('click', e => { e.stopPropagation(); expand(card); });
+    card.appendChild(b);
+  });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') close(); });
+})();
+</script>
 
 @endsection

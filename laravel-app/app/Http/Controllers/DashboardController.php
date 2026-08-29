@@ -23,15 +23,18 @@ class DashboardController extends Controller
         // power-users access to historical full-month figures (e.g. April
         // 2026) without leaving the dashboard.
         $today  = new \DateTimeImmutable();
-        $type   = strtolower((string) $request->query('period', 'ytd'));
+        // The sidebar master filter is remembered in the session and merged
+        // into the request by RememberPeriod — read input(), not query(), or a
+        // filter chosen on another page is ignored here.
+        $type   = strtolower((string) $request->input('period', session('bms.period.type', 'ytd')));
         if (!in_array($type, ['ytd', 'mtd', 'month'], true)) {
             $type = 'ytd';
         }
 
         // Year/month optional — only ytd/month consume year, only month
         // consumes month. ea_resolve_period clamps to safe ranges.
-        $year  = (int) $request->query('year',  $today->format('Y'));
-        $month = (int) $request->query('month', $today->format('m'));
+        $year  = (int) $request->input('year',  session('bms.period.year',  $today->format('Y')));
+        $month = (int) $request->input('month', session('bms.period.month', $today->format('m')));
         $period = ['type' => $type, 'year' => $year, 'month' => $month];
 
         [$from, $to, $periodLabel] = ea_resolve_period($today, $period);
@@ -218,8 +221,10 @@ class DashboardController extends Controller
                         ? ea_cached('logi_oop_v2_' . md5(json_encode($period)), fn () => $svc->oopCompliance($from, $to)) : null,
                     'volumes' => $on('logi_volume_trend')
                         ? ea_cached('logi_volumes_v2_' . md5(json_encode($period)) . '_' . $grain, fn () => $svc->volumes($from, $to, $grain)) : null,
+                    'unbilled' => $on('logi_unbilled_debours')
+                        ? ea_cached('logi_unbilled_deb_v1_' . md5(json_encode($period)), fn () => $svc->unbilledDebours($from, $to)) : null,
                 ];
-                if ($logistics['files'] === null && $logistics['oop'] === null && $logistics['volumes'] === null) $logistics = null;
+                if (count(array_filter($logistics, fn ($v) => $v !== null)) === 0) $logistics = null;
             }
         } catch (\Throwable $e) {
             $logistics = null;

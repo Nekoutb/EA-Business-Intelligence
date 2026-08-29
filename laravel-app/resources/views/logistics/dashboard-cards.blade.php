@@ -7,8 +7,10 @@
   $lc  = $lf['closure'] ?? null;
   $lo  = $logistics['oop']     ?? null;
   $lv  = $logistics['volumes'] ?? null;
+  $lu  = $logistics['unbilled'] ?? null;
   $n   = fn ($v) => number_format((float) $v);
-  $xaf = fn ($v) => number_format((float) $v) . ' XAF';
+  // Money in millions, like the rest of the dashboard.
+  $xaf = fn ($v) => number_format((float) $v / 1_000_000, abs((float) $v) >= 100_000_000 ? 0 : 1) . ' M XAF';
 @endphp
 <style>
   .lgd-tiles { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; flex:1; align-content:start; }
@@ -71,6 +73,27 @@
     <div class="lgd-tile"><div class="l">Files</div><div class="v">{{ $n(($lo['over_n'] ?? 0) + ($lo['under_n'] ?? 0) + ($lo['nil_n'] ?? 0)) }}</div><div class="s"><span style="color:#0d6e6e">{{ $n($lo['over_n'] ?? 0) }} over</span> · <span style="color:#9a3b2e">{{ $n($lo['under_n'] ?? 0) }} under</span> · {{ $n($lo['nil_n'] ?? 0) }} nil</div></div>
   </div></div>
   <div class="v5-card__f"><b>Reading:</b> a positive gap means clients were recharged more than was spent on their files; a negative one is cost Elimelec absorbed · <a href="{{ tenant_url('/logistics/oop') }}">open OOP</a></div>
+</div>
+@endif
+
+@if ($kpiOn('logi_unbilled_debours') && $lu)
+@php
+  $files   = count(array_unique(array_map(fn ($i) => $i['file'], $lu['items'] ?? [])));
+  $clients = count($lu['by_client'] ?? []);
+  $top     = $lu['by_client'][0] ?? null;
+@endphp
+<div class="v5-card span-6">
+  <div class="v5-card__h"><div>
+    <div class="v5-card__t">Unbilled débours · {{ $periodLabel ?? '' }}</div>
+    <div class="v5-card__sub">cash disbursed on files with no matching débours line billed to the client</div>
+  </div></div>
+  <div class="v5-card__b"><div class="lgd-tiles">
+    <div class="lgd-tile bad"><div class="l">Value</div><div class="v">{{ $xaf($lu['total'] ?? 0) }}</div><div class="s">not yet recharged</div></div>
+    <div class="lgd-tile"><div class="l">Transactions</div><div class="v">{{ $n($lu['count'] ?? 0) }}</div><div class="s">advance lines</div></div>
+    <div class="lgd-tile"><div class="l">Files</div><div class="v">{{ $n($files) }}</div><div class="s">with unbilled débours</div></div>
+    <div class="lgd-tile"><div class="l">Clients</div><div class="v">{{ $n($clients) }}</div><div class="s">{{ $top ? 'largest: ' . $top['client'] . ' · ' . $xaf($top['amt']) : '' }}</div></div>
+  </div></div>
+  <div class="v5-card__f"><b>Reading:</b> every franc here was paid out for a client and is not on any invoice yet — a direct cash-flow exposure · <a href="{{ tenant_url('/billing') }}">open Billing</a> for the per-file detail.</div>
 </div>
 @endif
 
