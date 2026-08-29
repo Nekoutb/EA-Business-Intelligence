@@ -24,36 +24,132 @@ final class LogisticsOpsService
         return DB::table('wh_fact_dossier')->where('tenant_id', $this->tenantId);
     }
 
-    /** Page 1 — Dossiers: throughput, backlog, aging, lead time. */
-    public function dossiers(\DateTimeImmutable $from, \DateTimeImmutable $to): array
+    /** Backlog ageing buckets, in display order. */
+    public const AGE_BUCKETS = [['0-30', 0, 30], ['31-60', 31, 60], ['61-90', 61, 90], ['90+', 91, PHP_INT_MAX]];
+
+    /**
+     * Open files as of a date: opened on or before it and not yet closed by
+     * it. Ages are measured at that date, so the same function gives both
+     * today's backlog and a historical baseline to compare it with.
+     *
+     * @return array{n:int, buckets:array<string,int>, cum:array<string,int>, median:?int, mix:array<string,float>, rows:list<array>}
+     */
+    public function backlogAt(\DateTimeImmutable $asOf, bool $withRows = false): array
+    {
+        $d = $asOf->format('Y-m-d');
+        $q = $this->d()->whereNotNull('opened_date')->where('opened_date', '<=', $d)
+            ->where(fn ($w) => $w->where('is_closed', false)->orWhereNull('closed_date')->orWhere('closed_date', '>', $d));
+        $out = ['as_of' => $d, 'n' => 0, 'buckets' => [], 'cum' => [], 'median' => null, 'mix' => [], 'rows' => []];
+        foreach (self::AGE_BUCKETS as [$k]) { $out['buckets'][$k] = 0; $out['mix'][$k] = 0.0; }
+
+        $rows = $q->selectRaw("odoo_id, code, COALESCE(client_name,'—') client, type_name, port_name, employee_name, opened_date,
+                               DATEDIFF(?, opened_date) age", [$d])->orderByDesc('age')->get();
+        $ages = [];
+        foreach ($rows as $r) {
+            $age = (int) $r->age; $ages[] = $age;
+            $bucket = '90+';
+            foreach (self::AGE_BUCKETS as [$k, $lo, $hi]) { if ($age >= $lo && $age <= $hi) { $bucket = $k; break; } }
+            $out['buckets'][$bucket]++;
+            if ($withRows) {
+                $out['rows'][] = ['bucket' => $bucket, 'client' => (string) $r->client, 'code' => (string) $r->code,
+                    'type' => $r->type_name, 'port' => $r->port_name, 'employee' => $r->employee_name,
+                    'opened' => (string) $r->opened_date, 'age' => $age];
+            }
+        }
+        $out['n'] = count($ages);
+        if ($ages !== []) {
+            sort($ages);
+            $out['median'] = $ages[(int) floor(count($ages) / 2)];
+            foreach ([30, 40, 60, 90] as $t) $out['cum']['>' . $t] = count(array_filter($ages, fn ($x) => $x > $t));
+            foreach ($out['buckets'] as $k => $n) $out['mix'][$k] = round(100 * $n / count($ages), 1);
+        } else {
+            foreach ([30, 40, 60, 90] as $t) $out['cum']['>' . $t] = 0;
+        }
+        return $out;
+    }
+
+    /**
+     * Page 1 — Files. Everything is driven by the master filter: the
+     * backlog is taken AS OF the end of the window, openings/closures are
+     * counted INSIDE it, and the ageing mix is compared with a baseline —
+     * the end of the earliest month on record for yearly windows, the end
+     * of the previous month for monthly ones.
+     */
+    public function dossiers(\DateTimeImmutable $from, \DateTimeImmutable $to, string $grain = 'month'): array
     {
         $out = ['open_now' => 0, 'opened' => 0, 'closed' => 0, 'median_age' => null,
-                'monthly' => [], 'aging' => [], 'cum' => [], 'type_port' => [], 'finding' => null];
+                'series' => [], 'grain' => $grain, 'aging' => [], 'cum' => [], 'type_port' => [], 'finding' => null,
+                'today' => null, 'baseline' => null, 'baseline_label' => null, 'closure' => null, 'detail' => []];
         try {
-            $out['open_now'] = (int) $this->d()->where('is_closed', false)->count();
-            $out['opened']   = (int) $this->d()->whereBetween('opened_date', [$from->format('Y-m-d'), $to->format('Y-m-d')])->count();
-            $out['closed']   = (int) $this->d()->whereBetween('closed_date', [$from->format('Y-m-d'), $to->format('Y-m-d')])->count();
+            $f = $from->format('Y-m-d'); $t = $to->format('Y-m-d');
 
-            $ages = $this->d()->where('is_closed', false)->whereNotNull('opened_date')
-                ->selectRaw('DATEDIFF(CURDATE(), opened_date) a')->pluck('a')->map(fn ($v) => (int) $v)->sort()->values();
-            if ($ages->isNotEmpty()) {
-                $out['median_age'] = $ages[(int) floor($ages->count() / 2)];
+            // Backlog as of the end of the window, with the file list for the drill-down.
+            $today = $this->backlogAt($to, true);
+            $out['open_now']   = $today['n'];
+            $out['median_age'] = $today['median'];
+            $out['aging']      = $today['buckets'];
+            $out['cum']        = $today['cum'];
+            foreach ($today['rows'] as $r) $out['detail'][$r['bucket']][$r['client']][] = $r;
+            foreach ($out['detail'] as &$byClient) {
+                uasort($byClient, fn ($x, $y) => count($y) <=> count($x));
             }
-            foreach ([['0-30', 0, 30], ['31-40', 31, 40], ['41-60', 41, 60], ['61-90', 61, 90], ['90+', 91, PHP_INT_MAX]] as [$k, $lo, $hi]) {
-                $out['aging'][$k] = $ages->filter(fn ($a) => $a >= $lo && $a <= $hi)->count();
+            unset($byClient);
+            unset($today['rows']);
+            $out['today'] = $today;
+
+            // Baseline: yearly windows look back to the earliest month on
+            // record; monthly windows to the end of the previous month.
+            $monthly = $from->format('Y-m') === $to->format('Y-m');
+            if ($monthly) {
+                $base = $from->modify('last day of previous month');
+                $out['baseline_label'] = 'End of ' . $base->format('F Y');
+            } else {
+                $first = $this->d()->whereNotNull('opened_date')->min('opened_date');
+                $base  = $first ? (new \DateTimeImmutable((string) $first))->modify('last day of this month') : $from;
+                $out['baseline_label'] = 'End of ' . $base->format('F Y') . ' (earliest month on record)';
             }
-            foreach ([30, 40, 60, 90] as $t) {
-                $out['cum']['>' . $t] = $ages->filter(fn ($a) => $a > $t)->count();
+            $out['baseline'] = $this->backlogAt($base);
+
+            // Flow inside the window.
+            $out['opened'] = (int) $this->d()->whereBetween('opened_date', [$f, $t])->count();
+            $out['closed'] = (int) $this->d()->whereBetween('closed_date', [$f, $t])->count();
+
+            // Closure rate: how much of the window's workload (what was open
+            // at the start + what came in) was closed inside it.
+            $start = $this->backlogAt($from->modify('-1 day'));
+            $workload = $start['n'] + $out['opened'];
+            $ttc = $this->d()->whereBetween('closed_date', [$f, $t])->whereNotNull('opened_date')
+                ->selectRaw('DATEDIFF(closed_date, opened_date) x')->pluck('x')->map(fn ($v) => (int) $v)->sort()->values();
+            $wd = 0;
+            for ($c = $from; $c <= $to; $c = $c->modify('+1 day')) { if ((int) $c->format('N') <= 5) $wd++; }
+            $out['closure'] = [
+                'backlog_start'   => $start['n'],
+                'opened'          => $out['opened'],
+                'closed'          => $out['closed'],
+                'backlog_end'     => $today['n'],
+                'workload'        => $workload,
+                'rate'            => $workload > 0 ? round(100 * $out['closed'] / $workload, 1) : null,
+                'closed_vs_opened'=> $out['opened'] > 0 ? round(100 * $out['closed'] / $out['opened'], 1) : null,
+                'per_working_day' => $wd > 0 ? round($out['closed'] / $wd, 2) : null,
+                'working_days'    => $wd,
+                'median_days_to_close' => $ttc->isNotEmpty() ? $ttc[(int) floor($ttc->count() / 2)] : null,
+            ];
+
+            // Openings across the window, on a continuous axis (see volumes()).
+            $fmt = match ($grain) { 'day' => '%Y-%m-%d', 'week' => '%x-W%v', default => '%Y-%m' };
+            $got = [];
+            foreach ($this->d()->whereBetween('opened_date', [$f, $t])
+                ->selectRaw("DATE_FORMAT(opened_date, '{$fmt}') b, COUNT(*) n")->groupBy('b')->get() as $r) {
+                $got[$r->b] = (int) $r->n;
+            }
+            foreach (self::buckets($from, $to, $grain) as $b => $label) {
+                $out['series'][] = ['bucket' => $b, 'label' => $label, 'n' => $got[$b] ?? 0];
             }
 
-            foreach ($this->d()->whereNotNull('opened_date')->where('opened_date', '>=', $from->format('Y-01-01'))
-                ->selectRaw("DATE_FORMAT(opened_date, '%Y-%m') m, COUNT(*) n")->groupBy('m')->orderBy('m')->get() as $r) {
-                $out['monthly'][$r->m] = (int) $r->n;
-            }
-
-            $out['type_port'] = $this->d()
+            // Files opened in the window by type × port, with how many are still open.
+            $out['type_port'] = $this->d()->whereBetween('opened_date', [$f, $t])
                 ->selectRaw("COALESCE(type_name,'?') type, COALESCE(port_name,'—') port,
-                             SUM(CASE WHEN is_closed = 0 THEN 1 ELSE 0 END) open_n, COUNT(*) total")
+                             SUM(CASE WHEN is_closed = 0 OR closed_date IS NULL OR closed_date > ? THEN 1 ELSE 0 END) open_n, COUNT(*) total", [$t])
                 ->groupBy('type', 'port')->orderByDesc('total')->limit(10)->get()->all();
 
             // Closure discipline: the lead-time section only means something

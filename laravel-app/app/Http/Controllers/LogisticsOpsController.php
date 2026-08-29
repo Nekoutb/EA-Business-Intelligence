@@ -26,8 +26,10 @@ class LogisticsOpsController extends Controller
     public function dossiers(Request $request)
     {
         [$tenantId, $from, $to, $label, $period] = $this->ctx($request);
-        $key  = 'logi_dossiers_v1_' . md5(json_encode($period));
-        $data = ea_cached($key, fn () => (new LogisticsOpsService($tenantId))->dossiers($from, $to));
+        // Yearly windows list openings per month, monthly ones per day.
+        $grain = in_array((string) ($period['type'] ?? 'ytd'), ['mtd', 'month'], true) ? 'day' : 'month';
+        $key  = 'logi_dossiers_v2_' . md5(json_encode($period)) . '_' . $grain;
+        $data = ea_cached($key, fn () => (new LogisticsOpsService($tenantId))->dossiers($from, $to, $grain));
         return view('logistics.dossiers', [
             'data' => $data, 'active' => 'logistics_dossiers', 'period' => $period, 'periodLabel' => $label,
         ]);
