@@ -104,9 +104,15 @@ final class LogisticsOpsService
                 $base = $from->modify('last day of previous month');
                 $out['baseline_label'] = 'End of ' . $base->format('F Y');
             } else {
-                $first = $this->d()->whereNotNull('opened_date')->min('opened_date');
+                // "Earliest month on record" means the first month with real
+                // activity: Elimelec's extract carries a stray 2011 file, and a
+                // one-file baseline would make the comparison meaningless.
+                $first = $this->d()->whereNotNull('opened_date')
+                    ->selectRaw("DATE_FORMAT(opened_date, '%Y-%m-01') m, COUNT(*) n")
+                    ->groupBy('m')->havingRaw('COUNT(*) >= 10')->orderBy('m')->value('m')
+                    ?: $this->d()->whereNotNull('opened_date')->min('opened_date');
                 $base  = $first ? (new \DateTimeImmutable((string) $first))->modify('last day of this month') : $from;
-                $out['baseline_label'] = 'End of ' . $base->format('F Y') . ' (earliest month on record)';
+                $out['baseline_label'] = 'End of ' . $base->format('F Y') . ' (earliest month on record with activity)';
             }
             $out['baseline'] = $this->backlogAt($base);
 
