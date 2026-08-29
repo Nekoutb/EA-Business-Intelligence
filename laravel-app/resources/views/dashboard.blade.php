@@ -51,7 +51,7 @@
   .grid { flex: 1; display: grid; gap: 8px; grid-template-columns: repeat(12, 1fr); grid-auto-rows: 1fr; min-height: 0; }
   .grid > * { min-height: 0; min-width: 0; }
   .span-7 { grid-column: span 7; } .span-5 { grid-column: span 5; }
-  .span-4 { grid-column: span 4; } .span-12 { grid-column: span 12; }
+  .span-4 { grid-column: span 4; } .span-6 { grid-column: span 6; } .span-12 { grid-column: span 12; }
 
   .v5-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); padding: 8px 12px; display: flex; flex-direction: column; min-height: 0; }
   .v5-card__h { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; margin-bottom: 4px; flex-shrink: 0; }
@@ -421,6 +421,9 @@
 {{-- ── Grid ──────────────────────────────────────────────────────── --}}
 <div class="grid">
 
+    {{-- Logistics-sector summary cards (each its own admin toggle) --}}
+    @includeWhen(!empty($logistics), 'logistics.dashboard-cards', ['logistics' => $logistics ?? null])
+
     {{-- Row 1 · Cumulative Revenue (span 7) — gated on `revenue_ytd` --}}
     @if ($kpiOn('revenue_ytd'))
     <div class="v5-card span-7">
@@ -508,7 +511,7 @@
     @endif {{-- /margin layers --}}
 
     {{-- Row 2 · Cost Pressure (span 4) — gated on any of CPO / DPOT / DPC --}}
-    @if ($kpiOn('cpo') || $kpiOn('dpot') || $kpiOn('dpc'))
+    @if ($kpiOn('cost_ratio_card') && ($kpiOn('cpo') || $kpiOn('dpot') || $kpiOn('dpc')))
     <div class="v5-card span-4">
         <div class="v5-card__h">
             <div>
@@ -760,7 +763,7 @@
      single-screen board (the page scrolls to reach it). The form reuses the
      cached POST /sync route via an `_intent` marker (a dedicated route would
      404 behind this host's stale route cache). --}}
-@if (!empty($extraKpis))
+@if (!empty($extraKpis) && $kpiOn('kpi_targets_trends'))
 @php
     $kyear = (int) ($period['year'] ?? now()->format('Y'));
     // Single JSON blob for the charts (Blade @json wants one variable):

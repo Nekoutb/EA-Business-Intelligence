@@ -39,6 +39,14 @@ return [
             'label'       => 'Cash & AR',
             'description' => 'Headline cash & receivables cells that appear in the dashboard strip. Toggle off for tenants where cash position isn\'t the primary lens.',
         ],
+        'dashboard_sections' => [
+            'label'       => 'Dashboard sections',
+            'description' => 'Whole panels of the Dashboard. Switch off the ones that do not apply to a tenant\'s business.',
+        ],
+        'logistics' => [
+            'label'       => 'Logistics · Dashboard',
+            'description' => 'Summary cards from the Logistics Operations pages, shown at the top of the Dashboard. Off by default; switched on for logistics-sector tenants.',
+        ],
     ],
 
     'kpis' => [
@@ -161,5 +169,50 @@ return [
             'section'     => 'cash_position',
             'default'     => true,
         ],
-    ],
+
+        // ── Dashboard sections ──────────────────────────────────────────
+        [
+            'key'         => 'cost_ratio_card',
+            'label'       => 'Cost Ratio & Discount card',
+            'description' => 'The CPO · DPOT · DPC vs target card (also needs at least one of those KPIs on). Off for businesses without a per-unit cost/discount model.',
+            'section'     => 'dashboard_sections',
+            'default'     => true,
+        ],
+        [
+            'key'         => 'kpi_targets_trends',
+            'label'       => 'KPI Targets & Trends panel',
+            'description' => 'Budgeted targets per efficiency KPI with the monthly actual plotted against them. Off for tenants without a live Odoo P&L feed.',
+            'section'     => 'dashboard_sections',
+            'default'     => true,
+        ],
+
+        // ── Logistics · Dashboard ───────────────────────────────────────
+        [
+            'key'         => 'logi_file_summary',
+            'label'       => 'Logistics file summary',
+            'description' => 'The four headline tiles of the Files page: open files as of period end, opened, closed, median backlog age.',
+            'section'     => 'logistics',
+            'default'     => false,
+        ],
+        [
+            'key'         => 'logi_closure_rate',
+            'label'       => 'Closure rate',
+            'description' => 'Closed ÷ (open at start + opened), closed vs opened, closures per working day, median days to close.',
+            'section'     => 'logistics',
+            'default'     => false,
+        ],
+        [
+            'key'         => 'logi_oop_summary',
+            'label'       => 'OOP compliance summary',
+            'description' => 'Débours incurred vs recharged to clients in the period, the gap, and how many files over-, under- or exactly recharged.',
+            'section'     => 'logistics',
+            'default'     => false,
+        ],
+        [
+            'key'         => 'logi_volume_trend',
+            'label'       => 'Logistics volume trend',
+            'description' => 'Line graphs of tonnage, containers and packages across the period (per month for yearly views, per day for monthly ones).',
+            'section'     => 'logistics',
+            'default'     => false,
+        ],    ],
 ];
