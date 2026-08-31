@@ -79,6 +79,32 @@ try {
             ln(tailFile('/var/log/kwr-daily-report.log', $L));
             break;
 
+        case 'mailcheck':
+            // Mail config truth: which driver actually handles Mail:: sends,
+            // whether the smtp mailer is fully provisioned regardless of the
+            // default, and whether the MailerSend HTTP API key is present.
+            // Booleans only for secrets — values never leave the box.
+            ln('mail.default            = ' . config('mail.default'));
+            $smtp = (array) config('mail.mailers.smtp', []);
+            ln('smtp.host               = ' . ($smtp['host'] ?? '—'));
+            ln('smtp.port               = ' . ($smtp['port'] ?? '—'));
+            ln('smtp.scheme/encryption  = ' . ($smtp['scheme'] ?? $smtp['encryption'] ?? '—'));
+            ln('smtp.username           = ' . ($smtp['username'] ?? '—'));
+            ln('smtp.password set       = ' . (!empty($smtp['password']) ? 'yes' : 'NO'));
+            ln('from                    = ' . config('mail.from.name') . ' <' . config('mail.from.address') . '>');
+            ln('MAILERSEND_API_KEY set  = ' . (trim((string) config('daily_report.mailersend_api_key', '')) !== '' ? 'yes' : 'NO'));
+            // Raw .env lines (keys only, secret values masked) so a stale
+            // config cache vs .env mismatch is visible too.
+            foreach (@file(base_path('.env')) ?: [] as $line) {
+                if (preg_match('/^(MAIL_[A-Z_]+|MAILERSEND_API_KEY)=(.*)$/', trim($line), $m)) {
+                    $v = $m[2];
+                    $masked = in_array($m[1], ['MAIL_PASSWORD', 'MAILERSEND_API_KEY'], true)
+                        ? ($v === '' ? '(empty)' : '(set, ' . strlen($v) . ' chars)') : $v;
+                    ln('.env ' . str_pad($m[1], 22) . ' = ' . $masked);
+                }
+            }
+            break;
+
         case 'offenderslog':
             // The scorecard's own log. Empty or missing means the scheduled
             // send has not run since output capture was added — which is the
