@@ -38,7 +38,7 @@ class LogisticsOpsController extends Controller
     public function workflow(Request $request)
     {
         [$tenantId, $from, $to, $label, $period] = $this->ctx($request);
-        $key  = 'logi_workflow_v1_' . md5(json_encode($period));
+        $key  = 'logi_workflow_v2_' . md5(json_encode($period));
         $data = ea_cached($key, fn () => (new LogisticsOpsService($tenantId))->workflow($from, $to));
         // Stage latency across the file lifecycle, narrowed by the page's own
         // customer / file filters on top of the master period.

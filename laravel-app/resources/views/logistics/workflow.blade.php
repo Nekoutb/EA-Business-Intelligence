@@ -140,11 +140,11 @@
   </div>
   <div class="lg-card">
     <h3>Average lag per approval step</h3>
-    @php $smax = collect($data['steps'])->max(fn ($r) => (float) $r->lag) ?: 1; @endphp
+    @php $smax = collect($data['steps'])->max(fn ($r) => (float) $r->avg_lag) ?: 1; @endphp
     @forelse ($data['steps'] as $r)
       <div class="lg-brow"><span class="k">{{ $r->circuit }} · step {{ $r->rang }}</span>
-        <span class="bar"><i style="width:{{ max(2, (int) (100 * (float) $r->lag / $smax)) }}%"></i></span>
-        <span class="n">{{ number_format(24 * (float) $r->lag, 1) }} h · {{ number_format($r->n) }}</span></div>
+        <span class="bar"><i style="width:{{ max(2, (int) (100 * (float) $r->avg_lag / $smax)) }}%"></i></span>
+        <span class="n">{{ number_format(24 * (float) $r->avg_lag, 1) }} h · {{ number_format($r->n) }}</span></div>
     @empty
       <p style="color:#7c7466;font-size:12px">No step activity in this window.</p>
     @endforelse

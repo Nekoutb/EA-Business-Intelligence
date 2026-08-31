@@ -191,7 +191,7 @@ final class LogisticsOpsService
             $out['steps'] = (clone $base)
                 ->whereBetween('step_date', [$from->format('Y-m-d'), $to->format('Y-m-d')])
                 ->whereNotNull('step_lag_days')
-                ->selectRaw("COALESCE(circuit,'?') circuit, rang, AVG(step_lag_days) lag, COUNT(*) n")
+                ->selectRaw("COALESCE(circuit,'—') circuit, rang, AVG(step_lag_days) avg_lag, COUNT(*) n")
                 ->groupBy('circuit', 'rang')->orderBy('circuit')->orderBy('rang')->get()->all();
 
             $out['note'] = 'Dossier step tracking (planned vs actual per workflow step) carries no actual '
