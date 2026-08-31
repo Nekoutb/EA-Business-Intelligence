@@ -71,19 +71,33 @@ class TenantUsersController extends Controller
             'role'        => $data['role'],
             'status'      => $data['status'],
             'permissions' => $permissions,
+            'must_change_password' => true,
         ]);
 
-        AuditLog::record([
+        AuditLog::record('user.created', [
             'tenant_id' => $tenant->id,
             'user_id'   => optional($request->user())->id,
-            'action'    => 'user.created',
             'target'    => "user:{$user->id}",
             'payload'   => ['email' => $user->email, 'role' => $user->role],
         ]);
 
+        // Email the new user their temporary credentials. Best-effort:
+        // a mail hiccup must never lose the freshly-created account.
+        $mailNote = '';
+        try {
+            \Illuminate\Support\Facades\Mail::to($user->email)
+                ->send(new \App\Mail\WelcomeUserMail($user, $data['password']));
+            $mailNote = " Their login details were emailed to {$user->email}.";
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('WelcomeUserMail dispatch failed', [
+                'user_id' => $user->id, 'error' => $e->getMessage(),
+            ]);
+            $mailNote = ' The welcome email could not be sent — share the password with them yourself.';
+        }
+
         return redirect(tenant_url('/settings/users'))->with('flash', [
             'type' => 'success',
-            'msg'  => "User {$user->email} created.",
+            'msg'  => "User {$user->email} created.{$mailNote}",
         ]);
     }
 

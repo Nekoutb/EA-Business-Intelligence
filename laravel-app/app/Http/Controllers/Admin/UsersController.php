@@ -99,6 +99,7 @@ class UsersController extends Controller
             'role'        => $data['role'],
             'status'      => $data['status'],
             'permissions' => $this->collectPermissions($request),
+            'must_change_password' => true,
         ]);
 
         AuditLog::record('admin.user.created', [

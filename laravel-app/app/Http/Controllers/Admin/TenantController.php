@@ -440,15 +440,27 @@ class TenantController extends Controller
             }
         }
 
-        // Bootstrap an owner user
-        User::create([
+        // Bootstrap an owner user. They get their temporary password by
+        // email and are forced to replace it on first sign-in.
+        $owner = User::create([
             'tenant_id' => $tenant->id,
             'name'      => $data['owner_name'],
             'email'     => $data['owner_email'],
             'password'  => Hash::make($data['owner_password']),
             'role'      => User::ROLE_OWNER,
             'status'    => User::STATUS_ACTIVE,
+            'must_change_password' => true,
         ]);
+
+        try {
+            $owner->setRelation('tenant', $tenant);
+            \Illuminate\Support\Facades\Mail::to($owner->email)
+                ->send(new \App\Mail\WelcomeUserMail($owner, $data['owner_password']));
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('WelcomeUserMail dispatch failed (tenant wizard)', [
+                'tenant_id' => $tenant->id, 'user_id' => $owner->id, 'error' => $e->getMessage(),
+            ]);
+        }
 
         // Save integration settings if provided.
         // NB: previous version had an operator-precedence bug —

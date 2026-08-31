@@ -18,7 +18,7 @@ Sign in
 If the button doesn't work, paste this into your browser:
 [{{ $loginUrl }}]({{ $loginUrl }})
 
-Once you're in, head to **Settings → Account** and set a password you'll remember. The temporary one above stops working as soon as you save a new one.
+When you sign in for the first time you'll be asked to set a password of your own before anything else — the temporary one above stops working the moment you save it.
 
 If you weren't expecting this email, please reply to your administrator — somebody created an account for you in error.
 

@@ -49,6 +49,16 @@ class RequireAppLogin
             return redirect($routeSlug !== '' ? "/t/{$routeSlug}/login" : '/login');
         }
 
+        // Temporary-password gate: an admin-created account must set its
+        // own password before touching anything else — every page except
+        // the change form (and logout) redirects there.
+        if ($user && ($user->must_change_password ?? false) && $routeSlug !== '') {
+            $path = $request->path();
+            if (!str_ends_with($path, '/account/password') && !str_ends_with($path, '/logout')) {
+                return redirect("/t/{$routeSlug}/account/password");
+            }
+        }
+
         return $next($request);
     }
 }

@@ -42,6 +42,7 @@ class User extends Authenticatable
         'tenant_id', 'name', 'email', 'password',
         'role', 'status', 'permissions',
         'last_login_at', 'last_login_ip',
+        'must_change_password',
     ];
 
     protected $hidden = [
@@ -55,6 +56,7 @@ class User extends Authenticatable
             'last_login_at'     => 'datetime',
             'password'          => 'hashed',
             'permissions'       => 'array',
+            'must_change_password' => 'boolean',
         ];
     }
 

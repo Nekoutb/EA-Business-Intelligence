@@ -56,6 +56,11 @@ class AuthController extends Controller
             if ($tenant) {
                 $request->session()->put('bi_tenant_slug', $tenant);
             }
+            // Temporary-password holders go straight to the change form
+            // (RequireAppLogin blocks every other page for them anyway).
+            if ($tenant && $authedUser->must_change_password) {
+                return redirect("/t/{$tenant}/account/password");
+            }
             return redirect($homeUrl);
         }
 
@@ -71,6 +76,49 @@ class AuthController extends Controller
         $request->session()->invalidate();
         $request->session()->regenerateToken();
         return redirect($tenant ? "/t/{$tenant}/login" : '/login');
+    }
+
+    /**
+     * Change-password form. Serves both the forced first-sign-in flow
+     * (must_change_password set by an admin-created account) and a
+     * voluntary password change from the same URL.
+     */
+    public function showChangePassword(Request $request, ?string $tenant = null)
+    {
+        return view('auth.change-password', [
+            'tenantSlug' => $tenant,
+            'forced'     => (bool) $request->user()?->must_change_password,
+        ]);
+    }
+
+    public function changePassword(Request $request, ?string $tenant = null)
+    {
+        $user = $request->user();
+        abort_unless($user, 403);
+
+        $data = $request->validate([
+            'current_password' => ['required', 'string'],
+            'password'         => ['required', 'string', 'min:10', 'max:128', 'confirmed', 'different:current_password'],
+        ]);
+
+        if (!Hash::check($data['current_password'], $user->password)) {
+            return back()->withErrors(['current_password' => 'That is not your current password.']);
+        }
+
+        $user->forceFill([
+            'password'             => Hash::make($data['password']),
+            'must_change_password' => false,
+        ])->save();
+
+        \App\Models\AuditLog::record('user.password_changed', [
+            'tenant_id' => $user->tenant_id,
+            'target'    => "user:{$user->id}",
+        ]);
+
+        return redirect($tenant ? "/t/{$tenant}" : '/')->with('flash', [
+            'type' => 'success',
+            'msg'  => 'Password updated — welcome aboard.',
+        ]);
     }
 
     /**

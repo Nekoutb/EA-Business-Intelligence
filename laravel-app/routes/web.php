@@ -1525,6 +1525,12 @@ Route::prefix('t/{tenant}')
             Route::post('/onboarding/step',          [OnboardingController::class, 'step']);
             Route::post('/onboarding/complete',      [OnboardingController::class, 'complete']);
 
+            // Change password — outside the onboarding redirect on purpose:
+            // a freshly-invited owner must be able to replace their
+            // temporary password before the onboarding wizard.
+            Route::get ('/account/password', [AuthController::class, 'showChangePassword']);
+            Route::post('/account/password', [AuthController::class, 'changePassword'])->middleware('throttle:6,1');
+
             // Apply onboarding redirect middleware to all other routes.
             // 'remember.period' rides along here so the master sidebar
             // filter persists across every tenant page in the group.
