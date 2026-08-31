@@ -115,6 +115,10 @@ try {
                 'name' => 'Mail Test', 'email' => $to,
                 'role' => App\Models\User::ROLE_VIEWER, 'tenant_id' => null,
             ]);
+            // The CLI-style bootstrap has no bound request, and both url()
+            // and the mail layout need one to build absolute links.
+            $req = Illuminate\Http\Request::create((string) config('app.url', 'https://bms.cm-ea.com'), 'GET');
+            app()->instance('request', $req);
             ln('driver: ' . config('mail.default'));
             try {
                 $t0 = microtime(true);
