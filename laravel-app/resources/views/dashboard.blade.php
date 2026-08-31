@@ -721,7 +721,7 @@
        running cumulative (YTD) figures. --}}
 @if (!empty($extraKpis))
 @php
-    $fmtKpi = function ($v, $kpi) use ($ccy) {
+    $fmtKpi = function ($v, $kpi) use ($ccy, $shortNum, $shortUnit) {
         if (!is_numeric($v)) return '—';
         return match ($kpi['fmt'] ?? 'pct') {
             'days'  => number_format((float) $v, 0) . ' d',
