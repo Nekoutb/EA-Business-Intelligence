@@ -95,7 +95,11 @@ final class DataSource
         if ($this->n === 1) return true;
         $type = $this->type();
         if ($type === '') return false;
-        $need = $type === 'odoo' ? ['ODOO_URL', 'ODOO_DB'] : ['ERP_DB_HOST', 'ERP_DB_DATABASE'];
+        $need = match (true) {
+            $type === 'odoo' => ['ODOO_URL', 'ODOO_DB'],
+            $type === 'rest' => ['ERP_API_URL', 'ERP_API_KEY'],
+            default          => ['ERP_DB_HOST', 'ERP_DB_DATABASE'],
+        };
         foreach ($need as $k) {
             if (trim((string) config_env($this->key($k), '')) === '') return false;
         }

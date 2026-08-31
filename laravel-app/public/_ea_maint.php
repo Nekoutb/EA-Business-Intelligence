@@ -131,6 +131,31 @@ try {
             }
             break;
 
+        case 'resttest':
+            // Probe a tenant's REST-gateway ERP source (ERP_TYPE=rest) and
+            // report warehouse coverage. ?tenant=slug&source=2
+            $slug = (string) ($_GET['tenant'] ?? '');
+            $srcN = max(1, min(2, (int) ($_GET['source'] ?? 1)));
+            $tenant = App\Models\Tenant::where('slug', $slug)->first();
+            if (!$tenant) { ln("no tenant '{$slug}'"); break; }
+            app(App\Tenancy\TenantContext::class)->set($tenant);
+            $src = App\Services\DataSource::of($srcN);
+            ln('source ' . $srcN . ' type=' . $src->type() . ' configured=' . ($src->configured() ? 'yes' : 'no') . ' label=' . $src->label());
+            $t = App\Services\SageRestClient::testCurrent($src);
+            ln('test: ' . ($t['ok'] ? 'OK' : 'FAIL') . ' · ' . $t['latency_ms'] . 'ms · ' . $t['message']);
+            $agg = Illuminate\Support\Facades\DB::table('wh_sage_ecriture')
+                ->where('tenant_id', $tenant->id)->where('source', $srcN)
+                ->selectRaw('COUNT(*) n, MIN(ecr_date) d0, MAX(ecr_date) d1, COUNT(DISTINCT account) accts,
+                             SUM(CASE WHEN sens = 0 THEN amount ELSE 0 END) deb,
+                             SUM(CASE WHEN sens = 1 THEN amount ELSE 0 END) cre')->first();
+            ln('warehouse: ' . number_format((int) $agg->n) . ' rows · ' . ($agg->d0 ?? '—') . ' → ' . ($agg->d1 ?? '—')
+                . ' · ' . (int) $agg->accts . ' accounts · débit ' . number_format((float) $agg->deb, 0, '.', ' ')
+                . ' · crédit ' . number_format((float) $agg->cre, 0, '.', ' '));
+            $st = Illuminate\Support\Facades\DB::table('wh_sync_state')->where('tenant_id', $tenant->id)
+                ->where('model', $src->stateModel('sage:ecritures'))->first();
+            ln('state: ' . ($st ? ('last_run ' . $st->last_run_at . ' · rows ' . $st->rows_synced . ' · ' . ($st->last_error ?: 'no error')) : 'never synced'));
+            break;
+
         case 'offenderslog':
             // The scorecard's own log. Empty or missing means the scheduled
             // send has not run since output capture was added — which is the

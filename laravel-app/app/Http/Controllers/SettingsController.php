@@ -35,11 +35,14 @@ class SettingsController extends Controller
         // Direct ERP database connection (non-Odoo ERPs)
         'ERP_DB_DRIVER', 'ERP_DB_HOST', 'ERP_DB_PORT', 'ERP_DB_DATABASE',
         'ERP_DB_USERNAME', 'ERP_DB_PASSWORD', 'ERP_DB_SSLMODE', 'ERP_DB_SCHEMA',
+        // REST API gateway (ERP_TYPE=rest — e.g. Sage behind an API)
+        'ERP_API_URL', 'ERP_API_KEY_HEADER', 'ERP_API_KEY', 'ERP_API_DATABASE',
         // Optional second data source (see App\Services\DataSource)
         'ERP2_TYPE', 'ERP2_NAME',
         'ERP2_ODOO_URL', 'ERP2_ODOO_DB', 'ERP2_ODOO_USERNAME', 'ERP2_ODOO_API_KEY', 'ERP2_ODOO_PROTOCOL',
         'ERP2_DB_DRIVER', 'ERP2_DB_HOST', 'ERP2_DB_PORT', 'ERP2_DB_DATABASE',
         'ERP2_DB_USERNAME', 'ERP2_DB_PASSWORD', 'ERP2_DB_SSLMODE', 'ERP2_DB_SCHEMA',
+        'ERP2_API_URL', 'ERP2_API_KEY_HEADER', 'ERP2_API_KEY', 'ERP2_API_DATABASE',
         'REVENUE_SOURCE', 'APP_BRAND',
         // Existing budget benchmarks (kept)
         'BUDGET_MONTHLY_REVENUE', 'BUDGET_MONTHLY_OUTFITS', 'BUDGET_MONTHLY_COGS',
@@ -168,6 +171,15 @@ class SettingsController extends Controller
     {
         $this->requireTenant();
         return response()->json(\App\Services\ErpDbConnectionTester::testCurrent(\App\Services\DataSource::of((int) $source)));
+    }
+
+    /**
+     * Test a REST-gateway ERP source (ERP_TYPE=rest).
+     */
+    public function testRestApi($source = 1): JsonResponse
+    {
+        $this->requireTenant();
+        return response()->json(\App\Services\SageRestClient::testCurrent(\App\Services\DataSource::of((int) $source)));
     }
 
     /**

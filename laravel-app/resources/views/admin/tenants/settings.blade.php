@@ -119,6 +119,33 @@
         </div>
     </div>
 
+    <div class="panel p-5" data-erp-section="rest" data-erp-group="1">
+        <div class="flex items-center justify-between mb-3">
+            <h2 class="text-sm font-semibold text-slate-900">REST API gateway</h2>
+            <button type="button" data-test-btn data-test-url="/admin/tenants/{{ $tenant->id }}/settings/test-rest-api"
+                    data-test-pending="Calling the gateway's test endpoint as this tenant…"
+                    class="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-rose-700 border border-rose-300 hover:border-rose-500 bg-rose-50/40 hover:bg-rose-50 rounded-md px-3 py-1.5 transition disabled:opacity-50 disabled:cursor-not-allowed">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                <span data-label>Test connection</span>
+            </button>
+        </div>
+        <p class="text-[11px] text-slate-500 mb-3">A read-only HTTPS API the ERP provider exposes (e.g. Sage 100 behind an API). The key is sent in the header named below on every request.</p>
+        <div data-test-result class="hidden mb-4 px-3 py-2.5 rounded-lg text-[12px] leading-relaxed border" role="status"></div>
+        <div class="grid md:grid-cols-2 gap-4">
+            @foreach (['ERP_API_URL' => 'https://apisage.example.com', 'ERP_API_KEY_HEADER' => 'X-API-Key', 'ERP_API_KEY' => '', 'ERP_API_DATABASE' => 'Company database label (optional)'] as $k => $ph)
+                @php $isSecret = preg_match('/(KEY$|SECRET|PASSWORD|TOKEN)/i', $k); @endphp
+                <label class="block">
+                    <span class="text-[11px] font-medium text-slate-600 font-mono">{{ $k }}</span>
+                    <input name="{{ $k }}"
+                           type="{{ $isSecret ? 'password' : 'text' }}"
+                           value="{{ $isSecret ? '' : ($values[$k] ?? '') }}"
+                           placeholder="{{ $isSecret ? (!empty($values['__has_'.$k]) ? '•••• (already set, leave blank to keep)' : '') : $ph }}"
+                           class="mt-1 w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono">
+                </label>
+            @endforeach
+        </div>
+    </div>
+
     {{-- Optional second data source. A client running two systems gets
          both synced into the same warehouse and combined in every report
          (see App\Services\DataSource). Same fields, ERP2_ prefix. --}}
@@ -212,6 +239,33 @@
         </div>
     </div>
 
+    <div class="panel p-5" data-erp-section="rest" data-erp-group="2">
+        <div class="flex items-center justify-between mb-3">
+            <h2 class="text-sm font-semibold text-slate-900">Second source · REST API gateway</h2>
+            <button type="button" data-test-btn data-test-url="/admin/tenants/{{ $tenant->id }}/settings/test-rest-api/2"
+                    data-test-pending="Calling the second gateway's test endpoint as this tenant…"
+                    class="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-rose-700 border border-rose-300 hover:border-rose-500 bg-rose-50/40 hover:bg-rose-50 rounded-md px-3 py-1.5 transition disabled:opacity-50 disabled:cursor-not-allowed">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                <span data-label>Test connection</span>
+            </button>
+        </div>
+        <p class="text-[11px] text-slate-500 mb-3">A read-only HTTPS API the ERP provider exposes (e.g. Sage 100 behind an API). The key is sent in the header named below on every request.</p>
+        <div data-test-result class="hidden mb-4 px-3 py-2.5 rounded-lg text-[12px] leading-relaxed border" role="status"></div>
+        <div class="grid md:grid-cols-2 gap-4">
+            @foreach (['ERP2_API_URL' => 'https://apisage.example.com', 'ERP2_API_KEY_HEADER' => 'X-API-Key', 'ERP2_API_KEY' => '', 'ERP2_API_DATABASE' => 'Company database label (optional)'] as $k => $ph)
+                @php $isSecret = preg_match('/(KEY$|SECRET|PASSWORD|TOKEN)/i', $k); @endphp
+                <label class="block">
+                    <span class="text-[11px] font-medium text-slate-600 font-mono">{{ $k }}</span>
+                    <input name="{{ $k }}"
+                           type="{{ $isSecret ? 'password' : 'text' }}"
+                           value="{{ $isSecret ? '' : ($values[$k] ?? '') }}"
+                           placeholder="{{ $isSecret ? (!empty($values['__has_'.$k]) ? '•••• (already set, leave blank to keep)' : '') : $ph }}"
+                           class="mt-1 w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono">
+                </label>
+            @endforeach
+        </div>
+    </div>
+
     {{-- Shared BI + branding settings --}}
     <div class="panel p-5">
         <h2 class="text-sm font-semibold text-slate-900 mb-3">General</h2>
@@ -242,16 +296,19 @@
     function syncGroup(sel) {
         const g = sel.dataset.erpTypeSelect;
         const type = sel.value;
-        const isOdoo = type === 'odoo', off = type === 'none' || type === '';
+        const off = type === 'none' || type === '';
+        // Each ERP type maps to one connection panel: Odoo's web API, a
+        // REST gateway, or a direct database (every other ERP).
+        const want = type === 'odoo' ? 'odoo' : (type === 'rest' ? 'rest' : 'db');
         document.querySelectorAll('[data-erp-section][data-erp-group="' + g + '"]').forEach(el => {
-            const show = !off && ((el.dataset.erpSection === 'odoo') === isOdoo);
+            const show = !off && el.dataset.erpSection === want;
             el.classList.toggle('hidden', !show);
             // Hidden panels are disabled so switching ERP type never
             // silently rewrites the other connection's stored settings.
             el.querySelectorAll('input, select').forEach(i => { i.disabled = !show; });
         });
         const nameField = document.querySelector('[data-erp-name-field="' + g + '"]');
-        if (nameField) nameField.classList.toggle('hidden', isOdoo || off);
+        if (nameField) nameField.classList.toggle('hidden', type === 'odoo' || off);
     }
     document.querySelectorAll('[data-erp-type-select]').forEach(sel => {
         sel.addEventListener('change', () => syncGroup(sel));

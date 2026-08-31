@@ -161,6 +161,45 @@
             </div>
         </div>
 
+        <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-6" data-erp-section="rest" data-erp-group="1">
+            <div class="flex items-center justify-between mb-1">
+                <h2 class="text-sm font-semibold text-slate-900">REST API Gateway</h2>
+                <button type="button" data-test-btn data-test-url="{{ tenant_url('/settings/test-rest-api') }}" data-test-pending="Calling the gateway's test endpoint…"
+                        class="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-indigo-700 border border-indigo-300 hover:border-indigo-500 bg-indigo-50/40 hover:bg-indigo-50 rounded-md px-3 py-1.5 transition disabled:opacity-50 disabled:cursor-not-allowed">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                    <span data-label>Test connection</span>
+                </button>
+            </div>
+            <p class="text-xs text-slate-500 mb-4">A read-only HTTPS API your ERP provider exposes (e.g. Sage 100 behind an API). The key is sent in the header named below on every request.</p>
+            <div data-test-result class="hidden mb-4 px-3 py-2.5 rounded-lg text-[12px] leading-relaxed border" role="status"></div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                    <label class="block text-xs font-medium text-slate-600 mb-1">API URL</label>
+                    <input name="ERP_API_URL" value="{{ $values['ERP_API_URL'] ?? '' }}" placeholder="https://apisage.example.com"
+                           class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm font-mono">
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-slate-600 mb-1">Key header <span class="text-slate-400 font-normal">(default X-API-Key)</span></label>
+                    <input name="ERP_API_KEY_HEADER" value="{{ $values['ERP_API_KEY_HEADER'] ?? '' }}" placeholder="X-API-Key"
+                           class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm font-mono">
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-slate-600 mb-1">
+                        API key <span class="text-slate-400 font-normal">(leave blank to keep current)</span>
+                    </label>
+                    <input name="ERP_API_KEY" type="password"
+                           placeholder="{{ !empty($values['__has_ERP_API_KEY']) ? '•••• stored (leave blank to keep)' : '••••••••••••' }}"
+                           autocomplete="off"
+                           class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm font-mono">
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-slate-600 mb-1">Company database <span class="text-slate-400 font-normal">(label, optional)</span></label>
+                    <input name="ERP_API_DATABASE" value="{{ $values['ERP_API_DATABASE'] ?? '' }}" placeholder="e.g. TSA COMPTA 2026 SQL"
+                           class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm font-mono">
+                </div>
+            </div>
+        </div>
+
         {{-- ── Second data source (optional) ──────────────────────────
              For a workspace that runs two systems side by side: both are
              synced into the same warehouse and every report combines
@@ -265,6 +304,32 @@
                         @endforeach
                     </select>
                 </div>
+            </div>
+        </div>
+
+        <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-6" data-erp-section="rest" data-erp-group="2">
+            <div class="flex items-center justify-between mb-1">
+                <h2 class="text-sm font-semibold text-slate-900">Second Source · REST API Gateway</h2>
+                <button type="button" data-test-btn data-test-url="{{ tenant_url('/settings/test-rest-api/2') }}" data-test-pending="Calling the second gateway's test endpoint…"
+                        class="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-indigo-700 border border-indigo-300 hover:border-indigo-500 bg-indigo-50/40 hover:bg-indigo-50 rounded-md px-3 py-1.5 transition disabled:opacity-50 disabled:cursor-not-allowed">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                    <span data-label>Test connection</span>
+                </button>
+            </div>
+            <p class="text-xs text-slate-500 mb-4">A read-only HTTPS API the provider exposes (e.g. Sage 100 behind an API). The key is sent in the header named below on every request.</p>
+            <div data-test-result class="hidden mb-4 px-3 py-2.5 rounded-lg text-[12px] leading-relaxed border" role="status"></div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div><label class="block text-xs font-medium text-slate-600 mb-1">API URL</label>
+                    <input name="ERP2_API_URL" value="{{ $values['ERP2_API_URL'] ?? '' }}" placeholder="https://apisage.example.com" class="{{ $inM }}"></div>
+                <div><label class="block text-xs font-medium text-slate-600 mb-1">Key header <span class="text-slate-400 font-normal">(default X-API-Key)</span></label>
+                    <input name="ERP2_API_KEY_HEADER" value="{{ $values['ERP2_API_KEY_HEADER'] ?? '' }}" placeholder="X-API-Key" class="{{ $inM }}"></div>
+                <div>
+                    <label class="block text-xs font-medium text-slate-600 mb-1">API key <span class="text-slate-400 font-normal">(leave blank to keep current)</span></label>
+                    <input name="ERP2_API_KEY" type="password" autocomplete="off"
+                           placeholder="{{ !empty($values['__has_ERP2_API_KEY']) ? '•••• stored (leave blank to keep)' : '••••••••••••' }}" class="{{ $inM }}">
+                </div>
+                <div><label class="block text-xs font-medium text-slate-600 mb-1">Company database <span class="text-slate-400 font-normal">(label, optional)</span></label>
+                    <input name="ERP2_API_DATABASE" value="{{ $values['ERP2_API_DATABASE'] ?? '' }}" placeholder="e.g. TSA COMPTA 2026 SQL" class="{{ $inM }}"></div>
             </div>
         </div>
 
@@ -571,8 +636,9 @@
     function syncGroup(sel) {
         const g = sel.dataset.erpTypeSelect, type = sel.value;
         const isOdoo = type === 'odoo', off = type === 'none' || type === '';
+        const want = type === 'odoo' ? 'odoo' : (type === 'rest' ? 'rest' : 'db');
         document.querySelectorAll('[data-erp-section][data-erp-group="' + g + '"]').forEach(el => {
-            const show = !off && ((el.dataset.erpSection === 'odoo') === isOdoo);
+            const show = !off && el.dataset.erpSection === want;
             el.classList.toggle('hidden', !show);
             // Hidden panels are disabled so switching ERP type never
             // silently rewrites the other connection's stored settings.

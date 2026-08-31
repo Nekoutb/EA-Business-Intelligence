@@ -65,6 +65,18 @@ class WarehouseSync extends Command
                         if (!$src->configured()) continue;
                         if (!$src->isPrimary()) $this->line("   [{$src->label()}]");
 
+                        // REST-gateway ERPs (e.g. Sage behind an API) have
+                        // their own windowed sync into wh_sage_ecriture.
+                        if ($src->type() === 'rest') {
+                            $budget = (float) $this->option('seconds');
+                            $res = (new \App\Services\SageRestSyncService($tenant, $src))->syncAll(function (string $model, array $r) {
+                                $this->line(sprintf('   %-20s %8s rows %7.1fs %s',
+                                    $model, number_format($r['rows']), $r['seconds'], $r['error'] ?? ''));
+                            }, $budget > 0 ? microtime(true) + $budget : 0.0);
+                            foreach ($res as $r) if ($r['error']) $failed++;
+                            continue;
+                        }
+
                         // Direct-database ERPs sync through their own service;
                         // the Odoo path below would only ever see a NullOdooClient.
                         if (!$src->isOdoo()) {

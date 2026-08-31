@@ -261,6 +261,7 @@ Route::prefix('admin')->group(function () {
         // {source} = 1 (default) or 2 for the optional second data source.
         Route::post('/tenants/{tenant}/settings/test-odoo/{source?}', [AdminTenantController::class, 'testOdoo'])->where('source', '[12]');
         Route::post('/tenants/{tenant}/settings/test-erp-db/{source?}', [AdminTenantController::class, 'testErpDb'])->where('source', '[12]');
+        Route::post('/tenants/{tenant}/settings/test-rest-api/{source?}', [AdminTenantController::class, 'testRestApi'])->where('source', '[12]');
         Route::post('/tenants/{tenant}/rename',      [AdminTenantController::class, 'rename']);
         Route::post('/tenants/{tenant}/suspend',     [AdminTenantController::class, 'suspend']);
         Route::post('/tenants/{tenant}/activate',    [AdminTenantController::class, 'activate']);
@@ -1704,6 +1705,7 @@ Route::prefix('t/{tenant}')
                     Route::post('/settings',                [SettingsController::class, 'save']);
                     Route::post('/settings/test-odoo/{source?}',   [SettingsController::class, 'testOdoo'])->where('source', '[12]');
                     Route::post('/settings/test-erp-db/{source?}', [SettingsController::class, 'testErpDb'])->where('source', '[12]');
+                    Route::post('/settings/test-rest-api/{source?}', [SettingsController::class, 'testRestApi'])->where('source', '[12]');
                 });
 
                 // Tenant user management — gated to tenant admins (and

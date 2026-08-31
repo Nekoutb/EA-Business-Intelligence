@@ -38,18 +38,21 @@ class TenantController extends Controller
         'ODOO_URL', 'ODOO_DB', 'ODOO_USERNAME', 'ODOO_API_KEY', 'ODOO_PROTOCOL',
         'ERP_DB_DRIVER', 'ERP_DB_HOST', 'ERP_DB_PORT', 'ERP_DB_DATABASE',
         'ERP_DB_USERNAME', 'ERP_DB_PASSWORD', 'ERP_DB_SSLMODE', 'ERP_DB_SCHEMA',
+        'ERP_API_URL', 'ERP_API_KEY_HEADER', 'ERP_API_KEY', 'ERP_API_DATABASE',
         // Optional second data source — same shape under an ERP2_ prefix
         // (see App\Services\DataSource).
         'ERP2_TYPE', 'ERP2_NAME',
         'ERP2_ODOO_URL', 'ERP2_ODOO_DB', 'ERP2_ODOO_USERNAME', 'ERP2_ODOO_API_KEY', 'ERP2_ODOO_PROTOCOL',
         'ERP2_DB_DRIVER', 'ERP2_DB_HOST', 'ERP2_DB_PORT', 'ERP2_DB_DATABASE',
         'ERP2_DB_USERNAME', 'ERP2_DB_PASSWORD', 'ERP2_DB_SSLMODE', 'ERP2_DB_SCHEMA',
+        'ERP2_API_URL', 'ERP2_API_KEY_HEADER', 'ERP2_API_KEY', 'ERP2_API_DATABASE',
         'REVENUE_SOURCE', 'APP_BRAND',
     ];
 
     /** ERP systems selectable in the integration UI. 'other' unlocks a free-text name. */
     public const ERP_TYPES = [
         'odoo'      => 'Odoo (web API)',
+        'rest'      => 'REST API gateway (e.g. Sage behind an API)',
         'sage'      => 'Sage',
         'sap'       => 'SAP Business One',
         'dynamics'  => 'Microsoft Dynamics',
@@ -77,6 +80,15 @@ class TenantController extends Controller
                 $k('ODOO_USERNAME') => ['required', 'string'],
                 $k('ODOO_API_KEY')  => ['required', 'string'],
                 $k('ODOO_PROTOCOL') => ['required', 'in:json2,jsonrpc,xmlrpc'],
+            ];
+        }
+        if ($erpType === 'rest') {
+            return [
+                $k('ERP_NAME')           => ['nullable', 'string', 'max:191'],
+                $k('ERP_API_URL')        => ['required', 'url', 'max:191'],
+                $k('ERP_API_KEY_HEADER') => ['nullable', 'string', 'max:64'],
+                $k('ERP_API_KEY')        => ['required', 'string'],
+                $k('ERP_API_DATABASE')   => ['nullable', 'string', 'max:191'],
             ];
         }
         return [
@@ -670,6 +682,27 @@ class TenantController extends Controller
         $ctx->set($tenant);
         try {
             $payload = \App\Services\ErpDbConnectionTester::testCurrent($src);
+        } finally {
+            if ($previous) {
+                $ctx->set($previous);
+            }
+        }
+        return response()->json($payload);
+    }
+
+    /**
+     * Probe a REST-gateway ERP source (ERP_TYPE=rest). Same context-swap
+     * dance as testOdoo().
+     */
+    public function testRestApi(Tenant $tenant, $source = 1)
+    {
+        $src = \App\Services\DataSource::of((int) $source);
+        /** @var \App\Tenancy\TenantContext $ctx */
+        $ctx = app(\App\Tenancy\TenantContext::class);
+        $previous = $ctx->has() ? $ctx->tenant() : null;
+        $ctx->set($tenant);
+        try {
+            $payload = \App\Services\SageRestClient::testCurrent($src);
         } finally {
             if ($previous) {
                 $ctx->set($previous);

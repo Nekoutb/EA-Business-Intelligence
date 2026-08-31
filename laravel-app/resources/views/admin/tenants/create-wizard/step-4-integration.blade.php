@@ -164,6 +164,37 @@
                     </div>
                 </div>
 
+                {{-- REST API gateway credentials (ERP_TYPE=rest) --}}
+                <div class="space-y-4" data-erp-section="rest" data-erp-group="1">
+                    <p class="text-xs text-slate-500">A read-only HTTPS API the ERP provider exposes (e.g. Sage 100 behind an API). The key is sent in the header named below on every request.</p>
+                    <label class="block">
+                        <span class="text-xs font-medium text-slate-600">API URL <span class="text-red-500">*</span></span>
+                        <input type="url" name="ERP_API_URL" value="{{ old('ERP_API_URL', $data['ERP_API_URL'] ?? '') }}" required
+                               class="mt-1.5 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                               placeholder="https://apisage.example.com">
+                    </label>
+                    <div class="grid grid-cols-2 gap-4">
+                        <label class="block">
+                            <span class="text-xs font-medium text-slate-600">Key header</span>
+                            <input type="text" name="ERP_API_KEY_HEADER" value="{{ old('ERP_API_KEY_HEADER', $data['ERP_API_KEY_HEADER'] ?? '') }}"
+                                   class="mt-1.5 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                                   placeholder="X-API-Key">
+                        </label>
+                        <label class="block">
+                            <span class="text-xs font-medium text-slate-600">API key <span class="text-red-500">*</span></span>
+                            <input type="password" name="ERP_API_KEY" value="{{ old('ERP_API_KEY', $data['ERP_API_KEY'] ?? '') }}" required
+                                   class="mt-1.5 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                                   placeholder="••••••••••">
+                        </label>
+                    </div>
+                    <label class="block">
+                        <span class="text-xs font-medium text-slate-600">Company database <span class="text-slate-400 font-normal">(label, optional)</span></span>
+                        <input type="text" name="ERP_API_DATABASE" value="{{ old('ERP_API_DATABASE', $data['ERP_API_DATABASE'] ?? '') }}"
+                               class="mt-1.5 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                               placeholder="e.g. TSA COMPTA 2026 SQL">
+                    </label>
+                </div>
+
                 {{-- Optional second data source (ERP2_*): for clients running
                      two systems. Both sync into the same warehouse and every
                      report combines them (see App\Services\DataSource). --}}
@@ -236,6 +267,19 @@
                                 <input type="text" name="ERP2_DB_SCHEMA" value="{{ old('ERP2_DB_SCHEMA', $data['ERP2_DB_SCHEMA'] ?? '') }}" class="{{ $in }}" placeholder="public"></label>
                         </div>
                     </div>
+
+                    <div class="space-y-4" data-erp-section="rest" data-erp-group="2">
+                        <label class="block"><span class="text-xs font-medium text-slate-600">API URL <span class="text-red-500">*</span></span>
+                            <input type="url" name="ERP2_API_URL" value="{{ old('ERP2_API_URL', $data['ERP2_API_URL'] ?? '') }}" required class="{{ $in }}" placeholder="https://apisage.example.com"></label>
+                        <div class="grid grid-cols-2 gap-4">
+                            <label class="block"><span class="text-xs font-medium text-slate-600">Key header</span>
+                                <input type="text" name="ERP2_API_KEY_HEADER" value="{{ old('ERP2_API_KEY_HEADER', $data['ERP2_API_KEY_HEADER'] ?? '') }}" class="{{ $in }}" placeholder="X-API-Key"></label>
+                            <label class="block"><span class="text-xs font-medium text-slate-600">API key <span class="text-red-500">*</span></span>
+                                <input type="password" name="ERP2_API_KEY" value="{{ old('ERP2_API_KEY', $data['ERP2_API_KEY'] ?? '') }}" required class="{{ $in }}" placeholder="••••••••••"></label>
+                        </div>
+                        <label class="block"><span class="text-xs font-medium text-slate-600">Company database <span class="text-slate-400 font-normal">(label, optional)</span></span>
+                            <input type="text" name="ERP2_API_DATABASE" value="{{ old('ERP2_API_DATABASE', $data['ERP2_API_DATABASE'] ?? '') }}" class="{{ $in }}" placeholder="e.g. TSA COMPTA 2026 SQL"></label>
+                    </div>
                 </div>
 
                 <script>
@@ -246,8 +290,9 @@
                     function syncGroup(sel) {
                         const g = sel.dataset.erpTypeSelect, type = sel.value;
                         const isOdoo = type === 'odoo', off = type === 'none' || type === '';
+                        const want = type === 'odoo' ? 'odoo' : (type === 'rest' ? 'rest' : 'db');
                         document.querySelectorAll('[data-erp-section][data-erp-group="' + g + '"]').forEach(el => {
-                            const show = !off && ((el.dataset.erpSection === 'odoo') === isOdoo);
+                            const show = !off && el.dataset.erpSection === want;
                             el.classList.toggle('hidden', !show);
                             // Disable hidden inputs so their `required`
                             // attributes don't block submission and their
