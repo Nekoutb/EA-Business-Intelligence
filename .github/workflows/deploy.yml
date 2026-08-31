@@ -76,6 +76,10 @@ jobs:
             DB_NAME="${{ secrets.DB_NAME }}"
             DB_USER="${{ secrets.DB_USER }}"
             DB_PASS="${{ secrets.DB_PASSWORD }}"
+            # Mail: delivered through the MailerSend HTTP API when the repo
+            # secret is present; falls back to the log driver otherwise.
+            MAILERSEND_KEY="${{ secrets.MAILERSEND_API_KEY }}"
+            if [ -n "$MAILERSEND_KEY" ]; then MAIL_DRIVER=mailersend; else MAIL_DRIVER=log; fi
 
             export DEBIAN_FRONTEND=noninteractive
 
@@ -199,6 +203,11 @@ jobs:
             QUEUE_CONNECTION=database
 
             BCRYPT_ROUNDS=12
+
+            MAIL_MAILER=$MAIL_DRIVER
+            MAILERSEND_API_KEY=$MAILERSEND_KEY
+            MAIL_FROM_ADDRESS="no-reply@cm-ea.com"
+            MAIL_FROM_NAME="Business Management Suite"
             EOF
 
             if [ -z "$EXISTING_APP_KEY" ]; then
