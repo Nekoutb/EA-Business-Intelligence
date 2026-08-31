@@ -105,6 +105,28 @@ try {
             }
             break;
 
+        case 'mailtest':
+            // Send one real test email (the exact WelcomeUserMail rendering
+            // path) to &to=addr through whatever driver is active, and print
+            // the outcome. Complements mailcheck: config says vs. wire says.
+            $to = trim((string) ($_GET['to'] ?? ''));
+            if (!filter_var($to, FILTER_VALIDATE_EMAIL)) { ln('pass &to=someone@example.com'); break; }
+            $dummy = new App\Models\User([
+                'name' => 'Mail Test', 'email' => $to,
+                'role' => App\Models\User::ROLE_VIEWER, 'tenant_id' => null,
+            ]);
+            ln('driver: ' . config('mail.default'));
+            try {
+                $t0 = microtime(true);
+                Illuminate\Support\Facades\Mail::to($to)->send(new App\Mail\WelcomeUserMail(
+                    $dummy, '••• TEST — not a real password •••', url('/admin/login')
+                ));
+                ln('SENT to ' . $to . ' in ' . (int) round((microtime(true) - $t0) * 1000) . 'ms');
+            } catch (\Throwable $e) {
+                ln('SEND FAILED: ' . get_class($e) . ': ' . $e->getMessage());
+            }
+            break;
+
         case 'offenderslog':
             // The scorecard's own log. Empty or missing means the scheduled
             // send has not run since output capture was added — which is the

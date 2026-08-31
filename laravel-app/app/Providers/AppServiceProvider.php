@@ -43,6 +43,11 @@ class AppServiceProvider extends ServiceProvider
             }
             @ini_set('memory_limit', '512M');
         }
+
+        // MailerSend HTTP API transport — active when MAIL_MAILER=mailersend.
+        \Illuminate\Support\Facades\Mail::extend('mailersend', fn () => new \App\Mail\Transport\MailerSendApiTransport(
+            (string) config('services.mailersend.api_key', '')
+        ));
     }
 }
 

@@ -1,0 +1,51 @@
+name: Configure mail delivery
+
+# Writes the mail settings into the server's .env and re-caches config.
+# The MailerSend API token comes from the repo secret MAILERSEND_API_KEY
+# (Settings → Secrets and variables → Actions) so it never appears in
+# logs or run metadata. Trigger manually once the secret is in place.
+
+on:
+  workflow_dispatch:
+    inputs:
+      from_address:
+        description: "From address (must be on a domain verified in MailerSend)"
+        required: true
+        type: string
+      from_name:
+        description: "From name"
+        required: false
+        default: "Business Management Suite"
+        type: string
+
+jobs:
+  configure:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Write mail settings into .env and re-cache
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.SERVER_IP }}
+          username: ${{ secrets.SERVER_USER }}
+          password: ${{ secrets.SERVER_PASSWORD }}
+          script: |
+            set -e
+            cd /var/www/eams/laravel-app
+            if [ -z "${{ secrets.MAILERSEND_API_KEY }}" ]; then
+              echo "ERROR: repo secret MAILERSEND_API_KEY is not set"; exit 1
+            fi
+            upsert() {
+              key="$1"; val="$2"
+              if grep -q "^${key}=" .env; then
+                sed -i "s|^${key}=.*|${key}=${val}|" .env
+              else
+                printf '%s=%s\n' "$key" "$val" >> .env
+              fi
+            }
+            upsert MAIL_MAILER mailersend
+            upsert MAILERSEND_API_KEY '${{ secrets.MAILERSEND_API_KEY }}'
+            upsert MAIL_FROM_ADDRESS '"${{ inputs.from_address }}"'
+            upsert MAIL_FROM_NAME '"${{ inputs.from_name }}"'
+            php artisan config:cache
+            echo "--- verification (values masked) ---"
+            php -r 'require "vendor/autoload.php"; $app=require "bootstrap/app.php"; $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap(); echo "mail.default=",config("mail.default"),PHP_EOL,"from=",config("mail.from.address"),PHP_EOL,"api key set=",trim((string)config("services.mailersend.api_key"))!==""?"yes":"NO",PHP_EOL;'

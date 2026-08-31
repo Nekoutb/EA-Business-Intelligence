@@ -37,6 +37,12 @@ return [
 
     'mailers' => [
 
+        // MailerSend HTTP API (custom transport registered in
+        // AppServiceProvider). Needs MAILERSEND_API_KEY in .env.
+        'mailersend' => [
+            'transport' => 'mailersend',
+        ],
+
         'smtp' => [
             'transport' => 'smtp',
             'scheme' => env('MAIL_SCHEME'),
