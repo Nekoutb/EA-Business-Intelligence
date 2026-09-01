@@ -1,0 +1,45 @@
+name: Server discovery (read-only)
+
+# Read-only snapshot of how production actually runs: web server, vhosts,
+# TLS, processes, ports, databases, disk, cron. Changes NOTHING. Used to
+# plan the isolated dev/staging instance.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Inspect server (read-only)
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.SERVER_IP }}
+          username: ${{ secrets.SERVER_USER }}
+          password: ${{ secrets.SERVER_PASSWORD }}
+          script: |
+            echo "== identity =="
+            hostname; uname -r; . /etc/os-release && echo "$PRETTY_NAME"
+            echo "public egress IP: $(curl -s --max-time 8 https://api.ipify.org || echo n/a)"
+            echo; echo "== listeners =="
+            ss -tlnp | awk 'NR==1 || /:(80|443|3306|22|8[0-9]{3}) /'
+            echo; echo "== web servers =="
+            systemctl is-active apache2 && apache2ctl -S 2>&1 | head -25 || true
+            systemctl is-active caddy 2>/dev/null && echo "caddy ACTIVE" || echo "caddy: not active/installed"
+            ls /etc/caddy 2>/dev/null || true
+            echo; echo "== apache sites-enabled =="
+            ls -la /etc/apache2/sites-enabled/
+            for f in /etc/apache2/sites-enabled/*.conf; do echo "--- $f"; grep -E "ServerName|ServerAlias|DocumentRoot|VirtualHost|SSLCertificate" "$f"; done
+            echo; echo "== TLS =="
+            certbot certificates 2>/dev/null | grep -E "Certificate Name|Domains|Expiry" || echo "certbot: none"
+            echo; echo "== databases =="
+            systemctl is-active mysql && mysql -u root -e "SHOW DATABASES; SELECT table_schema, ROUND(SUM(data_length+index_length)/1048576) AS mb FROM information_schema.tables GROUP BY table_schema;" || true
+            echo; echo "== app dirs =="
+            ls -la /var/www/
+            du -sh /var/www/eams 2>/dev/null || true
+            echo; echo "== php =="
+            php -v | head -1; ls /etc/php/ 2>/dev/null
+            echo; echo "== cron (root) =="
+            crontab -l 2>/dev/null | sed 's/t=[A-Za-z0-9_]*/t=***TOKEN***/g'
+            echo; echo "== disk/mem =="
+            df -h / | tail -1; free -h | head -2
