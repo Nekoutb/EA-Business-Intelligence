@@ -156,6 +156,101 @@ try {
             ln('state: ' . ($st ? ('last_run ' . $st->last_run_at . ' · rows ' . $st->rows_synced . ' · ' . ($st->last_error ?: 'no error')) : 'never synced'));
             break;
 
+        case 'teesedump':
+            // Export the Teese (Elimelec legacy ERP) data for the Odoo
+            // migration. ?tenant=elimelec&mode=warehouse|live
+            //   warehouse — the BMS warehouse copy (works even while the
+            //               legacy server is down; data as of the last sync)
+            //   live      — every schema/table the ERP credentials can see
+            //               on the legacy PostgreSQL, complete rows
+            // Writes CSVs + manifest, zips them, and prints a one-time URL
+            // (random name under public/). op=teeseclean removes the zips.
+            @set_time_limit(600);
+            $slug = (string) ($_GET['tenant'] ?? 'elimelec');
+            $mode = (string) ($_GET['mode'] ?? 'warehouse');
+            $tenant = App\Models\Tenant::where('slug', $slug)->first();
+            if (!$tenant) { ln("no tenant '{$slug}'"); break; }
+            app(App\Tenancy\TenantContext::class)->set($tenant);
+            $dir = storage_path('app/teese-export');
+            @mkdir($dir, 0775, true);
+            foreach (glob($dir . '/*') as $old) @unlink($old);
+            $csv = function (string $path, array $rows): int {
+                $fh = fopen($path, 'w');
+                $n = 0;
+                foreach ($rows as $r) {
+                    $r = (array) $r;
+                    if ($n === 0) fputcsv($fh, array_keys($r));
+                    fputcsv($fh, array_map(fn ($v) => is_bool($v) ? (int) $v : $v, array_values($r)));
+                    $n++;
+                }
+                fclose($fh);
+                return $n;
+            };
+            $manifest = ["Teese export — mode={$mode} — tenant={$slug} — " . date('c')];
+            if ($mode === 'warehouse') {
+                $tables = ['wh_dim_partner', 'wh_fact_invoice', 'wh_fact_invoice_line',
+                           'wh_fact_dossier', 'wh_fact_advance', 'wh_fact_validation'];
+                foreach ($tables as $tbl) {
+                    if (!Illuminate\Support\Facades\Schema::hasTable($tbl)) continue;
+                    $rows = Illuminate\Support\Facades\DB::table($tbl)->where('tenant_id', $tenant->id)->get();
+                    $n = $csv("{$dir}/{$tbl}.csv", $rows->all());
+                    $manifest[] = sprintf('%-28s %6d rows', $tbl . '.csv', $n);
+                    ln(sprintf('%-28s %6d rows', $tbl, $n));
+                }
+                $st = Illuminate\Support\Facades\DB::table('wh_sync_state')->where('tenant_id', $tenant->id)->get();
+                $csv("{$dir}/_sync_state.csv", $st->all());
+                $manifest[] = 'data as of the last successful sync (see _sync_state.csv)';
+            } else {
+                $src = App\Services\DataSource::primary();
+                $conn = 'teese_dump_' . bin2hex(random_bytes(3));
+                config(["database.connections.{$conn}" => App\Services\ErpDbConnectionTester::connectionConfig(null, $src)]);
+                $db = Illuminate\Support\Facades\DB::connection($conn);
+                $rels = $db->select("
+                    select n.nspname sch, c.relname rel, c.relkind kind
+                      from pg_class c join pg_namespace n on n.oid = c.relnamespace
+                     where c.relkind in ('r','v','m','f','p')
+                       and n.nspname not in ('pg_catalog','information_schema')
+                     order by n.nspname, c.relname");
+                $manifest[] = count($rels) . ' relations visible';
+                $cols = $db->select("
+                    select table_schema sch, table_name rel, column_name col, data_type typ
+                      from information_schema.columns
+                     where table_schema not in ('pg_catalog','information_schema')
+                     order by table_schema, table_name, ordinal_position");
+                $cat = fopen("{$dir}/_catalog.csv", 'w');
+                fputcsv($cat, ['schema', 'table', 'column', 'type']);
+                foreach ($cols as $c) fputcsv($cat, [$c->sch, $c->rel, $c->col, $c->typ]);
+                fclose($cat);
+                foreach ($rels as $r) {
+                    $name = "{$r->sch}.{$r->rel}";
+                    try {
+                        $rows = $db->select("select * from \"{$r->sch}\".\"{$r->rel}\"");
+                        $n = $csv("{$dir}/{$r->sch}__{$r->rel}.csv", $rows);
+                        $manifest[] = sprintf('%-44s %7d rows', $name, $n);
+                        ln(sprintf('%-44s %7d rows', $name, $n));
+                    } catch (\Throwable $e) {
+                        $manifest[] = $name . '  FAILED: ' . mb_substr($e->getMessage(), 0, 120);
+                        ln($name . '  FAILED: ' . mb_substr($e->getMessage(), 0, 160));
+                    }
+                }
+            }
+            file_put_contents("{$dir}/_manifest.txt", implode("\n", $manifest) . "\n");
+            $zipName = '_teese_export_' . bin2hex(random_bytes(8)) . '.zip';
+            $zip = new ZipArchive();
+            $zip->open(public_path($zipName), ZipArchive::CREATE | ZipArchive::OVERWRITE);
+            foreach (glob($dir . '/*') as $file) $zip->addFile($file, basename($file));
+            $zip->close();
+            ln('');
+            ln('ZIP: https://bms.cm-ea.com/' . $zipName . ' (' . number_format(filesize(public_path($zipName))) . ' bytes)');
+            ln('Delete with op=teeseclean when fetched.');
+            break;
+
+        case 'teeseclean':
+            foreach (glob(public_path('_teese_export_*.zip')) as $z) { ln('deleted ' . basename($z)); @unlink($z); }
+            foreach (glob(storage_path('app/teese-export/*')) as $file) @unlink($file);
+            ln('done');
+            break;
+
         case 'offenderslog':
             // The scorecard's own log. Empty or missing means the scheduled
             // send has not run since output capture was added — which is the
