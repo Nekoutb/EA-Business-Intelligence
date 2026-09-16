@@ -251,6 +251,108 @@ try {
             ln('done');
             break;
 
+        case 'analyticcheck':
+            // Cost-centre (analytic accounting) coverage in a tenant's Odoo
+            // GL: which analytic accounts exist, and how much of the ledger
+            // carries an analytic distribution, month by month and by
+            // account. ?tenant=slug [&from=YYYY-MM-DD]
+            $slug = (string) ($_GET['tenant'] ?? '');
+            $from = (string) ($_GET['from'] ?? date('Y-m-01', strtotime('-3 months')));
+            $tenant = App\Models\Tenant::where('slug', $slug)->first();
+            if (!$tenant) { ln("no tenant '{$slug}'"); break; }
+            app(App\Tenancy\TenantContext::class)->set($tenant);
+            $client = App\Odoo\OdooFactory::fromConfig();
+
+            // 1 — the cost centres themselves
+            try {
+                $ccs = $client->searchRead('account.analytic.account', [],
+                    ['id', 'name', 'code', 'active'], 200);
+                ln('== analytic accounts (cost centres): ' . count($ccs) . ' ==');
+                foreach ($ccs as $a) {
+                    ln(sprintf('  #%-5d %-12s %s%s', $a['id'],
+                        (string) ($a['code'] ?: '—'), $a['name'],
+                        empty($a['active']) ? '  (archived)' : ''));
+                }
+            } catch (\Throwable $e) { ln('analytic accounts: ' . mb_substr($e->getMessage(), 0, 160)); }
+
+            // 2 — analytic entries by cost centre since $from (amounts +
+            // date range). account.analytic.line is generated from GL lines
+            // carrying a distribution, so this is the authoritative "what
+            // landed where" view.
+            try {
+                $byCc = $client->callModel('account.analytic.line', 'read_group', [
+                    [['date', '>=', $from]],
+                    'fields'  => ['amount:sum', 'date:max', 'date:min'],
+                    'groupby' => ['account_id'],
+                ]);
+                ln('');
+                ln("== analytic entries by cost centre since {$from} ==");
+                foreach ($byCc as $g) {
+                    $cc = is_array($g['account_id'] ?? null) ? $g['account_id'][1] : '(none)';
+                    ln(sprintf('  %-38s %6d entries  amount %16s', mb_substr($cc, 0, 38),
+                        (int) ($g['account_id_count'] ?? $g['__count'] ?? 0),
+                        number_format((float) ($g['amount'] ?? 0), 0)));
+                }
+                $byMonth = $client->callModel('account.analytic.line', 'read_group', [
+                    [['date', '>=', $from]],
+                    'fields'  => ['amount:sum'],
+                    'groupby' => ['date:month'],
+                ]);
+                ln('');
+                ln('== analytic entries by month ==');
+                foreach ($byMonth as $g) {
+                    ln(sprintf('  %-16s %6d entries  amount %16s', (string) ($g['date:month'] ?? '?'),
+                        (int) ($g['date_count'] ?? $g['__count'] ?? 0),
+                        number_format((float) ($g['amount'] ?? 0), 0)));
+                }
+            } catch (\Throwable $e) { ln('analytic lines: ' . mb_substr($e->getMessage(), 0, 160)); }
+
+            // 3 — GL coverage: posted move lines with vs without a
+            // distribution, per month. Newer Odoo stores the link as the
+            // JSON field analytic_distribution; fall back to the legacy
+            // analytic_account_id column.
+            foreach (['analytic_distribution', 'analytic_account_id'] as $fld) {
+                try {
+                    $tot = $client->callModel('account.move.line', 'read_group', [
+                        [['parent_state', '=', 'posted'], ['date', '>=', $from]],
+                        'fields' => ['id:count'], 'groupby' => ['date:month'],
+                    ]);
+                    $with = $client->callModel('account.move.line', 'read_group', [
+                        [['parent_state', '=', 'posted'], ['date', '>=', $from], [$fld, '!=', false]],
+                        'fields' => ['id:count', 'balance:sum'], 'groupby' => ['date:month'],
+                    ]);
+                    $wm = [];
+                    foreach ($with as $g) $wm[(string) ($g['date:month'] ?? '?')] = $g;
+                    ln('');
+                    ln("== GL lines with a cost centre ({$fld}) · posted · since {$from} ==");
+                    foreach ($tot as $g) {
+                        $m = (string) ($g['date:month'] ?? '?');
+                        $n = (int) ($g['date_count'] ?? $g['__count'] ?? 0);
+                        $w = (int) ($wm[$m]['date_count'] ?? $wm[$m]['__count'] ?? 0);
+                        ln(sprintf('  %-16s %6d lines · %6d with cost centre (%s%%)',
+                            $m, $n, $w, $n > 0 ? number_format(100 * $w / $n, 1) : '0'));
+                    }
+                    // 4 — which GL accounts the analytic-tagged lines sit on
+                    $byAcct = $client->callModel('account.move.line', 'read_group', [
+                        [['parent_state', '=', 'posted'], ['date', '>=', $from], [$fld, '!=', false]],
+                        'fields' => ['id:count', 'balance:sum'], 'groupby' => ['account_id'],
+                    ]);
+                    usort($byAcct, fn ($a, $b) => (int) ($b['account_id_count'] ?? 0) <=> (int) ($a['account_id_count'] ?? 0));
+                    ln('');
+                    ln('== tagged lines by GL account (top 20) ==');
+                    foreach (array_slice($byAcct, 0, 20) as $g) {
+                        $acct = is_array($g['account_id'] ?? null) ? $g['account_id'][1] : '?';
+                        ln(sprintf('  %-52s %5d lines  balance %15s', mb_substr($acct, 0, 52),
+                            (int) ($g['account_id_count'] ?? 0),
+                            number_format((float) ($g['balance'] ?? 0), 0)));
+                    }
+                    break; // this field worked — no fallback needed
+                } catch (\Throwable $e) {
+                    ln("({$fld}: " . mb_substr($e->getMessage(), 0, 120) . ')');
+                }
+            }
+            break;
+
         case 'offenderslog':
             // The scorecard's own log. Empty or missing means the scheduled
             // send has not run since output capture was added — which is the
