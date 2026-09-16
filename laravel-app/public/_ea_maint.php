@@ -313,6 +313,30 @@ try {
             // distribution, per month. Newer Odoo stores the link as the
             // JSON field analytic_distribution; fall back to the legacy
             // analytic_account_id column.
+            // 2b — older-Odoo mechanisms: analytic TAGS and the all-time
+            // analytic-line population (in case dates or fields differ).
+            try {
+                $tags = $client->searchRead('account.analytic.tag', [], ['id', 'name', 'active'], ['limit' => 200]);
+                ln('');
+                ln('== analytic tags: ' . count($tags) . ' ==');
+                foreach ($tags as $t) ln('  #' . $t['id'] . '  ' . $t['name'] . (empty($t['active']) ? '  (archived)' : ''));
+                $tagged = $client->callModel('account.move.line', 'read_group', [
+                    'domain' => [['parent_state', '=', 'posted'], ['date', '>=', $from], ['analytic_tag_ids', '!=', false]],
+                    'fields' => ['balance:sum'], 'groupby' => ['date:month'], 'lazy' => false,
+                ]);
+                ln('tagged GL lines by month since ' . $from . ': ' . count($tagged) . ' month group(s)');
+                foreach ($tagged as $g) ln('  ' . ($g['date:month'] ?? '?') . '  ' . (int) ($g['__count'] ?? 0) . ' lines');
+            } catch (\Throwable $e) { ln('analytic tags: ' . mb_substr($e->getMessage(), 0, 140)); }
+            try {
+                $all = $client->callModel('account.analytic.line', 'read_group', [
+                    'domain' => [], 'fields' => ['amount:sum'], 'groupby' => ['date:year'], 'lazy' => false,
+                ]);
+                ln('');
+                ln('== account.analytic.line all-time by year ==');
+                if (!$all) ln('  (none — the analytic ledger is empty)');
+                foreach ($all as $g) ln('  ' . ($g['date:year'] ?? '?') . '  ' . (int) ($g['__count'] ?? 0) . ' entries  amount ' . number_format((float) ($g['amount'] ?? 0), 0));
+            } catch (\Throwable $e) { ln('analytic all-time: ' . mb_substr($e->getMessage(), 0, 140)); }
+
             foreach (['analytic_distribution', 'analytic_account_id'] as $fld) {
                 try {
                     $tot = $client->callModel('account.move.line', 'read_group', [
