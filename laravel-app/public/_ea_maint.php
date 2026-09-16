@@ -266,7 +266,7 @@ try {
             // 1 — the cost centres themselves
             try {
                 $ccs = $client->searchRead('account.analytic.account', [],
-                    ['id', 'name', 'code', 'active'], 200);
+                    ['id', 'name', 'code', 'active'], ['limit' => 200]);
                 ln('== analytic accounts (cost centres): ' . count($ccs) . ' ==');
                 foreach ($ccs as $a) {
                     ln(sprintf('  #%-5d %-12s %s%s', $a['id'],
@@ -281,9 +281,10 @@ try {
             // landed where" view.
             try {
                 $byCc = $client->callModel('account.analytic.line', 'read_group', [
-                    [['date', '>=', $from]],
-                    'fields'  => ['amount:sum', 'date:max', 'date:min'],
+                    'domain'  => [['date', '>=', $from]],
+                    'fields'  => ['amount:sum'],
                     'groupby' => ['account_id'],
+                    'lazy'    => false,
                 ]);
                 ln('');
                 ln("== analytic entries by cost centre since {$from} ==");
@@ -294,9 +295,10 @@ try {
                         number_format((float) ($g['amount'] ?? 0), 0)));
                 }
                 $byMonth = $client->callModel('account.analytic.line', 'read_group', [
-                    [['date', '>=', $from]],
+                    'domain'  => [['date', '>=', $from]],
                     'fields'  => ['amount:sum'],
                     'groupby' => ['date:month'],
+                    'lazy'    => false,
                 ]);
                 ln('');
                 ln('== analytic entries by month ==');
@@ -314,12 +316,12 @@ try {
             foreach (['analytic_distribution', 'analytic_account_id'] as $fld) {
                 try {
                     $tot = $client->callModel('account.move.line', 'read_group', [
-                        [['parent_state', '=', 'posted'], ['date', '>=', $from]],
-                        'fields' => ['id:count'], 'groupby' => ['date:month'],
+                        'domain' => [['parent_state', '=', 'posted'], ['date', '>=', $from]],
+                        'fields' => ['balance:sum'], 'groupby' => ['date:month'], 'lazy' => false,
                     ]);
                     $with = $client->callModel('account.move.line', 'read_group', [
-                        [['parent_state', '=', 'posted'], ['date', '>=', $from], [$fld, '!=', false]],
-                        'fields' => ['id:count', 'balance:sum'], 'groupby' => ['date:month'],
+                        'domain' => [['parent_state', '=', 'posted'], ['date', '>=', $from], [$fld, '!=', false]],
+                        'fields' => ['balance:sum'], 'groupby' => ['date:month'], 'lazy' => false,
                     ]);
                     $wm = [];
                     foreach ($with as $g) $wm[(string) ($g['date:month'] ?? '?')] = $g;
@@ -334,16 +336,16 @@ try {
                     }
                     // 4 — which GL accounts the analytic-tagged lines sit on
                     $byAcct = $client->callModel('account.move.line', 'read_group', [
-                        [['parent_state', '=', 'posted'], ['date', '>=', $from], [$fld, '!=', false]],
-                        'fields' => ['id:count', 'balance:sum'], 'groupby' => ['account_id'],
+                        'domain' => [['parent_state', '=', 'posted'], ['date', '>=', $from], [$fld, '!=', false]],
+                        'fields' => ['balance:sum'], 'groupby' => ['account_id'], 'lazy' => false,
                     ]);
-                    usort($byAcct, fn ($a, $b) => (int) ($b['account_id_count'] ?? 0) <=> (int) ($a['account_id_count'] ?? 0));
+                    usort($byAcct, fn ($a, $b) => (int) ($b['account_id_count'] ?? $b['__count'] ?? 0) <=> (int) ($a['account_id_count'] ?? $a['__count'] ?? 0));
                     ln('');
                     ln('== tagged lines by GL account (top 20) ==');
                     foreach (array_slice($byAcct, 0, 20) as $g) {
                         $acct = is_array($g['account_id'] ?? null) ? $g['account_id'][1] : '?';
                         ln(sprintf('  %-52s %5d lines  balance %15s', mb_substr($acct, 0, 52),
-                            (int) ($g['account_id_count'] ?? 0),
+                            (int) ($g['account_id_count'] ?? $g['__count'] ?? 0),
                             number_format((float) ($g['balance'] ?? 0), 0)));
                     }
                     break; // this field worked — no fallback needed
