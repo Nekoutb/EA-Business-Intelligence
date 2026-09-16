@@ -246,6 +246,17 @@ jobs:
               crontab -l | head -20
             fi
 
+            # ==================== LARAVEL SCHEDULER CRON ====================
+            # Everything in routes/console.php (warehouse sync 4x/hour,
+            # nightly reconcile, daily insights, offenders report) only
+            # fires if cron runs schedule:run every minute. That line was
+            # lost in the Aug-2026 server suspension and every tenant's
+            # sync silently froze — ensure it idempotently on each deploy.
+            if ! crontab -l 2>/dev/null | grep -q 'artisan schedule:run'; then
+              echo "⏰ Installing schedule:run cron..."
+              ( crontab -l 2>/dev/null; echo "* * * * * cd $APP_DIR && /usr/bin/php artisan schedule:run >> /var/log/bms-schedule.log 2>&1" ) | crontab -
+            fi
+
             # ==================== PERMISSIONS ====================
             echo "🔒 Permissions..."
             chown -R www-data:www-data "$REPO_DIR"
