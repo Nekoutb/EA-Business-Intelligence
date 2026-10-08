@@ -379,6 +379,27 @@ try {
             }
             break;
 
+        case 'userlist':
+            // Read-only account inventory for the platform operator: who can
+            // sign in where. Emails, roles, status, last login — NEVER the
+            // password hashes (bcrypt is one-way; recovery = reset, not read).
+            $rows = Illuminate\Support\Facades\DB::table('users as u')
+                ->leftJoin('tenants as t', 't.id', '=', 'u.tenant_id')
+                ->orderByRaw('t.slug IS NULL DESC')->orderBy('t.slug')->orderBy('u.role')->orderBy('u.email')
+                ->get(['u.id', 't.slug', 'u.name', 'u.email', 'u.role', 'u.status',
+                       'u.last_login_at', 'u.must_change_password']);
+            ln(sprintf('%-4s %-16s %-34s %-24s %-13s %-9s %-17s %s',
+                'id', 'workspace', 'email', 'name', 'role', 'status', 'last login', 'must-change'));
+            foreach ($rows as $r) {
+                ln(sprintf('%-4d %-16s %-34s %-24s %-13s %-9s %-17s %s',
+                    $r->id, $r->slug ?? 'PLATFORM', mb_substr($r->email, 0, 34), mb_substr((string) $r->name, 0, 24),
+                    $r->role, $r->status, $r->last_login_at ? substr($r->last_login_at, 0, 16) : 'never',
+                    !empty($r->must_change_password) ? 'yes' : ''));
+            }
+            ln('');
+            ln(count($rows) . ' accounts. Login URLs: platform admins → /admin/login · workspace users → /t/{workspace}/login');
+            break;
+
         case 'offenderslog':
             // The scorecard's own log. Empty or missing means the scheduled
             // send has not run since output capture was added — which is the
