@@ -20,7 +20,7 @@
             </div>
 
             @if (session('flash'))
-              <div class="text-xs px-3 py-2 rounded-lg bg-rose-50 border border-rose-200 text-rose-700">
+              <div class="text-xs px-3 py-2 rounded-lg {{ session('flash.type') === 'success' ? 'bg-emerald-50 border border-emerald-200 text-emerald-700' : 'bg-rose-50 border border-rose-200 text-rose-700' }}">
                   {{ session('flash.msg') }}
               </div>
             @endif
@@ -40,6 +40,7 @@
                 <button class="w-full bg-gradient-to-r from-rose-600 to-orange-600 hover:from-rose-700 hover:to-orange-700 text-white font-medium py-2.5 rounded-lg text-sm shadow-lg transition">
                     Sign in
                 </button>
+                <p class="text-center"><a href="/admin/forgot-password" class="text-xs text-slate-500 hover:text-slate-800 underline">Forgot password?</a></p>
             </form>
         </div>
     </div>

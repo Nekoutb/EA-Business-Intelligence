@@ -101,7 +101,7 @@ class TenantUsersController extends Controller
         ]);
     }
 
-    public function edit(int $id)
+    public function edit(string $tenantSlug, int $id)
     {
         $tenant = $this->requireTenant();
         $user   = User::where('tenant_id', $tenant->id)->where('id', $id)->firstOrFail();
@@ -116,7 +116,7 @@ class TenantUsersController extends Controller
         ]);
     }
 
-    public function update(Request $request, int $id)
+    public function update(Request $request, string $tenantSlug, int $id)
     {
         $tenant = $this->requireTenant();
         $user   = User::where('tenant_id', $tenant->id)->where('id', $id)->firstOrFail();
@@ -138,15 +138,22 @@ class TenantUsersController extends Controller
             'status'      => $data['status'],
             'permissions' => $this->collectPermissions($request),
         ]);
-        if (!empty($data['password'])) {
+        $passwordSet = !empty($data['password']);
+        if ($passwordSet) {
+            // An admin-chosen password is temporary by nature: the user must
+            // replace it on next sign-in, and any open sessions end now.
             $user->password = Hash::make($data['password']);
+            $user->must_change_password = true;
         }
         $user->save();
+        if ($passwordSet) {
+            \App\Services\PasswordResetService::endSessions($user,
+                optional($request->user())->id === $user->id ? $request->session()->getId() : null);
+        }
 
-        AuditLog::record([
+        AuditLog::record('user.updated', [
             'tenant_id' => $tenant->id,
             'user_id'   => optional($request->user())->id,
-            'action'    => 'user.updated',
             'target'    => "user:{$user->id}",
             'payload'   => ['email' => $user->email, 'role' => $user->role],
         ]);
@@ -157,7 +164,18 @@ class TenantUsersController extends Controller
         ]);
     }
 
-    public function destroy(Request $request, int $id)
+    /** Email a password-reset link to one of this workspace's users. */
+    public function sendReset(string $tenantSlug, int $id)
+    {
+        $tenant = $this->requireTenant();
+        $user   = User::where('tenant_id', $tenant->id)->where('id', $id)->firstOrFail();
+        $ok = \App\Services\PasswordResetService::sendLink($user, 'admin', $tenant->slug);
+        return redirect(tenant_url('/settings/users'))->with('flash', $ok
+            ? ['type' => 'success', 'msg' => "Reset link emailed to {$user->email} — valid for " . \App\Services\PasswordResetService::TTL_MINUTES . ' minutes.']
+            : ['type' => 'error',   'msg' => "Could not email {$user->email} — check the mail configuration."]);
+    }
+
+    public function destroy(Request $request, string $tenantSlug, int $id)
     {
         $tenant = $this->requireTenant();
         $user   = User::where('tenant_id', $tenant->id)->where('id', $id)->firstOrFail();
@@ -188,10 +206,9 @@ class TenantUsersController extends Controller
         $email = $user->email;
         $user->delete();
 
-        AuditLog::record([
+        AuditLog::record('user.deleted', [
             'tenant_id' => $tenant->id,
             'user_id'   => optional($request->user())->id,
-            'action'    => 'user.deleted',
             'target'    => "user:{$id}",
             'payload'   => ['email' => $email],
         ]);

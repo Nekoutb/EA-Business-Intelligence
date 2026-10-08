@@ -173,8 +173,12 @@ Route::prefix('demo/sandbox')->middleware('demo.session')->group(function () {
 Route::prefix('admin')->group(function () {
     Route::get('/login',  [AdminAuthController::class, 'showLogin']);
     // Rate-limit admin login: 6 attempts/min per IP. Blocks brute force.
-    Route::post('/login', [AdminAuthController::class, 'login'])->middleware('throttle:6,1');
+    Route::post('/login', [AdminAuthController::class, 'login'])->middleware('throttle:6,1,admin-login');
     Route::get('/logout', [AdminAuthController::class, 'logout']);
+    Route::get ('/forgot-password',         [\App\Http\Controllers\PasswordResetController::class, 'showForgot']);
+    Route::post('/forgot-password',         [\App\Http\Controllers\PasswordResetController::class, 'sendLink'])->middleware('throttle:3,1,pw-forgot');
+    Route::get ('/reset-password/{token}',  [\App\Http\Controllers\PasswordResetController::class, 'showReset'])->where('token', '[A-Za-z0-9]{64}');
+    Route::post('/reset-password/{token}',  [\App\Http\Controllers\PasswordResetController::class, 'reset'])->where('token', '[A-Za-z0-9]{64}')->middleware('throttle:6,1,pw-reset');
 
     Route::middleware('admin.auth')->group(function () {
         Route::get('/', [AdminDashboardController::class, 'index']);
@@ -191,6 +195,7 @@ Route::prefix('admin')->group(function () {
         Route::get   ('/users/{id}/edit',      [AdminUsersController::class, 'edit'])->whereNumber('id');
         Route::post  ('/users/{id}',           [AdminUsersController::class, 'update'])->whereNumber('id');
         Route::post  ('/users/{id}/delete',    [AdminUsersController::class, 'destroy'])->whereNumber('id');
+        Route::post  ('/users/{id}/send-reset',[AdminUsersController::class, 'sendReset'])->whereNumber('id')->middleware('throttle:10,1,pw-send');
 
         // Mail diagnostic — quick way to verify the configured driver
         // actually delivers, without having to create a throwaway user.
@@ -1516,8 +1521,12 @@ Route::prefix('t/{tenant}')
         // Public (within a tenant): login/logout
         Route::get('/login',  [AuthController::class, 'showLogin'])->name('login');
         // Rate-limit tenant login: 6 attempts/min per IP. Blocks brute force.
-        Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:6,1');
+        Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:6,1,login');
         Route::get('/logout', [AuthController::class, 'logout']);
+        Route::get ('/forgot-password',        [\App\Http\Controllers\PasswordResetController::class, 'showForgot']);
+        Route::post('/forgot-password',        [\App\Http\Controllers\PasswordResetController::class, 'sendLink'])->middleware('throttle:3,1,pw-forgot');
+        Route::get ('/reset-password/{token}', [\App\Http\Controllers\PasswordResetController::class, 'showReset'])->where('token', '[A-Za-z0-9]{64}');
+        Route::post('/reset-password/{token}', [\App\Http\Controllers\PasswordResetController::class, 'reset'])->where('token', '[A-Za-z0-9]{64}')->middleware('throttle:6,1,pw-reset');
 
         // Authenticated tenant area
         Route::middleware('bi.auth')->group(function () {
@@ -1530,7 +1539,7 @@ Route::prefix('t/{tenant}')
             // a freshly-invited owner must be able to replace their
             // temporary password before the onboarding wizard.
             Route::get ('/account/password', [AuthController::class, 'showChangePassword']);
-            Route::post('/account/password', [AuthController::class, 'changePassword'])->middleware('throttle:6,1');
+            Route::post('/account/password', [AuthController::class, 'changePassword'])->middleware('throttle:6,1,pw-change');
 
             // Apply onboarding redirect middleware to all other routes.
             // 'remember.period' rides along here so the master sidebar
@@ -1720,6 +1729,7 @@ Route::prefix('t/{tenant}')
                     Route::get   ('/settings/users/{id}/edit',         [TenantUsersController::class, 'edit'])->whereNumber('id');
                     Route::post  ('/settings/users/{id}',              [TenantUsersController::class, 'update'])->whereNumber('id');
                     Route::post  ('/settings/users/{id}/delete',       [TenantUsersController::class, 'destroy'])->whereNumber('id');
+                    Route::post  ('/settings/users/{id}/send-reset',   [TenantUsersController::class, 'sendReset'])->whereNumber('id')->middleware('throttle:10,1,pw-send');
                 });
             });
         });

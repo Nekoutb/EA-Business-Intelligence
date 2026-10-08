@@ -158,28 +158,28 @@ class SettingsController extends Controller
      * Test the saved Odoo credentials — round-trip authentication.
      * Returns JSON for the AJAX caller in the Settings page.
      */
-    public function testOdoo($source = 1): JsonResponse
+    public function testOdoo(string $tenantSlug, $source = 1): JsonResponse
     {
         $this->requireTenant();
-        return response()->json(OdooConnectionTester::testCurrent(\App\Services\DataSource::of((int) $source)));
+        return response()->json(OdooConnectionTester::testCurrent(\App\Services\DataSource::of(is_numeric($source) ? (int) $source : 1)));
     }
 
     /**
      * Test the saved direct-database ERP credentials (non-Odoo ERPs).
      */
-    public function testErpDb($source = 1): JsonResponse
+    public function testErpDb(string $tenantSlug, $source = 1): JsonResponse
     {
         $this->requireTenant();
-        return response()->json(\App\Services\ErpDbConnectionTester::testCurrent(\App\Services\DataSource::of((int) $source)));
+        return response()->json(\App\Services\ErpDbConnectionTester::testCurrent(\App\Services\DataSource::of(is_numeric($source) ? (int) $source : 1)));
     }
 
     /**
      * Test a REST-gateway ERP source (ERP_TYPE=rest).
      */
-    public function testRestApi($source = 1): JsonResponse
+    public function testRestApi(string $tenantSlug, $source = 1): JsonResponse
     {
         $this->requireTenant();
-        return response()->json(\App\Services\SageRestClient::testCurrent(\App\Services\DataSource::of((int) $source)));
+        return response()->json(\App\Services\SageRestClient::testCurrent(\App\Services\DataSource::of(is_numeric($source) ? (int) $source : 1)));
     }
 
     /**

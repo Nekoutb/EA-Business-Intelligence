@@ -110,6 +110,8 @@ class AuthController extends Controller
             'must_change_password' => false,
         ])->save();
 
+        \App\Services\PasswordResetService::endSessions($user, $request->session()->getId());
+
         \App\Models\AuditLog::record('user.password_changed', [
             'tenant_id' => $user->tenant_id,
             'target'    => "user:{$user->id}",

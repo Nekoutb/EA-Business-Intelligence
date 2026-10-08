@@ -77,6 +77,10 @@
                       @if ($canManage)
                       <td class="px-4 py-3 text-right">
                           <a href="{{ tenant_url('/settings/users/'.$u->id.'/edit') }}" class="text-[11px] font-semibold text-brand-700 hover:text-brand-900 mr-3">Edit</a>
+                          <form method="POST" action="{{ tenant_url('/settings/users/'.$u->id.'/send-reset') }}" class="inline mr-3" onsubmit="return confirm('Email a password reset link to {{ $u->email }}?')">
+                              @csrf
+                              <button type="submit" class="text-[11px] font-semibold text-slate-600 hover:text-slate-900">Send reset link</button>
+                          </form>
                           @if (!$me || $me->id !== $u->id)
                             <form method="POST" action="{{ tenant_url('/settings/users/'.$u->id.'/delete') }}" class="inline" onsubmit="return confirm('Delete {{ $u->email }}?')">
                                 @csrf

@@ -192,10 +192,15 @@ class UsersController extends Controller
             'status'      => $data['status'],
             'permissions' => $this->collectPermissions($request),
         ]);
-        if (!empty($data['password'])) {
+        $passwordSet = !empty($data['password']);
+        if ($passwordSet) {
             $user->password = Hash::make($data['password']);
+            $user->must_change_password = true;
         }
         $user->save();
+        if ($passwordSet) {
+            \App\Services\PasswordResetService::endSessions($user);
+        }
 
         AuditLog::record('admin.user.updated', [
             'tenant_id' => $user->tenant_id,
@@ -207,6 +212,16 @@ class UsersController extends Controller
             'type' => 'success',
             'msg'  => "User {$user->email} updated.",
         ]);
+    }
+
+    /** Email a password-reset link to any account (workspace or platform). */
+    public function sendReset(int $id)
+    {
+        $user = User::findOrFail($id);
+        $ok = \App\Services\PasswordResetService::sendLink($user, 'admin');
+        return redirect('/admin/users')->with('flash', $ok
+            ? ['type' => 'success', 'msg' => "Reset link emailed to {$user->email} — valid for " . \App\Services\PasswordResetService::TTL_MINUTES . ' minutes.']
+            : ['type' => 'error',   'msg' => "Could not email {$user->email} — check the mail configuration."]);
     }
 
     public function destroy(Request $request, int $id)

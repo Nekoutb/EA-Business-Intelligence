@@ -635,6 +635,9 @@
                         <input id="login-password" name="password" type="password" required autocomplete="current-password" class="field" placeholder="••••••••••">
                     </div>
                     <button type="submit" class="btn btn-primary btn-lg btn-block" style="margin-top: 8px;">Sign in to BMS →</button>
+                    @if ($tenantSlug)
+                        <p style="margin-top: 12px; text-align: center; font-size: 13px;"><a href="/t/{{ $tenantSlug }}/forgot-password" style="color: var(--fg-tertiary); text-decoration: underline;">Forgot password?</a></p>
+                    @endif
                 </form>
 
                 <div class="footnote">
