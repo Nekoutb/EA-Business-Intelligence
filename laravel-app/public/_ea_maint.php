@@ -1459,6 +1459,24 @@ try {
             echo json_encode($J, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE | JSON_PARTIAL_OUTPUT_ON_ERROR);
             break;
 
+        case 'whtenants':
+            // Read-only: every tenant row plus logistics/GL fact counts per
+            // tenant_id (including ids whose tenant row no longer exists).
+            foreach (Illuminate\Support\Facades\DB::table('tenants')->orderBy('id')->get() as $t) {
+                ln(sprintf('tenant %-3d %-16s %s', $t->id, $t->slug, $t->name ?? ''));
+            }
+            foreach (['wh_fact_dossier', 'wh_fact_advance', 'wh_fact_validation', 'wh_fact_invoice', 'wh_fact_invoice_line', 'wh_fact_gl_line'] as $tb) {
+                if (!Illuminate\Support\Facades\Schema::hasTable($tb)) continue;
+                $rows = Illuminate\Support\Facades\DB::table($tb)->selectRaw('tenant_id, COUNT(*) n')->groupBy('tenant_id')->get();
+                ln($tb . ': ' . $rows->map(fn ($r) => "t{$r->tenant_id}=" . number_format($r->n))->implode('  '));
+            }
+            if (Illuminate\Support\Facades\Schema::hasTable('wh_fact_dossier')) {
+                foreach (Illuminate\Support\Facades\DB::table('wh_fact_dossier')->selectRaw('tenant_id, MIN(opened_date) a, MAX(opened_date) b')->groupBy('tenant_id')->get() as $r) {
+                    ln("dossier dates t{$r->tenant_id}: {$r->a} → {$r->b}");
+                }
+            }
+            break;
+
         case 'whstats':
             // Pure-warehouse row counts and invoice totals for one tenant —
             // no live ERP/Odoo needed, so it works for direct-DB tenants
