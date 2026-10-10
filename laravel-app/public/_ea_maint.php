@@ -400,6 +400,42 @@ try {
             ln(count($rows) . ' accounts. Login URLs: platform admins → /admin/login · workspace users → /t/{workspace}/login');
             break;
 
+        case 'fieldscheck':
+            // fields_get validation of config/clearance_reports.php against a
+            // tenant's Odoo: per model, missing fields, plus the selection
+            // values of the state/kind/step fields the reports filter on.
+            // ?tenant=slug
+            $slug = (string) ($_GET['tenant'] ?? '');
+            $tenant = App\Models\Tenant::where('slug', $slug)->first();
+            if (!$tenant) { ln("no tenant '{$slug}'"); break; }
+            app(App\Tenancy\TenantContext::class)->set($tenant);
+            $client = App\Odoo\OdooFactory::fromConfig();
+            $selFields = ['state', 'step', 'kind', 'payment_mode', 'originating_team', 'justification',
+                          'clearance_category', 'clearance_service_kind', 'clearance_invoice_kind',
+                          'customs_regime', 'opening_state', 'waiver_state', 'advance_waiver_state',
+                          'recharge_state', 'reopen_request_state', 'stage_owner', 'shipment_type'];
+            $allOk = true;
+            foreach ((array) config('clearance_reports.required_fields') as $model => $need) {
+                try {
+                    $fg = $client->callModel($model, 'fields_get', ['attributes' => ['type', 'string', 'selection', 'relation']]);
+                } catch (\Throwable $e) {
+                    ln(sprintf('%-30s MODEL UNREADABLE: %s', $model, mb_substr($e->getMessage(), 0, 140)));
+                    $allOk = false; continue;
+                }
+                $missing = array_values(array_diff($need, array_keys((array) $fg)));
+                if ($missing) $allOk = false;
+                ln(sprintf('%-30s %3d/%3d ok%s', $model, count($need) - count($missing), count($need),
+                    $missing ? '  MISSING: ' . implode(', ', $missing) : ''));
+                foreach ($selFields as $sf) {
+                    if (in_array($sf, $need, true) && isset($fg[$sf]['selection']) && is_array($fg[$sf]['selection'])) {
+                        ln('      ' . $sf . ' = ' . implode(' | ', array_map(fn ($p) => $p[0] . ' (' . $p[1] . ')', $fg[$sf]['selection'])));
+                    }
+                }
+            }
+            ln('');
+            ln($allOk ? 'ALL REQUIRED FIELDS PRESENT' : 'VALIDATION FAILED — see MISSING above');
+            break;
+
         case 'offenderslog':
             // The scorecard's own log. Empty or missing means the scheduled
             // send has not run since output capture was added — which is the
