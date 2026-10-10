@@ -85,7 +85,7 @@
                 <div>
                     <label class="block text-xs font-medium text-slate-600 mb-1">Revenue Source</label>
                     <select name="REVENUE_SOURCE" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white">
-                        @foreach (['invoice' => 'Customer Invoices', 'sale' => 'Sales Orders', 'pos' => 'POS Orders'] as $v => $l)
+                        @foreach (['invoice' => 'Customer Invoices', 'sale' => 'Sales Orders', 'pos' => 'POS Orders', 'gl' => 'General ledger (class 70)'] as $v => $l)
                           <option value="{{ $v }}" {{ $values['REVENUE_SOURCE'] === $v ? 'selected' : '' }}>{{ $l }}</option>
                         @endforeach
                     </select>

@@ -155,6 +155,8 @@ final class RevenueService
      */
     private function fetchWindow(\DateTimeImmutable $from, \DateTimeImmutable $to): array
     {
+        if ($this->source === 'gl') return $this->fetchWindowGl($from, $to);
+
         [$model, $domain, $dateField, $amountField, $lineModel, $lineParentField] = $this->modelConfig($from, $to);
 
         // Scope for line queries: the parent domain with each condition
@@ -507,6 +509,81 @@ final class RevenueService
             'line_scope'         => $lineScope,
             'total_discount'     => $totalDiscount,
             'discounted_outfits' => $discountedOutfits,
+        ];
+    }
+
+    /**
+     * GL source: revenue = credit balance of the class-70 sales accounts on
+     * posted entries, by accounting date. For tenants whose sales reach the
+     * ledger as journal entries rather than customer invoices (Elimelec's
+     * fees were migrated as monthly entries), so the invoice source reads 0
+     * while the P&L shows the revenue. Same total as P&L class 70.
+     * "Outfits" = revenue-bearing journal entries.
+     */
+    private function fetchWindowGl(\DateTimeImmutable $from, \DateTimeImmutable $to): array
+    {
+        $total = 0.0; $series = []; $partnerRevenue = []; $partnerNames = []; $partnerOrders = []; $partnerMonths = [];
+        $entries = 0;
+
+        $accIds = array_values(array_filter(array_map(fn ($a) => (int) ($a['id'] ?? 0),
+            $this->odoo->searchRead('account.account', [['code', '=like', '70%']], ['id'], []))));
+        if ($accIds !== []) {
+            $domain = [
+                ['parent_state', '=', 'posted'],
+                ['account_id', 'in', $accIds],
+                ['date', '>=', $from->format('Y-m-d')],
+                ['date', '<=', $to->format('Y-m-d')],
+            ];
+            $rangeDay = function (array $g, string $gb): ?string {
+                $f = $g['__range'][$gb]['from'] ?? $g['__range']['date']['from'] ?? null;
+                if (is_string($f) && strlen($f) >= 10) return substr($f, 0, 10);
+                return null;
+            };
+
+            foreach ((array) $this->odoo->callModel('account.move.line', 'read_group', [
+                'domain' => $domain, 'fields' => ['balance:sum'], 'groupby' => ['date:day'], 'lazy' => false,
+            ]) as $g) {
+                $amt = -(float) ($g['balance'] ?? 0);
+                $total += $amt;
+                if (($day = $rangeDay($g, 'date:day')) !== null) $series[$day] = ($series[$day] ?? 0.0) + $amt;
+            }
+
+            foreach ((array) $this->odoo->callModel('account.move.line', 'read_group', [
+                'domain' => $domain, 'fields' => ['balance:sum'], 'groupby' => ['partner_id', 'date:month'], 'lazy' => false,
+            ]) as $g) {
+                $pv = $g['partner_id'] ?? null;
+                if (!is_array($pv)) continue;
+                $pid = (int) $pv[0];
+                $partnerRevenue[$pid] = ($partnerRevenue[$pid] ?? 0.0) - (float) ($g['balance'] ?? 0);
+                $partnerNames[$pid]   = $partnerNames[$pid] ?? (string) ($pv[1] ?? '');
+                $partnerOrders[$pid]  = ($partnerOrders[$pid] ?? 0) + (int) ($g['__count'] ?? 0);
+                if (($day = $rangeDay($g, 'date:month')) !== null) $partnerMonths[$pid][substr($day, 0, 7)] = true;
+            }
+
+            $entries = count((array) $this->odoo->callModel('account.move.line', 'read_group', [
+                'domain' => $domain, 'fields' => [], 'groupby' => ['move_id'], 'lazy' => false,
+            ]));
+        }
+
+        for ($cursor = $from; $cursor <= $to; $cursor = $cursor->modify('+1 day')) {
+            if ((int) $cursor->format('w') === 0) continue;
+            $series[$cursor->format('Y-m-d')] = $series[$cursor->format('Y-m-d')] ?? 0.0;
+        }
+        ksort($series);
+
+        return [
+            'total'              => $total,
+            'outfits'            => $entries,
+            'customers'          => count($partnerRevenue),
+            'series'             => $series,
+            'partner_revenue'    => $partnerRevenue,
+            'partner_names'      => $partnerNames,
+            'partner_orders'     => $partnerOrders,
+            'partner_months'     => $partnerMonths,
+            'doc_ids'            => [],
+            'line_scope'         => [],
+            'total_discount'     => 0.0,
+            'discounted_outfits' => 0,
         ];
     }
 

@@ -129,6 +129,14 @@ final class ReceivablesService
             } while (count($batch) === $limit);
         }
 
+        // Ledger-based tenants (REVENUE_SOURCE=gl): sales reach the books
+        // as journal entries, so there are no open invoices to age; rebuild
+        // the open items from the receivable accounts instead.
+        if ($records === [] && strtolower((string) config_env('REVENUE_SOURCE', 'invoice')) === 'gl') {
+            try { $records = (new GLOpenItems($this->odoo))->fetch('receivable'); }
+            catch (\Throwable $e) { \Illuminate\Support\Facades\Log::warning('GL open receivables failed', ['error' => $e->getMessage()]); }
+        }
+
         $totalAr   = 0.0;
         $overdueAr = 0.0;
         $weightedAgeNum = 0.0;   // sum(age_days * residual)

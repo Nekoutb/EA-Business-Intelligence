@@ -63,6 +63,12 @@ final class PayablesService
             $offset += $limit;
         } while (count($batch) === $limit);
 
+        // Ledger-based tenants: rebuild open items from the payable accounts.
+        if ($records === [] && strtolower((string) config_env('REVENUE_SOURCE', 'invoice')) === 'gl') {
+            try { $records = (new GLOpenItems($this->odoo))->fetch('payable'); }
+            catch (\Throwable $e) { \Illuminate\Support\Facades\Log::warning('GL open payables failed', ['error' => $e->getMessage()]); }
+        }
+
         $totalAp   = 0.0;
         $overdueAp = 0.0;
         $weightedAgeNum = 0.0;
