@@ -1074,6 +1074,18 @@ final class LogisticsOpsService
     }
 
     /** True when this tenant has synced dossier facts (gates the sections). */
+    /**
+     * Tenant whose file warehouse feeds the logistics pages. Normally the
+     * tenant itself; LOGISTICS_DATA_TENANT points a workspace at another
+     * tenant's dataset — Elimelec moved from Teese (tenant 23, whose file
+     * history stays in the warehouse) to Odoo (tenant 25).
+     */
+    public static function dataTenant(int $tenantId): int
+    {
+        $o = (int) config_env('LOGISTICS_DATA_TENANT', 0);
+        return $o > 0 ? $o : $tenantId;
+    }
+
     public static function available(?int $tenantId): bool
     {
         if (!$tenantId) return false;

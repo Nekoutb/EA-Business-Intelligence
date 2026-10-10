@@ -209,10 +209,11 @@ class DashboardController extends Controller
         try {
             $ctx = app(TenantContext::class);
             $lt  = $ctx->has() ? $ctx->tenant() : null;
-            if ($lt && \App\Services\LogisticsOpsService::available((int) $lt->id)) {
+            $ltData = $lt ? \App\Services\LogisticsOpsService::dataTenant((int) $lt->id) : 0;
+            if ($lt && \App\Services\LogisticsOpsService::available($ltData)) {
                 $on    = fn (string $k) => $lt->dashboardKpiEnabled($k);
                 $grain = in_array($type, ['mtd', 'month'], true) ? 'day' : 'month';
-                $svc   = new \App\Services\LogisticsOpsService((int) $lt->id);
+                $svc   = new \App\Services\LogisticsOpsService($ltData);
                 $pk    = md5(json_encode($period)) . '_' . $grain;
                 $logistics = [
                     'files'   => ($on('logi_file_summary') || $on('logi_closure_rate'))

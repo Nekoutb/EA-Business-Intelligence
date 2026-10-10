@@ -20,7 +20,7 @@ class LogisticsOpsController extends Controller
         $period = current_period();
         [$from, $to, $label] = ea_resolve_period($today, $period);
         $tenantId = (int) (optional(app(TenantContext::class)->has() ? app(TenantContext::class)->tenant() : null)->id ?? 0);
-        return [$tenantId, $from, $to, $label, $period];
+        return [LogisticsOpsService::dataTenant($tenantId), $from, $to, $label, $period];
     }
 
     public function dossiers(Request $request)
