@@ -436,6 +436,67 @@ try {
             ln($allOk ? 'ALL REQUIRED FIELDS PRESENT' : 'VALIDATION FAILED — see MISSING above');
             break;
 
+        case 'clrsnapshot':
+            // Read-only snapshot of exactly what the clearance pack reads, for
+            // offline development/testing. ?tenant=slug — writes a gzipped
+            // JSON under a random public name; op=clrsnapclean deletes it.
+            @set_time_limit(600);
+            $slug = (string) ($_GET['tenant'] ?? 'elimelec');
+            $tenant = App\Models\Tenant::where('slug', $slug)->first();
+            if (!$tenant) { ln("no tenant '{$slug}'"); break; }
+            app(App\Tenancy\TenantContext::class)->set($tenant);
+            $d = App\Services\Clearance\ClearanceData::live(App\Odoo\OdooFactory::fromConfig());
+            $req = (array) config('clearance_reports.required_fields');
+            $snap = ['meta' => ['tenant' => $slug, 'taken_at' => date('c')], 'fields' => [], 'rows' => []];
+            foreach (array_keys($req) as $m) $snap['fields'][$m] = $d->fieldsGet($m);
+            $fl = fn (string $m, array $extra = []) => array_values(array_unique(array_merge(['id'], $req[$m], $extra)));
+
+            $snap['rows']['res.company']               = $d->searchAll('res.company', [], $fl('res.company', ['name']));
+            $snap['rows']['logistics.file']            = $d->searchAll('logistics.file', [], $fl('logistics.file'));
+            $snap['rows']['logistics.expense']         = $d->searchAll('logistics.expense', [], $fl('logistics.expense'));
+            $snap['rows']['logistics.expense.category']= $d->searchAll('logistics.expense.category', [], $fl('logistics.expense.category'));
+            $snap['rows']['logistics.service.type']    = $d->searchAll('logistics.service.type', [], $fl('logistics.service.type'));
+            $snap['rows']['clearance.turnaround']      = $d->searchAll('clearance.turnaround', [], $fl('clearance.turnaround'));
+            $snap['rows']['clearance.task']            = $d->searchAll('clearance.task', [], $fl('clearance.task'));
+            $snap['rows']['res.partner']               = $d->searchAll('res.partner', [], $fl('res.partner'));
+            $snap['rows']['hr.employee']               = $d->searchAll('hr.employee', [], $fl('hr.employee'));
+            $jr = $d->searchAll('account.journal', [['type', 'in', ['bank', 'cash']]], $fl('account.journal'));
+            $snap['rows']['account.journal'] = $jr;
+            $pml = [];
+            foreach ($jr as $j) foreach ((array) ($j['outbound_payment_method_line_ids'] ?? []) as $id) $pml[] = (int) $id;
+            $snap['rows']['account.payment.method.line'] = $pml
+                ? $d->searchAll('account.payment.method.line', [['id', 'in', $pml]], $fl('account.payment.method.line')) : [];
+            $snap['rows']['account.move'] = $d->searchAll('account.move',
+                [['move_type', 'in', ['out_invoice', 'out_refund', 'entry']]], $fl('account.move'));
+
+            // Lines: every clearance-tagged line, plus every line on the
+            // company's clearance accounts and on bank/till/holding accounts.
+            $co = $d->companyAccounts();
+            $accts = array_values(array_filter(array_map(fn ($k) => $co[$k] ?? null, $req['res.company'])));
+            foreach ($jr as $j) if ($id = App\Services\Clearance\ClearanceData::m2oId($j['default_account_id'] ?? false)) $accts[] = $id;
+            foreach ($snap['rows']['account.payment.method.line'] as $p) if ($id = App\Services\Clearance\ClearanceData::m2oId($p['payment_account_id'] ?? false)) $accts[] = $id;
+            $accts = array_values(array_unique($accts));
+            $snap['rows']['account.move.line'] = $d->searchAll('account.move.line',
+                ['|', ['clearance_category', '!=', false], ['account_id', 'in', $accts]],
+                $fl('account.move.line', ['parent_state', 'journal_id']));
+
+            $snap['rows']['mail.message'] = $d->searchAll('mail.message', [
+                ['model', 'in', ['logistics.file', 'logistics.expense', 'logistics.billing.service']],
+                ['body', 'ilike', 'Reason:'],
+            ], $fl('mail.message'));
+
+            foreach ($snap['rows'] as $m => $r) ln(sprintf('%-30s %7d rows', $m, count($r)));
+            $name = '_clrsnap_' . bin2hex(random_bytes(10)) . '.json.gz';
+            file_put_contents(public_path($name), gzencode(json_encode($snap, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE), 9));
+            ln('');
+            ln('SNAPSHOT: https://bms.cm-ea.com/' . $name . ' (' . number_format(filesize(public_path($name))) . ' bytes) — delete with op=clrsnapclean');
+            break;
+
+        case 'clrsnapclean':
+            foreach (glob(public_path('_clrsnap_*.json.gz')) as $z) { @unlink($z); ln('deleted ' . basename($z)); }
+            ln('done');
+            break;
+
         case 'offenderslog':
             // The scorecard's own log. Empty or missing means the scheduled
             // send has not run since output capture was added — which is the
