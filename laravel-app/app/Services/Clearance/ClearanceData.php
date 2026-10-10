@@ -97,6 +97,41 @@ class ClearanceData
         return $this->memo[$key] = $rows;
     }
 
+    /**
+     * Sum of account.move.line balance per account for a domain — aggregated
+     * in Odoo (read_group, then Odoo 19's formatted_read_group), falling back
+     * to paging the lines when neither is available.
+     * @return array<int,float> account id → balance
+     */
+    public function balanceByAccount(array $domain, string $note = ''): array
+    {
+        if ($this->snapshot === null) {
+            foreach ([
+                ['read_group', ['domain' => $domain, 'fields' => ['balance:sum'], 'groupby' => ['account_id'], 'lazy' => false]],
+                ['formatted_read_group', ['domain' => $domain, 'groupby' => ['account_id'], 'aggregates' => ['balance:sum']]],
+            ] as [$method, $kw]) {
+                try {
+                    $groups = (array) $this->client->callModel('account.move.line', $method, $kw);
+                    $out = [];
+                    foreach ($groups as $g) {
+                        $id = self::m2oId($g['account_id'] ?? false);
+                        if ($id) $out[$id] = (float) ($g['balance'] ?? $g['balance:sum'] ?? 0);
+                    }
+                    $this->queryLog[] = ['model' => 'account.move.line', 'rows' => count($groups), 'note' => "{$note} ({$method})"];
+                    return $out;
+                } catch (\Throwable $e) {
+                    // try the next aggregation method
+                }
+            }
+        }
+        $out = [];
+        foreach ($this->searchAll('account.move.line', $domain, ['account_id', 'balance'], "{$note} (paged)") as $l) {
+            $id = self::m2oId($l['account_id'] ?? false);
+            if ($id) $out[$id] = ($out[$id] ?? 0.0) + (float) $l['balance'];
+        }
+        return $out;
+    }
+
     public function searchCount(string $model, array $domain): int
     {
         return $this->snapshot !== null

@@ -3068,6 +3068,8 @@ try {
             // views can be verified on production like any report page.
             if (!$def && $want === 'settings')       $def = ['controller' => App\Http\Controllers\SettingsController::class, 'action' => 'show', 'query' => []];
             if (!$def && $want === 'admin-settings') $def = ['controller' => App\Http\Controllers\Admin\TenantController::class, 'action' => 'showSettings', 'query' => [], 'params' => ['tenant' => $tenant]];
+            // Clearance pack pages: page=clearance-r1 … clearance-r11.
+            if (!$def && preg_match('/^clearance-(r\d{1,2})$/', $want, $cm)) $def = ['controller' => App\Http\Controllers\ClearanceReportsController::class, 'action' => 'show', 'query' => [], 'params' => ['code' => $cm[1]]];
             if (!$def) { ln("no page '{$want}' in config/warm.php"); break; }
             // &period=month&year=2026&month=8 overrides the page's default
             // query (and, via RememberPeriod, the session) — lets this op
