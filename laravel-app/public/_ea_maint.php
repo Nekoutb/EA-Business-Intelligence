@@ -3089,6 +3089,8 @@ try {
             if (!isset($_GET['noflash'])) {
                 session()->flash('flash', ['type' => 'success', 'msg' => 'render-test']);
             }
+            // &force=1 recomputes (and re-caches) every dataset like the warm worker.
+            if (!empty($_GET['force'])) App\Support\CacheFreshness::force(true);
             try {
                 $resp = app()->call([app((string) $def['controller']), (string) ($def['action'] ?? 'index')], (array) ($def['params'] ?? []));
                 $html = ($resp instanceof Illuminate\Contracts\Support\Renderable) ? $resp->render() : '(non-view response: ' . get_class($resp) . ')';
