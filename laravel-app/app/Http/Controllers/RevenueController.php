@@ -35,6 +35,21 @@ class RevenueController extends Controller
             $topDiscounted = ea_cached($cacheKey . '_disc', fn() => $svc->topDiscountedProducts($data));
         } catch (\Throwable $e) { $error = $e->getMessage(); }
 
+        // Revenue streams by nature (one per class-7 account) — admin toggle.
+        // Window: start of the period's year to the end of the period.
+        $tenant     = tenant();
+        $showRatios = !$tenant || $tenant->dashboardKpiEnabled('revenue_cost_ratios');
+        $streams    = null;
+        if ($tenant && $tenant->dashboardKpiEnabled('revenue_streams')) {
+            try {
+                $ref = (string) config_env('KPI_FILE_REF_FIELD', 'move_name');
+                $ref = in_array($ref, \App\Services\FileUnitEconomics::FIELDS, true) ? $ref : 'move_name';
+                $sFrom = $to->format('Y') . '-01-01';
+                $streams = ea_cached('rev_streams_v1_' . md5(json_encode($period)), fn () =>
+                    (new \App\Services\FileUnitEconomics(OdooFactory::fromConfig(), $ref))->streams($sFrom, $to->format('Y-m-d')));
+            } catch (\Throwable $e) { $streams = null; }
+        }
+
         return view('revenue', [
             'data'          => $data,
             'profitability' => $profitability,
@@ -44,6 +59,8 @@ class RevenueController extends Controller
             'aiPage'        => 'revenue',
             'period'        => $period,
             'periodLabel'   => $label,
+            'streams'       => $streams,
+            'showRatios'    => $showRatios,
         ]);
     }
 }

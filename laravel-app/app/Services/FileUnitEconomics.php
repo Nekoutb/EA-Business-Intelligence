@@ -105,6 +105,73 @@ final class FileUnitEconomics
         return count($all);
     }
 
+    /**
+     * Revenue streams = one per class-7 account with movement in the window.
+     * Per stream: total, monthly series, files carrying it, and per-file
+     * value against ALL files of the window (stream ÷ total files).
+     */
+    public function streams(string $from, string $to): array
+    {
+        $months = [];
+        for ($m = new \DateTimeImmutable(substr($from, 0, 7) . '-01'); $m->format('Y-m') <= substr($to, 0, 7); $m = $m->modify('+1 month')) {
+            $months[$m->format('Y-m')] = $m->format('M');
+        }
+        $ids = $this->accountIds('7%');
+        $out = ['months' => $months, 'files_total' => 0, 'files_by_month' => array_fill_keys(array_keys($months), 0), 'streams' => [], 'total' => 0.0];
+        if (!$ids) return $out;
+
+        $byAcc = []; $allRefs = []; $refsByMonth = [];
+        $offset = 0;
+        do {
+            $batch = $this->odoo->searchRead('account.move.line', [
+                ['parent_state', '=', 'posted'], ['account_id', 'in', $ids],
+                ['date', '>=', $from], ['date', '<=', $to],
+            ], ['date', 'account_id', 'balance', $this->refField], ['offset' => $offset, 'limit' => 5000, 'order' => 'date asc, id asc']);
+            foreach ($batch as $l) {
+                if (!is_array($l['account_id'] ?? null)) continue;
+                $aid   = (int) $l['account_id'][0];
+                $ym    = substr((string) $l['date'], 0, 7);
+                $amt   = -(float) ($l['balance'] ?? 0);
+                $label = (string) $l['account_id'][1];
+                $code  = (string) strtok($label, ' ');
+                $a = $byAcc[$aid] ?? ['code' => $code, 'name' => trim(substr($label, strlen($code))), 'total' => 0.0,
+                                      'monthly' => array_fill_keys(array_keys($months), 0.0), 'refs' => []];
+                $a['total'] += $amt;
+                if (isset($a['monthly'][$ym])) $a['monthly'][$ym] += $amt;
+                $ref = is_string($l[$this->refField] ?? null) ? strtoupper(trim($l[$this->refField])) : '';
+                if ($ref !== '') {
+                    $a['refs'][$ref] = true;
+                    // Files = references on the class-70 sales accounts only.
+                    if (str_starts_with($code, '70')) { $allRefs[$ref] = true; $refsByMonth[$ym][$ref] = true; }
+                }
+                $byAcc[$aid] = $a;
+            }
+            $offset += 5000;
+        } while (count($batch) === 5000);
+
+        $out['files_total'] = count($allRefs);
+        foreach ($refsByMonth as $ym => $set) if (isset($out['files_by_month'][$ym])) $out['files_by_month'][$ym] = count($set);
+        $out['total'] = array_sum(array_column($byAcc, 'total'));
+
+        foreach ($byAcc as $a) {
+            if (abs($a['total']) < 0.5) continue;
+            $pfm = [];
+            foreach ($a['monthly'] as $ym => $v) {
+                $n = $out['files_by_month'][$ym] ?? 0;
+                $pfm[$ym] = $n > 0 ? $v / $n : null;
+            }
+            $out['streams'][] = [
+                'code' => $a['code'], 'name' => $a['name'], 'total' => $a['total'],
+                'share' => $out['total'] != 0.0 ? 100 * $a['total'] / $out['total'] : 0.0,
+                'files_with' => count($a['refs']),
+                'per_file' => $out['files_total'] > 0 ? $a['total'] / $out['files_total'] : null,
+                'monthly' => $a['monthly'], 'per_file_monthly' => $pfm,
+            ];
+        }
+        usort($out['streams'], fn ($x, $y) => $y['total'] <=> $x['total']);
+        return $out;
+    }
+
     private function accountIds(string $like): array
     {
         return array_values(array_filter(array_map(fn ($a) => (int) ($a['id'] ?? 0),

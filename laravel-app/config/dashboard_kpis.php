@@ -174,6 +174,21 @@ return [
             'default'     => true,
         ],
 
+        [
+            'key'         => 'revenue_cost_ratios',
+            'label'       => 'Cost & Discount Ratios (Revenue page)',
+            'description' => 'CpO / RpO, DpOT / RpO, DpC / RpC vs target on the Revenue Analysis page. Off for businesses without a per-unit cost/discount model.',
+            'section'     => 'revenue_tables',
+            'default'     => true,
+        ],
+        [
+            'key'         => 'revenue_streams',
+            'label'       => 'Revenue streams by nature (Revenue page)',
+            'description' => 'One stream per class-7 account: trend since the start of the year, stream per file, and the Revenue Composition donut by account instead of by product. Files = distinct invoice references on class 70 (KPI_FILE_REF_FIELD, default move_name).',
+            'section'     => 'revenue_tables',
+            'default'     => false,
+        ],
+
         // ── Dashboard sections ──────────────────────────────────────────
         [
             'key'         => 'cost_ratio_card',

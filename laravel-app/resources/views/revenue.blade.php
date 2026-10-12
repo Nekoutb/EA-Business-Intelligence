@@ -236,6 +236,26 @@
   $ecComposition = [];
   foreach ($compRows as $r) $ecComposition[] = ['name' => $r['name'], 'value' => $r['value']];
   if ($other > 0) $ecComposition[] = ['name' => 'Other', 'value' => $other];
+
+  // Revenue streams by nature (class-7 accounts) — replaces the SKU donut
+  // when the tenant has the revenue_streams toggle on.
+  $streamRows = $streams['streams'] ?? [];
+  if (!empty($streamRows)) {
+      $ecComposition = [];
+      foreach ($streamRows as $s) {
+          if ($s['total'] > 0) $ecComposition[] = ['name' => $s['code'] . ' ' . $s['name'], 'value' => round($s['total'], 2)];
+      }
+      $compRows = $ecComposition;
+  }
+  $ecStreams = [
+      'months'  => array_values($streams['months'] ?? []),
+      'files'   => array_values($streams['files_by_month'] ?? []),
+      'streams' => array_map(fn ($s) => [
+          'name'     => $s['code'] . ' ' . $s['name'],
+          'monthly'  => array_map(fn ($v) => round($v, 2), array_values($s['monthly'])),
+          'per_file' => array_map(fn ($v) => $v === null ? null : round($v, 2), array_values($s['per_file_monthly'])),
+      ], $streamRows),
+  ];
 @endphp
 
 {{-- Summary band ─────────────────────────────────────────────── --}}
@@ -331,7 +351,7 @@
         <div class="rv-card__h">
             <div>
                 <div class="rv-card__t">Revenue Composition</div>
-                <div class="rv-card__sub">Top 5 SKUs + Other · YTD share</div>
+                <div class="rv-card__sub">{{ !empty($streamRows) ? 'By revenue account (class 7) · since 1 Jan' : 'Top 5 SKUs + Other · YTD share' }}</div>
             </div>
         </div>
         <div class="rv-card__b rv-chart-280" id="ec-rv-composition">
@@ -350,16 +370,51 @@
                 $top5Sum   = array_sum(array_column($compRows, 'value'));
                 $top5Share = $compTotal > 0 ? min(100.0, 100.0 * $top5Sum / $compTotal) : 0.0;
               @endphp
+              @if (!empty($streamRows))
+              <b>Reading:</b> {{ $streamRows[0]['name'] }} is the largest stream at
+              <b>{{ number_format($streamRows[0]['share'], 0) }}%</b> of class-7 revenue ({{ $shortNum($streams['total']) }}{{ $shortUnit($streams['total']) }} {{ $ccy }}).
+              @else
               <b>Reading:</b> Top {{ count($compRows) }} SKUs drive
               <b>{{ number_format($top5Share, 0) }}%</b> of categorised revenue
               ({{ $shortNum($top5Sum) }}{{ $shortUnit($top5Sum) }} {{ $ccy }}).
+              @endif
             @else
               <b>Reading:</b> Run sync to compute SKU breakdown.
             @endif
         </div>
     </div>
 
-    {{-- Cost & Discount Ratios (span 12) --}}
+    {{-- Revenue streams by nature (span 12) — admin toggle revenue_streams --}}
+    @if (!empty($streamRows))
+    @php $nFiles = (int) ($streams['files_total'] ?? 0); @endphp
+    <div class="rv-card span-12">
+        <div class="rv-card__h">
+            <div>
+                <div class="rv-card__t">Revenue streams · by nature</div>
+                <div class="rv-card__sub">One stream per revenue account (class 7) · since 1 Jan {{ $year }} · per file = stream ÷ {{ number_format($nFiles) }} files (distinct invoice references on class 70)</div>
+            </div>
+        </div>
+        <div class="rv-card__b">
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-bottom:14px;">
+                @foreach ($streamRows as $s)
+                    <div style="border:1px solid var(--line,#e8e4de);border-radius:10px;padding:10px 12px;">
+                        <div style="font-size:10.5px;color:var(--text-muted,#6b7280);text-transform:uppercase;letter-spacing:.04em;" title="{{ $s['code'] }} {{ $s['name'] }}">{{ $s['code'] }} · {{ \Illuminate\Support\Str::limit($s['name'], 30) }}</div>
+                        <div style="font-size:18px;font-weight:700;">{{ $shortNum($s['total']) }}<span class="u" style="font-size:12px;font-weight:600;"> {{ $shortUnit($s['total']) }} {{ $ccy }}</span></div>
+                        <div style="font-size:11px;color:var(--text-muted,#6b7280);">{{ number_format($s['share'], 1) }}% of revenue · in {{ number_format($s['files_with']) }} files</div>
+                        <div style="font-size:12.5px;margin-top:4px;"><b>{{ $s['per_file'] === null ? '—' : $shortNum($s['per_file']) . $shortUnit($s['per_file']) }}</b> {{ $ccy }} / file</div>
+                    </div>
+                @endforeach
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px;">
+                <div><div class="rv-card__sub" style="margin-bottom:4px;">Monthly revenue per stream</div><div class="rv-chart-280" id="ec-rv-streams"></div></div>
+                <div><div class="rv-card__sub" style="margin-bottom:4px;">Stream per file · month's stream ÷ files invoiced that month</div><div class="rv-chart-280" id="ec-rv-streams-pf"></div></div>
+            </div>
+        </div>
+    </div>
+    @endif
+
+    {{-- Cost & Discount Ratios (span 12) — admin toggle revenue_cost_ratios --}}
+    @if ($showRatios ?? true)
     <div class="rv-card span-12">
         <div class="rv-card__h">
             <div>
@@ -404,6 +459,7 @@
             @endif
         </div>
     </div>
+    @endif
 
     {{-- Profitability tables --}}
     @php
@@ -593,6 +649,24 @@
       }],
     });
   }
+
+  /* Revenue streams — monthly value and per-file value per stream */
+  const st = @json($ecStreams);
+  const stPal = [t.pri, '#d18840', '#5a815e', '#d06a50', '#4f6d7a', '#9ca3af', '#7c3aed', '#0891b2'];
+  [['ec-rv-streams', 'monthly'], ['ec-rv-streams-pf', 'per_file']].forEach(([id, key]) => {
+    const el = document.getElementById(id);
+    if (!el || !st.streams.length) return;
+    echarts.init(el).setOption({
+      textStyle: { fontFamily: FF, color:'#374151' },
+      grid: { left: 48, right: 12, top: 30, bottom: 24, containLabel: false },
+      tooltip: { ...tip, axisPointer:{ type:'line' }, valueFormatter: v => fmt(v) },
+      legend: { top: 0, icon:'circle', itemWidth:8, itemHeight:8, textStyle:{ fontSize:10, color: t.textM }, formatter: n => n.length > 26 ? n.slice(0, 25) + '…' : n },
+      xAxis: { type:'category', data: st.months, axisLine:{ lineStyle:{ color: t.base } }, axisTick:{ show:false }, axisLabel:{ color: t.textM, fontSize: 10 } },
+      yAxis: { type:'value', axisLine:{ show:false }, splitLine:{ lineStyle:{ color: t.grid } }, axisLabel:{ color: t.textM, fontSize: 10, formatter: v => fmt(v) } },
+      series: st.streams.map((s, i) => ({ name: s.name, type:'line', data: s[key], smooth: .2, symbolSize: 5, connectNulls: false,
+        lineStyle:{ color: stPal[i % stPal.length], width: 2 }, itemStyle:{ color: stPal[i % stPal.length] } })),
+    });
+  });
 
   function resizeAll() {
     document.querySelectorAll('[id^="ec-rv-"]').forEach(el => { const i = echarts.getInstanceByDom(el); if (i) i.resize(); });
