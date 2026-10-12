@@ -43,6 +43,10 @@ return [
             'label'       => 'Dashboard sections',
             'description' => 'Whole panels of the Dashboard. Switch off the ones that do not apply to a tenant\'s business.',
         ],
+        'efficiency' => [
+            'label'       => 'Efficiency KPI strip',
+            'description' => 'Unit-economics cells in the dashboard KPI strip and KPI Targets & Trends panel. Per-scan for scanning operations; per-file for clearing / forwarding (files = distinct invoice references on class 70, field set by the KPI_FILE_REF_FIELD tenant setting, default move_name).',
+        ],
         'logistics' => [
             'label'       => 'Logistics · Dashboard',
             'description' => 'Summary cards from the Logistics Operations pages, shown at the top of the Dashboard. Off by default; switched on for logistics-sector tenants.',
@@ -184,6 +188,36 @@ return [
             'description' => 'Budgeted targets per efficiency KPI with the monthly actual plotted against them. Off for tenants without a live Odoo P&L feed.',
             'section'     => 'dashboard_sections',
             'default'     => true,
+        ],
+
+        // ── Efficiency KPI strip ────────────────────────────────────────
+        [
+            'key'         => 'kpi_rev_per_scan',
+            'label'       => 'Revenue / scan',
+            'description' => 'Revenue ÷ scans (containers + vehicles + wood), monthly.',
+            'section'     => 'efficiency',
+            'default'     => true,
+        ],
+        [
+            'key'         => 'kpi_cost_per_scan',
+            'label'       => 'Cost / scan',
+            'description' => 'Operating cost (revenue − EBIT) ÷ scans, monthly.',
+            'section'     => 'efficiency',
+            'default'     => true,
+        ],
+        [
+            'key'         => 'kpi_rev_per_file',
+            'label'       => 'Revenue / file',
+            'description' => 'Class-7 revenue ÷ files, cumulative year to date.',
+            'section'     => 'efficiency',
+            'default'     => false,
+        ],
+        [
+            'key'         => 'kpi_cost_per_file',
+            'label'       => 'Cost / file',
+            'description' => 'Class-6 cost ÷ files, cumulative year to date.',
+            'section'     => 'efficiency',
+            'default'     => false,
         ],
 
         // ── Logistics · Dashboard ───────────────────────────────────────

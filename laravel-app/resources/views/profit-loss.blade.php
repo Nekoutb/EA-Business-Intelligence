@@ -42,30 +42,44 @@
         @php
             $tot = $data['totals']; $scans = $data['scans']; $ps = $data['per_scan']; $g = $data['growth'];
             $n = (int) ($scans['total'] ?? 0);
-            $scanSub = number_format($n) . ' scans' . ($n > 0
-                ? ' · ' . number_format($scans['containers']) . ' cont · ' . number_format($scans['vehicles']) . ' veh · ' . number_format($scans['wood']) . ' wood'
-                : '');
+            $isFile = ($data['unit'] ?? 'scan') === 'file';
+            $u  = $isFile ? 'file' : 'scan';
+            $us = $isFile ? 'files' : 'scans';
+            $scanSub = $isFile
+                ? 'distinct invoice references on class 70'
+                : number_format($n) . ' scans' . ($n > 0
+                    ? ' · ' . number_format($scans['containers'] ?? 0) . ' cont · ' . number_format($scans['vehicles'] ?? 0) . ' veh · ' . number_format($scans['wood'] ?? 0) . ' wood'
+                    : '');
+            $unitHint = $isFile
+                ? 'files (distinct invoice references on revenue accounts 70 — one invoice with several revenue streams counts once)'
+                : 'scans (containers + vehicles + wood)';
         @endphp
 
-        <h2 class="text-[12px] font-semibold text-[#1e3d44] uppercase tracking-wide mb-2">Unit economics · per scan</h2>
-        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-3">
-            <x-kpi title="Revenue / scan" :value="$money($ps['revenue'])"
-                   :sub="$money($tot['revenue']) . ' ÷ ' . number_format($n) . ' scans'"
+        <h2 class="text-[12px] font-semibold text-[#1e3d44] uppercase tracking-wide mb-2">Unit economics · per {{ $u }}</h2>
+        <div class="grid grid-cols-1 sm:grid-cols-2 {{ $isFile ? 'lg:grid-cols-4' : 'lg:grid-cols-3' }} gap-4 mb-3">
+            <x-kpi :title="'Revenue / ' . $u" :value="$money($ps['revenue'])"
+                   :sub="$money($tot['revenue']) . ' ÷ ' . number_format($n) . ' ' . $us"
                    :vsPy="$ps['revenue_vs_py']" prefer="up" color="indigo"
-                   hint="Total revenue divided by the total number of scans (containers + vehicles + wood) in the period." />
-            <x-kpi title="Cost / scan" :value="$money($ps['cost'])"
-                   :sub="$money($tot['total_cost']) . ' ÷ ' . number_format($n) . ' scans'"
+                   :hint="'Total revenue divided by the total number of ' . $unitHint . ' in the period.'" />
+            <x-kpi :title="'Cost / ' . $u" :value="$money($ps['cost'])"
+                   :sub="$money($tot['total_cost']) . ' ÷ ' . number_format($n) . ' ' . $us"
                    :vsPy="$ps['cost_vs_py']" prefer="down" color="amber"
-                   hint="Total operating cost (COGS + OpEx + D&A) divided by total scans. Lower is better." />
-            <x-kpi title="Employee cost / scan" :value="$money($ps['fte'])"
-                   :sub="$money($tot['employee_cost']) . ' ÷ ' . number_format($n) . ' scans'"
+                   :hint="'Total operating cost (COGS + OpEx + D&A) divided by total ' . $us . '. Lower is better.'" />
+            <x-kpi :title="'Employee cost / ' . $u" :value="$money($ps['fte'])"
+                   :sub="$money($tot['employee_cost']) . ' ÷ ' . number_format($n) . ' ' . $us"
                    :vsPy="$ps['fte_vs_py']" prefer="down" color="slate"
-                   hint="SYSCOHADA class-66 personnel (FTE) cost divided by total scans. Lower is better." />
+                   :hint="'SYSCOHADA class-66 personnel cost divided by total ' . $us . '. Lower is better.'" />
+            @if ($isFile)
+                <x-kpi title="EBITDA / file" :value="$money($ps['ebitda'] ?? null)"
+                       :sub="'margin ' . (($ps['ebitda_margin'] ?? null) === null ? '—' : number_format((float) $ps['ebitda_margin'], 1) . '%') . ' · ' . $money($tot['ebitda']) . ' ÷ ' . number_format($n) . ' files'"
+                       :vsPy="$ps['ebitda_vs_py'] ?? null" prefer="up" color="emerald"
+                       hint="EBITDA (revenue − COGS − OpEx) per file; the margin is EBITDA ÷ revenue." />
+            @endif
         </div>
 
         @if (!($scans['available'] ?? false))
             <div class="bg-warm-50 border border-warm-200 text-[#7a5a1a] rounded-lg p-3 text-[11px] mb-4">
-                No scan-count source is available for this workspace, so per-scan figures can't be computed.
+                No {{ $u }}-count source is available for this workspace, so per-{{ $u }} figures can't be computed.
                 The growth and revenue-per-day sections below are unaffected.
             </div>
         @endif
@@ -84,7 +98,7 @@
                 <div class="text-[15px] font-bold text-[#2d3748] tabular-nums">{{ $money($tot['employee_cost']) }}</div>
             </div>
             <div class="bg-white border border-[#e8e4de] rounded-lg px-3 py-2">
-                <div class="text-[#8a8578] uppercase tracking-wide">Total scans</div>
+                <div class="text-[#8a8578] uppercase tracking-wide">Total {{ $us }}</div>
                 <div class="text-[15px] font-bold text-[#2d3748] tabular-nums">{{ number_format($n) }}</div>
                 <div class="text-[10px] text-[#a09d95] truncate">{{ $scanSub }}</div>
             </div>
@@ -105,13 +119,19 @@
 
         <div class="bg-white rounded-xl border border-[#e8e4de] p-5 shadow-sm mb-6">
             <div class="flex items-start justify-between gap-3 flex-wrap mb-1">
-                <h2 class="text-sm font-semibold text-[#1e3d44]">Unit economics per scan — monthly</h2>
+                <h2 class="text-sm font-semibold text-[#1e3d44]">Unit economics per {{ $u }} — monthly</h2>
+                @if (!$isFile)
                 <label class="inline-flex items-center gap-2 text-[11px] font-medium text-[#5a6a70] cursor-pointer select-none">
                     <input type="checkbox" id="profExEmpty" class="rounded border-[#cbc7be] text-brand-600 focus:ring-brand-500">
                     Exclude empty containers
                 </label>
+                @endif
             </div>
+            @if ($isFile)
+            <p class="text-[11px] text-[#7c7466] mb-3">Revenue per file and cost per file, by month since January (closed months only — the month's actual revenue/cost ÷ files invoiced that month). Figures in {{ $ccy }}.</p>
+            @else
             <p class="text-[11px] text-[#7c7466] mb-3">Revenue per scan and cost per scan, by month since January (closed months only — actual revenue/cost ÷ actual scans). Empty containers are scanned but earn no revenue; tick the box to exclude them from the denominator. Figures in {{ $ccy }}.</p>
+            @endif
             <div class="h-72"><canvas id="profUnitMonthly"></canvas></div>
         </div>
 
@@ -168,11 +188,12 @@
             });
 
             const ups = @json($data['monthly_per_scan']);
+            const unitL = @json($u);
             const upsChart = new Chart(document.getElementById('profUnitMonthly'), {
                 type:'line',
                 data:{ labels: ups.labels, datasets:[
-                    { label:'Revenue / scan', data: ups.revenue, borderColor:'#2f6f76', backgroundColor:'#2f6f76', tension:0.3, borderWidth:2, pointRadius:3, pointHoverRadius:5, spanGaps:false, fill:false },
-                    { label:'Cost / scan',    data: ups.cost,    borderColor:'#d98c3f', backgroundColor:'#d98c3f', tension:0.3, borderWidth:2, pointRadius:3, pointHoverRadius:5, spanGaps:false, fill:false },
+                    { label:'Revenue / ' + unitL, data: ups.revenue, borderColor:'#2f6f76', backgroundColor:'#2f6f76', tension:0.3, borderWidth:2, pointRadius:3, pointHoverRadius:5, spanGaps:false, fill:false },
+                    { label:'Cost / ' + unitL,    data: ups.cost,    borderColor:'#d98c3f', backgroundColor:'#d98c3f', tension:0.3, borderWidth:2, pointRadius:3, pointHoverRadius:5, spanGaps:false, fill:false },
                 ]},
                 options: baseOpts,
             });

@@ -109,10 +109,20 @@ class DashboardController extends Controller
             // figures that don't move intra-day, so cache 30 min (vs the 5-min
             // default) — the underlying Odoo work is non-trivial.
             try {
+                // Per-scan / per-file cells are admin toggles (Efficiency KPI
+                // strip). File KPIs cost Odoo reads, so they are only built
+                // when switched on — and that state is part of the cache key.
+                $kt = app(TenantContext::class)->has() ? app(TenantContext::class)->tenant() : null;
+                $kpiToggle = ['rev_per_scan' => 'kpi_rev_per_scan', 'cost_per_scan' => 'kpi_cost_per_scan',
+                              'rev_per_file' => 'kpi_rev_per_file', 'cost_per_file' => 'kpi_cost_per_file'];
+                $kpiOnOff = fn (string $k) => !$kt || $kt->dashboardKpiEnabled($kpiToggle[$k]);
+                $withFiles = $kpiOnOff('rev_per_file') || $kpiOnOff('cost_per_file');
                 $extraKpis = \Illuminate\Support\Facades\Cache::remember(
-                    ea_cache_prefix() . "dash_kpis_v4_{$year}", 1800,
-                    fn () => $this->buildExtraKpis($client, $year)
+                    ea_cache_prefix() . "dash_kpis_v5_{$year}_" . ($withFiles ? 'f' : 's'), 1800,
+                    fn () => $this->buildExtraKpis($client, $year, $withFiles)
                 );
+                $extraKpis = array_filter($extraKpis,
+                    fn ($kk) => !isset($kpiToggle[$kk]) || $kpiOnOff($kk), ARRAY_FILTER_USE_KEY);
             } catch (\Throwable $e) {
                 $extraKpis = [];
             }
@@ -256,7 +266,7 @@ class DashboardController extends Controller
      * Each entry: ['label','value','prev','fmt'('days'|'pct'|'money'),'ccy',
      * 'higher_better','series'(0-indexed Jan..Dec, null where no actual)].
      */
-    private function buildExtraKpis($client, int $year): array
+    private function buildExtraKpis($client, int $year, bool $withFiles = false): array
     {
         $ccy  = 'XAF';
         $thru = 0;
@@ -345,12 +355,12 @@ class DashboardController extends Controller
             ];
         }
 
-        // File-based tenants (KPI_FILE_REF_FIELD set — clearing agents): the
-        // per-scan pair is meaningless; replace it, in place, with Revenue /
-        // file and Cost / file (cumulative YTD: class 7 ÷ files, class 6 ÷
-        // files, files = distinct invoice references on class-70 lines).
-        $refField = (string) config_env('KPI_FILE_REF_FIELD', '');
-        if (in_array($refField, \App\Services\FileUnitEconomics::FIELDS, true)) {
+        // Per-file pair (clearing / forwarding tenants), placed right after
+        // the per-scan pair: Revenue / file and Cost / file, cumulative YTD
+        // (class 7 ÷ files, class 6 ÷ files; files = distinct invoice
+        // references on class-70 lines). Which cells show is an admin toggle.
+        $refField = (string) config_env('KPI_FILE_REF_FIELD', 'move_name');
+        if ($withFiles && in_array($refField, \App\Services\FileUnitEconomics::FIELDS, true)) {
             try {
                 $fe = (new \App\Services\FileUnitEconomics($client, $refField))->ytdByMonth($year);
                 $revFile = $costFile = array_fill(1, 12, null);
@@ -367,8 +377,8 @@ class DashboardController extends Controller
                 ];
                 $swapped = [];
                 foreach ($out as $key => $kpi) {
-                    if ($key === 'cost_per_scan') continue;
-                    if ($key === 'rev_per_scan') {
+                    $swapped[$key] = $kpi;
+                    if ($key === 'cost_per_scan') {
                         foreach ($fileDefs as $fk => [$label, $hb, $byMonth]) {
                             [$val, $prev] = $lastTwo($byMonth);
                             $swapped[$fk] = [
@@ -378,9 +388,7 @@ class DashboardController extends Controller
                                 'files' => $fe['last'] ? (int) $fe['months'][$fe['last']]['files'] : 0,
                             ];
                         }
-                        continue;
                     }
-                    $swapped[$key] = $kpi;
                 }
                 $out = $swapped;
             } catch (\Throwable $e) {

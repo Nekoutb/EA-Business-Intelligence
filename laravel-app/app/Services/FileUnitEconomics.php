@@ -29,7 +29,7 @@ final class FileUnitEconomics
 
     /**
      * @return array{months:array<int,array{revenue:float,cost:float,files:int}>,last:int}
-     *   cumulative YTD figures per month 1..12; `last` = last month with revenue
+     *   cumulative YTD figures per month 1..12; `last` = last month with revenue or cost
      */
     public function ytdByMonth(int $year): array
     {
@@ -66,9 +66,43 @@ final class FileUnitEconomics
             $c += ($costM[$m] ?? 0.0);
             $f += $newFiles[$m];
             $out[$m] = ['revenue' => $r, 'cost' => $c, 'files' => $f];
-            if (abs($revM[$m] ?? 0.0) > 0.005) $last = $m;
+            // Last month with any activity: a month of costs without billing
+            // (e.g. depreciation posted ahead of invoicing) still counts.
+            if (abs($revM[$m] ?? 0.0) > 0.005 || abs($costM[$m] ?? 0.0) > 0.005) $last = $m;
         }
         return ['months' => $out, 'last' => $last];
+    }
+
+    /**
+     * Distinct references per calendar month over a window.
+     * @return array<string, array<string,true>>  'Y-m' => [ref => true]
+     */
+    public function refsByMonth(string $from, string $to): array
+    {
+        $ids = $this->accountIds('70%');
+        if (!$ids) return [];
+        $out = [];
+        $offset = 0;
+        do {
+            $batch = $this->odoo->searchRead('account.move.line', [
+                ['parent_state', '=', 'posted'], ['account_id', 'in', $ids],
+                ['date', '>=', $from], ['date', '<=', $to],
+            ], ['date', $this->refField], ['offset' => $offset, 'limit' => 5000, 'order' => 'date asc, id asc']);
+            foreach ($batch as $l) {
+                $ref = is_string($l[$this->refField] ?? null) ? strtoupper(trim($l[$this->refField])) : '';
+                if ($ref !== '') $out[substr((string) $l['date'], 0, 7)][$ref] = true;
+            }
+            $offset += 5000;
+        } while (count($batch) === 5000);
+        return $out;
+    }
+
+    /** Distinct references over a whole window (a file billed twice counts once). */
+    public static function distinctCount(array $refsByMonth): int
+    {
+        $all = [];
+        foreach ($refsByMonth as $set) $all += $set;
+        return count($all);
     }
 
     private function accountIds(string $like): array

@@ -47,8 +47,12 @@ class ProfitabilityController extends Controller
         } else {
             try {
                 $client = OdooFactory::fromConfig();
-                $data = ea_cached("profitability_v3_{$year}", function () use ($client, $year, $assumptions) {
-                    return (new ProfitabilityService($client))->analyze($year, $assumptions);
+                // File-based tenants (KPI_FILE_REF_FIELD): unit economics per
+                // file instead of per scan.
+                $ref = (string) config_env('KPI_FILE_REF_FIELD', '');
+                $ref = in_array($ref, \App\Services\FileUnitEconomics::FIELDS, true) ? $ref : null;
+                $data = ea_cached("profitability_v4_{$year}_" . ($ref ?? 'scan'), function () use ($client, $year, $assumptions, $ref) {
+                    return (new ProfitabilityService($client, $ref))->analyze($year, $assumptions);
                 });
             } catch (\Throwable $e) {
                 $error = ea_safe_error($e, 'profitability.index', 'Could not load profitability data.');

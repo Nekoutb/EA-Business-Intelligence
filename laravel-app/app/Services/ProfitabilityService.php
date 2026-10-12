@@ -49,7 +49,11 @@ final class ProfitabilityService
 
     private OdooClient $odoo;
 
-    public function __construct(OdooClient $odoo)
+    /**
+     * @param ?string $fileRefField  set → unit = file (distinct invoice
+     *   references on class-70 lines, see FileUnitEconomics) instead of scan.
+     */
+    public function __construct(OdooClient $odoo, private ?string $fileRefField = null)
     {
         $this->odoo = $odoo;
     }
@@ -93,9 +97,19 @@ final class ProfitabilityService
         $employeeCost   = $this->personnelCost($from, $to, $notes);
         $pyEmployeeCost = $this->personnelCost($pyFrom, $pyTo, $notes);
 
-        // ── 3. Total scans (count) for the same window ──
-        $scans   = $this->totalScans($from, $to, $notes);
-        $pyScans = $this->totalScans($pyFrom, $pyTo, $notes);
+        // ── 3. Total units (scans, or files) for the same window ──
+        $fileMonths = null;
+        if ($this->fileRefField !== null) {
+            $fue = new FileUnitEconomics($this->odoo, $this->fileRefField);
+            $fileMonths = $fue->refsByMonth($from->format('Y-m-d'), $to->format('Y-m-d'));
+            $nf  = FileUnitEconomics::distinctCount($fileMonths);
+            $pyF = FileUnitEconomics::distinctCount($fue->refsByMonth($pyFrom->format('Y-m-d'), $pyTo->format('Y-m-d')));
+            $scans   = ['total' => $nf,  'total_ex_empty' => $nf,  'available' => true];
+            $pyScans = ['total' => $pyF, 'total_ex_empty' => $pyF, 'available' => true];
+        } else {
+            $scans   = $this->totalScans($from, $to, $notes);
+            $pyScans = $this->totalScans($pyFrom, $pyTo, $notes);
+        }
         $n   = (int) $scans['total'];
         $pyN = (int) $pyScans['total'];
 
@@ -133,7 +147,9 @@ final class ProfitabilityService
         for ($m = 1; $m <= min(12, $thru); $m++) {
             $mFrom = new \DateTimeImmutable(sprintf('%04d-%02d-01', $year, $m));
             $mTo   = $mFrom->modify('last day of this month')->setTime(23, 59, 59);
-            $c     = $this->scanCounts($mFrom, $mTo);
+            $c     = $fileMonths !== null
+                ? ['total' => count($fileMonths[$mFrom->format('Y-m')] ?? []), 'total_ex_empty' => count($fileMonths[$mFrom->format('Y-m')] ?? [])]
+                : $this->scanCounts($mFrom, $mTo);
             $sc    = (int) $c['total'];
             $scEx  = (int) $c['total_ex_empty'];
             $mScans[$m - 1]   = $sc;
@@ -154,7 +170,9 @@ final class ProfitabilityService
             'thru_month'       => $thru,
         ];
 
+        $pyEbitda = (float) ($prev['ebitda'] ?? 0);
         return [
+            'unit'     => $fileMonths !== null ? 'file' : 'scan',
             'currency' => $currency,
             'year'     => $year,
             'period'   => ['from' => $from->format('Y-m-d'), 'to' => $to->format('Y-m-d'), 'label' => $periodLabel],
@@ -170,6 +188,9 @@ final class ProfitabilityService
                 'revenue'        => $revPerScan,
                 'cost'           => $costPerScan,
                 'fte'            => $ftePerScan,
+                'ebitda'         => $n > 0 ? $ebitda / $n : null,
+                'ebitda_margin'  => $revenue != 0.0 ? $ebitda / $revenue * 100.0 : null,
+                'ebitda_vs_py'   => $this->pct($n > 0 ? $ebitda / $n : null, $pyN > 0 ? $pyEbitda / $pyN : null),
                 'revenue_vs_py'  => $this->pct($revPerScan,  $pyRevPerScan),
                 'cost_vs_py'     => $this->pct($costPerScan, $pyCostPerScan),
                 'fte_vs_py'      => $this->pct($ftePerScan,  $pyFtePerScan),
