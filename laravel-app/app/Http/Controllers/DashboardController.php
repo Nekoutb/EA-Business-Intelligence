@@ -227,7 +227,7 @@ class DashboardController extends Controller
                 $pk    = md5(json_encode($period)) . '_' . $grain;
                 $logistics = [
                     'files'   => ($on('logi_file_summary') || $on('logi_closure_rate'))
-                        ? ea_cached('logi_dossiers_v3_' . $pk, fn () => $svc->dossiers($from, $to, $grain)) : null,
+                        ? ea_cached('logi_dossiers_v4_' . $pk, fn () => $svc->dossiers($from, $to, $grain)) : null,
                     'oop'     => $on('logi_oop_summary')
                         ? ea_cached('logi_oop_v2_' . md5(json_encode($period)), fn () => $svc->oopCompliance($from, $to)) : null,
                     'volumes' => $on('logi_volume_trend')

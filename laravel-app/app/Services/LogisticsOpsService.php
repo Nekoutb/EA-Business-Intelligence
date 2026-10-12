@@ -34,10 +34,11 @@ final class LogisticsOpsService
      *
      * @return array{n:int, buckets:array<string,int>, cum:array<string,int>, median:?int, mix:array<string,float>, rows:list<array>}
      */
-    public function backlogAt(\DateTimeImmutable $asOf, bool $withRows = false): array
+    public function backlogAt(\DateTimeImmutable $asOf, bool $withRows = false, ?\DateTimeImmutable $openedFrom = null): array
     {
         $d = $asOf->format('Y-m-d');
         $q = $this->d()->whereNotNull('opened_date')->where('opened_date', '<=', $d)
+            ->when($openedFrom, fn ($w) => $w->where('opened_date', '>=', $openedFrom->format('Y-m-d')))
             ->where(fn ($w) => $w->where('is_closed', false)->orWhereNull('closed_date')->orWhere('closed_date', '>', $d));
         $out = ['as_of' => $d, 'n' => 0, 'buckets' => [], 'cum' => [], 'median' => null, 'mix' => [], 'rows' => []];
         foreach (self::AGE_BUCKETS as [$k]) { $out['buckets'][$k] = 0; $out['mix'][$k] = 0.0; }
@@ -83,8 +84,12 @@ final class LogisticsOpsService
         try {
             $f = $from->format('Y-m-d'); $t = $to->format('Y-m-d');
 
-            // Backlog as of the end of the window, with the file list for the drill-down.
-            $today = $this->backlogAt($to, true);
+            // Open files = files OPENED IN THE WINDOW that are still open at
+            // its end (the master filter scopes the cohort, not just the
+            // date); the all-years backlog is kept alongside for context.
+            $today = $this->backlogAt($to, true, $from);
+            $all   = $this->backlogAt($to);
+            $out['open_all'] = $all['n'];
             $out['open_now']   = $today['n'];
             $out['median_age'] = $today['median'];
             $out['aging']      = $today['buckets'];
@@ -99,22 +104,15 @@ final class LogisticsOpsService
 
             // Baseline: yearly windows look back to the earliest month on
             // record; monthly windows to the end of the previous month.
+            // Baseline = the same cohort (files opened in the window) earlier
+            // on: end of the window's first month for yearly windows, day 15
+            // for monthly ones.
             $monthly = $from->format('Y-m') === $to->format('Y-m');
-            if ($monthly) {
-                $base = $from->modify('last day of previous month');
-                $out['baseline_label'] = 'End of ' . $base->format('F Y');
-            } else {
-                // "Earliest month on record" means the first month with real
-                // activity: Elimelec's extract carries a stray 2011 file, and a
-                // one-file baseline would make the comparison meaningless.
-                $first = $this->d()->whereNotNull('opened_date')
-                    ->selectRaw("DATE_FORMAT(opened_date, '%Y-%m-01') m, COUNT(*) n")
-                    ->groupBy('m')->havingRaw('COUNT(*) >= 10')->orderBy('m')->value('m')
-                    ?: $this->d()->whereNotNull('opened_date')->min('opened_date');
-                $base  = $first ? (new \DateTimeImmutable((string) $first))->modify('last day of this month') : $from;
-                $out['baseline_label'] = 'End of ' . $base->format('F Y') . ' (earliest month on record with activity)';
-            }
-            $out['baseline'] = $this->backlogAt($base);
+            $base = $monthly ? $from->modify('+14 days') : $from->modify('last day of this month');
+            if ($base > $to) $base = $to;
+            $out['baseline_label'] = ($monthly ? $base->format('j F Y') : 'End of ' . $base->format('F Y'))
+                . ' — files opened since ' . $from->format('j M Y') . ' that were open on that date';
+            $out['baseline'] = $this->backlogAt($base, false, $from);
 
             // Flow inside the window.
             $out['opened'] = (int) $this->d()->whereBetween('opened_date', [$f, $t])->count();
@@ -132,7 +130,7 @@ final class LogisticsOpsService
                 'backlog_start'   => $start['n'],
                 'opened'          => $out['opened'],
                 'closed'          => $out['closed'],
-                'backlog_end'     => $today['n'],
+                'backlog_end'     => $all['n'],
                 'workload'        => $workload,
                 'rate'            => $workload > 0 ? round(100 * $out['closed'] / $workload, 1) : null,
                 'closed_vs_opened'=> $out['opened'] > 0 ? round(100 * $out['closed'] / $out['opened'], 1) : null,

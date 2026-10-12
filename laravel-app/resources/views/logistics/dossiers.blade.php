@@ -28,10 +28,10 @@
 </style>
 
 <div class="lg-tiles">
-  <div class="lg-tile bad"><div class="l">Open files · as of {{ $tdy['as_of'] ?? '' }}</div><div class="v">{{ number_format($data['open_now']) }}</div><div class="s">backlog at end of {{ $periodLabel }}</div></div>
+  <div class="lg-tile bad"><div class="l">Open files · opened in {{ $periodLabel }}</div><div class="v">{{ number_format($data['open_now']) }}</div><div class="s">still open on {{ $tdy['as_of'] ?? '' }}@isset($data['open_all']) · {{ number_format($data['open_all']) }} incl. earlier years @endisset</div></div>
   <div class="lg-tile"><div class="l">Opened · {{ $periodLabel }}</div><div class="v">{{ number_format($data['opened']) }}</div><div class="s">&nbsp;</div></div>
   <div class="lg-tile bad"><div class="l">Closed · {{ $periodLabel }}</div><div class="v">{{ number_format($data['closed']) }}</div><div class="s">vs {{ number_format($data['opened']) }} opened</div></div>
-  <div class="lg-tile bad"><div class="l">Median backlog age</div><div class="v">{{ $data['median_age'] !== null ? number_format($data['median_age']) . ' d' : '—' }}</div><div class="s">of open files</div></div>
+  <div class="lg-tile bad"><div class="l">Median backlog age</div><div class="v">{{ $data['median_age'] !== null ? number_format($data['median_age']) . ' d' : '—' }}</div><div class="s">of open files opened in {{ $periodLabel }}</div></div>
 </div>
 
 <div class="lg-card">
@@ -61,7 +61,7 @@
       @else Older mix unchanged @endif
       <span style="font-weight:500;color:#7c7466"> · 90+ share {{ $pct($b['mix']['90+'] ?? 0) }} → {{ $pct($tdy['mix']['90+'] ?? 0) }} · backlog {{ number_format($b['n']) }} → {{ number_format($tdy['n']) }} files</span>
     </div>
-    <p style="font-size:11px;color:#7c7466;margin:8px 0 0">Baseline: {{ $data['baseline_label'] }}. Both bars are the files open on that date, aged from their opening date.</p>
+    <p style="font-size:11px;color:#7c7466;margin:8px 0 0">Baseline: {{ $data['baseline_label'] }}. Both bars cover only files opened in {{ $periodLabel }}, aged from their opening date.</p>
   @else
     <p style="color:#7c7466;font-size:12px">No backlog data.</p>
   @endif
@@ -77,7 +77,7 @@
         <div class="lg-tile"><div class="l">Closures per working day</div><div class="v">{{ $cl['per_working_day'] !== null ? number_format($cl['per_working_day'], 2) : '—' }}</div><div class="s">{{ $cl['working_days'] }} working days</div></div>
         <div class="lg-tile"><div class="l">Median days to close</div><div class="v">{{ $cl['median_days_to_close'] !== null ? number_format($cl['median_days_to_close']) . ' d' : '—' }}</div><div class="s">files closed in period</div></div>
       </div>
-      <p style="font-size:11px;color:#7c7466;margin:10px 0 0">In play = {{ number_format($cl['backlog_start']) }} open at the start + {{ number_format($cl['opened']) }} opened during the period. Backlog moved {{ number_format($cl['backlog_start']) }} → {{ number_format($cl['backlog_end']) }}.</p>
+      <p style="font-size:11px;color:#7c7466;margin:10px 0 0">In play = {{ number_format($cl['backlog_start']) }} open at the start + {{ number_format($cl['opened']) }} opened during the period. All-years backlog moved {{ number_format($cl['backlog_start']) }} → {{ number_format($cl['backlog_end']) }}.</p>
     @endif
   </div>
   <div class="lg-card">
@@ -94,7 +94,7 @@
 </div>
 
 <div class="lg-card">
-  <h3>Backlog ageing · open files as of {{ $tdy['as_of'] ?? '' }} <span style="float:right;font-weight:500;text-transform:none;letter-spacing:0;color:#7c7466;font-size:11px">click a bucket, then a customer</span></h3>
+  <h3>Backlog ageing · files opened in {{ $periodLabel }} still open on {{ $tdy['as_of'] ?? '' }} <span style="float:right;font-weight:500;text-transform:none;letter-spacing:0;color:#7c7466;font-size:11px">click a bucket, then a customer</span></h3>
   <div class="lg-tiles" style="margin:0 0 10px">
     @foreach (($data['cum'] ?? []) as $k => $n)
       <div class="lg-tile bad"><div class="l">{{ $k }} days</div><div class="v">{{ number_format($n) }}</div>

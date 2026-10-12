@@ -29,7 +29,7 @@
     <div class="v5-card__sub">backlog as of {{ $lf['today']['as_of'] ?? '' }} · flow inside the period</div>
   </div></div>
   <div class="v5-card__b"><div class="lgd-tiles">
-    <div class="lgd-tile bad"><div class="l">Open files</div><div class="v">{{ $n($lf['open_now'] ?? 0) }}</div><div class="s">as of period end</div></div>
+    <div class="lgd-tile bad"><div class="l">Open files</div><div class="v">{{ $n($lf['open_now'] ?? 0) }}</div><div class="s">opened in the period, still open</div></div>
     <div class="lgd-tile"><div class="l">Opened</div><div class="v">{{ $n($lf['opened'] ?? 0) }}</div><div class="s">in period</div></div>
     <div class="lgd-tile bad"><div class="l">Closed</div><div class="v">{{ $n($lf['closed'] ?? 0) }}</div><div class="s">vs {{ $n($lf['opened'] ?? 0) }} opened</div></div>
     <div class="lgd-tile bad"><div class="l">Median backlog age</div><div class="v">{{ ($lf['median_age'] ?? null) !== null ? $n($lf['median_age']) . ' d' : '—' }}</div><div class="s">of open files</div></div>
