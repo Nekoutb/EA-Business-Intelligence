@@ -220,20 +220,25 @@ class DashboardController extends Controller
             $ctx = app(TenantContext::class);
             $lt  = $ctx->has() ? $ctx->tenant() : null;
             $ltData = $lt ? \App\Services\LogisticsOpsService::dataTenant((int) $lt->id) : 0;
-            if ($lt && \App\Services\LogisticsOpsService::available($ltData)) {
+            // Clearance-application tenants (LOGISTICS_SOURCE=clearance) read
+            // the cards from Odoo; the rest from the dossier warehouse.
+            $clr = \App\Services\Clearance\ClearanceOps::enabled();
+            if ($lt && ($clr || \App\Services\LogisticsOpsService::available($ltData))) {
                 $on    = fn (string $k) => $lt->dashboardKpiEnabled($k);
                 $grain = in_array($type, ['mtd', 'month'], true) ? 'day' : 'month';
-                $svc   = new \App\Services\LogisticsOpsService($ltData);
+                $sp    = $clr ? 'clr_' : '';
+                $svcF  = $clr ? fn () => \App\Services\Clearance\ClearanceOps::forWindow($from, $to)
+                              : fn () => new \App\Services\LogisticsOpsService($ltData);
                 $pk    = md5(json_encode($period)) . '_' . $grain;
                 $logistics = [
                     'files'   => ($on('logi_file_summary') || $on('logi_closure_rate'))
-                        ? ea_cached('logi_dossiers_v4_' . $pk, fn () => $svc->dossiers($from, $to, $grain)) : null,
+                        ? ea_cached($sp . 'logi_dossiers_v4_' . $pk, fn () => $svcF()->dossiers($from, $to, $grain)) : null,
                     'oop'     => $on('logi_oop_summary')
-                        ? ea_cached('logi_oop_v2_' . md5(json_encode($period)), fn () => $svc->oopCompliance($from, $to)) : null,
+                        ? ea_cached($sp . 'logi_oop_v2_' . md5(json_encode($period)), fn () => $svcF()->oopCompliance($from, $to)) : null,
                     'volumes' => $on('logi_volume_trend')
-                        ? ea_cached('logi_volumes_v2_' . md5(json_encode($period)) . '_' . $grain, fn () => $svc->volumes($from, $to, $grain)) : null,
+                        ? ea_cached($sp . 'logi_volumes_v2_' . md5(json_encode($period)) . '_' . $grain, fn () => $svcF()->volumes($from, $to, $grain)) : null,
                     'unbilled' => $on('logi_unbilled_debours')
-                        ? ea_cached('logi_unbilled_deb_v1_' . md5(json_encode($period)), fn () => $svc->unbilledDebours($from, $to)) : null,
+                        ? ea_cached($sp . 'logi_unbilled_deb_v1_' . md5(json_encode($period)), fn () => $svcF()->unbilledDebours($from, $to)) : null,
                 ];
                 if (count(array_filter($logistics, fn ($v) => $v !== null)) === 0) $logistics = null;
             }

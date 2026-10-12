@@ -23,13 +23,26 @@ class LogisticsOpsController extends Controller
         return [LogisticsOpsService::dataTenant($tenantId), $from, $to, $label, $period];
     }
 
+    /**
+     * Files / OOP / Volumes source: Odoo's clearance application when the
+     * tenant has LOGISTICS_SOURCE=clearance, else the dossier warehouse.
+     * The source is part of every cache key.
+     */
+    private function src(int $tenantId, \DateTimeImmutable $from, \DateTimeImmutable $to): array
+    {
+        return \App\Services\Clearance\ClearanceOps::enabled()
+            ? [fn () => \App\Services\Clearance\ClearanceOps::forWindow($from, $to), 'clr_']
+            : [fn () => new LogisticsOpsService($tenantId), ''];
+    }
+
     public function dossiers(Request $request)
     {
         [$tenantId, $from, $to, $label, $period] = $this->ctx($request);
         // Yearly windows list openings per month, monthly ones per day.
         $grain = in_array((string) ($period['type'] ?? 'ytd'), ['mtd', 'month'], true) ? 'day' : 'month';
-        $key  = 'logi_dossiers_v4_' . md5(json_encode($period)) . '_' . $grain;
-        $data = ea_cached($key, fn () => (new LogisticsOpsService($tenantId))->dossiers($from, $to, $grain));
+        [$svc, $sp] = $this->src($tenantId, $from, $to);
+        $key  = $sp . 'logi_dossiers_v4_' . md5(json_encode($period)) . '_' . $grain;
+        $data = ea_cached($key, fn () => $svc()->dossiers($from, $to, $grain));
         return view('logistics.dossiers', [
             'data' => $data, 'active' => 'logistics_dossiers', 'period' => $period, 'periodLabel' => $label,
         ]);
@@ -72,8 +85,9 @@ class LogisticsOpsController extends Controller
     public function oop(Request $request)
     {
         [$tenantId, $from, $to, $label, $period] = $this->ctx($request);
-        $key  = 'logi_oop_v2_' . md5(json_encode($period));
-        $data = ea_cached($key, fn () => (new LogisticsOpsService($tenantId))->oopCompliance($from, $to));
+        [$svc, $sp] = $this->src($tenantId, $from, $to);
+        $key  = $sp . 'logi_oop_v2_' . md5(json_encode($period));
+        $data = ea_cached($key, fn () => $svc()->oopCompliance($from, $to));
         return view('logistics.oop', [
             'data' => $data, 'active' => 'logistics_oop', 'period' => $period, 'periodLabel' => $label,
         ]);
@@ -88,8 +102,9 @@ class LogisticsOpsController extends Controller
         // the chart's resolution rather than the period.
         $monthly = in_array((string) ($period['type'] ?? 'ytd'), ['mtd', 'month'], true);
         $grain   = $monthly ? ($request->query('g') === 'week' ? 'week' : 'day') : 'month';
-        $key  = 'logi_volumes_v2_' . md5(json_encode($period)) . '_' . $grain;
-        $data = ea_cached($key, fn () => (new LogisticsOpsService($tenantId))->volumes($from, $to, $grain));
+        [$svc, $sp] = $this->src($tenantId, $from, $to);
+        $key  = $sp . 'logi_volumes_v2_' . md5(json_encode($period)) . '_' . $grain;
+        $data = ea_cached($key, fn () => $svc()->volumes($from, $to, $grain));
         return view('logistics.volumes', [
             'data' => $data, 'active' => 'logistics_volumes', 'period' => $period, 'periodLabel' => $label,
             'grain' => $grain, 'grainChoice' => $monthly,
