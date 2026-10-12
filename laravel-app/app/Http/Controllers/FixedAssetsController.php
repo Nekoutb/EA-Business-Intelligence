@@ -11,7 +11,7 @@ class FixedAssetsController extends Controller
     {
         $data = null; $error = null;
         try {
-            $data = ea_cached('fa', fn() =>
+            $data = ea_cached('fa_v2', fn() =>
                 (new FixedAssetsService(OdooFactory::fromConfig()))->analyze());
         } catch (\Throwable $e) { $error = $e->getMessage(); }
 
