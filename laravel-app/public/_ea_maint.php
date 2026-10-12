@@ -1459,6 +1459,36 @@ try {
             echo json_encode($J, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE | JSON_PARTIAL_OUTPUT_ON_ERROR);
             break;
 
+        case 'assetprobe':
+            // Read-only: account.asset shape on this tenant's Odoo — fields,
+            // counts by state, a sample, and the depreciation-move link.
+            $slug = (string) ($_GET['tenant'] ?? 'elimelec');
+            $tenant = App\Models\Tenant::where('slug', $slug)->first();
+            if (!$tenant) { ln("no tenant '{$slug}'"); break; }
+            app(App\Tenancy\TenantContext::class)->set($tenant);
+            $client = App\Odoo\OdooFactory::fromConfig();
+            try {
+                $fg = $client->callModel('account.asset', 'fields_get', ['attributes' => ['type', 'string', 'relation', 'selection']]);
+            } catch (\Throwable $e) { ln('fields_get failed: ' . $e->getMessage()); break; }
+            $keep = [];
+            foreach ($fg as $k => $f) {
+                if (in_array($f['type'], ['one2many', 'many2many', 'binary', 'html'], true) && !in_array($k, ['depreciation_move_ids', 'original_move_line_ids'], true)) continue;
+                if (str_starts_with($k, 'message_') || str_starts_with($k, 'activity_') || str_starts_with($k, 'website_')) continue;
+                $keep[] = $k;
+                $sel = isset($f['selection']) && is_array($f['selection']) ? ' [' . implode(',', array_map(fn ($s) => $s[0], $f['selection'])) . ']' : '';
+                ln(sprintf('  %-34s %-10s %s%s%s', $k, $f['type'], $f['string'] ?? '', isset($f['relation']) ? ' → ' . $f['relation'] : '', $sel));
+            }
+            try {
+                foreach ((array) $client->callModel('account.asset', 'read_group', ['domain' => [], 'fields' => ['original_value:sum'], 'groupby' => ['state'], 'lazy' => false]) as $g) {
+                    ln('state ' . json_encode($g['state'] ?? null) . ': ' . ($g['__count'] ?? '?') . ' assets, original ' . number_format((float) ($g['original_value'] ?? 0)));
+                }
+            } catch (\Throwable $e) { ln('read_group: ' . $e->getMessage()); }
+            $sampleFields = array_values(array_intersect($keep, ['name', 'state', 'original_value', 'book_value', 'value_residual', 'salvage_value', 'acquisition_date', 'prorata_date', 'method', 'method_number', 'method_period', 'account_asset_id', 'account_depreciation_id', 'account_depreciation_expense_id', 'model_id', 'asset_group_id', 'disposal_date', 'already_depreciated_amount_import', 'company_id', 'analytic_distribution']));
+            try {
+                foreach ($client->searchRead('account.asset', [], $sampleFields, ['limit' => 5, 'order' => 'original_value desc']) as $a) ln(json_encode($a, JSON_UNESCAPED_UNICODE));
+            } catch (\Throwable $e) { ln('sample: ' . $e->getMessage()); }
+            break;
+
         case 'fileref':
             // Read-only: which field on class-70 GL lines carries the invoice
             // reference (files = distinct references). ?tenant=&year=
