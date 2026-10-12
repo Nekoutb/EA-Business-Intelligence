@@ -280,6 +280,10 @@ final class ProfitLossService
             'cogs'              => $cogs,
             'opex'              => $opex,
             'd_and_a'           => $da,
+            // Same figure under the key the waterfalls (and the demo facts)
+            // read — they looked for `depreciation` only, so live D&A
+            // (class 68) was charted as 0 and EBITDA → Net didn't bridge.
+            'depreciation'      => $da,
             'gross_profit'      => $grossProfit,
             'ebitda'            => $ebitda,
             'ebit'              => $ebit,
@@ -294,7 +298,7 @@ final class ProfitLossService
     private function emptyResult(): array
     {
         $zero = [
-            'revenue' => 0.0, 'cogs' => 0.0, 'opex' => 0.0, 'd_and_a' => 0.0,
+            'revenue' => 0.0, 'cogs' => 0.0, 'opex' => 0.0, 'd_and_a' => 0.0, 'depreciation' => 0.0,
             'gross_profit' => 0.0, 'ebitda' => 0.0, 'ebit' => 0.0, 'net_profit' => 0.0,
             'gross_margin_pct' => 0.0, 'ebitda_margin_pct' => 0.0,
             'ebit_margin_pct' => 0.0, 'net_margin_pct' => 0.0,

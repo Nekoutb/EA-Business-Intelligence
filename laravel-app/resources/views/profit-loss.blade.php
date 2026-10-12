@@ -199,13 +199,13 @@
         <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4 mb-6">
             <x-kpi title="Revenue"      :value="ea_money_short((float)($cur['revenue'] ?? 0), $ccy)" color="indigo"/>
             <x-kpi title="Gross Profit" :value="ea_money_short((float)($cur['gross_profit'] ?? 0), $ccy)"
-                   :sub="'GM ' . number_format((float)($cur['gross_margin'] ?? 0), 1) . '%'" color="emerald"/>
+                   :sub="'GM ' . number_format((float)($cur['gross_margin_pct'] ?? $cur['gross_margin'] ?? 0), 1) . '%'" color="emerald"/>
             <x-kpi title="EBITDA"       :value="ea_money_short((float)($cur['ebitda'] ?? 0), $ccy)"
-                   :sub="number_format((float)($cur['ebitda_margin'] ?? 0), 1) . '%'" color="indigo"/>
+                   :sub="number_format((float)($cur['ebitda_margin_pct'] ?? $cur['ebitda_margin'] ?? 0), 1) . '%'" color="indigo"/>
             <x-kpi title="EBIT"         :value="ea_money_short((float)($cur['ebit'] ?? 0), $ccy)"
-                   :sub="number_format((float)($cur['ebit_margin'] ?? 0), 1) . '%'" color="amber"/>
+                   :sub="number_format((float)($cur['ebit_margin_pct'] ?? $cur['ebit_margin'] ?? 0), 1) . '%'" color="amber"/>
             <x-kpi title="Net Profit"   :value="ea_money_short((float)($cur['net_profit'] ?? 0), $ccy)"
-                   :sub="number_format((float)($cur['net_margin'] ?? 0), 1) . '%'"
+                   :sub="number_format((float)($cur['net_margin_pct'] ?? $cur['net_margin'] ?? 0), 1) . '%'"
                    :color="($cur['net_profit'] ?? 0) >= 0 ? 'emerald' : 'rose'"/>
             <x-kpi title="OpEx"         :value="ea_money_short((float)($cur['opex'] ?? 0), $ccy)" color="slate"/>
         </div>
@@ -225,7 +225,7 @@
                 ['Gross Profit', +c.gross_profit || 0, '#10b981'],
                 ['– OpEx',       -(+c.opex       || 0), '#fb923c'],
                 ['EBITDA',       +c.ebitda       || 0, '#6366f1'],
-                ['– D&A',        -(+c.depreciation || 0), '#f87171'],
+                ['– D&A',        -(+(c.d_and_a ?? c.depreciation) || 0), '#f87171'],
                 ['EBIT',         +c.ebit         || 0, '#f59e0b'],
                 ['– Tax/Int',    -((+c.tax || 0)+(+c.interest || 0)), '#f87171'],
                 ['Net Profit',   +c.net_profit   || 0, (+c.net_profit||0)>=0 ? '#10b981' : '#ef4444'],

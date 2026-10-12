@@ -933,7 +933,7 @@
       { name: 'GP',     value: +pl.gross_profit  || 0,           type: 'sub'   },
       { name: 'OPEX',   value: -Math.abs(+pl.opex || 0),         type: 'out'   },
       { name: 'EBITDA', value: +pl.ebitda        || 0,           type: (+pl.ebitda || 0) >= 0 ? 'sub' : 'sub-' },
-      { name: 'D&A+T',  value: -Math.abs((+pl.depreciation || 0) + (+pl.tax || 0) + (+pl.interest || 0)), type: 'out' },
+      { name: 'D&A+T',  value: -Math.abs((+(pl.d_and_a ?? pl.depreciation) || 0) + (+pl.tax || 0) + (+pl.interest || 0)), type: 'out' },
       { name: 'NP',     value: +pl.net_profit    || 0,           type: (+pl.net_profit || 0) >= 0 ? 'sub' : 'tot-' },
     ];
     const ph = [], pos = [], neg = [];
