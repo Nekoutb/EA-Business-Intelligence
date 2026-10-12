@@ -1459,6 +1459,33 @@ try {
             echo json_encode($J, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE | JSON_PARTIAL_OUTPUT_ON_ERROR);
             break;
 
+        case 'fileref':
+            // Read-only: which field on class-70 GL lines carries the invoice
+            // reference (files = distinct references). ?tenant=&year=
+            $slug = (string) ($_GET['tenant'] ?? 'elimelec');
+            $tenant = App\Models\Tenant::where('slug', $slug)->first();
+            if (!$tenant) { ln("no tenant '{$slug}'"); break; }
+            app(App\Tenancy\TenantContext::class)->set($tenant);
+            $client = App\Odoo\OdooFactory::fromConfig();
+            $year = (int) ($_GET['year'] ?? date('Y'));
+            $ids = array_map(fn ($a) => (int) $a['id'], $client->searchRead('account.account', [['code', '=like', '70%']], ['id'], []));
+            $lines = $client->searchRead('account.move.line', [
+                ['parent_state', '=', 'posted'], ['account_id', 'in', $ids],
+                ['date', '>=', $year . '-01-01'], ['date', '<=', $year . '-12-31'],
+            ], ['move_id', 'move_name', 'ref', 'name', 'date', 'balance', 'account_id', 'partner_id'], ['limit' => 20000, 'order' => 'date asc, id asc']);
+            ln(count($lines) . ' class-70 lines in ' . $year);
+            foreach (['move_name', 'ref', 'name'] as $f) {
+                $vals = array_filter(array_map(fn ($l) => is_string($l[$f] ?? null) ? trim($l[$f]) : '', $lines));
+                ln(sprintf('%-10s non-empty %5d  distinct %5d', $f, count($vals), count(array_unique($vals))));
+            }
+            $mv = array_unique(array_map(fn ($l) => is_array($l['move_id']) ? $l['move_id'][0] : 0, $lines));
+            ln('distinct move_id ' . count($mv));
+            foreach (array_slice($lines, 0, 25) as $l) {
+                ln(sprintf('%s | %-14s | %-22s | ref=%-22s | name=%s | %s | %s', $l['date'], is_array($l['account_id']) ? mb_substr($l['account_id'][1], 0, 14) : '', (string) $l['move_name'],
+                    mb_substr((string) ($l['ref'] ?: ''), 0, 22), mb_substr((string) ($l['name'] ?: ''), 0, 50), number_format((float) $l['balance']), is_array($l['partner_id']) ? mb_substr($l['partner_id'][1], 0, 20) : '-'));
+            }
+            break;
+
         case 'whtenants':
             // Read-only: every tenant row plus logistics/GL fact counts per
             // tenant_id (including ids whose tenant row no longer exists).
