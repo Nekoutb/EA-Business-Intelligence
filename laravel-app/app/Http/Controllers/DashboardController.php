@@ -110,7 +110,7 @@ class DashboardController extends Controller
             // default) — the underlying Odoo work is non-trivial.
             try {
                 $extraKpis = \Illuminate\Support\Facades\Cache::remember(
-                    ea_cache_prefix() . "dash_kpis_v3_{$year}", 1800,
+                    ea_cache_prefix() . "dash_kpis_v4_{$year}", 1800,
                     fn () => $this->buildExtraKpis($client, $year)
                 );
             } catch (\Throwable $e) {
@@ -343,6 +343,49 @@ class DashboardController extends Controller
                 'higher_better' => $hb,
                 'series'        => array_values($byMonth),   // 0-indexed Jan..Dec
             ];
+        }
+
+        // File-based tenants (KPI_FILE_REF_FIELD set — clearing agents): the
+        // per-scan pair is meaningless; replace it, in place, with Revenue /
+        // file and Cost / file (cumulative YTD: class 7 ÷ files, class 6 ÷
+        // files, files = distinct invoice references on class-70 lines).
+        $refField = (string) config_env('KPI_FILE_REF_FIELD', '');
+        if (in_array($refField, \App\Services\FileUnitEconomics::FIELDS, true)) {
+            try {
+                $fe = (new \App\Services\FileUnitEconomics($client, $refField))->ytdByMonth($year);
+                $revFile = $costFile = array_fill(1, 12, null);
+                for ($m = 1; $m <= $fe['last']; $m++) {
+                    $f = (int) $fe['months'][$m]['files'];
+                    if ($f > 0) {
+                        $revFile[$m]  = $fe['months'][$m]['revenue'] / $f;
+                        $costFile[$m] = $fe['months'][$m]['cost'] / $f;
+                    }
+                }
+                $fileDefs = [
+                    'rev_per_file'  => ['Revenue / file', true,  $revFile],
+                    'cost_per_file' => ['Cost / file',    false, $costFile],
+                ];
+                $swapped = [];
+                foreach ($out as $key => $kpi) {
+                    if ($key === 'cost_per_scan') continue;
+                    if ($key === 'rev_per_scan') {
+                        foreach ($fileDefs as $fk => [$label, $hb, $byMonth]) {
+                            [$val, $prev] = $lastTwo($byMonth);
+                            $swapped[$fk] = [
+                                'label' => $label, 'value' => $val, 'prev' => $prev, 'fmt' => 'money',
+                                'ccy' => $ccy, 'unit' => 'file', 'higher_better' => $hb,
+                                'series' => array_values($byMonth),
+                                'files' => $fe['last'] ? (int) $fe['months'][$fe['last']]['files'] : 0,
+                            ];
+                        }
+                        continue;
+                    }
+                    $swapped[$key] = $kpi;
+                }
+                $out = $swapped;
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning('file KPIs failed', ['error' => $e->getMessage()]);
+            }
         }
         return $out;
     }

@@ -283,6 +283,8 @@ final class BudgetService
     public const KPI_BUDGET_KEYS = [
         'rev_per_scan',
         'cost_per_scan',
+        'rev_per_file',
+        'cost_per_file',
         'ebitda_margin',
         'net_margin',
         'dso',

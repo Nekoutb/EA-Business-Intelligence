@@ -742,7 +742,7 @@
         @endphp
         <div class="strip__c">
             <div class="strip__l">{{ $kpi['label'] }}</div>
-            <div class="strip__v">{{ $fmtKpi($val, $kpi) }}</div>
+            <div class="strip__v" @if (isset($kpi['files'])) title="Year to date · {{ number_format((int) $kpi['files']) }} files (distinct invoice references on class 70)" @endif>{{ $fmtKpi($val, $kpi) }}</div>
             <div class="strip__m">
                 @if ($better === null)
                     <span style="color: var(--text-faint);">— vs last mo</span>
@@ -777,7 +777,7 @@
         ];
     }
     $unitOf = fn ($kpi) => ($kpi['fmt'] ?? '') === 'days' ? 'days'
-        : (($kpi['fmt'] ?? '') === 'money' ? (($kpi['ccy'] ?? ($ccy ?? 'XAF')) . '/scan') : '%');
+        : (($kpi['fmt'] ?? '') === 'money' ? (($kpi['ccy'] ?? ($ccy ?? 'XAF')) . '/' . ($kpi['unit'] ?? 'scan')) : '%');
 @endphp
 <section class="kpanel">
     <div class="kpanel__h">
