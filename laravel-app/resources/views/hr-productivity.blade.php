@@ -37,7 +37,7 @@
         <x-kpi title="Employee cost YTD" :value="$m($k['cost_ytd'])" :sub="'66: ' . $m($k['cost_66_ytd']) . ' · 625: ' . $m($k['cost_625_ytd'])" color="indigo" />
         <x-kpi title="Employees" :value="number_format((int) $k['employees'])" sub="profiles in the system" color="slate" />
         <x-kpi title="Files created YTD" :value="number_format((int) $k['files_ytd'])" sub="clearance files" color="slate" />
-        <x-kpi title="Employee cost / file YTD" :value="$m($k['per_file_ytd'])" :sub="$m($k['cost_ytd']) . ' ÷ ' . number_format((int) $k['files_ytd']) . ' files'" color="amber" />
+        <x-kpi title="Employee cost / file YTD" :value="$m($k['per_file_ytd'])" :sub="$k['per_file_ytd'] === null ? 'no month with both cost and files yet' : $m($k['per_file_basis']['cost']) . ' ÷ ' . number_format((int) $k['per_file_basis']['files']) . ' files'" color="amber" />
     </div>
 
     {{-- Sandbox 1 — Employee cost per employee --}}

@@ -68,7 +68,9 @@ final class HrProductivityService
 
         // 4. Department membership from the clearance role groups.
         $deptUsers = []; $roles = [];
-        $adminUids = [];
+        // Odoo's built-in superuser (1) and Administrator (2) are system
+        // accounts that hold every role — not department members.
+        $adminUids = [1 => true, 2 => true];
         foreach ($this->odoo->searchRead('res.users', [['login', '=', 'admin']], ['id'], []) as $u) $adminUids[(int) $u['id']] = true;
         $groups = $this->odoo->searchRead('res.groups', [['name', '!=', false]], ['name', 'user_ids'], ['limit' => 2000]);
         foreach (self::DEPARTMENTS as $dept => $patterns) {
@@ -125,8 +127,9 @@ final class HrProductivityService
             $rows[$ym] = [
                 'label' => $label, 'cost_66' => $cost66[$ym] ?? 0.0, 'cost_625' => $cost625[$ym] ?? 0.0, 'cost' => $cost,
                 'employees' => $emp, 'files' => $filesM[$ym],
-                'per_employee' => $emp > 0 ? $cost / $emp : null,
-                'per_file' => $filesM[$ym] > 0 ? $cost / $filesM[$ym] : null,
+                // A month whose payroll is not booked yet has no ratio (not 0).
+                'per_employee' => $emp > 0 && abs($cost) > 0.5 ? $cost / $emp : null,
+                'per_file' => $filesM[$ym] > 0 && abs($cost) > 0.5 ? $cost / $filesM[$ym] : null,
             ];
         }
         $dept = [];
@@ -143,6 +146,11 @@ final class HrProductivityService
 
         $totCost = array_sum(array_column($rows, 'cost'));
         $totFiles = array_sum($filesM);
+        // Year-to-date per file only over months carrying both cost and files,
+        // so costs of months without files are not spread over later files.
+        $pfCost = 0.0; $pfFiles = 0;
+        foreach ($rows as $r) if ($r['per_file'] !== null) { $pfCost += $r['cost']; $pfFiles += $r['files']; }
+        if ($totFiles > 0 && $pfFiles === 0) $notes[] = 'Employee cost and clearance files do not overlap yet: payroll is booked for months with no files, and months with files have no payroll posted yet.';
         $empNow = count($empDates);
         $last = end($rows) ?: [];
         if (count($empDates) && min($empDates) > $from) {
@@ -156,7 +164,8 @@ final class HrProductivityService
                 'employees' => $empNow, 'files_ytd' => $totFiles,
                 // YTD averages: cost per employee per month on average headcount; cost per file over the year.
                 'per_employee_month' => $this->avg(array_column($rows, 'per_employee')),
-                'per_file_ytd' => $totFiles > 0 ? $totCost / $totFiles : null,
+                'per_file_ytd' => $pfFiles > 0 ? $pfCost / $pfFiles : null,
+                'per_file_basis' => ['cost' => $pfCost, 'files' => $pfFiles],
                 'last_month' => $last,
             ],
             'notes' => $notes,
