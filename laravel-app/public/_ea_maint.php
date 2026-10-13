@@ -3191,7 +3191,9 @@ try {
             app()->instance('request', $req);
             try { $s = app('session')->driver(); $s->start(); $req->setLaravelSession($s); } catch (\Throwable $e) {}
             try { (new App\Http\Middleware\RememberPeriod())->handle($req, fn ($r) => new Illuminate\Http\Response()); } catch (\Throwable $e) {}
-            $u = App\Models\User::where('tenant_id', $tenant->id)->orderBy('id')->first();
+            // &as=<user id> renders as that tenant user (role-dependent UI).
+            $u = App\Models\User::where('tenant_id', $tenant->id)
+                ->when(isset($_GET['as']), fn ($q) => $q->where('id', (int) $_GET['as']))->orderBy('id')->first();
             if ($u) { try { Illuminate\Support\Facades\Auth::login($u); } catch (\Throwable $e) {} }
             // Put a flash in the session to exercise the toast path too
             // (skip with &noflash=1 to isolate flash-dependent failures).
