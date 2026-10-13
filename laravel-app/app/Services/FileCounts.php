@@ -21,6 +21,17 @@ final class FileCounts
 {
     private static array $memo = [];
 
+    /** Plain-language description of where the file count comes from. */
+    public static function basisLabel(): string
+    {
+        if (self::clearanceMode()) {
+            $g = new \DateTimeImmutable(self::goLive());
+            return 'Productivity settings to ' . $g->format('M Y') . ', clearance files from ' . $g->modify('+1 day')->format('M Y');
+        }
+        return ProductivityOverrides::enabled() ? 'invoice references on class 70, manual months from Productivity settings'
+                                                : 'distinct invoice references on class 70';
+    }
+
     public static function clearanceMode(): bool
     {
         return strtolower((string) config_env('FILE_COUNT_SOURCE', '')) === 'clearance';

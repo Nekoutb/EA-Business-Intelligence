@@ -397,7 +397,7 @@
         <div class="rv-card__h">
             <div>
                 <div class="rv-card__t">Revenue streams · by nature</div>
-                <div class="rv-card__sub">One stream per revenue account (class 7) · since 1 Jan {{ $year }} · per file = stream ÷ {{ number_format($nFiles) }} files (distinct invoice references on class 70)</div>
+                <div class="rv-card__sub">One stream per revenue account (class 7) · since 1 Jan {{ $year }} · per file = stream ÷ {{ number_format($nFiles) }} files ({{ \App\Services\FileCounts::basisLabel() }})</div>
             </div>
         </div>
         <div class="rv-card__b">

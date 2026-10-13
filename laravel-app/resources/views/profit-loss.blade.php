@@ -46,7 +46,7 @@
             $u  = $isFile ? 'file' : 'scan';
             $us = $isFile ? 'files' : 'scans';
             $scanSub = $isFile
-                ? 'distinct invoice references on class 70'
+                ? \App\Services\FileCounts::basisLabel()
                 : number_format($n) . ' scans' . ($n > 0
                     ? ' · ' . number_format($scans['containers'] ?? 0) . ' cont · ' . number_format($scans['vehicles'] ?? 0) . ' veh · ' . number_format($scans['wood'] ?? 0) . ' wood'
                     : '');

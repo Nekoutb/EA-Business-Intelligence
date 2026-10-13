@@ -170,7 +170,7 @@ final class HrProductivityService
         if ($totFiles > 0 && $pfFiles === 0) $notes[] = 'Employee cost and clearance files do not overlap yet: payroll is booked for months with no files, and months with files have no payroll posted yet.';
         $empNow = count($empDates);
         $last = end($rows) ?: [];
-        if (count($empDates) && min($empDates) > $from) {
+        if (count($empDates) && min($empDates) > $from && !$ovEmp) {
             $notes[] = 'Employee profiles were created on ' . min($empDates) . '; earlier months have no headcount, so cost per employee starts from then.';
         }
 
