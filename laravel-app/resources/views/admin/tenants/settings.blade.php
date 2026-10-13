@@ -270,7 +270,7 @@
     <div class="panel p-5">
         <h2 class="text-sm font-semibold text-slate-900 mb-3">General</h2>
         <div class="grid md:grid-cols-2 gap-4">
-            @foreach (['REVENUE_SOURCE','APP_BRAND'] as $k)
+            @foreach (['REVENUE_SOURCE','APP_BRAND','UNIT_NAME','FILE_COUNT_SOURCE'] as $k)
                 <label class="block">
                     <span class="text-[11px] font-medium text-slate-600 font-mono">{{ $k }}</span>
                     <input name="{{ $k }}" type="text" value="{{ $values[$k] }}"

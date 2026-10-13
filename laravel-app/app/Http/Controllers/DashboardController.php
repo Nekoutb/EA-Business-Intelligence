@@ -59,7 +59,7 @@ class DashboardController extends Controller
             // amount_untaxed_signed (HT). Old cached entries are stale and
             // would otherwise serve TTC figures for up to 5 minutes after
             // deploy. The new prefix bypasses them cleanly.
-            $data   = ea_cached("revenue_ht_v1_{$cacheTag}",
+            $data   = ea_cached("revenue_ht_v1_{$cacheTag}" . (\App\Support\UnitName::get() === 'file' ? '_f' . \App\Services\ProductivityOverrides::fingerprint() . (\App\Services\FileCounts::clearanceMode() ? 'c' : '') : ''),
                 fn () => (new RevenueService($client, $source))->analyze(null, $period));
             try {
                 $pl = ea_cached("pl_{$cacheTag}",
@@ -118,7 +118,7 @@ class DashboardController extends Controller
                 $kpiOnOff = fn (string $k) => !$kt || $kt->dashboardKpiEnabled($kpiToggle[$k]);
                 $withFiles = $kpiOnOff('rev_per_file') || $kpiOnOff('cost_per_file');
                 $extraKpis = \Illuminate\Support\Facades\Cache::remember(
-                    ea_cache_prefix() . "dash_kpis_v5_{$year}_" . ($withFiles ? 'f' : 's') . '_' . \App\Services\ProductivityOverrides::fingerprint(), 1800,
+                    ea_cache_prefix() . "dash_kpis_v5_{$year}_" . ($withFiles ? 'f' : 's') . '_' . \App\Services\ProductivityOverrides::fingerprint() . (\App\Services\FileCounts::clearanceMode() ? 'c' : ''), 1800,
                     fn () => $this->buildExtraKpis($client, $year, $withFiles)
                 );
                 $extraKpis = array_filter($extraKpis,

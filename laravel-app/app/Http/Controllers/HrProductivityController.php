@@ -15,7 +15,7 @@ class HrProductivityController extends Controller
         $year = max(2018, min($thisYear, (int) $request->query('year', $thisYear)));
         $data = null; $error = null;
         try {
-            $data = ea_cached('hr_productivity_v2_' . $year . '_' . \App\Services\ProductivityOverrides::fingerprint(),
+            $data = ea_cached('hr_productivity_v2_' . $year . '_' . \App\Services\ProductivityOverrides::fingerprint() . (\App\Services\FileCounts::clearanceMode() ? 'c' : ''),
                 fn () => (new HrProductivityService(OdooFactory::fromConfig()))->analyze($year));
         } catch (\Throwable $e) {
             $error = ea_safe_error($e, 'hr.productivity', 'Could not load productivity data.');

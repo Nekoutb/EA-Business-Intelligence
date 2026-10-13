@@ -120,11 +120,18 @@ final class HrProductivityService
 
         // Manual monthly figures (Productivity settings) replace the system
         // counts for the months they cover.
-        $ovFiles = ProductivityOverrides::files($year);
         $ovEmp   = ProductivityOverrides::employees($year);
         $natures = ProductivityOverrides::naturesByMonth($year);
-        foreach ($ovFiles as $ym => $n) if (isset($filesM[$ym])) $filesM[$ym] = $n;
+        // Files: the shared rule (FileCounts) — manual figures before the
+        // clearance go-live, clearance files after (FILE_COUNT_SOURCE).
+        $fc = FileCounts::monthly($this->odoo, $from, $to, $filesM);
+        $filesM = $fc['by_month'];
+        $ovFiles = array_filter($fc['source'], fn ($s) => $s === 'manual');
         if ($ovFiles || $ovEmp) $notes[] = 'Months marked ✎ use manual figures from Productivity settings.';
+        if (in_array('clearance', $fc['source'], true)) $notes[] = 'From ' . date('F Y', strtotime(FileCounts::goLive() . ' +1 day')) . ', files are counted from the clearance application.';
+        if (!ProductivityOverrides::enabled() && ProductivityOverrides::rows((int) (optional(tenant())->id ?? 0), $year)) {
+            $notes[] = 'Manual figures are saved in Productivity settings but switched off — tick "Use manual figures" to apply them.';
+        }
 
         // ── Assemble monthly series ──
         $rows = [];

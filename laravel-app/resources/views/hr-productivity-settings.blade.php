@@ -17,6 +17,12 @@
     </div>
 @endunless
 
+@if (!$manual && count($rows))
+    <div class="bg-warm-50 border border-warm-200 text-[#7a5a1a] rounded-lg p-3 text-[12px] mb-4">
+        <b>Manual figures are saved but switched off.</b> They are not used in any computation until "Use manual figures" is ticked and saved.
+    </div>
+@endif
+
 <form method="POST" action="{{ tenant_url('/hr/productivity-settings') }}">
     @csrf
     <input type="hidden" name="year" value="{{ $year }}">

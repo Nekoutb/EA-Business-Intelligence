@@ -46,7 +46,7 @@ class TenantController extends Controller
         'ERP2_DB_DRIVER', 'ERP2_DB_HOST', 'ERP2_DB_PORT', 'ERP2_DB_DATABASE',
         'ERP2_DB_USERNAME', 'ERP2_DB_PASSWORD', 'ERP2_DB_SSLMODE', 'ERP2_DB_SCHEMA',
         'ERP2_API_URL', 'ERP2_API_KEY_HEADER', 'ERP2_API_KEY', 'ERP2_API_DATABASE',
-        'REVENUE_SOURCE', 'APP_BRAND',
+        'REVENUE_SOURCE', 'APP_BRAND', 'UNIT_NAME', 'FILE_COUNT_SOURCE',
     ];
 
     /** ERP systems selectable in the integration UI. 'other' unlocks a free-text name. */

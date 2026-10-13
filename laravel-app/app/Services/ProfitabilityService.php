@@ -102,10 +102,10 @@ final class ProfitabilityService
         if ($this->fileRefField !== null) {
             $fue = new FileUnitEconomics($this->odoo, $this->fileRefField);
             $fileMonths = $fue->refsByMonth($from->format('Y-m-d'), $to->format('Y-m-d'));
-            $fc  = FileUnitEconomics::countsWithOverrides($fileMonths, $from->format('Y-m-d'), $to->format('Y-m-d'));
+            $fc  = $fue->countsWithOverrides($fileMonths, $from->format('Y-m-d'), $to->format('Y-m-d'));
             $nf  = $fc['total'];
             $fileCountM = $fc['by_month'];
-            $pyF = FileUnitEconomics::countsWithOverrides($fue->refsByMonth($pyFrom->format('Y-m-d'), $pyTo->format('Y-m-d')),
+            $pyF = $fue->countsWithOverrides($fue->refsByMonth($pyFrom->format('Y-m-d'), $pyTo->format('Y-m-d')),
                 $pyFrom->format('Y-m-d'), $pyTo->format('Y-m-d'))['total'];
             if ($fc['manual']) $notes[] = 'File counts include manual monthly figures from Productivity settings.';
             $scans   = ['total' => $nf,  'total_ex_empty' => $nf,  'available' => true];

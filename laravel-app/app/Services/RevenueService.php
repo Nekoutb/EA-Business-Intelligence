@@ -563,6 +563,18 @@ final class RevenueService
             $entries = count((array) $this->odoo->callModel('account.move.line', 'read_group', [
                 'domain' => $domain, 'fields' => [], 'groupby' => ['move_id'], 'lazy' => false,
             ]));
+
+            // Unit = file: count files with the shared rule (invoice
+            // references on class 70, manual figures, clearance files).
+            if (\App\Support\UnitName::get() === 'file') {
+                try {
+                    $ref = (string) config_env('KPI_FILE_REF_FIELD', 'move_name');
+                    $ref = in_array($ref, FileUnitEconomics::FIELDS, true) ? $ref : 'move_name';
+                    $fue = new FileUnitEconomics($this->odoo, $ref);
+                    $f = $from->format('Y-m-d'); $t = $to->format('Y-m-d');
+                    $entries = (int) $fue->countsWithOverrides($fue->refsByMonth($f, $t), $f, $t)['total'];
+                } catch (\Throwable $e) { /* keep the entry count */ }
+            }
         }
 
         for ($cursor = $from; $cursor <= $to; $cursor = $cursor->modify('+1 day')) {
@@ -1021,6 +1033,20 @@ final class RevenueService
 
     private function fetchCogsAndSalesDiscounts(\DateTimeImmutable $from, \DateTimeImmutable $to): float
     {
+        // Unit = file: cost per file uses every class-6 cost, like the
+        // dashboard's Cost / file.
+        if (\App\Support\UnitName::get() === 'file') {
+            try {
+                $ids = array_map(fn ($a) => (int) $a['id'], $this->odoo->searchRead('account.account', [['code', '=like', '6%']], ['id'], []));
+                if (!$ids) return 0.0;
+                $rows = $this->odoo->callModel('account.move.line', 'read_group', [
+                    'domain' => [['parent_state', '=', 'posted'], ['account_id', 'in', $ids],
+                                 ['date', '>=', $from->format('Y-m-d')], ['date', '<=', $to->format('Y-m-d')]],
+                    'fields' => ['balance:sum'], 'groupby' => [], 'lazy' => false,
+                ]);
+                return (float) ($rows[0]['balance'] ?? 0);
+            } catch (\Throwable $e) { return 0.0; }
+        }
         try {
         $accounts = $this->odoo->searchRead('account.account',
             ['|', ['code', 'like', '603%'], ['code', 'like', '7019%']],

@@ -141,6 +141,12 @@
 
   $planRevenue   = $budgetTotals['revenue']   ?? null;
 
+  // Unit of activity (tenant setting UNIT_NAME): outfit, file, scan, …
+  $unitName   = \App\Support\UnitName::get();
+  $unitCap    = ucfirst($unitName);
+  $unitPlural = \App\Support\UnitName::plural();
+  $unitAbbr   = \App\Support\UnitName::abbr();
+
   // Helpers — short formatters consistent with dashboard
   $shortNum = function (float $v) {
       $a = abs($v);
@@ -293,13 +299,13 @@
         <div class="rv-strip__m">{{ $wdSoFar }} working days</div>
     </div>
     <div class="rv-strip__c">
-        <div class="rv-strip__l">OpD · Outfit / Day</div>
+        <div class="rv-strip__l">{{ $unitAbbr['opd'] }} · {{ $unitCap }} / Day</div>
         @php $d = $variance($cur['opd'] ?? null, $prev['opd'] ?? null); @endphp
         <div class="rv-strip__v">{{ number_format((float) ($cur['opd'] ?? 0), 1) }}@if($d!==null)<span class="rv-strip__d {{ $deltaCls($d) }}">{{ $signed($d, 1) }}</span>@endif</div>
-        <div class="rv-strip__m">{{ number_format((int) ($cur['outfits'] ?? 0)) }} outfits</div>
+        <div class="rv-strip__m">{{ number_format((int) ($cur['outfits'] ?? 0)) }} {{ $unitPlural }}</div>
     </div>
     <div class="rv-strip__c">
-        <div class="rv-strip__l">RpO · Rev / Outfit</div>
+        <div class="rv-strip__l">{{ $unitAbbr['rpo'] }} · Rev / {{ $unitCap }}</div>
         @php $d = $variance($cur['rpo'] ?? null, $prev['rpo'] ?? null); @endphp
         <div class="rv-strip__v">{{ $shortNum((float) ($cur['rpo'] ?? 0)) }}<span class="u">{{ $shortUnit((float) ($cur['rpo'] ?? 0)) }}</span>@if($d!==null)<span class="rv-strip__d {{ $deltaCls($d) }}">{{ $signed($d, 1) }}</span>@endif</div>
         <div class="rv-strip__m">unit price</div>
@@ -311,10 +317,10 @@
         <div class="rv-strip__m">{{ number_format((int) ($cur['customers'] ?? 0)) }} customers</div>
     </div>
     <div class="rv-strip__c">
-        <div class="rv-strip__l">CpO · Cost / Outfit</div>
+        <div class="rv-strip__l">{{ $unitAbbr['cpo'] }} · Cost / {{ $unitCap }}</div>
         @php $d = $variance($cur['cpo'] ?? null, $prev['cpo'] ?? null); @endphp
         <div class="rv-strip__v {{ $cpoR > 35 ? 'is-neg' : '' }}">{{ $shortNum((float) ($cur['cpo'] ?? 0)) }}<span class="u">{{ $shortUnit((float) ($cur['cpo'] ?? 0)) }}</span>@if($d!==null)<span class="rv-strip__d {{ $deltaCls($d, true) }}">{{ $signed($d, 1) }}</span>@endif</div>
-        <div class="rv-strip__m">{{ number_format($cpoR, 0) }}% of RpO · target ≤ 35%</div>
+        <div class="rv-strip__m">{{ number_format($cpoR, 0) }}% of {{ $unitAbbr['rpo'] }}{{ $unitName === 'outfit' ? ' · target ≤ 35%' : '' }}</div>
     </div>
 </div>
 

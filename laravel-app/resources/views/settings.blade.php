@@ -90,6 +90,23 @@
                         @endforeach
                     </select>
                 </div>
+                <div>
+                    <label class="block text-xs font-medium text-slate-600 mb-1">Unit of activity</label>
+                    <select name="UNIT_NAME" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white">
+                        @foreach (\App\Support\UnitName::OPTIONS as $v => $l)
+                          <option value="{{ $v }}" {{ (($values['UNIT_NAME'] ?? '') ?: 'outfit') === $v ? 'selected' : '' }}>{{ $l }}</option>
+                        @endforeach
+                    </select>
+                    <p class="text-[11px] text-slate-500 mt-1">Names the unit in Revenue per …, … per day and Cost per … (Revenue page and Dashboard). "File" counts files and uses all class-6 costs.</p>
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-slate-600 mb-1">Number of files</label>
+                    <select name="FILE_COUNT_SOURCE" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white">
+                        @foreach (['' => 'Invoice references on class 70', 'clearance' => 'Clearance files (Productivity settings before go-live)'] as $v => $l)
+                          <option value="{{ $v }}" {{ ($values['FILE_COUNT_SOURCE'] ?? '') === $v ? 'selected' : '' }}>{{ $l }}</option>
+                        @endforeach
+                    </select>
+                </div>
             </div>
         </div>
 

@@ -335,8 +335,8 @@
   // Default: all 4 visible (no behavioural change for existing tenants).
   $unitDataFull = [
       'rpd' => ['RPD · Rev/Day',      [(float) ($prev['rpd']          ?? 0), (float) ($cur['rpd']          ?? 0)]],
-      'opd' => ['OPD · Outfit/Day',   [(float) ($prev['opd']          ?? 0), (float) ($cur['opd']          ?? 0)]],
-      'rpo' => ['RPO · Rev/Outfit',   [(float) ($prev['rpo']          ?? 0), (float) ($cur['rpo']          ?? 0)]],
+      'opd' => [strtoupper(\App\Support\UnitName::abbr()['opd']) . ' · ' . ucfirst(\App\Support\UnitName::get()) . '/Day',   [(float) ($prev['opd']          ?? 0), (float) ($cur['opd']          ?? 0)]],
+      'rpo' => [strtoupper(\App\Support\UnitName::abbr()['rpo']) . ' · Rev/' . ucfirst(\App\Support\UnitName::get()),   [(float) ($prev['rpo']          ?? 0), (float) ($cur['rpo']          ?? 0)]],
       'rpc' => ['RPC · Rev/Customer', [(float) ($prev['per_customer'] ?? 0), (float) ($cur['per_customer'] ?? 0)]],
   ];
   $unitData = [];

@@ -21,7 +21,7 @@ class RevenueController extends Controller
         // Cache key prefix bumped to revenue_ht_v1_ on 2026-05-11 when
         // RevenueService switched amount_total_signed (TTC) → amount_untaxed_signed
         // (HT). Bypasses stale TTC-era cache entries on deploy.
-        $cacheKey = 'revenue_ht_v1_' . md5(json_encode($period));
+        $cacheKey = 'revenue_ht_v1_' . md5(json_encode($period)) . (\App\Support\UnitName::get() === 'file' ? '_f' . \App\Services\ProductivityOverrides::fingerprint() . (\App\Services\FileCounts::clearanceMode() ? 'c' : '') : '');
         $data  = null; $error = null; $profitability = null;
         try {
             $client = OdooFactory::fromConfig();
@@ -45,7 +45,7 @@ class RevenueController extends Controller
                 $ref = (string) config_env('KPI_FILE_REF_FIELD', 'move_name');
                 $ref = in_array($ref, \App\Services\FileUnitEconomics::FIELDS, true) ? $ref : 'move_name';
                 $sFrom = $to->format('Y') . '-01-01';
-                $streams = ea_cached('rev_streams_v1_' . md5(json_encode($period)) . '_' . \App\Services\ProductivityOverrides::fingerprint(), fn () =>
+                $streams = ea_cached('rev_streams_v1_' . md5(json_encode($period)) . '_' . \App\Services\ProductivityOverrides::fingerprint() . (\App\Services\FileCounts::clearanceMode() ? 'c' : ''), fn () =>
                     (new \App\Services\FileUnitEconomics(OdooFactory::fromConfig(), $ref))->streams($sFrom, $to->format('Y-m-d')));
             } catch (\Throwable $e) { $streams = null; }
         }

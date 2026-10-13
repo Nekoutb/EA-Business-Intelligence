@@ -51,7 +51,7 @@ class ProfitabilityController extends Controller
                 // file instead of per scan.
                 $ref = (string) config_env('KPI_FILE_REF_FIELD', '');
                 $ref = in_array($ref, \App\Services\FileUnitEconomics::FIELDS, true) ? $ref : null;
-                $data = ea_cached("profitability_v4_{$year}_" . ($ref ?? 'scan') . '_' . \App\Services\ProductivityOverrides::fingerprint(), function () use ($client, $year, $assumptions, $ref) {
+                $data = ea_cached("profitability_v4_{$year}_" . ($ref ?? 'scan') . '_' . \App\Services\ProductivityOverrides::fingerprint() . (\App\Services\FileCounts::clearanceMode() ? 'c' : ''), function () use ($client, $year, $assumptions, $ref) {
                     return (new ProfitabilityService($client, $ref))->analyze($year, $assumptions);
                 });
             } catch (\Throwable $e) {
