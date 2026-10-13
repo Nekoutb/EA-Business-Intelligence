@@ -1567,6 +1567,8 @@ Route::prefix('t/{tenant}')
                 Route::get('/payables',          [PayablesController::class, 'index'])->middleware('module:payables');
                 Route::get('/fixed-assets',      [FixedAssetsController::class, 'index'])->middleware('module:fixed_assets');
                 Route::get('/hr/productivity',   fn () => app(\App\Http\Controllers\HrProductivityController::class)->index(request()))->middleware('module:hr_productivity');
+                Route::get('/hr/productivity-settings',  fn () => app(\App\Http\Controllers\ProductivitySettingsController::class)->show(request()))->middleware('module:hr_productivity_settings');
+                Route::post('/hr/productivity-settings', fn () => app(\App\Http\Controllers\ProductivitySettingsController::class)->save(request()))->middleware('module:hr_productivity_settings');
                 Route::get('/inventory',         [InventoryController::class, 'index'])->middleware('module:inventory');
                 Route::get('/operations',        [OperationsController::class, 'index'])->middleware('module:operations');
                 Route::get('/logistics/dossiers', [\App\Http\Controllers\LogisticsOpsController::class, 'dossiers'])->middleware('module:logistics_dossiers');

@@ -118,15 +118,25 @@ final class HrProductivityService
             } while (count($batch) === 5000);
         }
 
+        // Manual monthly figures (Productivity settings) replace the system
+        // counts for the months they cover.
+        $ovFiles = ProductivityOverrides::files($year);
+        $ovEmp   = ProductivityOverrides::employees($year);
+        $natures = ProductivityOverrides::naturesByMonth($year);
+        foreach ($ovFiles as $ym => $n) if (isset($filesM[$ym])) $filesM[$ym] = $n;
+        if ($ovFiles || $ovEmp) $notes[] = 'Months marked ✎ use manual figures from Productivity settings.';
+
         // ── Assemble monthly series ──
         $rows = [];
         foreach ($months as $ym => $label) {
             $end = (new \DateTimeImmutable($ym . '-01'))->format('Y-m-t');
-            $emp = count(array_filter($empDates, fn ($d) => $d !== '' && $d <= $end));
+            $emp = $ovEmp[$ym] ?? count(array_filter($empDates, fn ($d) => $d !== '' && $d <= $end));
             $cost = ($cost66[$ym] ?? 0.0) + ($cost625[$ym] ?? 0.0);
             $rows[$ym] = [
                 'label' => $label, 'cost_66' => $cost66[$ym] ?? 0.0, 'cost_625' => $cost625[$ym] ?? 0.0, 'cost' => $cost,
                 'employees' => $emp, 'files' => $filesM[$ym],
+                'manual_employees' => isset($ovEmp[$ym]), 'manual_files' => isset($ovFiles[$ym]),
+                'natures' => $natures[$ym] ?? [],
                 // A month whose payroll is not booked yet has no ratio (not 0).
                 'per_employee' => $emp > 0 && abs($cost) > 0.5 ? $cost / $emp : null,
                 'per_file' => $filesM[$ym] > 0 && abs($cost) > 0.5 ? $cost / $filesM[$ym] : null,
@@ -159,9 +169,10 @@ final class HrProductivityService
 
         return [
             'year' => $year, 'months' => $months, 'rows' => $rows, 'departments' => $dept,
+            'nature_names' => array_values(array_unique(array_merge(ProductivityOverrides::natures(), ...array_map('array_keys', array_values($natures) ?: [[]])))),
             'kpis' => [
                 'cost_ytd' => $totCost, 'cost_66_ytd' => array_sum(array_column($rows, 'cost_66')), 'cost_625_ytd' => array_sum(array_column($rows, 'cost_625')),
-                'employees' => $empNow, 'files_ytd' => $totFiles,
+                'employees' => ($ovEmp && ($lastEmp = end($rows)['employees'] ?? null) !== null) ? $lastEmp : $empNow, 'files_ytd' => $totFiles,
                 // YTD averages: cost per employee per month on average headcount; cost per file over the year.
                 'per_employee_month' => $this->avg(array_column($rows, 'per_employee')),
                 'per_file_ytd' => $pfFiles > 0 ? $pfCost / $pfFiles : null,

@@ -45,7 +45,7 @@ class RevenueController extends Controller
                 $ref = (string) config_env('KPI_FILE_REF_FIELD', 'move_name');
                 $ref = in_array($ref, \App\Services\FileUnitEconomics::FIELDS, true) ? $ref : 'move_name';
                 $sFrom = $to->format('Y') . '-01-01';
-                $streams = ea_cached('rev_streams_v1_' . md5(json_encode($period)), fn () =>
+                $streams = ea_cached('rev_streams_v1_' . md5(json_encode($period)) . '_' . \App\Services\ProductivityOverrides::fingerprint(), fn () =>
                     (new \App\Services\FileUnitEconomics(OdooFactory::fromConfig(), $ref))->streams($sFrom, $to->format('Y-m-d')));
             } catch (\Throwable $e) { $streams = null; }
         }

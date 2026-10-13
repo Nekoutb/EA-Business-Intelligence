@@ -102,8 +102,12 @@ final class ProfitabilityService
         if ($this->fileRefField !== null) {
             $fue = new FileUnitEconomics($this->odoo, $this->fileRefField);
             $fileMonths = $fue->refsByMonth($from->format('Y-m-d'), $to->format('Y-m-d'));
-            $nf  = FileUnitEconomics::distinctCount($fileMonths);
-            $pyF = FileUnitEconomics::distinctCount($fue->refsByMonth($pyFrom->format('Y-m-d'), $pyTo->format('Y-m-d')));
+            $fc  = FileUnitEconomics::countsWithOverrides($fileMonths, $from->format('Y-m-d'), $to->format('Y-m-d'));
+            $nf  = $fc['total'];
+            $fileCountM = $fc['by_month'];
+            $pyF = FileUnitEconomics::countsWithOverrides($fue->refsByMonth($pyFrom->format('Y-m-d'), $pyTo->format('Y-m-d')),
+                $pyFrom->format('Y-m-d'), $pyTo->format('Y-m-d'))['total'];
+            if ($fc['manual']) $notes[] = 'File counts include manual monthly figures from Productivity settings.';
             $scans   = ['total' => $nf,  'total_ex_empty' => $nf,  'available' => true];
             $pyScans = ['total' => $pyF, 'total_ex_empty' => $pyF, 'available' => true];
         } else {
@@ -148,7 +152,7 @@ final class ProfitabilityService
             $mFrom = new \DateTimeImmutable(sprintf('%04d-%02d-01', $year, $m));
             $mTo   = $mFrom->modify('last day of this month')->setTime(23, 59, 59);
             $c     = $fileMonths !== null
-                ? ['total' => count($fileMonths[$mFrom->format('Y-m')] ?? []), 'total_ex_empty' => count($fileMonths[$mFrom->format('Y-m')] ?? [])]
+                ? ['total' => $fileCountM[$mFrom->format('Y-m')] ?? 0, 'total_ex_empty' => $fileCountM[$mFrom->format('Y-m')] ?? 0]
                 : $this->scanCounts($mFrom, $mTo);
             $sc    = (int) $c['total'];
             $scEx  = (int) $c['total_ex_empty'];

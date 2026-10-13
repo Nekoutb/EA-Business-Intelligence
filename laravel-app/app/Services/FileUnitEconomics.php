@@ -59,6 +59,9 @@ final class FileUnitEconomics
         }
         $newFiles = array_fill(1, 12, 0);
         foreach ($firstSeen as $m) if ($m >= 1 && $m <= 12) $newFiles[$m]++;
+        // Manual monthly file counts (Productivity settings) replace the
+        // system count for the months they cover.
+        foreach (ProductivityOverrides::files($year) as $ym => $n) $newFiles[(int) substr($ym, 5, 2)] = $n;
 
         $out = []; $r = $c = 0.0; $f = 0; $last = 0;
         for ($m = 1; $m <= 12; $m++) {
@@ -103,6 +106,25 @@ final class FileUnitEconomics
         $all = [];
         foreach ($refsByMonth as $set) $all += $set;
         return count($all);
+    }
+
+    /**
+     * File count per month and for the window, with manual monthly counts
+     * (Productivity settings) replacing the system count where entered.
+     * @return array{by_month:array<string,int>, total:int, manual:bool}
+     */
+    public static function countsWithOverrides(array $refsByMonth, string $from, string $to): array
+    {
+        $by = [];
+        for ($m = new \DateTimeImmutable(substr($from, 0, 7) . '-01'); $m->format('Y-m') <= substr($to, 0, 7); $m = $m->modify('+1 month')) {
+            $by[$m->format('Y-m')] = count($refsByMonth[$m->format('Y-m')] ?? []);
+        }
+        $ov = [];
+        foreach (array_unique([substr($from, 0, 4), substr($to, 0, 4)]) as $y) $ov += ProductivityOverrides::files((int) $y);
+        $ov = array_intersect_key($ov, $by);
+        if (!$ov) return ['by_month' => $by, 'total' => self::distinctCount($refsByMonth), 'manual' => false];
+        foreach ($ov as $ym => $n) $by[$ym] = $n;
+        return ['by_month' => $by, 'total' => array_sum($by), 'manual' => true];
     }
 
     /**
@@ -151,6 +173,14 @@ final class FileUnitEconomics
 
         $out['files_total'] = count($allRefs);
         foreach ($refsByMonth as $ym => $set) if (isset($out['files_by_month'][$ym])) $out['files_by_month'][$ym] = count($set);
+        // Manual monthly file counts (Productivity settings) replace the
+        // system count for the months they cover; the total then follows.
+        $ov = ProductivityOverrides::files((int) substr($from, 0, 4));
+        if ($ov) {
+            foreach ($ov as $ym => $n) if (isset($out['files_by_month'][$ym])) $out['files_by_month'][$ym] = $n;
+            $out['files_total'] = array_sum($out['files_by_month']);
+            $out['manual'] = true;
+        }
         $out['total'] = array_sum(array_column($byAcc, 'total'));
 
         foreach ($byAcc as $a) {

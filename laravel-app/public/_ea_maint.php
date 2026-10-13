@@ -3175,6 +3175,7 @@ try {
             // Two pages outside the warm list, so admin/tenant settings
             // views can be verified on production like any report page.
             if (!$def && $want === 'settings')       $def = ['controller' => App\Http\Controllers\SettingsController::class, 'action' => 'show', 'query' => []];
+            if (!$def && $want === 'productivity-settings') $def = ['controller' => App\Http\Controllers\ProductivitySettingsController::class, 'action' => 'show', 'query' => []];
             if (!$def && $want === 'admin-settings') $def = ['controller' => App\Http\Controllers\Admin\TenantController::class, 'action' => 'showSettings', 'query' => [], 'params' => ['tenant' => $tenant]];
             // Clearance pack pages: page=clearance-r1 … clearance-r11.
             if (!$def && preg_match('/^clearance-(r\d{1,2})$/', $want, $cm)) $def = ['controller' => App\Http\Controllers\ClearanceReportsController::class, 'action' => 'show', 'query' => [], 'params' => ['code' => $cm[1]]];

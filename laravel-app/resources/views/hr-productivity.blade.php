@@ -99,13 +99,40 @@
             @foreach ($data['rows'] as $r)
                 <tr class="border-t border-[#f1ede5]">
                     <td class="{{ $td }}">{{ $r['label'] }}</td><td class="{{ $td }} {{ $num }}">{{ $x($r['cost_66']) }}</td><td class="{{ $td }} {{ $num }}">{{ $x($r['cost_625']) }}</td>
-                    <td class="{{ $td }} {{ $num }} font-semibold">{{ $x($r['cost']) }}</td><td class="{{ $td }} {{ $num }}">{{ $r['employees'] }}</td>
-                    <td class="{{ $td }} {{ $num }}">{{ $x($r['per_employee']) }}</td><td class="{{ $td }} {{ $num }}">{{ $r['files'] }}</td><td class="{{ $td }} {{ $num }}">{{ $x($r['per_file']) }}</td>
+                    <td class="{{ $td }} {{ $num }} font-semibold">{{ $x($r['cost']) }}</td><td class="{{ $td }} {{ $num }}">{{ $r['employees'] }}{{ !empty($r['manual_employees']) ? ' ✎' : '' }}</td>
+                    <td class="{{ $td }} {{ $num }}">{{ $x($r['per_employee']) }}</td><td class="{{ $td }} {{ $num }}">{{ $r['files'] }}{{ !empty($r['manual_files']) ? ' ✎' : '' }}</td><td class="{{ $td }} {{ $num }}">{{ $x($r['per_file']) }}</td>
                 </tr>
             @endforeach
             </tbody>
         </table>
     </div>
+
+    @if (!empty($data['nature_names']))
+        <div class="bg-white rounded-xl border border-[#e8e4de] shadow-sm mb-4 overflow-x-auto">
+            <h2 class="text-sm font-semibold text-[#1e3d44] px-5 pt-4">Files by nature</h2>
+            <p class="text-[11px] text-[#7c7466] px-5 pb-2">Entered in Productivity settings.</p>
+            <table class="w-full">
+                <thead class="bg-[#faf9f6]"><tr>
+                    <th class="{{ $th }} text-left">Nature</th>
+                    @foreach ($data['months'] as $ym => $label)<th class="{{ $th }} {{ $num }}">{{ $label }}</th>@endforeach
+                    <th class="{{ $th }} {{ $num }}">YTD</th>
+                </tr></thead>
+                <tbody>
+                @foreach ($data['nature_names'] as $nat)
+                    @php $tot = 0; @endphp
+                    <tr class="border-t border-[#f1ede5]">
+                        <td class="{{ $td }} font-semibold">{{ $nat }}</td>
+                        @foreach ($data['rows'] as $r)
+                            @php $v = $r['natures'][$nat] ?? null; $tot += (int) $v; @endphp
+                            <td class="{{ $td }} {{ $num }}">{{ $v === null ? '—' : number_format($v) }}</td>
+                        @endforeach
+                        <td class="{{ $td }} {{ $num }} font-semibold">{{ number_format($tot) }}</td>
+                    </tr>
+                @endforeach
+                </tbody>
+            </table>
+        </div>
+    @endif
 
     @if (!empty($data['notes']))
         <div class="bg-[#f5f2ec] border border-[#e8e4de] text-[#7c7466] rounded-lg p-3 text-[11px]"><span class="font-semibold">Notes:</span> {{ implode(' ', $data['notes']) }}</div>

@@ -118,7 +118,7 @@ class DashboardController extends Controller
                 $kpiOnOff = fn (string $k) => !$kt || $kt->dashboardKpiEnabled($kpiToggle[$k]);
                 $withFiles = $kpiOnOff('rev_per_file') || $kpiOnOff('cost_per_file');
                 $extraKpis = \Illuminate\Support\Facades\Cache::remember(
-                    ea_cache_prefix() . "dash_kpis_v5_{$year}_" . ($withFiles ? 'f' : 's'), 1800,
+                    ea_cache_prefix() . "dash_kpis_v5_{$year}_" . ($withFiles ? 'f' : 's') . '_' . \App\Services\ProductivityOverrides::fingerprint(), 1800,
                     fn () => $this->buildExtraKpis($client, $year, $withFiles)
                 );
                 $extraKpis = array_filter($extraKpis,
