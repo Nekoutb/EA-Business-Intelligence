@@ -1459,6 +1459,28 @@ try {
             echo json_encode($J, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE | JSON_PARTIAL_OUTPUT_ON_ERROR);
             break;
 
+        case 'prodcheck':
+            // Read-only: saved productivity settings + what HR Productivity
+            // computes from them right now (no cache).
+            $slug = (string) ($_GET['tenant'] ?? 'elimelec');
+            $tenant = App\Models\Tenant::where('slug', $slug)->first();
+            if (!$tenant) { ln("no tenant '{$slug}'"); break; }
+            app(App\Tenancy\TenantContext::class)->set($tenant);
+            $y = (int) ($_GET['year'] ?? date('Y'));
+            ln('PRODUCTIVITY_MANUAL=' . var_export(config_env('PRODUCTIVITY_MANUAL'), true) . ' enabled=' . var_export(App\Services\ProductivityOverrides::enabled(), true));
+            ln('PRODUCTIVITY_FILE_NATURES=' . var_export(config_env('PRODUCTIVITY_FILE_NATURES'), true));
+            foreach (Illuminate\Support\Facades\DB::table('tenant_productivity_months')->where('tenant_id', $tenant->id)->orderBy('year')->orderBy('month')->get() as $r) {
+                ln(sprintf('  %d-%02d employees=%s files=%s natures=%s updated=%s', $r->year, $r->month, var_export($r->employees, true), var_export($r->files, true), (string) $r->natures, $r->updated_at));
+            }
+            ln('fingerprint=' . App\Services\ProductivityOverrides::fingerprint());
+            try {
+                $a = (new App\Services\HrProductivityService(App\Odoo\OdooFactory::fromConfig()))->analyze($y);
+                foreach ($a['rows'] as $ym => $r) ln(sprintf('  %s cost=%s emp=%s%s files=%s%s per_emp=%s per_file=%s', $ym, number_format($r['cost']), $r['employees'], $r['manual_employees'] ? '*' : '', $r['files'], $r['manual_files'] ? '*' : '', var_export($r['per_employee'], true), var_export($r['per_file'], true)));
+                ln('kpis: ' . json_encode(array_diff_key($a['kpis'], ['last_month' => 1])));
+                ln('notes: ' . implode(' | ', $a['notes']));
+            } catch (\Throwable $e) { ln('analyze failed: ' . get_class($e) . ': ' . $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine()); }
+            break;
+
         case 'hrprobe':
             // Read-only: clearance role groups and members, employee count,
             // and who acts on files (chatter / tracking authors).
