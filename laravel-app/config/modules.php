@@ -762,6 +762,20 @@ return [
             'status'  => 'coming_soon',
         ],
         [
+            // Productivity — employee cost (66 + 625) per employee and per
+            // clearance file, and files acted on per department (clearance
+            // role groups), tracked monthly. Reads Odoo directly.
+            'key'     => 'hr_productivity',
+            'service' => 'human_resources',
+            'label'   => 'Productivity',
+            'url'     => '/hr/productivity',
+            'active'  => 'hr_productivity',
+            'icon'    => 'M13 7h8m0 0v8m0-8l-8 8-4-4-6 6',
+            'default' => false,
+            'core'    => false,
+            'status'  => 'live',
+        ],
+        [
             'key'     => 'clr_r1',
             'service' => 'clearance_pack',
             'label'   => 'Executive Cockpit',
