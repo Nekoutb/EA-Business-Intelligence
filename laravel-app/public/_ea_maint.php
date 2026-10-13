@@ -1459,6 +1459,39 @@ try {
             echo json_encode($J, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE | JSON_PARTIAL_OUTPUT_ON_ERROR);
             break;
 
+        case 'hrprobe':
+            // Read-only: clearance role groups and members, employee count,
+            // and who acts on files (chatter / tracking authors).
+            $slug = (string) ($_GET['tenant'] ?? 'elimelec');
+            $tenant = App\Models\Tenant::where('slug', $slug)->first();
+            if (!$tenant) { ln("no tenant '{$slug}'"); break; }
+            app(App\Tenancy\TenantContext::class)->set($tenant);
+            $client = App\Odoo\OdooFactory::fromConfig();
+            try {
+                $gf = array_keys((array) $client->callModel('res.groups', 'fields_get', ['attributes' => ['type']]));
+                ln('res.groups fields: ' . implode(',', array_intersect($gf, ['name', 'full_name', 'category_id', 'user_ids', 'users', 'privilege_id', 'all_user_ids'])));
+                $uf = in_array('user_ids', $gf, true) ? 'user_ids' : 'users';
+                $groups = $client->searchRead('res.groups', ['|', '|', '|', '|', '|', ['name', 'ilike', 'head of'], ['name', 'ilike', 'agent'],
+                    ['name', 'ilike', 'customer service'], ['name', 'ilike', 'transit'], ['name', 'ilike', 'operations'], ['name', 'ilike', 'logistics']],
+                    array_values(array_intersect(['id', 'name', 'full_name', $uf], $gf)), ['limit' => 80]);
+                foreach ($groups as $g) ln(sprintf('group %-4d %-45s users=%s', $g['id'], mb_substr((string) ($g['full_name'] ?? $g['name']), 0, 45), json_encode($g[$uf] ?? [])));
+            } catch (\Throwable $e) { ln('groups: ' . $e->getMessage()); }
+            try {
+                ln('hr.employee active: ' . $client->searchCount('hr.employee', []) . ' · all incl. archived: ' . $client->searchCount('hr.employee', ['|', ['active', '=', true], ['active', '=', false]]));
+                foreach ($client->searchRead('hr.employee', [], ['name', 'user_id', 'create_date', 'department_id', 'job_title'], ['limit' => 60]) as $e) {
+                    ln(sprintf('  emp %-28s user=%-22s created=%s dept=%s job=%s', mb_substr($e['name'], 0, 28), is_array($e['user_id']) ? mb_substr($e['user_id'][1], 0, 22) : '-', substr((string) $e['create_date'], 0, 10), is_array($e['department_id']) ? $e['department_id'][1] : '-', (string) ($e['job_title'] ?: '')));
+                }
+                ln('res.users (internal): ' . $client->searchCount('res.users', [['share', '=', false]]));
+            } catch (\Throwable $e) { ln('employees: ' . $e->getMessage()); }
+            foreach (['logistics.file', 'logistics.expense'] as $model) {
+                try {
+                    $rows = $client->callModel('mail.message', 'read_group', ['domain' => [['model', '=', $model]], 'fields' => [], 'groupby' => ['author_id', 'message_type'], 'lazy' => false]);
+                    ln("messages on {$model}:");
+                    foreach ((array) $rows as $r) ln('   ' . json_encode($r['author_id'] ?? null, JSON_UNESCAPED_UNICODE) . ' ' . ($r['message_type'] ?? '') . ' n=' . ($r['__count'] ?? '?'));
+                } catch (\Throwable $e) { ln("messages {$model}: " . $e->getMessage()); }
+            }
+            break;
+
         case 'assetprobe':
             // Read-only: account.asset shape on this tenant's Odoo — fields,
             // counts by state, a sample, and the depreciation-move link.
