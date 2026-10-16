@@ -6,7 +6,9 @@
 @include('clearance._style')
 <div class="clr">
     @php
-        $qs = $periodParam !== '' ? '?period=' . $periodParam : '';
+        $dayParams = $dayParams ?? [];
+        $qs = $dayParams ? '?' . http_build_query($dayParams) : ($periodParam !== '' ? '?period=' . $periodParam : '');
+        $inp = 'font-size:12px; padding:5px 6px; border:1px solid #E5DED2; border-radius:5px;';
         $titles = collect(\App\Services\Clearance\ClearancePack::REPORTS)->map(fn ($r) => $r[2]);
     @endphp
 
@@ -25,7 +27,14 @@
         <div class="clr-actions">
             <form method="GET" style="display:flex; gap:6px; align-items:center;">
                 <label for="clr-period" class="clr-period">Month</label>
-                <input id="clr-period" type="month" name="period" value="{{ $periodParam }}" style="font-size:12px; padding:5px 6px; border:1px solid #E5DED2; border-radius:5px;">
+                <input id="clr-period" type="month" name="period" value="{{ $periodParam }}" style="{{ $inp }}">
+                <button class="clr-btn" type="submit">Apply</button>
+            </form>
+            <form method="GET" style="display:flex; gap:6px; align-items:center;" title="One day: set From only. A range: set From and To.">
+                <label for="clr-from" class="clr-period">Day</label>
+                <input id="clr-from" type="date" name="from" value="{{ $dayParams['from'] ?? '' }}" max="{{ now('Africa/Douala')->format('Y-m-d') }}" required style="{{ $inp }}">
+                <label for="clr-to" class="clr-period">to</label>
+                <input id="clr-to" type="date" name="to" value="{{ ($dayParams['to'] ?? '') !== ($dayParams['from'] ?? '') ? $dayParams['to'] : '' }}" max="{{ now('Africa/Douala')->format('Y-m-d') }}" style="{{ $inp }}">
                 <button class="clr-btn" type="submit">Apply</button>
             </form>
             <a class="clr-btn" href="{{ tenant_url('/clearance/' . $code . '/export') }}{{ $qs }}">Excel</a>

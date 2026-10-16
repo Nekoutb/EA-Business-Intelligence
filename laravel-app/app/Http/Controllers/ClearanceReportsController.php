@@ -64,7 +64,8 @@ class ClearanceReportsController extends Controller
     }
 
     /**
-     * Build the requested reports. Period: ?period=YYYY-MM, else the master
+     * Build the requested reports. Period: ?from=…&to=… (days), else
+     * ?period=YYYY-MM, else the master
      * filter. Results cache per report + window; a schema failure (missing
      * Odoo field) stops everything with the missing names.
      */
@@ -78,6 +79,20 @@ class ClearanceReportsController extends Controller
         [$from, $to, $label] = ea_resolve_period($today, $period);
         $fromIso = $from->format('Y-m-d');
         $toIso = $to->format('Y-m-d');
+        // Day filter: ?from=YYYY-MM-DD[&to=YYYY-MM-DD] (one day, or a range);
+        // takes precedence over ?period. Clamped to today, swapped if reversed.
+        $dayParams = [];
+        $isDate = fn ($v) => is_string($v) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $v) && \DateTimeImmutable::createFromFormat('!Y-m-d', $v) !== false;
+        $qFrom = $request->query('from');
+        if ($isDate($qFrom)) {
+            $qTo = $isDate($request->query('to')) ? $request->query('to') : $qFrom;
+            if ($qTo < $qFrom) [$qFrom, $qTo] = [$qTo, $qFrom];
+            $qTo = min($qTo, $today->format('Y-m-d'));
+            $qFrom = min($qFrom, $qTo);
+            [$fromIso, $toIso] = [$qFrom, $qTo];
+            $label = $fromIso === $toIso ? 'Selected day' : 'Selected days';
+            $dayParams = ['from' => $fromIso, 'to' => $toIso];
+        }
 
         $source = [
             'db'   => (string) config_env('ODOO_DB', '—'),
@@ -129,7 +144,8 @@ class ClearanceReportsController extends Controller
             'meta' => $source + ['extracted' => $extracted, 'company' => $this->ctx->tenant()->name],
             'enabled' => array_values(array_filter(array_keys(ClearancePack::REPORTS),
                 fn ($c) => $this->ctx->moduleEnabled(ClearancePack::REPORTS[$c][1]))),
-            'periodParam' => (string) $request->query('period', ''),
+            'periodParam' => $dayParams ? '' : (string) $request->query('period', ''),
+            'dayParams' => $dayParams,
         ];
     }
 
