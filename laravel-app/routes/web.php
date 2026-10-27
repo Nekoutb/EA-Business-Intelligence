@@ -74,6 +74,10 @@ Route::get('/login', function () {
    ────────────────────────────────────────────────────────────────────── */
 Route::view('/demo', 'demo')->name('demo');
 
+/* ── Public marketing page (EN/FR) — Business Intelligence showcase.
+   Draft under client review: noindex until approved. ─────────────────── */
+Route::view('/marketing', 'marketing')->name('marketing');
+
 /* ── CSRF token refresh ────────────────────────────────────────────────
    Lightweight GET endpoint that returns the current session's CSRF
    token. Used by long-lived pages (Settings, anything with an AJAX
