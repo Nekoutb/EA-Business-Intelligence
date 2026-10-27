@@ -32,7 +32,7 @@ return [
         'files_opened' => ['activity', 'Files opened', 'int', 'up', 'Clearance files opened in the period (imported legacy and cancelled files excluded).', 'count(file) where date_opened in period', null, null],
         'files_started' => ['activity', 'Files started', 'int', 'up', 'Files on which work started in the period.', 'count(file) where date_started in period', null, null],
         'files_ops_closed' => ['activity', 'Files closed for operations', 'int', 'up', 'Files whose operational work was completed in the period (state OK for Billing reached).', 'count(file) where date_ops_closed in period', null, null],
-        'files_billed' => ['activity', 'Files billed', 'int', 'up', 'Files invoiced in the period. The unit used for every per-file ratio.', 'count(file) where date_billed in period', null, null],
+        'files_billed' => ['activity', 'Files billed', 'int', 'up', 'Files whose first customer invoice is dated in the period: a file is billed as soon as a standing invoice carries it. The unit used for every per-file ratio.', 'count(file) where first standing invoice date in period', null, null],
         'files_closed' => ['activity', 'Files closed', 'int', 'up', 'Files closed for good in the period.', 'count(file) where date_closed in period', null, null],
         'wip_files' => ['activity', 'Files in progress', 'int', null, 'Live files at the end of the period: draft, in progress or OK for billing.', 'count(file) where state in (draft, in_progress, ops_closed)', null, null],
         'eq_containers' => ['activity', 'Equivalent containers handled', 'int', 'up', 'Containers on files opened in the period; non-containerised cargo converted by weight (Settings → tonnes per container).', 'Σ equivalent_container_count of files opened', null, null],
@@ -45,14 +45,16 @@ return [
         'files_per_responsible' => ['productivity', 'Files billed per file owner', 'ratio', 'up', 'Average number of files billed per responsible user who billed at least one.', 'files billed ÷ distinct responsible users', null, null],
         'billing_per_day' => ['productivity', 'Files billed per working day', 'ratio', 'up', 'Billing throughput: files billed per working day (Mon–Fri) of the period.', 'files billed ÷ working days', 3.0, 2.0],
         'disbursements_paid' => ['productivity', 'Disbursements paid', 'int', null, 'Disbursements paid out (cash, bank, mobile money or advance) in the period.', 'count(expense) where date_settled in period', null, null],
+        'keyed_error_pct' => ['productivity', 'Disbursements keyed in error', 'pct', 'down', 'Share of disbursements keyed in the period that were later cancelled as an error (reassignments to another file counted apart).', 'cancelled with reason error ÷ disbursements keyed', 2.0, 5.0],
+        'reassignments' => ['productivity', 'Disbursements reassigned to another file', 'int', 'down', 'Disbursements cancelled in the period because they belonged to another file.', 'count(expense) cancel_reason = reassignment, cancelled in period', 0, 5],
 
         // ── Efficiency & delays ──────────────────────────────────────────
         'turnaround_days' => ['efficiency', 'Overall turnaround (days)', 'days', 'down', 'Average days from commercial invoice received to delivery, for files delivered in the period.', 'avg(overall_turnaround_days) of files delivered in period', 10.0, 15.0],
         'transit_days' => ['efficiency', 'Transit time (days)', 'days', 'down', 'Average transit time per the service type\'s rule, for files whose transit ended in the period.', 'avg(transit_days)', 5.0, 8.0],
         'open_to_start_days' => ['efficiency', 'Opening → work started (days)', 'days', 'down', 'Average days from file opening to work starting (documents and approvals).', 'avg(date_started − date_opened)', 1.0, 3.0],
         'start_to_ops_close_days' => ['efficiency', 'Work → closed for operations (days)', 'days', 'down', 'Average days of operational work on files closed for operations in the period.', 'avg(date_ops_closed − date_started)', 7.0, 12.0],
-        'ops_to_bill_days' => ['efficiency', 'Closed for operations → invoiced (days)', 'days', 'down', 'Average days a finished file waits before it is invoiced. Every day here is cash not yet claimed.', 'avg(date_billed − date_ops_closed)', 2.0, 5.0],
-        'open_to_bill_days' => ['efficiency', 'Opening → invoiced (days)', 'days', 'down', 'End-to-end lead time from opening to invoice, for files billed in the period.', 'avg(date_billed − date_opened)', 12.0, 20.0],
+        'ops_to_bill_days' => ['efficiency', 'Closed for operations → invoiced (days)', 'days', 'down', 'Average days a finished file waits before it is invoiced. Every day here is cash not yet claimed.', 'avg(first invoice date − date_ops_closed)', 2.0, 5.0],
+        'open_to_bill_days' => ['efficiency', 'Opening → invoiced (days)', 'days', 'down', 'End-to-end lead time from opening to invoice, for files billed in the period.', 'avg(first invoice date − date_opened)', 12.0, 20.0],
         'steps_late_pct' => ['efficiency', 'Steps over target', 'pct', 'down', 'Share of measured workflow steps completed in the period that took longer than their configured target (Clearance → Turnaround targets).', 'late steps ÷ completed steps', 10.0, 25.0],
         'expense_cycle_days' => ['efficiency', 'Disbursement request → paid (days)', 'days', 'down', 'Average days from a disbursement request to its payment, for disbursements paid in the period.', 'avg(date_settled − date_requested)', 1.0, 3.0],
         'justification_days' => ['efficiency', 'Advance paid → justified (days)', 'days', 'down', 'Average days staff take to justify an advance, for advances justified in the period.', 'avg(date_justified − date_settled)', 5.0, 10.0],
@@ -74,7 +76,7 @@ return [
         'net_margin_pct' => ['profitability', 'Net margin %', 'pct', 'up', 'Net margin as a share of fee revenue.', 'net margin ÷ fees', 20.0, 10.0],
         'net_margin_per_file' => ['profitability', 'Net margin per file', 'xaf', 'up', 'Average net margin per file billed (fully loaded).', 'contribution per file − operating cost per file', null, null],
         'loss_files_pct' => ['profitability', 'Files billed at a loss', 'pct', 'down', 'Share of files billed whose fees did not cover their share of operating costs and any débours absorbed.', 'files with net margin < 0 ÷ files billed', 10.0, 25.0],
-        'commission_yield_pct' => ['profitability', 'Commission yield on débours', 'pct', 'up', 'Commission invoiced as a share of the débours recharged.', 'commission ÷ débours billed', null, null],
+        'commission_yield_pct' => ['profitability', 'Commission yield on débours', 'pct', 'up', 'Commission invoiced as a share of the débours recharged on invoices.', 'commission lines ÷ débours lines', null, null],
         'debours_engaged' => ['profitability', 'Débours paid out', 'xaf', null, 'Out-of-pocket money paid for clients in the period (reversals deducted). Working capital tied up until recharged.', 'Σ amount of expenses paid in period', null, null],
 
         // ── Collections ──────────────────────────────────────────────────
@@ -83,7 +85,7 @@ return [
         'dso' => ['collections', 'Days sales outstanding', 'days', 'down', 'Days of billing still waiting to be collected, on the last 90 days of clearance invoices (TTC, débours included).', 'open receivables ÷ invoiced TTC over 90 days × 90', 30.0, 60.0],
 
         // ── Leakages & controls ──────────────────────────────────────────
-        'unbilled_debours' => ['leakage', 'Débours not yet recharged', 'xaf', 'down', 'Débours incurred on files already closed for operations or billed that are not on any standing invoice: money spent for clients and not yet claimed.', 'Σ (débours incurred − débours billed) on files OK for billing or closed', 0, 1000000],
+        'unbilled_debours' => ['leakage', 'Débours not yet recharged', 'xaf', 'down', 'Débours incurred on files already invoiced or finished that are not yet on an invoice: money spent for clients and not yet claimed. Débours billed = the débours lines of the file invoices (services lines excluded), credit notes deducted.', 'Σ (débours incurred − débours invoice lines) on files invoiced, OK for billing or closed', 0, 1000000],
         'ops_closed_unbilled' => ['leakage', 'Finished files not invoiced > 5 days', 'int', 'down', 'Files closed for operations more than the trigger days ago and still not invoiced.', 'count(file) state ops_closed and today − date_ops_closed > 5', 0, 3],
         'undercharge' => ['leakage', 'Débours absorbed (recharged below cost)', 'xaf', 'down', 'What the company paid for clients and chose not to recharge, on invoices of the period.', 'Σ negative adjustment lines', 0, 500000],
         'commission_waived' => ['leakage', 'Commission not billed (estimate)', 'xaf', 'down', 'Commission left off files billed in the period (commission skipped, or a rate below the service type\'s), valued at the service type rate on the débours billed.', 'Σ (service rate − billed rate) × débours billed', 0, 250000],

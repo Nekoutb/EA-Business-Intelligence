@@ -25,6 +25,8 @@ final class Dataset
     public array $reasons = [];
     /** @var array<int,string[]> user id → departments */
     public array $deptByUser = [];
+    /** @var array<int,string> user id → name, for role holders */
+    public array $userNames = [];
     /** @var array<string,int> 'Y-m' → manual headcount */
     public array $headcountByMonth = [];
     public int $headcountProfiles = 0;
@@ -84,6 +86,13 @@ final class Dataset
             }
         }
         $s->deptByUser = array_map('array_values', $s->deptByUser);
+        if ($s->deptByUser) {
+            foreach ($d->searchAll('res.users', [['id', 'in', array_keys($s->deptByUser)]], ['name', 'active'], 'role holders') as $u) {
+                $s->userNames[(int) $u['id']] = (string) $u['name'];
+            }
+            // Archived users keep their history but leave the staff list.
+            $s->deptByUser = array_intersect_key($s->deptByUser, $s->userNames);
+        }
 
         // Headcount: Productivity settings when switched on, else employee profiles.
         $y = (int) substr($asOf, 0, 4);

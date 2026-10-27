@@ -30,7 +30,8 @@ return [
         'date_settlement_submitted', 'date_settlement_approved', 'date_settled', 'date_documents_submitted',
         'date_justification_submitted', 'date_justified', 'date_cancelled', 'cancel_reason', 'reassign_file_id',
         'recharge_amount', 'is_billed', 'is_legacy', 'category_is_urgent', 'justification_required',
-        'approved_by_id', 'settled_by_id', 'create_uid',
+        'approved_by_id', 'settled_by_id', 'create_uid', 'settlement_submitted_by_id', 'settlement_approved_by_id',
+        'cancel_requested_by_id', 'cancelled_by_id', 'date_cancel_requested',
     ],
     'logistics.file.reopening' => ['file_id', 'reason_id', 'target_state', 'from_state', 'date', 'user_id'],
     'logistics.file.document'  => ['file_id', 'document_type_id', 'is_mandatory', 'received', 'date_received'],
@@ -53,4 +54,5 @@ return [
     'account.account'        => ['code', 'name'],
     'res.company'            => ['clearance_oop_undercharge_account_id', 'clearance_oop_loss_account_id'],
     'res.groups'             => ['name', 'user_ids'],
+    'res.users'              => ['name', 'active'],
 ];

@@ -40,7 +40,7 @@
     <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3 mb-4">
         @foreach ([['Fees HT', \App\Services\ClearanceIntel\Fmt::xaf($x['fees'] ?? null)], ['Contribution', \App\Services\ClearanceIntel\Fmt::xaf($x['contribution'] ?? null)],
                    ['Operating cost share', \App\Services\ClearanceIntel\Fmt::xaf($x['overhead'] ?? null)], ['Net margin', \App\Services\ClearanceIntel\Fmt::xaf($x['net'] ?? null)],
-                   ['Débours incurred / billed', \App\Services\ClearanceIntel\Fmt::xaf((float) $f['debours_incurred']) . ' / ' . \App\Services\ClearanceIntel\Fmt::xaf((float) $f['debours_billed'])],
+                   ['Débours incurred / billed', \App\Services\ClearanceIntel\Fmt::xaf((float) $f['debours_incurred']) . ' / ' . \App\Services\ClearanceIntel\Fmt::xaf($x['debours_billed'] ?? null)],
                    ['Opening → invoice', isset($x['open_to_bill']) && $x['open_to_bill'] !== null ? $x['open_to_bill'] . ' days' : '—']] as [$l, $v])
             <div class="bg-white rounded-xl border border-[#e8e4de] p-3 shadow-sm">
                 <div class="text-[11px] text-[#7c7466]">{{ $l }}</div>

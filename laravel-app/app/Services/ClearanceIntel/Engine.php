@@ -19,6 +19,8 @@ final class Engine
     private array $events = [];
     /** @var array<int,array> file id → facts */
     public array $facts = [];
+    /** @var array<int,string> file id → local date it was first invoiced */
+    private array $billedDate = [];
     /** @var array<string,?float> 'Y-m' → operating cost per file billed */
     private array $ohPerFile = [];
 
@@ -74,7 +76,7 @@ final class Engine
         };
         $conv($this->ds->turnaround, ['started', 'completed']);
         $conv($this->ds->expenses, ['date_submitted', 'date_approved', 'date_settlement_submitted', 'date_settlement_approved',
-            'date_settled', 'date_documents_submitted', 'date_justification_submitted', 'date_justified', 'date_cancelled']);
+            'date_settled', 'date_documents_submitted', 'date_justification_submitted', 'date_justified', 'date_cancelled', 'date_cancel_requested']);
         $conv($this->ds->tasks, ['date_landed']);
         $conv($this->ds->reopenings, ['date']);
         $conv($this->ds->files, ['date_started', 'date_ops_closed', 'date_billed', 'date_closed', 'commercial_invoice_received',
@@ -145,11 +147,26 @@ final class Engine
         foreach ($this->events as $e) {
             if ($e['file']) $byFile[$e['file']][$e['kind']] = ($byFile[$e['file']][$e['kind']] ?? 0.0) + $e['amount'];
         }
+        // A file is billed once a standing customer invoice carries it: the
+        // billed date is its first invoice's date (the file's own Invoiced On
+        // stamp is used only when no invoice is linked).
+        $firstInv = []; $invCount = [];
+        foreach ($this->ds->moves as $m) {
+            if (($m['move_type'] ?? '') !== 'out_invoice' || !Rules::billStands($m)) continue;
+            $fid = CD::m2oId($m['logistics_file_id'] ?? false);
+            $d = self::d($m['invoice_date'] ?? null);
+            if (!$fid || !$d) continue;
+            $invCount[$fid] = ($invCount[$fid] ?? 0) + 1;
+            if (!isset($firstInv[$fid]) || $d < $firstInv[$fid]) $firstInv[$fid] = $d;
+        }
+        $this->billedDate = [];
+        foreach ($this->ds->files as $id => $f) {
+            $b = $firstInv[$id] ?? self::d($f['date_billed'] ?? null);
+            if ($b) $this->billedDate[$id] = $b;
+        }
         // Operating cost per file billed, per month.
         $billedByMonth = [];
-        foreach ($this->ds->files as $f) {
-            if ($d = self::d($f['date_billed'] ?? null)) $billedByMonth[substr($d, 0, 7)] = ($billedByMonth[substr($d, 0, 7)] ?? 0) + 1;
-        }
+        foreach ($this->billedDate as $d) $billedByMonth[substr($d, 0, 7)] = ($billedByMonth[substr($d, 0, 7)] ?? 0) + 1;
         foreach ($this->ds->overheadByMonth as $ym => $oh) {
             $this->ohPerFile[$ym] = !empty($billedByMonth[$ym]) ? $oh / $billedByMonth[$ym] : null;
         }
@@ -185,14 +202,15 @@ final class Engine
             foreach (self::FEE_KINDS as $fk) $fees += $k[$fk] ?? 0.0;
             $over = $k['overcharge'] ?? 0.0; $under = -($k['undercharge'] ?? 0.0);
             $contribution = $fees + $over - $under;
-            $billed = self::d($f['date_billed'] ?? null);
+            $billed = $this->billedDate[$id] ?? null;
             $oh = $billed ? ($this->ohPerFile[substr($billed, 0, 7)] ?? null) : null;
             $net = $billed && $oh !== null ? $contribution - $oh : null;
 
             $state = (string) ($f['state'] ?? '');
             $incurred = (float) ($f['debours_incurred'] ?? 0);
-            $dbBilled = (float) ($f['debours_billed'] ?? 0);
-            $unbilledDebours = in_array($state, ['ops_closed', 'done'], true) ? max(0.0, $incurred - $dbBilled) : 0.0;
+            // Débours billed = the débours lines of the file's standing invoices, credit notes deducted.
+            $dbBilled = $k['debours'] ?? 0.0;
+            $unbilledDebours = ($billed || in_array($state, ['ops_closed', 'done'], true)) ? max(0.0, $incurred - $dbBilled) : 0.0;
 
             $svcRate = (float) ($f['commission_rate'] ?? 0);
             $billedRate = (float) ($f['billing_commission_rate'] ?? 0);
@@ -245,7 +263,7 @@ final class Engine
                 'transit' => !empty($f['transit_end']) ? (float) ($f['transit_days'] ?: 0) : null,
                 'transit_end' => self::d($f['transit_end'] ?? null),
                 'age' => $opened ? self::days($opened, $this->asOf) : null,
-                'expenses' => $expCount[$id] ?? 0, 'reopens' => max($reopened[$id] ?? 0, (int) ($f['reopen_count'] ?? 0)),
+                'expenses' => $expCount[$id] ?? 0, 'invoices' => $invCount[$id] ?? 0, 'reopens' => max($reopened[$id] ?? 0, (int) ($f['reopen_count'] ?? 0)),
                 'docs_complete' => !empty($f['documents_complete']), 'late_steps' => $lateSteps[$id] ?? 0,
                 'flags' => $flags,
             ];
@@ -304,6 +322,15 @@ final class Engine
             }
         }
 
+        $keyed = 0; $keyedErr = 0; $reassigned = 0;
+        foreach ($this->ds->expenses as $e) {
+            if (self::in($e['date_requested'] ?? null, $from, $to)) {
+                $keyed++;
+                if (($e['state'] ?? '') === 'cancel' && ($e['cancel_reason'] ?? '') === 'error') $keyedErr++;
+            }
+            if (($e['cancel_reason'] ?? '') === 'reassignment' && self::in($e['date_cancelled'] ?? null, $from, $to)) $reassigned++;
+        }
+
         // Tasks waiting now (ongoing-file rows are a list, not an action).
         $tasks = array_filter($this->ds->tasks, fn ($t) => ($t['kind'] ?? '') !== 'ongoing_file');
         $oldest = null;
@@ -347,6 +374,7 @@ final class Engine
             'files_per_responsible' => self::div($nBilled, $owners),
             'billing_per_day' => self::div($nBilled, self::workingDays($from, $to)),
             'disbursements_paid' => $paid,
+            'keyed_error_pct' => Rules::pct($keyedErr, $keyed), 'reassignments' => $reassigned,
 
             'turnaround_days' => self::avg($col($delivered, 'turnaround')),
             'transit_days' => self::avg($col($inW('transit_end'), 'transit')),
@@ -473,29 +501,87 @@ final class Engine
         unset($q);
         usort($queues, fn ($a, $b) => $b['count'] <=> $a['count']);
 
-        // Productivity per user and department.
+        // Productivity per staff member (every user holding a clearance role,
+        // plus anyone else who acted in the period) and per department.
         $users = []; $deptFiles = [];
-        $touch = function (?int $uid, string $name, ?int $fid, string $what) use (&$users, &$deptFiles) {
-            if (!$uid || $uid <= 2) return;
-            $users[$uid] ??= ['user' => $name, 'dept' => implode(', ', $this->ds->deptByUser[$uid] ?? []) ?: '—',
-                              'opened' => 0, 'billed' => 0, 'keyed' => 0, 'approved' => 0, 'paid' => 0, 'files' => []];
-            $users[$uid][$what]++;
+        $blank = fn (int $uid, string $name) => [
+            'uid' => $uid, 'user' => $name, 'dept' => implode(', ', $this->ds->deptByUser[$uid] ?? []) ?: '—',
+            'role' => isset($this->ds->deptByUser[$uid]),
+            'files' => [], 'opened' => 0, 'billed' => 0, 'keyed' => 0, 'approved' => 0, 'settle_prepared' => 0,
+            'settle_approved' => 0, 'paid' => 0, 'cancel_requested' => 0, 'cancel_executed' => 0, 'keyed_errors' => 0,
+            'reassignments' => 0, 'approve_days' => [], 'pay_days' => [], 'prep_days' => [], 'own_open_to_bill' => [],
+            'own_steps' => 0, 'own_late' => 0, 'waiting' => 0, 'waiting_oldest' => null,
+        ];
+        foreach ($this->ds->deptByUser as $uid => $_) $users[$uid] = $blank($uid, $this->ds->userNames[$uid] ?? ('User ' . $uid));
+        $touch = function ($m2o, ?int $fid, ?string $what) use (&$users, &$deptFiles, $blank) {
+            $uid = CD::m2oId($m2o);
+            if (!$uid || $uid <= 2) return null;
+            $users[$uid] ??= $blank($uid, CD::m2oName($m2o));
+            if ($what) $users[$uid][$what]++;
             if ($fid) {
                 $users[$uid]['files'][$fid] = true;
                 foreach ($this->ds->deptByUser[$uid] ?? [] as $d) $deptFiles[$d][$fid] = true;
             }
+            return $uid;
         };
-        foreach ($opened as $f) $touch($f['owner_id'], $f['owner'], $f['id'], 'opened');
-        foreach ($billed as $f) $touch($f['owner_id'], $f['owner'], $f['id'], 'billed');
+        $ownerM2o = fn (array $f) => $f['owner_id'] ? [$f['owner_id'], $f['owner']] : false;
+        foreach ($opened as $f) $touch($ownerM2o($f), $f['id'], 'opened');
+        foreach ($billed as $f) {
+            if ($uid = $touch($ownerM2o($f), $f['id'], 'billed')) {
+                if ($f['open_to_bill'] !== null) $users[$uid]['own_open_to_bill'][] = $f['open_to_bill'];
+            }
+        }
         foreach ($this->ds->expenses as $e) {
             $fid = CD::m2oId($e['file_id'] ?? false);
-            if (self::in($e['date_requested'] ?? null, $from, $to)) $touch(CD::m2oId($e['create_uid'] ?? false), CD::m2oName($e['create_uid'] ?? false), $fid, 'keyed');
-            if (self::in($e['date_approved'] ?? null, $from, $to)) $touch(CD::m2oId($e['approved_by_id'] ?? false), CD::m2oName($e['approved_by_id'] ?? false), $fid, 'approved');
-            if (self::in($e['date_settled'] ?? null, $from, $to)) $touch(CD::m2oId($e['settled_by_id'] ?? false), CD::m2oName($e['settled_by_id'] ?? false), $fid, 'paid');
+            if (self::in($e['date_requested'] ?? null, $from, $to)) {
+                $uid = $touch($e['create_uid'] ?? false, $fid, 'keyed');
+                if ($uid && ($e['state'] ?? '') === 'cancel' && ($e['cancel_reason'] ?? '') === 'error') $users[$uid]['keyed_errors']++;
+            }
+            if (self::in($e['date_approved'] ?? null, $from, $to) && ($uid = $touch($e['approved_by_id'] ?? false, $fid, 'approved'))) {
+                $users[$uid]['approve_days'][] = self::days($e['date_submitted'] ?? null, $e['date_approved']);
+            }
+            if (self::in($e['date_settlement_submitted'] ?? null, $from, $to) && ($uid = $touch($e['settlement_submitted_by_id'] ?? false, $fid, 'settle_prepared'))) {
+                $users[$uid]['prep_days'][] = self::days($e['date_approved'] ?? null, $e['date_settlement_submitted']);
+            }
+            if (self::in($e['date_settlement_approved'] ?? null, $from, $to)) $touch($e['settlement_approved_by_id'] ?? false, $fid, 'settle_approved');
+            if (self::in($e['date_settled'] ?? null, $from, $to) && ($uid = $touch($e['settled_by_id'] ?? false, $fid, 'paid'))) {
+                $users[$uid]['pay_days'][] = self::days($e['date_settlement_approved'] ?? null, $e['date_settled']);
+            }
+            if (self::in($e['date_cancel_requested'] ?? null, $from, $to)) $touch($e['cancel_requested_by_id'] ?? false, $fid, 'cancel_requested');
+            if (self::in($e['date_cancelled'] ?? null, $from, $to)) {
+                $touch($e['cancelled_by_id'] ?? false, $fid, 'cancel_executed');
+                if (($e['cancel_reason'] ?? '') === 'reassignment') {
+                    // The reassignment counts against whoever keyed the cost on the wrong file.
+                    if ($k = $touch($e['create_uid'] ?? false, $fid, null)) $users[$k]['reassignments']++;
+                }
+            }
         }
-        foreach ($users as &$u) { $u['files'] = count($u['files']); }
+        // Steps on the files a person owns (the turnaround view records no actor).
+        foreach ($this->ds->turnaround as $t) {
+            if (empty($t['is_done']) || !self::in($t['completed'] ?? null, $from, $to)) continue;
+            $fid = CD::m2oId($t['file_id'] ?? false);
+            $uid = $fid ? ($this->facts[$fid]['owner_id'] ?? null) : null;
+            if (!$uid || !isset($users[$uid])) continue;
+            $users[$uid]['own_steps']++;
+            if (!empty($t['is_late'])) $users[$uid]['own_late']++;
+        }
+        foreach ($this->ds->tasks as $t) {
+            if (($t['kind'] ?? '') === 'ongoing_file') continue;
+            $uid = CD::m2oId($t['holder_user_id'] ?? false);
+            if (!$uid || !isset($users[$uid])) continue;
+            $users[$uid]['waiting']++;
+            $age = self::days($t['date_landed'] ?? null, $this->asOf);
+            if ($age !== null) $users[$uid]['waiting_oldest'] = max($users[$uid]['waiting_oldest'] ?? 0, $age);
+        }
+        foreach ($users as &$u) {
+            $u['files'] = count($u['files']);
+            foreach (['approve_days', 'pay_days', 'prep_days', 'own_open_to_bill'] as $k) $u[$k] = self::avg($u[$k]);
+            $u['late_pct'] = Rules::pct($u['own_late'], $u['own_steps']);
+            $u['error_pct'] = Rules::pct($u['keyed_errors'], $u['keyed']);
+        }
         unset($u);
-        usort($users, fn ($a, $b) => $b['files'] <=> $a['files']);
+        $users = array_values($users);
+        usort($users, fn ($a, $b) => [$b['files'], $b['role']] <=> [$a['files'], $a['role']]);
         $depts = [];
         foreach (array_keys(\App\Services\HrProductivityService::DEPARTMENTS) as $d) {
             $members = count(array_filter($this->ds->deptByUser, fn ($ds) => in_array($d, $ds, true)));
