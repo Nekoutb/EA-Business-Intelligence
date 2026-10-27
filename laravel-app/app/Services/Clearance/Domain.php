@@ -41,6 +41,7 @@ class Domain
             '>='        => $x !== false && $x >= $v,
             'ilike'     => is_string($x) && stripos($x, (string) $v) !== false,
             'not ilike' => !is_string($x) || stripos($x, (string) $v) === false,
+            '=like'     => is_string($x) && preg_match('/^' . str_replace(['%', '_'], ['.*', '.'], preg_quote((string) $v, '/')) . '$/s', $x) === 1,
             default     => throw new \InvalidArgumentException("unsupported domain operator {$op}"),
         };
     }

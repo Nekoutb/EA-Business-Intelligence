@@ -3,28 +3,13 @@
 namespace App\Services\Clearance;
 
 /**
- * Shared context for the R1–R11 reports: the period window, lazily-loaded
- * datasets (each read once per run), lookups, and the validation summary
- * that precedes every computation (live files, settled expenses, posted
- * invoices in period, the two R-i reconciliations, R-m per bank).
+ * Clearance dataset context used by the BI logistics pages (ClearanceOps):
+ * the period window, lazily-loaded datasets (each read once per run),
+ * lookups and the validation summary. The R1–R11 reports that first used
+ * it were replaced by Clearance Intelligence (App\Services\ClearanceIntel).
  */
 class ClearancePack
 {
-    /** Report registry: code → [class, module key, title, cadence]. */
-    public const REPORTS = [
-        'r1'  => [Reports\R1Cockpit::class,       'clr_r1',  'Executive cockpit',                  'Monthly, weekly refresh'],
-        'r2'  => [Reports\R2Pipeline::class,      'clr_r2',  'Files pipeline and bottlenecks',     'Weekly'],
-        'r3'  => [Reports\R3Unbilled::class,      'clr_r3',  'Unbilled disbursements',             'Weekly'],
-        'r4'  => [Reports\R4Advances::class,      'clr_r4',  'Staff advances',                     'Weekly'],
-        'r5'  => [Reports\R5Turnaround::class,    'clr_r5',  'Turnaround against targets',         'Monthly'],
-        'r6'  => [Reports\R6Profitability::class, 'clr_r6',  'File and service profitability',     'Monthly / quarterly'],
-        'r7'  => [Reports\R7Portfolio::class,     'clr_r7',  'Client portfolio and collections',   'Monthly'],
-        'r8'  => [Reports\R8Controls::class,      'clr_r8',  'Controls and exceptions',            'Monthly'],
-        'r9'  => [Reports\R9Workload::class,      'clr_r9',  'Workload by queue',                  'Daily'],
-        'r10' => [Reports\R10CashOut::class,      'clr_r10', 'Cash out by channel and category',   'Weekly'],
-        'r11' => [Reports\R11Transit::class,      'clr_r11', 'Payments in transit by bank',        'Weekly, and at every bank reconciliation'],
-    ];
-
     public string $asOf;         // today, Africa/Douala
     public string $extractedAt;  // DD/MM/YYYY HH:MM
     public string $prevFrom;

@@ -132,6 +132,38 @@ class ClearanceData
         return $out;
     }
 
+    /**
+     * Posted balance per month ('Y-m' => Σ debit − credit) on the given
+     * accounts — read_group by date:month, falling back to paging the lines.
+     */
+    public function monthlySum(array $accountIds, string $from, string $to, string $note = ''): array
+    {
+        if (!$accountIds) return [];
+        $domain = [['parent_state', '=', 'posted'], ['account_id', 'in', array_values($accountIds)], ['date', '>=', $from], ['date', '<=', $to]];
+        if ($this->snapshot === null) {
+            try {
+                $out = [];
+                $groups = (array) $this->client->callModel('account.move.line', 'read_group', [
+                    'domain' => $domain, 'fields' => ['balance:sum'], 'groupby' => ['date:month'], 'lazy' => false,
+                ]);
+                foreach ($groups as $g) {
+                    $f = $g['__range']['date:month']['from'] ?? $g['__range']['date']['from'] ?? null;
+                    if (is_string($f)) $out[substr($f, 0, 7)] = ($out[substr($f, 0, 7)] ?? 0.0) + (float) ($g['balance'] ?? 0);
+                }
+                $this->queryLog[] = ['model' => 'account.move.line', 'rows' => count($groups), 'note' => "{$note} (read_group by month)"];
+                return $out;
+            } catch (\Throwable $e) {
+                // fall back to paging the lines
+            }
+        }
+        $out = [];
+        foreach ($this->searchAll('account.move.line', $domain, ['date', 'balance'], "{$note} (paged)") as $l) {
+            $ym = substr((string) $l['date'], 0, 7);
+            $out[$ym] = ($out[$ym] ?? 0.0) + (float) $l['balance'];
+        }
+        return $out;
+    }
+
     public function searchCount(string $model, array $domain): int
     {
         return $this->snapshot !== null

@@ -3203,8 +3203,9 @@ try {
             if (!$def && $want === 'settings')       $def = ['controller' => App\Http\Controllers\SettingsController::class, 'action' => 'show', 'query' => []];
             if (!$def && $want === 'productivity-settings') $def = ['controller' => App\Http\Controllers\ProductivitySettingsController::class, 'action' => 'show', 'query' => []];
             if (!$def && $want === 'admin-settings') $def = ['controller' => App\Http\Controllers\Admin\TenantController::class, 'action' => 'showSettings', 'query' => [], 'params' => ['tenant' => $tenant]];
-            // Clearance pack pages: page=clearance-r1 … clearance-r11.
-            if (!$def && preg_match('/^clearance-(r\d{1,2})$/', $want, $cm)) $def = ['controller' => App\Http\Controllers\ClearanceReportsController::class, 'action' => 'show', 'query' => [], 'params' => ['code' => $cm[1]]];
+            // Clearance Intelligence pages: page=ci-overview … ci-kpis, ci-file-<id>.
+            if (!$def && preg_match('/^ci-([a-z]+)$/', $want, $cm)) $def = ['controller' => App\Http\Controllers\ClearanceIntelController::class, 'action' => 'page', 'query' => [], 'params' => ['page' => $cm[1]]];
+            if (!$def && preg_match('/^ci-file-(\d+)$/', $want, $cm)) $def = ['controller' => App\Http\Controllers\ClearanceIntelController::class, 'action' => 'file', 'query' => [], 'params' => ['id' => (int) $cm[1]]];
             if (!$def) { ln("no page '{$want}' in config/warm.php"); break; }
             // &period=month&year=2026&month=8 overrides the page's default
             // query (and, via RememberPeriod, the session) — lets this op

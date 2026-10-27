@@ -1596,17 +1596,17 @@ Route::prefix('t/{tenant}')
                 // (a tenant with only the dashboard enabled would 403).
                 Route::get('/procurement-dashboard', fn () => app(ProcurementController::class)->index(request()->merge(['view' => 'dashboard'])))->middleware('module:procurement_dashboard');
 
-                // Clearance management pack — one route + module gate per report
-                // (R1–R11). Closures pass the code explicitly: on tenant routes
-                // the slug arrives positionally, so a {code} param would misbind.
-                foreach (\App\Services\Clearance\ClearancePack::REPORTS as $clrCode => [, $clrModule]) {
-                    Route::get("/clearance/{$clrCode}", fn () => app(\App\Http\Controllers\ClearanceReportsController::class)->show(request(), $clrCode))
-                        ->middleware("module:{$clrModule}");
-                    Route::get("/clearance/{$clrCode}/export", fn () => app(\App\Http\Controllers\ClearanceReportsController::class)->export(request(), $clrCode))
-                        ->middleware("module:{$clrModule}");
+                // Clearance Intelligence — one route + module gate per page.
+                // Closures pass the page explicitly: on tenant routes the slug
+                // arrives positionally, so a {page} param would misbind.
+                foreach (\App\Http\Controllers\ClearanceIntelController::PAGES as $ciPage => [$ciModule]) {
+                    Route::get("/clearance/{$ciPage}", fn () => app(\App\Http\Controllers\ClearanceIntelController::class)->page(request(), $ciPage))
+                        ->middleware("module:{$ciModule}");
                 }
-                Route::get('/clearance/pack.html', fn () => app(\App\Http\Controllers\ClearanceReportsController::class)->packHtml(request()));
-                Route::get('/clearance/pack.xlsx', fn () => app(\App\Http\Controllers\ClearanceReportsController::class)->packXlsx(request()));
+                Route::get('/clearance/files/{clrFile}', fn () => app(\App\Http\Controllers\ClearanceIntelController::class)->file(request(), (int) request()->route('clrFile')))
+                    ->where('clrFile', '[0-9]+')->middleware('module:ci_files');
+                Route::post('/clearance/kpis', fn () => app(\App\Http\Controllers\ClearanceIntelController::class)->saveTargets(request()))
+                    ->middleware('module:ci_library');
 
                 // ── Post-Retirement Benefits ──────────────────────────────────
                 // SYSCOHADA-compliant Projected Unit Credit valuation of

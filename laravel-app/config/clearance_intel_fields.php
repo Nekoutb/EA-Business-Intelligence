@@ -51,4 +51,6 @@ return [
     'logistics.reopen.reason'=> ['name'],
     'logistics.expense.category' => ['name', 'code', 'justification', 'is_urgent'],
     'account.account'        => ['code', 'name'],
+    'res.company'            => ['clearance_oop_undercharge_account_id', 'clearance_oop_loss_account_id'],
+    'res.groups'             => ['name', 'user_ids'],
 ];
