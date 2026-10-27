@@ -1510,6 +1510,38 @@ try {
 ", date('H:i:s'), 1000 * (microtime(true) - $t0)), FILE_APPEND);
             break;
 
+        case 'dmcheck':
+            // Débours margin cross-check (read-only): our incurred / billed per
+            // invoiced file vs Odoo's own debours_incurred / debours_billed,
+            // and the legacy (Teese) disbursements left out. ?tenant=slug
+            @set_time_limit(300);
+            $slug = (string) ($_GET['tenant'] ?? 'elimelec');
+            $tenant = App\Models\Tenant::where('slug', $slug)->first();
+            if (!$tenant) { ln("no tenant '{$slug}'"); break; }
+            app(App\Tenancy\TenantContext::class)->set($tenant);
+            try {
+                $cd = App\Services\Clearance\ClearanceData::live(App\Odoo\OdooFactory::fromConfig());
+                $y = date('Y');
+                $pk = new App\Services\Clearance\ClearancePack($cd, "{$y}-01-01", date('Y-m-d'), $y, ['db' => '', 'user' => '']);
+                $per = App\Services\Clearance\DeboursMargin::perFile($pk);
+                $ids = [];
+                foreach ($per as $fid => $x) if (!empty($x['first_invoice']) && $x['first_invoice'] >= "{$y}-01-01") $ids[] = $fid;
+                $ff = $cd->searchAll('logistics.file', [['id', 'in', $ids]], ['debours_incurred', 'debours_billed', 'legacy_relief', 'state'], 'files');
+                $leg = $cd->searchAll('logistics.expense', [['is_legacy', '=', true], ['file_id', 'in', $ids]], ['file_id', 'amount', 'state'], 'legacy disbursements');
+                $legBy = [];
+                foreach ($leg as $e) if (($e['state'] ?? '') !== 'cancel') { $f = App\Services\Clearance\ClearanceData::m2oId($e['file_id']); $legBy[$f] = ($legBy[$f] ?? 0) + (float) $e['amount']; }
+                $t = ['files' => 0, 'relief' => 0, 'our_inc' => 0, 'odoo_inc' => 0, 'legacy' => 0, 'our_bil' => 0, 'odoo_bil' => 0, 'files_with_legacy' => 0];
+                foreach ($ff as $f) {
+                    $x = $per[$f['id']];
+                    $t['files']++; if (!empty($f['legacy_relief'])) $t['relief']++;
+                    $t['our_inc'] += (float) ($x['incurred'] ?? 0); $t['odoo_inc'] += (float) $f['debours_incurred'];
+                    $t['our_bil'] += (float) ($x['billed'] ?? 0); $t['odoo_bil'] += (float) $f['debours_billed'];
+                    if (isset($legBy[$f['id']])) { $t['legacy'] += $legBy[$f['id']]; $t['files_with_legacy']++; }
+                }
+                foreach ($t as $k => $v) ln(sprintf('%-18s %s', $k, number_format($v, 0, '.', ' ')));
+            } catch (\Throwable $e) { ln('FAILED: ' . $e->getMessage()); }
+            break;
+
         case 'ciloadlog':
             $logFile = storage_path('app/ciload.txt');
             echo is_file($logFile) ? file_get_contents($logFile) : "no log
