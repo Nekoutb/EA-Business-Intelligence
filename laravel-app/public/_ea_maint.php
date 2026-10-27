@@ -1497,7 +1497,11 @@ try {
                 ln(sprintf('compute %d ms · %d files · %d alerts · payload %d KB', 1000 * (microtime(true) - $t1), count($r['files']), count($r['alerts']), strlen(serialize($r)) / 1024));
                 foreach (['files_opened', 'files_billed', 'fees', 'wip_files', 'turnaround_days', 'steps_late_pct', 'unbilled_debours', 'unjustified_advances', 'tasks_open'] as $k)
                     ln(sprintf('  %-22s %s', $k, json_encode($r['kpis'][$k]['value'])));
-            } catch (\Throwable $e) { ln('FAILED: ' . $e->getMessage() . ' @ ' . basename($e->getFile()) . ':' . $e->getLine()); }
+            } catch (\Throwable $e) {
+                ln('FAILED: ' . $e->getMessage() . ' @ ' . basename($e->getFile()) . ':' . $e->getLine());
+                if (!empty($_GET['bg'])) file_put_contents($logFile, 'FAILED: ' . mb_substr($e->getMessage(), 0, 1500) . ' @ ' . basename($e->getFile()) . ':' . $e->getLine() . "
+", FILE_APPEND);
+            }
             if (!empty($_GET['bg'])) file_put_contents($logFile, sprintf("done %s total %d ms
 ", date('H:i:s'), 1000 * (microtime(true) - $t0)), FILE_APPEND);
             break;
