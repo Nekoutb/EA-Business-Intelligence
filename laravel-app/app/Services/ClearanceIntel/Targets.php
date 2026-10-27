@@ -11,16 +11,35 @@ namespace App\Services\ClearanceIntel;
  */
 final class Targets
 {
+    /** Raw setting, read once per tenant per process (config_env hits the database each call). */
+    private static array $raw = [];
+
+    private static function raw(): string
+    {
+        $tid = optional(tenant())->id ?? 0;
+        return self::$raw[$tid] ??= (string) (config_env('CLRI_TARGETS', '') ?? '');
+    }
+
+    /** After a save in this process. */
+    public static function forget(): void
+    {
+        self::$raw = [];
+    }
+
     public static function saved(): array
     {
-        $raw = (string) (config_env('CLRI_TARGETS', '') ?? '');
-        $j = $raw !== '' ? json_decode($raw, true) : null;
-        return is_array($j) ? $j : [];
+        static $parsed = [];
+        $raw = self::raw();
+        if (!isset($parsed[$raw])) {
+            $j = $raw !== '' ? json_decode($raw, true) : null;
+            $parsed[$raw] = is_array($j) ? $j : [];
+        }
+        return $parsed[$raw];
     }
 
     public static function fingerprint(): string
     {
-        return substr(md5((string) (config_env('CLRI_TARGETS', '') ?? '')), 0, 8);
+        return substr(md5(self::raw()), 0, 8);
     }
 
     /** @return array{target:?float, trigger:?float} */

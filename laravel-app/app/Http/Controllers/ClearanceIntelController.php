@@ -91,6 +91,7 @@ class ClearanceIntelController extends Controller
             ['tenant_id' => tenant()->id, 'key' => 'CLRI_TARGETS'],
             ['value' => json_encode($out), 'updated_at' => now(), 'created_at' => now()]
         );
+        \App\Services\ClearanceIntel\Targets::forget();
         \App\Models\AuditLog::record('clearance_intel.targets.update', ['keys' => count($out)]);
         return redirect(tenant_url('/clearance/kpis'))->with('flash', ['type' => 'success', 'msg' => 'Targets saved. Every page now measures against them.']);
     }
