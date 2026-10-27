@@ -1542,6 +1542,30 @@ try {
             } catch (\Throwable $e) { ln('FAILED: ' . $e->getMessage()); }
             break;
 
+        case 'handlingcheck':
+            // Read-only: invoice lines whose description mentions Handling,
+            // split by clearance category and the is_handling flag. ?tenant=slug
+            @set_time_limit(300);
+            $slug = (string) ($_GET['tenant'] ?? 'elimelec');
+            $tenant = App\Models\Tenant::where('slug', $slug)->first();
+            if (!$tenant) { ln("no tenant '{$slug}'"); break; }
+            app(App\Tenancy\TenantContext::class)->set($tenant);
+            try {
+                $cd = App\Services\Clearance\ClearanceData::live(App\Odoo\OdooFactory::fromConfig());
+                $rows = $cd->searchAll('account.move.line', [['clearance_category', '!=', false], ['parent_state', '=', 'posted'], ['name', 'ilike', 'handling']],
+                    ['name', 'clearance_category', 'clearance_service_kind', 'is_handling', 'price_subtotal', 'move_id'], 'handling lines');
+                $g = [];
+                foreach ($rows as $l) {
+                    $k = ($l['clearance_category'] ?: '-') . ' | is_handling=' . (!empty($l['is_handling']) ? 'yes' : 'no') . ' | kind=' . ($l['clearance_service_kind'] ?: '-');
+                    $g[$k]['n'] = ($g[$k]['n'] ?? 0) + 1; $g[$k]['amt'] = ($g[$k]['amt'] ?? 0) + (float) $l['price_subtotal'];
+                    $g[$k]['ex'][trim((string) $l['name'])] = true;
+                }
+                foreach ($g as $k => $v) ln(sprintf('%-60s %5d lines %16s   e.g. %s', $k, $v['n'], number_format($v['amt'], 0, '.', ' '), implode(' / ', array_slice(array_keys($v['ex']), 0, 4))));
+                $flag = $cd->searchAll('account.move.line', [['is_handling', '=', true], ['parent_state', '=', 'posted']], ['name', 'clearance_category', 'price_subtotal'], 'flagged');
+                ln(sprintf('lines flagged is_handling (any description): %d, %s', count($flag), number_format(array_sum(array_column($flag, 'price_subtotal')), 0, '.', ' ')));
+            } catch (\Throwable $e) { ln('FAILED: ' . $e->getMessage()); }
+            break;
+
         case 'ciloadlog':
             $logFile = storage_path('app/ciload.txt');
             echo is_file($logFile) ? file_get_contents($logFile) : "no log
