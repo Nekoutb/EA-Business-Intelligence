@@ -1492,9 +1492,13 @@ try {
                 $ds = App\Services\ClearanceIntel\Dataset::load($cd, $asOf);
                 foreach ($ds->queryLog as $q) ln(sprintf('%-28s %7d rows %7d ms  %s', $q['model'], $q['rows'], $q['ms'] ?? -1, $q['note']));
                 ln(sprintf('load total %d ms', 1000 * (microtime(true) - $t0)));
+                if (!empty($_GET['bg'])) file_put_contents($logFile, sprintf("load total %d ms
+", 1000 * (microtime(true) - $t0)), FILE_APPEND);
                 $t1 = microtime(true);
                 $r = App\Services\ClearanceIntel\Report::compute($ds, $asOf ? substr($asOf, 0, 4) . '-01-01' : $asOf, $asOf, $asOf);
                 ln(sprintf('compute %d ms · %d files · %d alerts · payload %d KB', 1000 * (microtime(true) - $t1), count($r['files']), count($r['alerts']), strlen(serialize($r)) / 1024));
+                if (!empty($_GET['bg'])) file_put_contents($logFile, sprintf("compute %d ms, payload %d KB
+", 1000 * (microtime(true) - $t1), strlen(serialize($r)) / 1024), FILE_APPEND);
                 foreach (['files_opened', 'files_billed', 'fees', 'wip_files', 'turnaround_days', 'steps_late_pct', 'unbilled_debours', 'unjustified_advances', 'tasks_open'] as $k)
                     ln(sprintf('  %-22s %s', $k, json_encode($r['kpis'][$k]['value'])));
             } catch (\Throwable $e) {

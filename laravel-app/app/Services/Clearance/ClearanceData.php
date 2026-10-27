@@ -145,6 +145,7 @@ class ClearanceData
     {
         if (!$accountIds) return [];
         $domain = [['parent_state', '=', 'posted'], ['account_id', 'in', array_values($accountIds)], ['date', '>=', $from], ['date', '<=', $to]];
+        $t0 = microtime(true);
         if ($this->snapshot === null) {
             try {
                 $out = [];
@@ -155,7 +156,8 @@ class ClearanceData
                     $f = $g['__range']['date:month']['from'] ?? $g['__range']['date']['from'] ?? null;
                     if (is_string($f)) $out[substr($f, 0, 7)] = ($out[substr($f, 0, 7)] ?? 0.0) + (float) ($g['balance'] ?? 0);
                 }
-                $this->queryLog[] = ['model' => 'account.move.line', 'rows' => count($groups), 'note' => "{$note} (read_group by month)"];
+                $this->queryLog[] = ['model' => 'account.move.line', 'rows' => count($groups), 'note' => "{$note} (read_group by month)", 'ms' => (int) round(1000 * (microtime(true) - $t0))];
+                if (self::$trace) (self::$trace)(end($this->queryLog));
                 return $out;
             } catch (\Throwable $e) {
                 // fall back to paging the lines
