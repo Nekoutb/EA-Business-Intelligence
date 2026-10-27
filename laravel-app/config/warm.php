@@ -54,6 +54,7 @@ return [
         ['label' => 'product-revenue',   'module' => 'product_revenue_tsd',   'controller' => \App\Http\Controllers\ProductRevenueTsdController::class,       'query' => []],
         ['label' => 'procurement',       'module' => 'procurement',           'controller' => \App\Http\Controllers\ProcurementController::class,             'query' => []],
         ['label' => 'procurement-dash',  'module' => 'procurement_dashboard', 'controller' => \App\Http\Controllers\ProcurementController::class,             'query' => ['view' => 'dashboard']],
+        ['label' => 'clearance-intel',   'module' => 'ci_overview',           'controller' => \App\Http\Controllers\ClearanceIntelController::class,          'query' => []],
         ['label' => 'hr-productivity',   'module' => 'hr_productivity',       'controller' => \App\Http\Controllers\HrProductivityController::class,          'query' => []],
         ['label' => 'fixed-assets',      'module' => 'fixed_assets',          'controller' => \App\Http\Controllers\FixedAssetsController::class,             'query' => []],
         ['label' => 'working-capital',   'module' => 'working_capital',       'controller' => \App\Http\Controllers\WorkingCapitalController::class,          'query' => []],

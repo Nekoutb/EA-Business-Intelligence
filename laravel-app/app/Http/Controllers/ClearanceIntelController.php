@@ -28,6 +28,12 @@ class ClearanceIntelController extends Controller
         'kpis'          => ['ci_library', 'KPI library & targets'],
     ];
 
+    /** Warm-worker entry (config/warm.php): the overview for the default period. */
+    public function index(Request $request)
+    {
+        return $this->page($request, 'overview');
+    }
+
     public function page(Request $request, string $page)
     {
         abort_unless(isset(self::PAGES[$page]), 404);

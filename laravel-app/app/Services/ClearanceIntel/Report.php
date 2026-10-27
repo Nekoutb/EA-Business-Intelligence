@@ -18,9 +18,10 @@ final class Report
     public static function build(string $from, string $to, bool $refresh = false): array
     {
         $asOf = (new \DateTimeImmutable('now', new \DateTimeZone(Rules::TZ)))->format('Y-m-d');
-        $bucket = intdiv(time(), 1800) . ($refresh ? '-' . time() : '');
+        // Kept fresh by the warm worker (config/warm.php); ?refresh=1 recomputes now.
+        if ($refresh) \App\Support\CacheFreshness::force(true);
         $key = self::CACHE . md5(json_encode([$from, $to, $asOf, Targets::fingerprint(),
-            \App\Services\ProductivityOverrides::fingerprint(), $bucket]));
+            \App\Services\ProductivityOverrides::fingerprint()]));
         return ea_cached($key, function () use ($from, $to, $asOf) {
             $d = ClearanceData::live(OdooFactory::fromConfig());
             $ds = Dataset::load($d, $asOf);

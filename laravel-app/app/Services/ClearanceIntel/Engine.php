@@ -24,21 +24,61 @@ final class Engine
 
     public function __construct(private Dataset $ds, private string $asOf)
     {
+        $this->normalizeDates();
         $this->prepareEvents();
         $this->prepareFacts();
     }
 
     // ── helpers ────────────────────────────────────────────────────────
-    public static function d($v): ?string { return Rules::localDate($v); }
+    // Hot paths: tens of thousands of rows are measured for ~30 windows
+    // (period, previous, 12 trend months, 12 forecast months), so dates
+    // are converted once and compared as strings.
+    private static array $localMemo = [];
+    private static array $dayNo = [];
 
-    private static function in($v, string $from, string $to): bool { return Rules::inPeriod($v, $from, $to); }
+    /**
+     * Odoo date ('Y-m-d') or UTC datetime → local 'Y-m-d'. Africa/Douala is
+     * UTC+1 all year (no daylight saving): 23:00 UTC and later is the next day.
+     */
+    public static function d($v): ?string
+    {
+        if (!$v || !is_string($v)) return null;
+        if (strlen($v) <= 10) return $v;
+        return self::$localMemo[$v] ??= ((int) substr($v, 11, 2) >= 23
+            ? gmdate('Y-m-d', strtotime(substr($v, 0, 10) . ' 00:00:00 UTC') + 86400)
+            : substr($v, 0, 10));
+    }
+
+    private static function in($v, string $from, string $to): bool
+    {
+        $d = self::d($v);
+        return $d !== null && $d >= $from && $d <= $to;
+    }
 
     /** Whole days between two Odoo dates/datetimes (local), or null. */
     public static function days($a, $b): ?int
     {
         $a = self::d($a); $b = self::d($b);
         if (!$a || !$b) return null;
-        return (int) (new \DateTimeImmutable($a))->diff(new \DateTimeImmutable($b))->format('%r%a');
+        $na = self::$dayNo[$a] ??= intdiv((int) strtotime($a . ' 00:00:00 UTC'), 86400);
+        $nb = self::$dayNo[$b] ??= intdiv((int) strtotime($b . ' 00:00:00 UTC'), 86400);
+        return $nb - $na;
+    }
+
+    /** Convert every date/datetime the engine compares to local dates, once. */
+    private function normalizeDates(): void
+    {
+        $conv = function (array &$rows, array $fields) {
+            foreach ($rows as &$r) foreach ($fields as $f) if (isset($r[$f]) && is_string($r[$f]) && strlen($r[$f]) > 10) $r[$f] = self::d($r[$f]);
+            unset($r);
+        };
+        $conv($this->ds->turnaround, ['started', 'completed']);
+        $conv($this->ds->expenses, ['date_submitted', 'date_approved', 'date_settlement_submitted', 'date_settlement_approved',
+            'date_settled', 'date_documents_submitted', 'date_justification_submitted', 'date_justified', 'date_cancelled']);
+        $conv($this->ds->tasks, ['date_landed']);
+        $conv($this->ds->reopenings, ['date']);
+        $conv($this->ds->files, ['date_started', 'date_ops_closed', 'date_billed', 'date_closed', 'commercial_invoice_received',
+            'documents_received_on', 'transit_start', 'transit_end']);
     }
 
     private static function avg(array $v): ?float
