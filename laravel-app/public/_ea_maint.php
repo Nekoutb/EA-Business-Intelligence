@@ -1471,6 +1471,20 @@ try {
             $tenant = App\Models\Tenant::where('slug', $slug)->first();
             if (!$tenant) { ln("no tenant '{$slug}'"); break; }
             app(App\Tenancy\TenantContext::class)->set($tenant);
+            // &bg=1: keep running after the HTTP request is cut (Cloudflare
+            // 100 s) and log each step to storage/app/ciload.txt; read it
+            // back with op=ciloadlog.
+            $logFile = storage_path('app/ciload.txt');
+            if (!empty($_GET['bg'])) {
+                ignore_user_abort(true);
+                file_put_contents($logFile, 'started ' . date('H:i:s') . "
+");
+                App\Services\Clearance\ClearanceData::$trace = function ($q) use ($logFile) {
+                    file_put_contents($logFile, sprintf("%-28s %7d rows %7d ms  %s
+", $q['model'], $q['rows'], $q['ms'] ?? -1, $q['note']), FILE_APPEND);
+                };
+                $lnOrig = true;
+            }
             $t0 = microtime(true);
             try {
                 $cd = App\Services\Clearance\ClearanceData::live(App\Odoo\OdooFactory::fromConfig());
@@ -1484,6 +1498,14 @@ try {
                 foreach (['files_opened', 'files_billed', 'fees', 'wip_files', 'turnaround_days', 'steps_late_pct', 'unbilled_debours', 'unjustified_advances', 'tasks_open'] as $k)
                     ln(sprintf('  %-22s %s', $k, json_encode($r['kpis'][$k]['value'])));
             } catch (\Throwable $e) { ln('FAILED: ' . $e->getMessage() . ' @ ' . basename($e->getFile()) . ':' . $e->getLine()); }
+            if (!empty($_GET['bg'])) file_put_contents($logFile, sprintf("done %s total %d ms
+", date('H:i:s'), 1000 * (microtime(true) - $t0)), FILE_APPEND);
+            break;
+
+        case 'ciloadlog':
+            $logFile = storage_path('app/ciload.txt');
+            echo is_file($logFile) ? file_get_contents($logFile) : "no log
+";
             break;
 
         case 'prodcheck':

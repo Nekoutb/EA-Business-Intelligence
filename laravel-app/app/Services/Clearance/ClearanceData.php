@@ -22,6 +22,9 @@ class ClearanceData
     /** @var string[] warnings to print on the report, never hidden */
     public array $warnings = [];
 
+    /** Optional diagnostics hook: called with each logged query (ops tooling). */
+    public static ?\Closure $trace = null;
+
     private ?array $snapshot = null;
     private array $memo = [];
 
@@ -95,6 +98,7 @@ class ClearanceData
             }
         }
         $this->queryLog[] = ['model' => $model, 'rows' => count($rows), 'note' => $note, 'ms' => (int) round(1000 * (microtime(true) - $t0))];
+        if (self::$trace) (self::$trace)(end($this->queryLog));
         return $this->memo[$key] = $rows;
     }
 
