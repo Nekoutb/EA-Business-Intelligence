@@ -13,7 +13,7 @@ use App\Services\Clearance\Rules;
  */
 final class Report
 {
-    public const CACHE = 'clri_v1_';
+    public const CACHE = 'clri_v2_';
 
     public static function build(string $from, string $to, bool $refresh = false): array
     {

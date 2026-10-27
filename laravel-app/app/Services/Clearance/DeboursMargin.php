@@ -8,7 +8,7 @@ namespace App\Services\Clearance;
  *   incurred = disbursements paid out on the file (settled or later,
  *              cancelled ones aside, reversals deducted)
  *   billed   = the débours lines of the file's standing invoices
- *              (clearance_category = debours; service lines excluded),
+ *              (clearance_category = debours; service and Handling lines excluded),
  *              credit notes deducted
  *   margin   = billed − incurred   (> 0 gain, < 0 loss)
  *
@@ -41,7 +41,8 @@ final class DeboursMargin
             $out[$fid]['invoices'][] = (string) ($m['name'] ?? '');
         }
         foreach ($p->invoiceLines() as $l) {
-            if (($l['clearance_category'] ?? '') !== 'debours') continue;
+            // Handling is due back to the customer: outside the débours result (as in Odoo's debours_billed).
+            if (($l['clearance_category'] ?? '') !== 'debours' || !empty($l['is_handling'])) continue;
             $mid = ClearanceData::m2oId($l['move_id'] ?? false);
             if (!$mid || !isset($ok[$mid])) continue;
             $fid = ClearanceData::m2oId($inv[$mid]['logistics_file_id'] ?? false);

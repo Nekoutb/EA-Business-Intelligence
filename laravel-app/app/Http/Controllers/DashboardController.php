@@ -234,11 +234,11 @@ class DashboardController extends Controller
                     'files'   => ($on('logi_file_summary') || $on('logi_closure_rate'))
                         ? ea_cached($sp . 'logi_dossiers_v4_' . $pk, fn () => $svcF()->dossiers($from, $to, $grain)) : null,
                     'oop'     => $on('logi_oop_summary')
-                        ? ea_cached($sp . ($sp === 'clr_' ? 'logi_oop_v3_' : 'logi_oop_v2_') . md5(json_encode($period)), fn () => $svcF()->oopCompliance($from, $to)) : null,
+                        ? ea_cached($sp . ($sp === 'clr_' ? 'logi_oop_v4_' : 'logi_oop_v2_') . md5(json_encode($period)), fn () => $svcF()->oopCompliance($from, $to)) : null,
                     'volumes' => $on('logi_volume_trend')
                         ? ea_cached($sp . 'logi_volumes_v2_' . md5(json_encode($period)) . '_' . $grain, fn () => $svcF()->volumes($from, $to, $grain)) : null,
                     'unbilled' => $on('logi_unbilled_debours')
-                        ? ea_cached($sp . ($sp === 'clr_' ? 'logi_unbilled_deb_v2_' : 'logi_unbilled_deb_v1_') . md5(json_encode($period)), fn () => $svcF()->unbilledDebours($from, $to)) : null,
+                        ? ea_cached($sp . ($sp === 'clr_' ? 'logi_unbilled_deb_v3_' : 'logi_unbilled_deb_v1_') . md5(json_encode($period)), fn () => $svcF()->unbilledDebours($from, $to)) : null,
                 ];
                 if (count(array_filter($logistics, fn ($v) => $v !== null)) === 0) $logistics = null;
             }

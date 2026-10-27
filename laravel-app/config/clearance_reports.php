@@ -48,7 +48,7 @@ return [
         ],
         'account.move.line' => [
             'move_id', 'account_id', 'partner_id', 'date', 'debit', 'credit', 'balance', 'price_subtotal', 'name',
-            'clearance_category', 'clearance_service_kind', 'clearance_credited', 'analytic_distribution', 'reconciled',
+            'clearance_category', 'clearance_service_kind', 'clearance_credited', 'analytic_distribution', 'reconciled', 'is_handling',
         ],
         'res.company' => [
             'clearance_oop_account_id', 'clearance_advance_account_id', 'clearance_oop_undercharge_account_id',

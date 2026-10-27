@@ -133,6 +133,7 @@ final class Engine
             } elseif ($cat === 'adjustment') {
                 $kind = $amt < 0 ? 'undercharge' : 'overcharge';
             } elseif ($cat === 'debours') {
+                if (!empty($l['is_handling'])) continue; // due back to the customer
                 $kind = 'debours';
             }
             if ($kind === null || $amt == 0.0) continue;

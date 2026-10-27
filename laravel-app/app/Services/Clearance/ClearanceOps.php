@@ -205,7 +205,7 @@ class ClearanceOps
         }
         // Recharged = débours lines of standing invoices dated in the window.
         foreach ($this->p->linesInWindow($f, $t) as $l) {
-            if (($l['clearance_category'] ?? '') !== 'debours') continue;
+            if (($l['clearance_category'] ?? '') !== 'debours' || !empty($l['is_handling'])) continue;
             $mid = ClearanceData::m2oId($l['move_id'] ?? false);
             $m = $inv[$mid] ?? null;
             $fid = $m ? ClearanceData::m2oId($m['logistics_file_id'] ?? false) : null;
