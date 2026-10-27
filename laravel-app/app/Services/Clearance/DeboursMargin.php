@@ -67,7 +67,7 @@ final class DeboursMargin
     public static function compute(ClearancePack $p, string $from, string $to): array
     {
         $files = $p->filesById();
-        $rows = [];
+        $rows = []; $noCost = [];
         foreach (self::perFile($p) as $fid => $x) {
             $first = $x['first_invoice'] ?? null;
             if (!$first || $first < $from || $first > $to) continue;
@@ -75,6 +75,13 @@ final class DeboursMargin
             if (($f['state'] ?? '') === 'imported') continue; // Teese history
             $inc = (float) ($x['incurred'] ?? 0); $bil = (float) ($x['billed'] ?? 0);
             if (abs($inc) < 0.5 && abs($bil) < 0.5) continue; // no débours on this file
+            if (abs($inc) < 0.5) {
+                // Débours recharged but none paid out in the application (paid
+                // before go-live, outside it): no cost to measure against.
+                $noCost[] = ['file' => (string) ($f['name'] ?? ('#' . $fid)), 'client' => ClearanceData::m2oName($f['partner_id'] ?? false, '') ?: '—',
+                             'invoiced' => $first, 'billed' => $bil];
+                continue;
+            }
             $rows[] = [
                 'id' => $fid, 'file' => (string) ($f['name'] ?? ('#' . $fid)),
                 'client' => ClearanceData::m2oName($f['partner_id'] ?? false, '') ?: '—',
@@ -147,6 +154,8 @@ final class DeboursMargin
             'months' => $months,
             'profitable' => $profitable, 'lossmaking' => $lossmaking, 'even' => $even,
             'loss_files' => array_slice($lossFiles, 0, 25),
+            'no_cost' => ['files' => count($noCost), 'billed' => array_sum(array_column($noCost, 'billed')),
+                          'rows' => array_slice($noCost, 0, 50)],
         ];
     }
 }

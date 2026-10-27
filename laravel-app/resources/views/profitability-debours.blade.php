@@ -41,6 +41,17 @@
             @endforeach
         </div>
 
+        @if (!empty($dm['no_cost']['files']))
+            <details class="bg-amber-50 border border-amber-200 rounded-xl p-3 mb-4 text-[12px] text-amber-900">
+                <summary class="cursor-pointer"><b>{{ $dm['no_cost']['files'] }} invoiced file{{ $dm['no_cost']['files'] > 1 ? 's' : '' }} left out</b>: their invoices recharge {{ $m($dm['no_cost']['billed']) }} of débours, but no disbursement was paid out on them in the clearance application (paid before go-live or outside it), so there is no cost to measure a margin against.</summary>
+                <div class="mt-2 max-h-64 overflow-y-auto">
+                    @foreach ($dm['no_cost']['rows'] as $r)
+                        <div class="flex justify-between gap-3 border-t border-amber-200 py-1"><span>{{ $r['file'] }} · {{ $r['client'] }} · invoiced {{ \Carbon\Carbon::parse($r['invoiced'])->format('d/m/Y') }}</span><span class="tabular-nums">{{ $m($r['billed']) }}</span></div>
+                    @endforeach
+                </div>
+            </details>
+        @endif
+
         {{-- Sandbox 1 — by customer --}}
         @php
             $allC = array_merge($dm['profitable'], $dm['lossmaking'], $dm['even']);

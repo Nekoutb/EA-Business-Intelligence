@@ -63,7 +63,7 @@ class ProfitabilityController extends Controller
         $deboursMargin = null;
         if (\App\Services\Clearance\ClearanceOps::enabled()) {
             try {
-                $deboursMargin = ea_cached('debours_margin_v2_' . $year,
+                $deboursMargin = ea_cached('debours_margin_v3_' . $year,
                     fn () => \App\Services\Clearance\DeboursMargin::forYear($year));
             } catch (\Throwable $e) {
                 $deboursMargin = ['error' => ea_safe_error($e, 'profitability.debours', 'Could not load the débours margin.')];
