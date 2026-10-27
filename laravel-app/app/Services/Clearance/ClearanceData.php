@@ -77,6 +77,7 @@ class ClearanceData
     {
         $key = 'sa:' . md5($model . json_encode($domain) . json_encode($fields) . $order);
         if (isset($this->memo[$key])) return $this->memo[$key];
+        $t0 = microtime(true);
 
         if ($this->snapshot !== null) {
             $rows = array_values(array_filter(
@@ -93,7 +94,7 @@ class ClearanceData
                 if (count($page) < self::PAGE) break;
             }
         }
-        $this->queryLog[] = ['model' => $model, 'rows' => count($rows), 'note' => $note];
+        $this->queryLog[] = ['model' => $model, 'rows' => count($rows), 'note' => $note, 'ms' => (int) round(1000 * (microtime(true) - $t0))];
         return $this->memo[$key] = $rows;
     }
 

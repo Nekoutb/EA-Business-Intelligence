@@ -1463,6 +1463,29 @@ try {
             echo json_encode($J, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE | JSON_PARTIAL_OUTPUT_ON_ERROR);
             break;
 
+        case 'ciload':
+            // Clearance Intelligence: load the dataset once and time every
+            // Odoo read, then the computation. Read-only. ?tenant=slug
+            @set_time_limit(900);
+            $slug = (string) ($_GET['tenant'] ?? 'elimelec');
+            $tenant = App\Models\Tenant::where('slug', $slug)->first();
+            if (!$tenant) { ln("no tenant '{$slug}'"); break; }
+            app(App\Tenancy\TenantContext::class)->set($tenant);
+            $t0 = microtime(true);
+            try {
+                $cd = App\Services\Clearance\ClearanceData::live(App\Odoo\OdooFactory::fromConfig());
+                $asOf = date('Y-m-d');
+                $ds = App\Services\ClearanceIntel\Dataset::load($cd, $asOf);
+                foreach ($ds->queryLog as $q) ln(sprintf('%-28s %7d rows %7d ms  %s', $q['model'], $q['rows'], $q['ms'] ?? -1, $q['note']));
+                ln(sprintf('load total %d ms', 1000 * (microtime(true) - $t0)));
+                $t1 = microtime(true);
+                $r = App\Services\ClearanceIntel\Report::compute($ds, $asOf ? substr($asOf, 0, 4) . '-01-01' : $asOf, $asOf, $asOf);
+                ln(sprintf('compute %d ms · %d files · %d alerts · payload %d KB', 1000 * (microtime(true) - $t1), count($r['files']), count($r['alerts']), strlen(serialize($r)) / 1024));
+                foreach (['files_opened', 'files_billed', 'fees', 'wip_files', 'turnaround_days', 'steps_late_pct', 'unbilled_debours', 'unjustified_advances', 'tasks_open'] as $k)
+                    ln(sprintf('  %-22s %s', $k, json_encode($r['kpis'][$k]['value'])));
+            } catch (\Throwable $e) { ln('FAILED: ' . $e->getMessage() . ' @ ' . basename($e->getFile()) . ':' . $e->getLine()); }
+            break;
+
         case 'prodcheck':
             // Read-only: saved productivity settings + what HR Productivity
             // computes from them right now (no cache).
