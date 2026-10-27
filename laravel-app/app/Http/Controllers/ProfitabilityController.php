@@ -59,6 +59,17 @@ class ProfitabilityController extends Controller
             }
         }
 
+        // Clearance tenants: margin on débours (billed lines vs paid out).
+        $deboursMargin = null;
+        if (\App\Services\Clearance\ClearanceOps::enabled()) {
+            try {
+                $deboursMargin = ea_cached('debours_margin_v1_' . $year,
+                    fn () => \App\Services\Clearance\DeboursMargin::forYear($year));
+            } catch (\Throwable $e) {
+                $deboursMargin = ['error' => ea_safe_error($e, 'profitability.debours', 'Could not load the débours margin.')];
+            }
+        }
+
         // Render through the existing (already-compiled) profit-loss view via
         // profMode — this host can't compile a brand-new template at runtime
         // (storage/framework/views isn't writable by the web user), so a
@@ -73,6 +84,7 @@ class ProfitabilityController extends Controller
             'profMode'  => true,
             'logistics' => $logistics,
             'periodLabel' => $periodLabel,
+            'deboursMargin' => $deboursMargin,
         ]);
     }
 }

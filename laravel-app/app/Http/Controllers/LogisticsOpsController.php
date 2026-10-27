@@ -86,7 +86,7 @@ class LogisticsOpsController extends Controller
     {
         [$tenantId, $from, $to, $label, $period] = $this->ctx($request);
         [$svc, $sp] = $this->src($tenantId, $from, $to);
-        $key  = $sp . 'logi_oop_v2_' . md5(json_encode($period));
+        $key  = $sp . ($sp === 'clr_' ? 'logi_oop_v3_' : 'logi_oop_v2_') . md5(json_encode($period));
         $data = ea_cached($key, fn () => $svc()->oopCompliance($from, $to));
         return view('logistics.oop', [
             'data' => $data, 'active' => 'logistics_oop', 'period' => $period, 'periodLabel' => $label,

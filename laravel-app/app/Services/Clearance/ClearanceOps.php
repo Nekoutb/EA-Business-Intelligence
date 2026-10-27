@@ -14,11 +14,13 @@ use App\Services\LogisticsOpsService;
  *             opened = date_opened, closed = date_closed.
  *  OOP        incurred  = disbursements (logistics.expense, non-legacy)
  *                         paid out (date_settled) in the window;
- *             recharged = disbursements billed to the client (is_billed,
- *                         billed invoice standing) whose invoice date is in
- *                         the window, at recharge_amount (amount when unset).
- *  Unbilled   disbursements paid out in the window, settled/justified and
- *             not billed — R-f, the same rule as Clearance report R3.
+ *             recharged = the débours lines of standing customer invoices
+ *                         (clearance_category = debours; service lines
+ *                         excluded) dated in the window, credit notes
+ *                         deducted — what the invoices actually recharge.
+ *  Unbilled   per file with débours paid out in the window: débours paid
+ *             out on the file (all dates) less the débours lines already
+ *             invoiced on it (DeboursMargin), when positive.
  *  Volumes    container_count / weight_kg / cargo_value on files opened in
  *             the window; shipment_type for the mode split.
  */
@@ -200,13 +202,17 @@ class ClearanceOps
                 $per[$fid]['incurred'][] = ['label' => $this->expenseLabel($e), 'who' => $this->payee($e),
                     'date' => (string) $this->d($e['date_settled']), 'amount' => (float) $e['amount']];
             }
-            $bid = ClearanceData::m2oId($e['billed_invoice_id'] ?? false);
-            if (!empty($e['is_billed']) && $bid && isset($inv[$bid]) && Rules::billStands($inv[$bid])
-                && Rules::inPeriod($inv[$bid]['invoice_date'] ?? null, $f, $t)) {
-                $amt = (float) ($e['recharge_amount'] ?: $e['amount']);
-                $per[$fid]['recharged'][] = ['label' => $this->expenseLabel($e), 'inv' => (string) ($inv[$bid]['name'] ?? ''),
-                    'date' => (string) $this->d($inv[$bid]['invoice_date']), 'amount' => $amt];
-            }
+        }
+        // Recharged = débours lines of standing invoices dated in the window.
+        foreach ($this->p->linesInWindow($f, $t) as $l) {
+            if (($l['clearance_category'] ?? '') !== 'debours') continue;
+            $mid = ClearanceData::m2oId($l['move_id'] ?? false);
+            $m = $inv[$mid] ?? null;
+            $fid = $m ? ClearanceData::m2oId($m['logistics_file_id'] ?? false) : null;
+            if (!$fid) continue;
+            $sign = ($m['move_type'] ?? '') === 'out_refund' ? -1 : 1;
+            $per[$fid]['recharged'][] = ['label' => trim((string) ($l['name'] ?? '')) ?: 'Débours', 'inv' => (string) ($m['name'] ?? ''),
+                'date' => (string) $this->d($m['invoice_date']), 'amount' => $sign * (float) ($l['price_subtotal'] ?? 0)];
         }
         $byId = $this->p->filesById();
         foreach ($per as $fid => $d) {
@@ -230,13 +236,20 @@ class ClearanceOps
         $f = $from->format('Y-m-d'); $t = $to->format('Y-m-d');
         $out = ['count' => 0, 'total' => 0.0, 'items' => [], 'by_client' => [], 'source' => 'clearance'];
         $byId = $this->p->filesById();
-        foreach ($this->p->unbilled() as $e) {
-            if (!Rules::inPeriod($e['date_settled'] ?? null, $f, $t)) continue;
-            $fid = ClearanceData::m2oId($e['file_id'] ?? false);
-            $lab = $fid && isset($byId[$fid]) ? $this->fileLabel($byId[$fid]) : ['code' => '—', 'client' => '—'];
-            $out['items'][] = ['client' => $lab['client'], 'file' => $lab['code'], 'who' => $this->payee($e),
-                'label' => $this->expenseLabel($e), 'date' => (string) $this->d($e['date_settled']), 'amount' => (float) $e['amount']];
-            $out['total'] += (float) $e['amount'];
+        // Files with débours paid out in the window.
+        $inWindow = [];
+        foreach ($this->paidOut() as $e) {
+            if (Rules::inPeriod($e['date_settled'] ?? null, $f, $t) && ($fid = ClearanceData::m2oId($e['file_id'] ?? false))) $inWindow[$fid] = true;
+        }
+        foreach (DeboursMargin::perFile($this->p) as $fid => $x) {
+            if (!isset($inWindow[$fid])) continue;
+            $gap = (float) ($x['incurred'] ?? 0) - (float) ($x['billed'] ?? 0);
+            if ($gap < 0.5) continue;
+            $lab = isset($byId[$fid]) ? $this->fileLabel($byId[$fid]) : ['code' => '—', 'client' => '—'];
+            $out['items'][] = ['client' => $lab['client'], 'file' => $lab['code'], 'who' => '—',
+                'label' => 'Débours paid ' . number_format((float) ($x['incurred'] ?? 0), 0, '.', ' ') . ', invoiced ' . number_format((float) ($x['billed'] ?? 0), 0, '.', ' '),
+                'date' => (string) ($x['last_paid'] ?? ''), 'amount' => $gap];
+            $out['total'] += $gap;
         }
         $out['count'] = count($out['items']);
         usort($out['items'], fn ($x, $y) => $y['amount'] <=> $x['amount']);

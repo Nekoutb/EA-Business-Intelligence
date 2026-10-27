@@ -210,6 +210,7 @@
         </script>
         @endpush
     @endif
+    @includeWhen(!empty($deboursMargin), 'profitability-debours', ['dm' => $deboursMargin ?? null, 'year' => $year])
 @else
     {{-- ====================== PROFIT & LOSS (existing) ====================== --}}
     @if ($error)
