@@ -413,9 +413,13 @@ try {
             $selFields = ['state', 'step', 'kind', 'payment_mode', 'originating_team', 'justification',
                           'clearance_category', 'clearance_service_kind', 'clearance_invoice_kind',
                           'customs_regime', 'opening_state', 'waiver_state', 'advance_waiver_state',
-                          'recharge_state', 'reopen_request_state', 'stage_owner', 'shipment_type'];
+                          'recharge_state', 'reopen_request_state', 'stage_owner', 'shipment_type',
+                          'billing_status', 'cancel_reason', 'target_state', 'from_state', 'clearance_receivable_kind', 'payment_state', 'move_type'];
             $allOk = true;
-            foreach ((array) config('clearance_reports.required_fields') as $model => $need) {
+            // &cfg=clearance_intel_fields checks the Clearance Intelligence registry instead.
+            $cfgFields = ($_GET['cfg'] ?? '') === 'clearance_intel_fields'
+                ? (array) config('clearance_intel_fields') : (array) config('clearance_reports.required_fields');
+            foreach ($cfgFields as $model => $need) {
                 try {
                     $fg = $client->callModel($model, 'fields_get', ['attributes' => ['type', 'string', 'selection', 'relation']]);
                 } catch (\Throwable $e) {
