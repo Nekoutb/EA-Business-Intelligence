@@ -21,11 +21,13 @@ class TenantContext
 
     public function set(Tenant $tenant): void
     {
+        if ($this->tenant?->id !== $tenant->id) TenantDatabase::reset();
         $this->tenant = $tenant;
     }
 
     public function clear(): void
     {
+        TenantDatabase::reset();
         $this->tenant = null;
     }
 

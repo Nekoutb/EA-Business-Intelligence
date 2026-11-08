@@ -65,7 +65,7 @@ final class ReceivablesService
             try {
                 $tenantId = (int) (optional(tenant())->id ?? 0);
                 if ($tenantId > 0) {
-                    $rows = \Illuminate\Support\Facades\DB::table('wh_fact_invoice as i')
+                    $rows = ea_tdb()->table('wh_fact_invoice as i')
                         ->leftJoin('wh_dim_partner as p', function ($j) {
                             $j->on('p.tenant_id', '=', 'i.tenant_id')
                               ->on('p.odoo_id', '=', 'i.partner_odoo_id');

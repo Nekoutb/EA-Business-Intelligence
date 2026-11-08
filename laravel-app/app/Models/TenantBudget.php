@@ -14,6 +14,8 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  */
 class TenantBudget extends Model
 {
+    use \App\Models\Concerns\OnTenantDatabase;
+
     protected $fillable = [
         'tenant_id', 'year', 'data', 'source_filename', 'uploaded_by',
     ];

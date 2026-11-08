@@ -28,6 +28,8 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  */
 class LineDonationCategory extends Model
 {
+    use \App\Models\Concerns\OnTenantDatabase;
+
     public const CAT_FULLY_DEDUCTIBLE = 1;
     public const CAT_CAPPED           = 2;
     public const CAT_NON_DEDUCTIBLE   = 3;

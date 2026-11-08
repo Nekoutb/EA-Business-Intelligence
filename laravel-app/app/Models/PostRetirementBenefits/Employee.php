@@ -26,6 +26,8 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  */
 class Employee extends Model
 {
+    use \App\Models\Concerns\OnTenantDatabase;
+
     protected $table = 'post_retirement_employees';
 
     protected $fillable = [

@@ -143,7 +143,7 @@ try {
             ln('source ' . $srcN . ' type=' . $src->type() . ' configured=' . ($src->configured() ? 'yes' : 'no') . ' label=' . $src->label());
             $t = App\Services\SageRestClient::testCurrent($src);
             ln('test: ' . ($t['ok'] ? 'OK' : 'FAIL') . ' · ' . $t['latency_ms'] . 'ms · ' . $t['message']);
-            $agg = Illuminate\Support\Facades\DB::table('wh_sage_ecriture')
+            $agg = ea_tdb()->table('wh_sage_ecriture')
                 ->where('tenant_id', $tenant->id)->where('source', $srcN)
                 ->selectRaw('COUNT(*) n, MIN(ecr_date) d0, MAX(ecr_date) d1, COUNT(DISTINCT account) accts,
                              SUM(CASE WHEN sens = 0 THEN amount ELSE 0 END) deb,
@@ -151,7 +151,7 @@ try {
             ln('warehouse: ' . number_format((int) $agg->n) . ' rows · ' . ($agg->d0 ?? '—') . ' → ' . ($agg->d1 ?? '—')
                 . ' · ' . (int) $agg->accts . ' accounts · débit ' . number_format((float) $agg->deb, 0, '.', ' ')
                 . ' · crédit ' . number_format((float) $agg->cre, 0, '.', ' '));
-            $st = Illuminate\Support\Facades\DB::table('wh_sync_state')->where('tenant_id', $tenant->id)
+            $st = ea_tdb()->table('wh_sync_state')->where('tenant_id', $tenant->id)
                 ->where('model', $src->stateModel('sage:ecritures'))->first();
             ln('state: ' . ($st ? ('last_run ' . $st->last_run_at . ' · rows ' . $st->rows_synced . ' · ' . ($st->last_error ?: 'no error')) : 'never synced'));
             break;
@@ -197,7 +197,7 @@ try {
                     $manifest[] = sprintf('%-28s %6d rows', $tbl . '.csv', $n);
                     ln(sprintf('%-28s %6d rows', $tbl, $n));
                 }
-                $st = Illuminate\Support\Facades\DB::table('wh_sync_state')->where('tenant_id', $tenant->id)->get();
+                $st = ea_tdb()->table('wh_sync_state')->where('tenant_id', $tenant->id)->get();
                 $csv("{$dir}/_sync_state.csv", $st->all());
                 $manifest[] = 'data as of the last successful sync (see _sync_state.csv)';
             } else {
@@ -527,7 +527,7 @@ try {
             // bms:warehouse-sync exists ONLY as a Laravel-scheduled task, at
             // minutes 7/22/37/52. If last_run_at lands on one of those and
             // nobody triggered it by hand, the scheduler is alive.
-            foreach (Illuminate\Support\Facades\DB::table('wh_sync_state')
+            foreach (ea_tdb()->table('wh_sync_state')
                 ->orderBy('tenant_id')->orderBy('model')->get() as $st) {
                 $t = (string) ($st->last_run_at ?? '');
                 $min = $t !== '' ? (int) substr($t, 14, 2) : -1;
@@ -675,12 +675,12 @@ try {
             $want = fn (string $k) => $part === 'all' || $part === $k;
 
             if ($want('coverage')) {
-            $tot = \Illuminate\Support\Facades\DB::table('wh_fact_gl_line')->where('tenant_id', $tid)->count();
-            $withProd = \Illuminate\Support\Facades\DB::table('wh_fact_gl_line')->where('tenant_id', $tid)
+            $tot = ea_tdb()->table('wh_fact_gl_line')->where('tenant_id', $tid)->count();
+            $withProd = ea_tdb()->table('wh_fact_gl_line')->where('tenant_id', $tid)
                 ->whereNotNull('product_odoo_id')->count();
-            $withQty = \Illuminate\Support\Facades\DB::table('wh_fact_gl_line')->where('tenant_id', $tid)
+            $withQty = ea_tdb()->table('wh_fact_gl_line')->where('tenant_id', $tid)
                 ->whereNotNull('product_odoo_id')->where('quantity', '>', 0)->count();
-            $joinable = \Illuminate\Support\Facades\DB::table('wh_fact_gl_line as l')
+            $joinable = ea_tdb()->table('wh_fact_gl_line as l')
                 ->join('wh_dim_product as p', function ($j) {
                     $j->on('p.tenant_id', '=', 'l.tenant_id')->on('p.odoo_id', '=', 'l.product_odoo_id');
                 })->where('l.tenant_id', $tid)->where('l.quantity', '>', 0)->count();
@@ -692,7 +692,7 @@ try {
             ln();
             }
 
-            $base = fn () => \Illuminate\Support\Facades\DB::table('wh_fact_gl_line as l')
+            $base = fn () => ea_tdb()->table('wh_fact_gl_line as l')
                 ->join('wh_dim_product as p', function ($j) {
                     $j->on('p.tenant_id', '=', 'l.tenant_id')->on('p.odoo_id', '=', 'l.product_odoo_id');
                 })
@@ -724,7 +724,7 @@ try {
             }
             if ($want('voyage')) {
             ln('== volume by voyage type (Type_voyage) ==');
-            foreach (\Illuminate\Support\Facades\DB::table('wh_fact_gl_line as l')
+            foreach (ea_tdb()->table('wh_fact_gl_line as l')
                 ->join('wh_fact_invoice as i', function ($j) {
                     $j->on('i.tenant_id', '=', 'l.tenant_id')->on('i.odoo_id', '=', 'l.move_odoo_id');
                 })
@@ -1582,7 +1582,7 @@ try {
             $y = (int) ($_GET['year'] ?? date('Y'));
             ln('PRODUCTIVITY_MANUAL=' . var_export(config_env('PRODUCTIVITY_MANUAL'), true) . ' enabled=' . var_export(App\Services\ProductivityOverrides::enabled(), true));
             ln('PRODUCTIVITY_FILE_NATURES=' . var_export(config_env('PRODUCTIVITY_FILE_NATURES'), true));
-            foreach (Illuminate\Support\Facades\DB::table('tenant_productivity_months')->where('tenant_id', $tenant->id)->orderBy('year')->orderBy('month')->get() as $r) {
+            foreach (ea_tdb()->table('tenant_productivity_months')->where('tenant_id', $tenant->id)->orderBy('year')->orderBy('month')->get() as $r) {
                 ln(sprintf('  %d-%02d employees=%s files=%s natures=%s updated=%s', $r->year, $r->month, var_export($r->employees, true), var_export($r->files, true), (string) $r->natures, $r->updated_at));
             }
             ln('fingerprint=' . App\Services\ProductivityOverrides::fingerprint());
@@ -1696,7 +1696,7 @@ try {
                 ln($tb . ': ' . $rows->map(fn ($r) => "t{$r->tenant_id}=" . number_format($r->n))->implode('  '));
             }
             if (Illuminate\Support\Facades\Schema::hasTable('wh_fact_dossier')) {
-                foreach (Illuminate\Support\Facades\DB::table('wh_fact_dossier')->selectRaw('tenant_id, MIN(opened_date) a, MAX(opened_date) b')->groupBy('tenant_id')->get() as $r) {
+                foreach (ea_tdb()->table('wh_fact_dossier')->selectRaw('tenant_id, MIN(opened_date) a, MAX(opened_date) b')->groupBy('tenant_id')->get() as $r) {
                     ln("dossier dates t{$r->tenant_id}: {$r->a} → {$r->b}");
                 }
             }
@@ -1719,7 +1719,7 @@ try {
             }
             ln();
             ln('== wh_fact_invoice by year ==');
-            foreach (Illuminate\Support\Facades\DB::table('wh_fact_invoice')
+            foreach (ea_tdb()->table('wh_fact_invoice')
                 ->where('tenant_id', $tid)->whereNotNull('invoice_date')
                 ->selectRaw('YEAR(invoice_date) y, COUNT(*) n, SUM(amount_untaxed) ht, SUM(amount_total) ttc, SUM(amount_residual) open_ar')
                 ->groupBy('y')->orderBy('y')->get() as $r) {
@@ -1740,7 +1740,7 @@ try {
                 ln();
             }
             if (Illuminate\Support\Facades\Schema::hasTable('wh_dim_product')) {
-                $withProd = Illuminate\Support\Facades\DB::table('wh_fact_gl_line as l')
+                $withProd = ea_tdb()->table('wh_fact_gl_line as l')
                     ->join('wh_dim_product as p', function ($j) {
                         $j->on('p.tenant_id', '=', 'l.tenant_id')->on('p.odoo_id', '=', 'l.product_odoo_id');
                     })->where('l.tenant_id', $tid)->count();
@@ -1748,7 +1748,7 @@ try {
                 ln();
             }
             ln('== top 5 partners by open AR ==');
-            foreach (Illuminate\Support\Facades\DB::table('wh_fact_invoice as i')
+            foreach (ea_tdb()->table('wh_fact_invoice as i')
                 ->leftJoin('wh_dim_partner as p', fn ($j) => $j->on('p.tenant_id', '=', 'i.tenant_id')->on('p.odoo_id', '=', 'i.partner_odoo_id'))
                 ->where('i.tenant_id', $tid)->where('i.amount_residual', '>', 0)
                 ->selectRaw('MAX(p.name) name, SUM(i.amount_residual) ar, COUNT(*) n')
@@ -1849,7 +1849,7 @@ try {
             if (!$tenant) { ln("no tenant '{$slug}'"); break; }
             app(App\Tenancy\TenantContext::class)->set($tenant);
             $client = App\Odoo\OdooFactory::fromConfig();
-            $T = Illuminate\Support\Facades\DB::table('wh_fact_gl_line')->where('tenant_id', $tenant->id);
+            $T = ea_tdb()->table('wh_fact_gl_line')->where('tenant_id', $tenant->id);
             $agg = (clone $T)->selectRaw(
                 'COUNT(*) total,
                  SUM(gl_date IS NULL) nodate,
@@ -1868,7 +1868,7 @@ try {
             ln(sprintf('odoo_id range      %s .. %s', number_format((int) $agg->minid), number_format((int) $agg->maxid)));
             ln(sprintf('debit / credit     %s / %s', number_format((float) $agg->dr, 2), number_format((float) $agg->cr, 2)));
             ln();
-            $st = Illuminate\Support\Facades\DB::table('wh_sync_state')
+            $st = ea_tdb()->table('wh_sync_state')
                 ->where('tenant_id', $tenant->id)->where('model', 'account.move.line')->first();
             ln('== cursor ==');
             ln(sprintf('last_write_date    %s', (string) ($st->last_write_date ?? '—')));
@@ -1988,7 +1988,7 @@ try {
                 $oHt    = (float) ($oG[0]['amount_untaxed_signed'] ?? 0);
                 $oRes   = (float) ($oG[0]['amount_residual_signed'] ?? 0);
 
-                $w = Illuminate\Support\Facades\DB::table('wh_fact_invoice')
+                $w = ea_tdb()->table('wh_fact_invoice')
                     ->where('tenant_id', $tenant->id)->where('move_type', $mt)->where('state', 'posted')
                     ->whereBetween('invoice_date', [$from, $to])
                     ->selectRaw('COUNT(*) c, COALESCE(SUM(amount_untaxed),0) ht, COALESCE(SUM(amount_residual),0) res')
@@ -2011,7 +2011,7 @@ try {
             // only. Match the document filter, and date on gl_date — the date
             // as booked — since invoice_date is rewritten to the parent's.
             $docTypes = ['out_invoice', 'out_refund', 'in_invoice', 'in_refund'];
-            $lc = Illuminate\Support\Facades\DB::table('wh_fact_gl_line')
+            $lc = ea_tdb()->table('wh_fact_gl_line')
                 ->where('tenant_id', $tenant->id)
                 ->whereIn('move_type', $docTypes)
                 ->whereBetween('gl_date', [$from, $to])->count();
@@ -2021,12 +2021,12 @@ try {
             ]);
             ln(sprintf('%-20s rows %7s/%-7s Δ%d', 'invoice lines', number_format($lc), number_format($oLc), $lc - $oLc));
 
-            $glc = Illuminate\Support\Facades\DB::table('wh_fact_gl_line')
+            $glc = ea_tdb()->table('wh_fact_gl_line')
                 ->where('tenant_id', $tenant->id)->whereBetween('gl_date', [$from, $to])->count();
             $oGlc = $client->searchCount('account.move.line', [['date', '>=', $from], ['date', '<=', $to]]);
             ln(sprintf('%-20s rows %7s/%-7s Δ%d', 'all GL lines', number_format($glc), number_format($oGlc), $glc - $oGlc));
 
-            foreach (Illuminate\Support\Facades\DB::table('wh_sync_state')->where('tenant_id', $tenant->id)->get() as $st) {
+            foreach (ea_tdb()->table('wh_sync_state')->where('tenant_id', $tenant->id)->get() as $st) {
                 ln(sprintf('  state %-20s watermark %-20s rows %8s %s',
                     $st->model, (string) ($st->last_write_date ?? '—'),
                     number_format((int) $st->rows_synced), $st->last_error ? ('ERR: ' . mb_substr($st->last_error, 0, 60)) : ''));
@@ -2948,7 +2948,7 @@ try {
             ]);
             $oBal = (float) (($og[0]['balance'] ?? 0));
 
-            $q = fn () => Illuminate\Support\Facades\DB::table('wh_fact_gl_line')
+            $q = fn () => ea_tdb()->table('wh_fact_gl_line')
                 ->where('tenant_id', $tenant->id)
                 ->whereBetween('gl_date', [$mStart, $mEnd])
                 ->whereIn('account_odoo_id', $ids);
@@ -2994,7 +2994,7 @@ try {
             $odooAcc = $client->searchRead('account.account',
                 ['|', '|', ['code', '=like', '6%'], ['code', '=like', '7%'], ['code', '=like', '89%']],
                 ['id', 'code', 'name'], []);
-            $whAcc = Illuminate\Support\Facades\DB::table('wh_dim_account')
+            $whAcc = ea_tdb()->table('wh_dim_account')
                 ->where('tenant_id', $tenant->id)
                 ->where(function ($q) { foreach (['6', '7', '89'] as $p) $q->orWhere('code', 'like', $p . '%'); })
                 ->get(['odoo_id', 'code', 'name']);
@@ -3012,7 +3012,7 @@ try {
             if ($onlyWh) {
                 ln('IN WAREHOUSE ONLY (odoo hides archived accounts by default):');
                 foreach (array_slice($onlyWh, 0, 15, true) as $id => $code) {
-                    $bal = Illuminate\Support\Facades\DB::table('wh_fact_gl_line')
+                    $bal = ea_tdb()->table('wh_fact_gl_line')
                         ->where('tenant_id', $tenant->id)->where('account_odoo_id', $id)
                         ->where('parent_state', 'posted')
                         ->whereBetween('gl_date', [date('Y') . '-01-01', date('Y') . '-12-31'])
@@ -3040,7 +3040,7 @@ try {
             }
             ln(sprintf('CODE MISMATCHES (same id, different code): %s', number_format(count($codeDiff))));
             foreach (array_slice($codeDiff, 0, 20, true) as $id => [$wc, $oc]) {
-                $bal = Illuminate\Support\Facades\DB::table('wh_fact_gl_line')
+                $bal = ea_tdb()->table('wh_fact_gl_line')
                     ->where('tenant_id', $tenant->id)->where('account_odoo_id', $id)
                     ->where('parent_state', 'posted')
                     ->whereBetween('gl_date', [date('Y') . '-01-01', date('Y') . '-12-31'])

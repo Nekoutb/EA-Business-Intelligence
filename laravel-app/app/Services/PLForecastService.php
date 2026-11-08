@@ -289,7 +289,7 @@ final class PLForecastService
         try {
             $id = (int) (optional(tenant())->id ?? 0);
             if ($id <= 0) return null;
-            return \Illuminate\Support\Facades\DB::table('wh_fact_gl_line')
+            return ea_tdb()->table('wh_fact_gl_line')
                 ->where('tenant_id', $id)->limit(1)->exists() ? $id : null;
         } catch (\Throwable $e) {
             return null;
@@ -301,7 +301,7 @@ final class PLForecastService
         $whT = $this->whTenantId();
         if ($whT !== null) {
             try {
-                $rows = \Illuminate\Support\Facades\DB::table('wh_dim_account')
+                $rows = ea_tdb()->table('wh_dim_account')
                     ->where('tenant_id', $whT)
                     ->where(function ($q) {
                         foreach (['6', '7', '89'] as $p) $q->orWhere('code', 'like', $p . '%');
@@ -348,7 +348,7 @@ final class PLForecastService
         $whT = $this->whTenantId();
         if ($whT !== null) {
             try {
-                $agg = \Illuminate\Support\Facades\DB::table('wh_fact_gl_line')
+                $agg = ea_tdb()->table('wh_fact_gl_line')
                     ->where('tenant_id', $whT)
                     ->where('parent_state', 'posted')
                     ->whereNotNull('gl_date')

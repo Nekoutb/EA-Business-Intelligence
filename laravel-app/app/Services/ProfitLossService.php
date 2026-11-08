@@ -79,7 +79,7 @@ final class ProfitLossService
         $accounts = null;
         if (($whT = $this->whTenantId()) !== null) {
             try {
-                $accounts = \Illuminate\Support\Facades\DB::table('wh_dim_account')
+                $accounts = ea_tdb()->table('wh_dim_account')
                     ->where('tenant_id', $whT)
                     ->where(function ($q) {
                         $q->where('code', 'like', '6%')->orWhere('code', 'like', '7%');
@@ -153,7 +153,7 @@ final class ProfitLossService
         try {
             $id = (int) (optional(tenant())->id ?? 0);
             if ($id <= 0) return null;
-            return \Illuminate\Support\Facades\DB::table('wh_fact_gl_line')
+            return ea_tdb()->table('wh_fact_gl_line')
                 ->where('tenant_id', $id)->limit(1)->exists() ? $id : null;
         } catch (\Throwable $e) {
             return null;
@@ -219,7 +219,7 @@ final class ProfitLossService
         if (($whT = $this->whTenantId()) !== null) {
             try {
                 $rows = [];
-                foreach (\Illuminate\Support\Facades\DB::table('wh_fact_gl_line')
+                foreach (ea_tdb()->table('wh_fact_gl_line')
                     ->where('tenant_id', $whT)
                     ->where('parent_state', 'posted')
                     ->whereNotNull('gl_date')

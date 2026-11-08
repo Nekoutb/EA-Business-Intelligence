@@ -385,7 +385,7 @@ final class ErpDbSyncService
     {
         $entity = $this->source->keyEntity($entity);
         if (!isset($this->keyCache[$entity])) {
-            $this->keyCache[$entity] = DB::table('wh_key_map')
+            $this->keyCache[$entity] = ea_tdb()->table('wh_key_map')
                 ->where('tenant_id', $this->tenant->id)->where('entity', $entity)
                 ->pluck('id', 'ext_key')->map(fn ($v) => (int) $v)->all();
         }
@@ -404,9 +404,9 @@ final class ErpDbSyncService
         }
         if ($missing === []) return;
         foreach (array_chunk(array_values($missing), self::CHUNK) as $chunk) {
-            DB::table('wh_key_map')->insertOrIgnore($chunk);
+            ea_tdb()->table('wh_key_map')->insertOrIgnore($chunk);
         }
-        $this->keyCache[$entity] = DB::table('wh_key_map')
+        $this->keyCache[$entity] = ea_tdb()->table('wh_key_map')
             ->where('tenant_id', $this->tenant->id)->where('entity', $entity)
             ->pluck('id', 'ext_key')->map(fn ($v) => (int) $v)->all();
     }
@@ -429,7 +429,7 @@ final class ErpDbSyncService
         }
         // Warm the whole entity on first touch — one query instead of N.
         if (!isset($this->keyCache[$entity])) {
-            $this->keyCache[$entity] = DB::table('wh_key_map')
+            $this->keyCache[$entity] = ea_tdb()->table('wh_key_map')
                 ->where('tenant_id', $this->tenant->id)->where('entity', $entity)
                 ->pluck('id', 'ext_key')->map(fn ($v) => (int) $v)->all();
             if (isset($this->keyCache[$entity][$extKey])) {
@@ -437,7 +437,7 @@ final class ErpDbSyncService
             }
         }
         try {
-            $id = (int) DB::table('wh_key_map')->insertGetId([
+            $id = (int) ea_tdb()->table('wh_key_map')->insertGetId([
                 'tenant_id'  => $this->tenant->id,
                 'entity'     => $entity,
                 'ext_key'    => substr($extKey, 0, 191),
@@ -449,7 +449,7 @@ final class ErpDbSyncService
             // PHP cache keeps apart ('Debours' vs 'Débours'). Adopt the row
             // the database considers equal — mapping both spellings to one
             // surrogate is also the semantically right rollup.
-            $id = (int) DB::table('wh_key_map')
+            $id = (int) ea_tdb()->table('wh_key_map')
                 ->where('tenant_id', $this->tenant->id)
                 ->where('entity', $entity)
                 ->where('ext_key', substr($extKey, 0, 191))
@@ -463,7 +463,7 @@ final class ErpDbSyncService
     private function flush(string $table, array $rows, array $updateCols): void
     {
         foreach (array_chunk($rows, self::CHUNK) as $chunk) {
-            DB::table($table)->upsert($chunk, ['tenant_id', 'odoo_id'], $updateCols);
+            ea_tdb()->table($table)->upsert($chunk, ['tenant_id', 'odoo_id'], $updateCols);
         }
     }
 
@@ -477,7 +477,7 @@ final class ErpDbSyncService
     private function prune(string $table, array $keep): void
     {
         // Only this source's id space: the other source's rows are not ours to judge.
-        $q = DB::table($table)->where('tenant_id', $this->tenant->id)
+        $q = ea_tdb()->table($table)->where('tenant_id', $this->tenant->id)
             ->whereBetween('odoo_id', $this->source->idRange());
         if ($keep === []) {
             // An empty source extract is more likely a provider-side reload
@@ -496,7 +496,7 @@ final class ErpDbSyncService
     /** Record the outcome in wh_sync_state (same table the Odoo sync uses). */
     private function note(string $model, array $result): void
     {
-        DB::table('wh_sync_state')->updateOrInsert(
+        ea_tdb()->table('wh_sync_state')->updateOrInsert(
             ['tenant_id' => $this->tenant->id, 'model' => $this->source->stateModel($model)],
             [
                 'last_run_at' => now(),

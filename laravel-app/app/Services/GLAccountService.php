@@ -45,7 +45,7 @@ final class GLAccountService
             if ($id <= 0) return null;
             // A tenant mid-backfill would silently under-report every GL
             // figure, so require lines to actually be there first.
-            $any = \Illuminate\Support\Facades\DB::table('wh_fact_gl_line')
+            $any = ea_tdb()->table('wh_fact_gl_line')
                 ->where('tenant_id', $id)->limit(1)->exists();
             return $any ? $id : null;
         } catch (\Throwable $e) {
@@ -70,7 +70,7 @@ final class GLAccountService
         if ($tenantId === null) return null;
 
         try {
-            $accounts = \Illuminate\Support\Facades\DB::table('wh_dim_account')
+            $accounts = ea_tdb()->table('wh_dim_account')
                 ->where('tenant_id', $tenantId)
                 ->where('code', 'like', $prefix . '%')
                 ->orderBy('code')
@@ -79,7 +79,7 @@ final class GLAccountService
 
             $ids = $accounts->pluck('odoo_id')->all();
 
-            $q = \Illuminate\Support\Facades\DB::table('wh_fact_gl_line')
+            $q = ea_tdb()->table('wh_fact_gl_line')
                 ->where('tenant_id', $tenantId)
                 ->whereIn('account_odoo_id', $ids)
                 ->where('parent_state', 'posted');

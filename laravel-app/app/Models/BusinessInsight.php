@@ -15,6 +15,8 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  */
 class BusinessInsight extends Model
 {
+    use \App\Models\Concerns\OnTenantDatabase;
+
     use HasFactory;
 
     public const PRIORITY_URGENT = 'urgent';

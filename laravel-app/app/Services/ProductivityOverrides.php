@@ -41,7 +41,7 @@ final class ProductivityOverrides
         if (isset(self::$memo[$k])) return self::$memo[$k];
         $out = [];
         try {
-            foreach (DB::table('tenant_productivity_months')->where('tenant_id', $tenantId)->where('year', $year)->get() as $r) {
+            foreach (ea_tdb()->table('tenant_productivity_months')->where('tenant_id', $tenantId)->where('year', $year)->get() as $r) {
                 $nat = array_map('intval', array_filter((array) json_decode((string) $r->natures, true), fn ($v) => $v !== null && $v !== ''));
                 $files = $r->files !== null ? (int) $r->files : ($nat ? array_sum($nat) : null);
                 $out[sprintf('%04d-%02d', $year, $r->month)] = [
@@ -91,8 +91,8 @@ final class ProductivityOverrides
     {
         if (!self::enabled() || !($t = self::tenantId())) return 'm0';
         try {
-            $last = (string) DB::table('tenant_productivity_months')->where('tenant_id', $t)->max('updated_at');
-            $n = (int) DB::table('tenant_productivity_months')->where('tenant_id', $t)->count();
+            $last = (string) ea_tdb()->table('tenant_productivity_months')->where('tenant_id', $t)->max('updated_at');
+            $n = (int) ea_tdb()->table('tenant_productivity_months')->where('tenant_id', $t)->count();
         } catch (\Throwable $e) { return 'm0'; }
         return 'm' . substr(md5($last . '|' . $n . '|' . implode(',', self::natures())), 0, 8);
     }

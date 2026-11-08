@@ -320,7 +320,7 @@ final class BillingService
         try {
             $id = (int) (optional(tenant())->id ?? 0);
             if ($id <= 0) return null;
-            return \Illuminate\Support\Facades\DB::table('wh_fact_invoice')
+            return ea_tdb()->table('wh_fact_invoice')
                 ->where('tenant_id', $id)->limit(1)->exists() ? $id : null;
         } catch (\Throwable $e) {
             return null;
@@ -354,7 +354,7 @@ final class BillingService
         if ($whT !== null) {
             try {
                 $rows = [];
-                foreach (\Illuminate\Support\Facades\DB::table('wh_fact_invoice')
+                foreach (ea_tdb()->table('wh_fact_invoice')
                     ->where('tenant_id', $whT)
                     ->where('move_type', 'out_invoice')
                     ->where('state', 'posted')
@@ -423,7 +423,7 @@ final class BillingService
             $invs = null;
             if ($whT !== null) {
                 try {
-                    $invs = \Illuminate\Support\Facades\DB::table('wh_fact_invoice')
+                    $invs = ea_tdb()->table('wh_fact_invoice')
                         ->where('tenant_id', $whT)
                         ->where('move_type', 'out_invoice')
                         ->where('state', 'posted')

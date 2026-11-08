@@ -7,6 +7,8 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class PLCommentary extends Model
 {
+    use \App\Models\Concerns\OnTenantDatabase;
+
     protected $table = 'pl_commentaries';
 
     protected $fillable = [

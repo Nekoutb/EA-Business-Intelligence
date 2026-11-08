@@ -184,7 +184,7 @@ final class RevenueService
         // to answer from, so those keep going to Odoo.
         if ($model === 'account.move' && ($whT = $this->whTenantId()) !== null) {
             try {
-                $base = fn () => \Illuminate\Support\Facades\DB::table('wh_fact_invoice')
+                $base = fn () => ea_tdb()->table('wh_fact_invoice')
                     ->where('wh_fact_invoice.tenant_id', $whT)
                     ->whereIn('wh_fact_invoice.move_type', ['out_invoice', 'out_refund'])
                     ->where('wh_fact_invoice.state', 'posted')
@@ -234,9 +234,9 @@ final class RevenueService
                 // fall back to, and one throw below used to blank the
                 // whole page. Odoo tenants without line rows keep the
                 // live path unchanged.
-                if (\Illuminate\Support\Facades\DB::table('wh_fact_invoice_line')
+                if (ea_tdb()->table('wh_fact_invoice_line')
                         ->where('tenant_id', $whT)->limit(1)->exists()) {
-                    $la = \Illuminate\Support\Facades\DB::table('wh_fact_invoice_line')
+                    $la = ea_tdb()->table('wh_fact_invoice_line')
                         ->where('tenant_id', $whT)
                         ->whereIn('move_type', ['out_invoice', 'out_refund'])
                         ->whereBetween('invoice_date', [$from->format('Y-m-d'), $to->format('Y-m-d')])
@@ -705,7 +705,7 @@ final class RevenueService
         try {
             $id = (int) (optional(tenant())->id ?? 0);
             if ($id <= 0) return null;
-            return \Illuminate\Support\Facades\DB::table('wh_fact_invoice')
+            return ea_tdb()->table('wh_fact_invoice')
                 ->where('tenant_id', $id)->limit(1)->exists() ? $id : null;
         } catch (\Throwable $e) {
             return null;

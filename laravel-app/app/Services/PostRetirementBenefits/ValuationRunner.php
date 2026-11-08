@@ -33,7 +33,7 @@ final class ValuationRunner
      */
     public function run(Tenant $tenant, Carbon $valuationDate): Valuation
     {
-        return DB::transaction(function () use ($tenant, $valuationDate) {
+        return ea_tdb()->transaction(function () use ($tenant, $valuationDate) {
             // 1. Resolve / persist the assumption set.
             $assumptions = $this->assumptions->resolveOrSeed($tenant, $valuationDate);
 

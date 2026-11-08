@@ -21,7 +21,7 @@ final class LogisticsOpsService
 
     private function d()
     {
-        return DB::table('wh_fact_dossier')->where('tenant_id', $this->tenantId);
+        return ea_tdb()->table('wh_fact_dossier')->where('tenant_id', $this->tenantId);
     }
 
     /** Backlog ageing buckets, in display order. */
@@ -175,7 +175,7 @@ final class LogisticsOpsService
     {
         $out = ['docs' => 0, 'pending' => 0, 'circuits' => [], 'steps' => [], 'note' => null];
         try {
-            $base = DB::table('wh_fact_validation')->where('tenant_id', $this->tenantId);
+            $base = ea_tdb()->table('wh_fact_validation')->where('tenant_id', $this->tenantId);
 
             $out['pending'] = (int) (clone $base)->where('is_passed', false)->distinct()->count('doc_key');
 
@@ -231,8 +231,8 @@ final class LogisticsOpsService
         }
         try {
             $f = $from->format('Y-m-d'); $t = $to->format('Y-m-d');
-            $hasBill = \Illuminate\Support\Facades\Schema::hasColumn('wh_fact_dossier', 'billing_start_date');
-            $hasDep  = \Illuminate\Support\Facades\Schema::hasColumn('wh_fact_invoice', 'deposited_date');
+            $hasBill = \Illuminate\Support\Facades\Schema::connection(ea_tconn())->hasColumn('wh_fact_dossier', 'billing_start_date');
+            $hasDep  = \Illuminate\Support\Facades\Schema::connection(ea_tconn())->hasColumn('wh_fact_invoice', 'deposited_date');
 
             $dq = $this->d()->whereBetween('opened_date', [$f, $t])->whereNotNull('opened_date');
             if ($customer !== null && $customer !== '') $dq->where('client_name', $customer);
@@ -246,7 +246,7 @@ final class LogisticsOpsService
             $ids = $dossiers->pluck('odoo_id')->all();
 
             // Advances per file: first request, and per-advance request→cash.
-            $adv = DB::table('wh_fact_advance')->where('tenant_id', $this->tenantId)->whereIn('dossier_odoo_id', $ids)
+            $adv = ea_tdb()->table('wh_fact_advance')->where('tenant_id', $this->tenantId)->whereIn('dossier_odoo_id', $ids)
                 ->get(['dossier_odoo_id', 'requested_date', 'disbursed_date']);
             $firstReq = []; $reqCash = []; $disb = [];
             foreach ($adv as $a) {
@@ -258,13 +258,13 @@ final class LogisticsOpsService
             // Invoices per file: first invoice, its due date, deposit date.
             $icols = ['dossier_odoo_id', 'invoice_date', 'invoice_date_due'];
             if ($hasDep) $icols[] = 'deposited_date';
-            $inv = DB::table('wh_fact_invoice')->where('tenant_id', $this->tenantId)->whereIn('dossier_odoo_id', $ids)
+            $inv = ea_tdb()->table('wh_fact_invoice')->where('tenant_id', $this->tenantId)->whereIn('dossier_odoo_id', $ids)
                 ->whereNotNull('invoice_date')->orderBy('invoice_date')->get($icols);
             $firstInv = [];
             foreach ($inv as $i) { if (!isset($firstInv[$i->dossier_odoo_id])) $firstInv[$i->dossier_odoo_id] = $i; }
             // Débours invoice lines per file (dates), for cash→billed.
             $debDates = [];
-            foreach (DB::table('wh_fact_invoice_line as l')
+            foreach (ea_tdb()->table('wh_fact_invoice_line as l')
                 ->join('wh_fact_invoice as i', fn ($j) => $j->on('i.tenant_id', '=', 'l.tenant_id')->on('i.odoo_id', '=', 'l.move_odoo_id'))
                 ->where('l.tenant_id', $this->tenantId)->where('l.is_debours', true)->whereIn('i.dossier_odoo_id', $ids)
                 ->whereNotNull('l.invoice_date')->orderBy('l.invoice_date')->get(['i.dossier_odoo_id', 'l.invoice_date']) as $l) {
@@ -425,7 +425,7 @@ final class LogisticsOpsService
             $f = $from->format('Y-m-d'); $t = $to->format('Y-m-d');
 
             // Money in the window (invoice date basis).
-            $money = DB::table('wh_fact_invoice_line as l')
+            $money = ea_tdb()->table('wh_fact_invoice_line as l')
                 ->join('wh_fact_invoice as i', function ($j) {
                     $j->on('i.tenant_id', '=', 'l.tenant_id')->on('i.odoo_id', '=', 'l.move_odoo_id');
                 })
@@ -436,7 +436,7 @@ final class LogisticsOpsService
                 ->first();
             $phys = $this->d()->whereBetween('opened_date', [$f, $t])
                 ->selectRaw('SUM(weight_kg)/1000 tons, SUM(containers) c')->first();
-            $adv = (float) (DB::table('wh_fact_advance')->where('tenant_id', $this->tenantId)
+            $adv = (float) (ea_tdb()->table('wh_fact_advance')->where('tenant_id', $this->tenantId)
                 ->whereBetween('disbursed_date', [$f, $t])->sum('amount'));
 
             $tons = (float) ($phys->tons ?? 0); $ctn = (int) ($phys->c ?? 0);
@@ -452,7 +452,7 @@ final class LogisticsOpsService
             ];
 
             // Per-dossier reconciliation (all time — files live longer than periods).
-            $rows = DB::table('wh_fact_dossier as d')
+            $rows = ea_tdb()->table('wh_fact_dossier as d')
                 ->leftJoin(DB::raw('(select i.tenant_id tid, i.dossier_odoo_id did,
                         SUM(CASE WHEN l.is_debours = 1 THEN l.price_subtotal ELSE 0 END) deb,
                         SUM(CASE WHEN l.is_debours = 1 THEN 0 ELSE l.price_subtotal END) fees
@@ -514,7 +514,7 @@ final class LogisticsOpsService
             // if the file itself opened earlier. MIN() is taken only over
             // in-period invoices, so a file billed again in a later period
             // doesn't drag an older bill into this window.
-            $rows = DB::table('wh_fact_dossier as d')
+            $rows = ea_tdb()->table('wh_fact_dossier as d')
                 ->join('wh_fact_invoice as i', function ($j) {
                     $j->on('i.tenant_id', '=', 'd.tenant_id')->on('i.dossier_odoo_id', '=', 'd.odoo_id');
                 })
@@ -555,7 +555,7 @@ final class LogisticsOpsService
             // matching advance can predate the period — that's normal:
             // a cost incurred in June is often only rebilled once the
             // client invoice goes out in August.
-            $linesInPeriod = DB::table('wh_fact_invoice_line as l')
+            $linesInPeriod = ea_tdb()->table('wh_fact_invoice_line as l')
                 ->join('wh_fact_invoice as i', function ($j) {
                     $j->on('i.tenant_id', '=', 'l.tenant_id')->on('i.odoo_id', '=', 'l.move_odoo_id');
                 })
@@ -563,13 +563,13 @@ final class LogisticsOpsService
                 ->whereNotNull('i.dossier_odoo_id')->whereBetween('l.invoice_date', [$f, $t])
                 ->get(['i.dossier_odoo_id', 'l.label', 'l.price_subtotal', 'l.invoice_date', 'i.name as inv']);
 
-            $advances = DB::table('wh_fact_advance')
+            $advances = ea_tdb()->table('wh_fact_advance')
                 ->where('tenant_id', $this->tenantId)
                 ->whereNotNull('dossier_odoo_id')->whereNotNull('disbursed_date')
                 ->get(['dossier_odoo_id', 'label', 'amount', 'disbursed_date', 'supplier_name']);
-            $meta = DB::table('wh_fact_dossier')->where('tenant_id', $this->tenantId)
+            $meta = ea_tdb()->table('wh_fact_dossier')->where('tenant_id', $this->tenantId)
                 ->pluck('client_name', 'odoo_id');
-            $codes = DB::table('wh_fact_dossier')->where('tenant_id', $this->tenantId)
+            $codes = ea_tdb()->table('wh_fact_dossier')->where('tenant_id', $this->tenantId)
                 ->pluck('code', 'odoo_id');
 
             $advByD = [];
@@ -654,14 +654,14 @@ final class LogisticsOpsService
     {
         $out = ['count' => 0, 'total' => 0.0, 'items' => [], 'by_client' => []];
         try {
-            $advances = DB::table('wh_fact_advance')->where('tenant_id', $this->tenantId)
+            $advances = ea_tdb()->table('wh_fact_advance')->where('tenant_id', $this->tenantId)
                 ->whereNotNull('dossier_odoo_id')
                 ->whereBetween('disbursed_date', [$from->format('Y-m-d'), $to->format('Y-m-d')])
                 ->get(['dossier_odoo_id', 'label', 'amount', 'disbursed_date', 'supplier_name']);
             if ($advances->isEmpty()) return $out;
 
             $ids = $advances->pluck('dossier_odoo_id')->unique()->all();
-            $lines = DB::table('wh_fact_invoice_line as l')
+            $lines = ea_tdb()->table('wh_fact_invoice_line as l')
                 ->join('wh_fact_invoice as i', function ($j) {
                     $j->on('i.tenant_id', '=', 'l.tenant_id')->on('i.odoo_id', '=', 'l.move_odoo_id');
                 })
@@ -671,8 +671,8 @@ final class LogisticsOpsService
             $linesByD = [];
             foreach ($lines as $l) { $linesByD[$l->dossier_odoo_id][] = $l->label; }
 
-            $meta  = DB::table('wh_fact_dossier')->where('tenant_id', $this->tenantId)->whereIn('odoo_id', $ids)->pluck('client_name', 'odoo_id');
-            $codes = DB::table('wh_fact_dossier')->where('tenant_id', $this->tenantId)->whereIn('odoo_id', $ids)->pluck('code', 'odoo_id');
+            $meta  = ea_tdb()->table('wh_fact_dossier')->where('tenant_id', $this->tenantId)->whereIn('odoo_id', $ids)->pluck('client_name', 'odoo_id');
+            $codes = ea_tdb()->table('wh_fact_dossier')->where('tenant_id', $this->tenantId)->whereIn('odoo_id', $ids)->pluck('code', 'odoo_id');
 
             foreach ($advances as $a) {
                 $at = $this->normalizeExpenseWords($a->label);
@@ -720,17 +720,17 @@ final class LogisticsOpsService
         try {
             $f = $from->format('Y-m-d'); $t = $to->format('Y-m-d');
 
-            $activeIds = DB::table('wh_fact_dossier')->where('tenant_id', $this->tenantId)
+            $activeIds = ea_tdb()->table('wh_fact_dossier')->where('tenant_id', $this->tenantId)
                 ->whereBetween('opened_date', [$f, $t])->pluck('odoo_id')
-                ->merge(DB::table('wh_fact_invoice')->where('tenant_id', $this->tenantId)
+                ->merge(ea_tdb()->table('wh_fact_invoice')->where('tenant_id', $this->tenantId)
                     ->whereNotNull('dossier_odoo_id')->whereBetween('invoice_date', [$f, $t])->pluck('dossier_odoo_id'))
-                ->merge(DB::table('wh_fact_advance')->where('tenant_id', $this->tenantId)
+                ->merge(ea_tdb()->table('wh_fact_advance')->where('tenant_id', $this->tenantId)
                     ->whereNotNull('dossier_odoo_id')->whereBetween('disbursed_date', [$f, $t])->pluck('dossier_odoo_id'))
                 ->unique()->values();
             if ($activeIds->isEmpty()) return $out;
             $ids = $activeIds->all();
 
-            $feeSub = DB::table('wh_fact_invoice_line as l')
+            $feeSub = ea_tdb()->table('wh_fact_invoice_line as l')
                 ->join('wh_fact_invoice as i', function ($j) {
                     $j->on('i.tenant_id', '=', 'l.tenant_id')->on('i.odoo_id', '=', 'l.move_odoo_id');
                 })
@@ -740,22 +740,22 @@ final class LogisticsOpsService
                              SUM(CASE WHEN l.is_debours = 1 THEN l.price_subtotal ELSE 0 END) deb")
                 ->groupBy('i.dossier_odoo_id')->get()->keyBy('did');
 
-            $advSub = DB::table('wh_fact_advance')->where('tenant_id', $this->tenantId)
+            $advSub = ea_tdb()->table('wh_fact_advance')->where('tenant_id', $this->tenantId)
                 ->whereIn('dossier_odoo_id', $ids)
                 ->selectRaw('dossier_odoo_id did, SUM(amount) amt')
                 ->groupBy('dossier_odoo_id')->get()->keyBy('did');
 
-            $meta = DB::table('wh_fact_dossier')->where('tenant_id', $this->tenantId)->whereIn('odoo_id', $ids)
+            $meta = ea_tdb()->table('wh_fact_dossier')->where('tenant_id', $this->tenantId)->whereIn('odoo_id', $ids)
                 ->get(['odoo_id', 'code', 'client_name', 'type_name', 'opened_date'])->keyBy('odoo_id');
 
             // Per-transaction detail for the file-level drilldown: every
             // advance (incurred) and every invoice line (issued) on these
             // files, all-time — a file's reconciliation isn't bounded by
             // the period that made it "active" and worth reviewing.
-            $advItems = DB::table('wh_fact_advance')->where('tenant_id', $this->tenantId)
+            $advItems = ea_tdb()->table('wh_fact_advance')->where('tenant_id', $this->tenantId)
                 ->whereIn('dossier_odoo_id', $ids)
                 ->get(['dossier_odoo_id', 'label', 'supplier_name', 'amount', 'disbursed_date']);
-            $invItems = DB::table('wh_fact_invoice_line as l')
+            $invItems = ea_tdb()->table('wh_fact_invoice_line as l')
                 ->join('wh_fact_invoice as i', function ($j) {
                     $j->on('i.tenant_id', '=', 'l.tenant_id')->on('i.odoo_id', '=', 'l.move_odoo_id');
                 })
@@ -833,7 +833,7 @@ final class LogisticsOpsService
     {
         $out = ['total' => 0.0, 'customers' => [], 'invoices' => 0];
         try {
-            $rows = DB::table('wh_fact_invoice as i')
+            $rows = ea_tdb()->table('wh_fact_invoice as i')
                 ->leftJoin('wh_dim_partner as p', function ($j) {
                     $j->on('p.tenant_id', '=', 'i.tenant_id')->on('p.odoo_id', '=', 'i.partner_odoo_id');
                 })
@@ -870,7 +870,7 @@ final class LogisticsOpsService
     public function customerInvoices(\DateTimeImmutable $from, \DateTimeImmutable $to, ?string $client = null): array
     {
         try {
-            $q = DB::table('wh_fact_invoice as i')
+            $q = ea_tdb()->table('wh_fact_invoice as i')
                 ->leftJoin('wh_dim_partner as p', function ($j) {
                     $j->on('p.tenant_id', '=', 'i.tenant_id')->on('p.odoo_id', '=', 'i.partner_odoo_id');
                 })
@@ -909,12 +909,12 @@ final class LogisticsOpsService
         $labels = ['0-30' => [0, 30], '31-60' => [31, 60], '61-90' => [61, 90], '>90' => [91, PHP_INT_MAX]];
         foreach ($labels as $k => $_) $out['buckets'][$k] = ['fee' => 0.0, 'deb' => 0.0, 'total' => 0.0, 'n' => 0];
         try {
-            $debSub = DB::table('wh_fact_invoice_line')
+            $debSub = ea_tdb()->table('wh_fact_invoice_line')
                 ->where('tenant_id', $this->tenantId)->where('is_debours', true)
                 ->selectRaw('tenant_id as tid, move_odoo_id as mid, SUM(price_subtotal) as deb')
                 ->groupBy('tenant_id', 'move_odoo_id');
 
-            $rows = DB::table('wh_fact_invoice as i')
+            $rows = ea_tdb()->table('wh_fact_invoice as i')
                 ->leftJoin('wh_dim_partner as p', function ($j) {
                     $j->on('p.tenant_id', '=', 'i.tenant_id')->on('p.odoo_id', '=', 'i.partner_odoo_id');
                 })
@@ -987,7 +987,7 @@ final class LogisticsOpsService
         try {
             $f = $from->format('Y-m-d'); $t = $to->format('Y-m-d');
 
-            $debSub = DB::table('wh_fact_invoice_line as l')
+            $debSub = ea_tdb()->table('wh_fact_invoice_line as l')
                 ->join('wh_fact_invoice as i', function ($j) {
                     $j->on('i.tenant_id', '=', 'l.tenant_id')->on('i.odoo_id', '=', 'l.move_odoo_id');
                 })
@@ -996,13 +996,13 @@ final class LogisticsOpsService
                 ->selectRaw('i.tenant_id as tid, i.dossier_odoo_id as did, SUM(l.price_subtotal) as recharged')
                 ->groupBy('i.tenant_id', 'i.dossier_odoo_id');
 
-            $advSub = DB::table('wh_fact_advance')
+            $advSub = ea_tdb()->table('wh_fact_advance')
                 ->where('tenant_id', $this->tenantId)->whereNotNull('dossier_odoo_id')
                 ->whereBetween('disbursed_date', [$f, $t])
                 ->selectRaw('tenant_id as tid2, dossier_odoo_id as did2, SUM(amount) as incurred')
                 ->groupBy('tenant_id', 'dossier_odoo_id');
 
-            $rows = DB::table('wh_fact_dossier as d')
+            $rows = ea_tdb()->table('wh_fact_dossier as d')
                 ->leftJoinSub($debSub, 'b', fn ($j) => $j->on('b.tid', '=', 'd.tenant_id')->on('b.did', '=', 'd.odoo_id'))
                 ->leftJoinSub($advSub, 'a', fn ($j) => $j->on('a.tid2', '=', 'd.tenant_id')->on('a.did2', '=', 'd.odoo_id'))
                 ->where('d.tenant_id', $this->tenantId)
@@ -1033,11 +1033,11 @@ final class LogisticsOpsService
             // odoo id (matches the surrogate the view uses for its target).
             $ids = $rows->pluck('odoo_id')->all();
             if ($ids !== []) {
-                $advLines = DB::table('wh_fact_advance')
+                $advLines = ea_tdb()->table('wh_fact_advance')
                     ->where('tenant_id', $this->tenantId)->whereIn('dossier_odoo_id', $ids)
                     ->whereBetween('disbursed_date', [$f, $t])
                     ->get(['dossier_odoo_id', 'label', 'supplier_name', 'amount', 'disbursed_date']);
-                $debLines = DB::table('wh_fact_invoice_line as l')
+                $debLines = ea_tdb()->table('wh_fact_invoice_line as l')
                     ->join('wh_fact_invoice as i', function ($j) {
                         $j->on('i.tenant_id', '=', 'l.tenant_id')->on('i.odoo_id', '=', 'l.move_odoo_id');
                     })
@@ -1088,7 +1088,7 @@ final class LogisticsOpsService
     {
         if (!$tenantId) return false;
         try {
-            return DB::table('wh_fact_dossier')->where('tenant_id', $tenantId)->limit(1)->exists();
+            return ea_tdb()->table('wh_fact_dossier')->where('tenant_id', $tenantId)->limit(1)->exists();
         } catch (\Throwable) {
             return false;
         }

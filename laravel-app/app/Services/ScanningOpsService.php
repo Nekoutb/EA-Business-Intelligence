@@ -26,7 +26,7 @@ final class ScanningOpsService
     /** Invoice lines that carry a container product, in the window. */
     private function lines(\DateTimeImmutable $from, \DateTimeImmutable $to)
     {
-        return DB::table('wh_fact_gl_line as l')
+        return ea_tdb()->table('wh_fact_gl_line as l')
             ->join('wh_dim_product as p', function ($j) {
                 $j->on('p.tenant_id', '=', 'l.tenant_id')->on('p.odoo_id', '=', 'l.product_odoo_id');
             })
@@ -63,7 +63,7 @@ final class ScanningOpsService
                 ->groupBy('m')->orderBy('m')->get()->all();
 
             // Voyage type lives on the invoice header, not the line.
-            $out['by_voyage'] = DB::table('wh_fact_gl_line as l')
+            $out['by_voyage'] = ea_tdb()->table('wh_fact_gl_line as l')
                 ->join('wh_fact_invoice as i', function ($j) {
                     $j->on('i.tenant_id', '=', 'l.tenant_id')->on('i.odoo_id', '=', 'l.move_odoo_id');
                 })
@@ -74,7 +74,7 @@ final class ScanningOpsService
                              SUM(l.quantity) qty, SUM(l.price_subtotal) rev, COUNT(*) n")
                 ->groupBy('k')->orderByDesc('qty')->get()->all();
 
-            $out['top_customers'] = DB::table('wh_fact_gl_line as l')
+            $out['top_customers'] = ea_tdb()->table('wh_fact_gl_line as l')
                 ->join('wh_dim_product as p', function ($j) {
                     $j->on('p.tenant_id', '=', 'l.tenant_id')->on('p.odoo_id', '=', 'l.product_odoo_id');
                 })
@@ -106,7 +106,7 @@ final class ScanningOpsService
     {
         if (!$tenantId) return false;
         try {
-            return DB::table('wh_dim_product')->where('tenant_id', $tenantId)->limit(1)->exists();
+            return ea_tdb()->table('wh_dim_product')->where('tenant_id', $tenantId)->limit(1)->exists();
         } catch (\Throwable) {
             return false;
         }

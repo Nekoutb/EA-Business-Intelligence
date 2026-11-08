@@ -16,6 +16,8 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  */
 class ValuationLine extends Model
 {
+    use \App\Models\Concerns\OnTenantDatabase;
+
     protected $table = 'post_retirement_valuation_lines';
 
     protected $fillable = [

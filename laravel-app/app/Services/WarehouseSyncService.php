@@ -321,7 +321,7 @@ final class WarehouseSyncService
         $fixed = 0;
         foreach ([['debit_line_odoo_id', 'debit_move_odoo_id'],
                   ['credit_line_odoo_id', 'credit_move_odoo_id']] as [$lineCol, $moveCol]) {
-            $fixed += DB::table('wh_fact_reconcile as r')
+            $fixed += ea_tdb()->table('wh_fact_reconcile as r')
                 ->join('wh_fact_gl_line as l', function ($j) use ($lineCol) {
                     $j->on('l.tenant_id', '=', 'r.tenant_id')->on('l.odoo_id', '=', 'r.' . $lineCol);
                 })
@@ -419,7 +419,7 @@ final class WarehouseSyncService
             // window survived in the database the resuming run would re-apply
             // it and silently skip everything below it — turning a full
             // backfill into a partial one that still reports success.
-            DB::table('wh_sync_state')->where('id', $state->id)->update([
+            ea_tdb()->table('wh_sync_state')->where('id', $state->id)->update([
                 'last_write_date' => null,
                 'last_id'         => null,
                 'updated_at'      => now(),
@@ -456,7 +456,7 @@ final class WarehouseSyncService
                 if ($w !== null && ($maxSeen === null || $w > $maxSeen)) $maxSeen = $w;
             }
             foreach (array_chunk($batch, self::CHUNK) as $chunk) {
-                DB::table($table)->upsert(
+                ea_tdb()->table($table)->upsert(
                     $chunk,
                     ['tenant_id', 'odoo_id'],
                     array_values(array_diff(array_keys($chunk[0]), ['tenant_id', 'odoo_id']))
@@ -469,7 +469,7 @@ final class WarehouseSyncService
             // Mid-window: keep the window open and record only how far the id
             // walk reached. Advancing the window here would strand whatever
             // this run has not got to yet.
-            DB::table('wh_sync_state')->where('id', $state->id)->update([
+            ea_tdb()->table('wh_sync_state')->where('id', $state->id)->update([
                 'last_id'     => $lastId,
                 'last_run_at' => now(),
                 'rows_synced' => (int) $state->rows_synced + $rows,
@@ -487,7 +487,7 @@ final class WarehouseSyncService
             // the next run rescans the new window from the start. That rescan
             // is the point — a low-id record edited later would be invisible
             // to an id cursor that never resets.
-            DB::table('wh_sync_state')->where('id', $state->id)->update([
+            ea_tdb()->table('wh_sync_state')->where('id', $state->id)->update([
                 'last_write_date' => $maxSeen,
                 'last_id'         => null,
                 'last_run_at'     => now(),
@@ -522,7 +522,7 @@ final class WarehouseSyncService
         $filled = 0; $removed = 0;
 
         while (true) {
-            $ids = DB::table('wh_fact_gl_line')
+            $ids = ea_tdb()->table('wh_fact_gl_line')
                 ->where('tenant_id', $this->tenant->id)
                 ->where(fn ($q) => $q->whereNull('gl_date')->orWhereNull('parent_state')->orWhere('parent_state', ''))
                 ->whereBetween('odoo_id', $this->source->idRange())
@@ -544,7 +544,7 @@ final class WarehouseSyncService
                 $seen[(int) $r['id']] = true;
             }
             foreach (array_chunk($batch, self::CHUNK) as $chunk) {
-                DB::table('wh_fact_gl_line')->upsert(
+                ea_tdb()->table('wh_fact_gl_line')->upsert(
                     $chunk,
                     ['tenant_id', 'odoo_id'],
                     array_values(array_diff(array_keys($chunk[0]), ['tenant_id', 'odoo_id']))
@@ -555,7 +555,7 @@ final class WarehouseSyncService
             // Asked for these ids and Odoo did not return them — gone upstream.
             $gone = array_values(array_diff($ids, array_keys($seen)));
             if ($gone !== []) {
-                DB::table('wh_fact_gl_line')
+                ea_tdb()->table('wh_fact_gl_line')
                     ->where('tenant_id', $this->tenant->id)
                     ->whereIn('odoo_id', array_map(fn ($i) => $this->id($i), $gone))
                     ->delete();
@@ -565,7 +565,7 @@ final class WarehouseSyncService
             if ($this->deadline > 0 && microtime(true) >= $this->deadline) break;
         }
 
-        $left = DB::table('wh_fact_gl_line')
+        $left = ea_tdb()->table('wh_fact_gl_line')
             ->where('tenant_id', $this->tenant->id)
             ->whereBetween('odoo_id', $this->source->idRange())
             ->where(fn ($q) => $q->whereNull('gl_date')->orWhereNull('parent_state')->orWhere('parent_state', ''))
@@ -627,7 +627,7 @@ final class WarehouseSyncService
         foreach ($state as $id => $st) $byState[$st][] = $id;
         foreach ($byState as $st => $ids) {
             foreach (array_chunk($ids, 1000) as $chunk) {
-                $fixed += DB::table('wh_fact_gl_line')
+                $fixed += ea_tdb()->table('wh_fact_gl_line')
                     ->where('tenant_id', $this->tenant->id)
                     ->whereIn('odoo_id', array_map(fn ($i) => $this->id($i), $chunk))
                     ->where(function ($q) use ($st) {
@@ -642,14 +642,14 @@ final class WarehouseSyncService
         // deleting against it would wipe rows that simply were not read yet.
         $removed = 0;
         if ($complete) {
-            $whIds = DB::table('wh_fact_gl_line')
+            $whIds = ea_tdb()->table('wh_fact_gl_line')
                 ->where('tenant_id', $this->tenant->id)
                 ->whereBetween('odoo_id', $this->source->idRange())
                 ->whereBetween('gl_date', [$from, $to])
                 ->pluck('odoo_id')->map(fn ($i) => $this->raw($i))->all();
             $gone = array_values(array_diff($whIds, array_keys($state)));
             foreach (array_chunk($gone, 1000) as $chunk) {
-                $removed += DB::table('wh_fact_gl_line')
+                $removed += ea_tdb()->table('wh_fact_gl_line')
                     ->where('tenant_id', $this->tenant->id)
                     ->whereIn('odoo_id', array_map(fn ($i) => $this->id($i), $chunk))
                     ->delete();
@@ -670,7 +670,7 @@ final class WarehouseSyncService
      */
     public function reconcileLineDates(): int
     {
-        return DB::update(
+        return ea_tdb()->update(
             'UPDATE wh_fact_gl_line l
                JOIN wh_fact_invoice i
                  ON i.tenant_id = l.tenant_id AND i.odoo_id = l.move_odoo_id
@@ -684,22 +684,22 @@ final class WarehouseSyncService
     private function state(string $model): object
     {
         $model = $this->source->stateModel($model);
-        $row = DB::table('wh_sync_state')
+        $row = ea_tdb()->table('wh_sync_state')
             ->where('tenant_id', $this->tenant->id)->where('model', $model)->first();
         if ($row) return $row;
 
-        DB::table('wh_sync_state')->insert([
+        ea_tdb()->table('wh_sync_state')->insert([
             'tenant_id' => $this->tenant->id, 'model' => $model,
             'rows_synced' => 0, 'created_at' => now(), 'updated_at' => now(),
         ]);
-        return DB::table('wh_sync_state')
+        return ea_tdb()->table('wh_sync_state')
             ->where('tenant_id', $this->tenant->id)->where('model', $model)->first();
     }
 
     private function note(string $model, ?string $error): void
     {
         $model = $this->source->stateModel($model);
-        DB::table('wh_sync_state')
+        ea_tdb()->table('wh_sync_state')
             ->where('tenant_id', $this->tenant->id)->where('model', $model)
             ->update(['last_error' => $error, 'updated_at' => now()]);
     }

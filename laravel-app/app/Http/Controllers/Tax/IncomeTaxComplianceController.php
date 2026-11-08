@@ -334,7 +334,7 @@ class IncomeTaxComplianceController extends Controller
                 ];
             }
 
-            DB::transaction(function () use ($rows) {
+            ea_tdb()->transaction(function () use ($rows) {
                 // Upsert by (tenant_id, odoo_move_line_id) — composite unique.
                 // Using upsert here keeps it to a single statement.
                 LineDonationCategory::upsert(

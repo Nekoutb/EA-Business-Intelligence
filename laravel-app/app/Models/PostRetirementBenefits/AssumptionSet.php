@@ -19,6 +19,8 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  */
 class AssumptionSet extends Model
 {
+    use \App\Models\Concerns\OnTenantDatabase;
+
     protected $table = 'post_retirement_assumptions';
 
     protected $fillable = [

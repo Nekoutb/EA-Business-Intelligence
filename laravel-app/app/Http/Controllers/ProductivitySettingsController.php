@@ -64,10 +64,10 @@ class ProductivitySettingsController extends Controller
             }
             $key = ['tenant_id' => $tenant->id, 'year' => $year, 'month' => $m];
             if ($emp === null && $fil === null && !$nat) {
-                DB::table('tenant_productivity_months')->where($key)->delete();
+                ea_tdb()->table('tenant_productivity_months')->where($key)->delete();
                 continue;
             }
-            DB::table('tenant_productivity_months')->updateOrInsert($key, [
+            ea_tdb()->table('tenant_productivity_months')->updateOrInsert($key, [
                 'employees' => $emp, 'files' => $fil, 'natures' => $nat ? json_encode($nat, JSON_UNESCAPED_UNICODE) : null,
                 'updated_by' => auth()->id(), 'updated_at' => now(), 'created_at' => now(),
             ]);

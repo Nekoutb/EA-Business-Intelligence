@@ -53,7 +53,7 @@ class SageRestSyncService
             // re-fetch tail (late postings), so the initial backfill survives
             // the cron's time budget across runs and daily runs stay cheap.
             $floor = now()->startOfYear();
-            $maxSeen = DB::table('wh_sage_ecriture')
+            $maxSeen = ea_tdb()->table('wh_sage_ecriture')
                 ->where('tenant_id', $this->tenant->id)->where('source', $this->source->n)
                 ->max('ecr_date');
             $from = $maxSeen
@@ -82,7 +82,7 @@ class SageRestSyncService
                 . (count($truncated) > 20 ? ' +' . (count($truncated) - 20) . ' more' : '');
         }
         $result = ['rows' => $rows, 'seconds' => round(microtime(true) - $started, 1), 'error' => $error];
-        DB::table('wh_sync_state')->updateOrInsert(
+        ea_tdb()->table('wh_sync_state')->updateOrInsert(
             ['tenant_id' => $this->tenant->id, 'model' => $this->source->stateModel('sage:ecritures')],
             ['last_run_at' => now(), 'rows_synced' => $rows, 'last_error' => $error,
              'updated_at' => now(), 'created_at' => now()]
@@ -112,14 +112,14 @@ class SageRestSyncService
 
         if ($count >= 100 && $du === $au) $truncated[] = 'cap:' . $du;
 
-        DB::transaction(function () use ($du, $au, $list) {
-            DB::table('wh_sage_ecriture')
+        ea_tdb()->transaction(function () use ($du, $au, $list) {
+            ea_tdb()->table('wh_sage_ecriture')
                 ->where('tenant_id', $this->tenant->id)
                 ->where('source', $this->source->n)
                 ->whereBetween('ecr_date', [$du, $au])
                 ->delete();
             foreach (array_chunk($list, 500) as $chunk) {
-                DB::table('wh_sage_ecriture')->insert(array_map(fn ($r) => [
+                ea_tdb()->table('wh_sage_ecriture')->insert(array_map(fn ($r) => [
                     'tenant_id' => $this->tenant->id,
                     'source'    => $this->source->n,
                     'ecr_date'  => substr((string) ($r['EC_Date'] ?? ''), 0, 10) ?: null,

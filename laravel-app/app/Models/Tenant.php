@@ -33,7 +33,12 @@ class Tenant extends Model
         'onboarded_at'    => 'datetime',
         'is_demo'         => 'boolean',
         'demo_expires_at' => 'datetime',
+        'db_config'       => 'encrypted:array',
+        'db_checked_at'   => 'datetime',
     ];
+
+    /** Database credentials never leave the model in arrays / JSON. */
+    protected $hidden = ['db_config'];
 
     public function users(): HasMany
     {

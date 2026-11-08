@@ -156,6 +156,35 @@ if (!function_exists('ea_resolve_period')) {
     }
 }
 
+if (!function_exists('ea_tconn')) {
+    /**
+     * Connection name for the CLIENT data of the tenant in context (data
+     * layer: warehouse, cached reports, budgets, commentaries...). Null =
+     * the default (platform) connection, which is where 'shared' clients
+     * keep their data. See App\Tenancy\TenantDatabase.
+     */
+    function ea_tconn(): ?string
+    {
+        return \App\Tenancy\TenantDatabase::connectionName();
+    }
+}
+
+if (!function_exists('ea_tdb')) {
+    /** Query builder connection for the client data of the tenant in context. */
+    function ea_tdb(): \Illuminate\Database\Connection
+    {
+        return \Illuminate\Support\Facades\DB::connection(ea_tconn());
+    }
+}
+
+if (!function_exists('ea_cache')) {
+    /** Cache store holding the cached reports of the tenant in context. */
+    function ea_cache(): \Illuminate\Contracts\Cache\Repository
+    {
+        return \Illuminate\Support\Facades\Cache::store(\App\Tenancy\TenantDatabase::storeName());
+    }
+}
+
 if (!function_exists('ea_cache_prefix')) {
     /**
      * Build the cache-key prefix for the active tenant.
@@ -179,7 +208,7 @@ if (!function_exists('ea_cache_prefix')) {
         $schema = (string) config('bi.cache_schema_version', 'v1');
         $tid    = optional(tenant())->id;
         $scope  = $tid ? 't' . $tid : 'g';
-        $cv     = (int) \Illuminate\Support\Facades\Cache::get("ea:cachever:{$scope}", 1);
+        $cv     = (int) ea_cache()->get("ea:cachever:{$scope}", 1);
         return "ea:{$schema}:{$scope}:cv{$cv}:";
     }
 }
@@ -209,7 +238,7 @@ if (!function_exists('ea_cached')) {
         // Keep the per-session "last synced" label working for the UI.
         session(['bi_last_sync' => time()]);
 
-        $cache = \Illuminate\Support\Facades\Cache::getFacadeRoot();
+        $cache = ea_cache();
 
         // Async model: web requests only READ; the bms:warm worker (which
         // sets the force switch) is the one that recomputes. Entries are
@@ -259,10 +288,10 @@ if (!function_exists('ea_cache_clear')) {
         $tid    = optional(tenant())->id;
         $scope  = $tid ? 't' . $tid : 'g';
         $cvKey  = "ea:cachever:{$scope}";
-        $cur    = (int) \Illuminate\Support\Facades\Cache::get($cvKey, 1);
+        $cur    = (int) ea_cache()->get($cvKey, 1);
         // forever() so the counter itself never expires and reset-collides
         // with still-live keys from a prior version.
-        \Illuminate\Support\Facades\Cache::forever($cvKey, $cur + 1);
+        ea_cache()->forever($cvKey, $cur + 1);
         session(['bi_last_sync' => time()]);
     }
 }
