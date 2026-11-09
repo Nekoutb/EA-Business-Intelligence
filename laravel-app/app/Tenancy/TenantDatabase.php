@@ -67,15 +67,35 @@ final class TenantDatabase
     {
         if (!self::isolated($t)) { self::reset(); return; }
         if (self::$active === $t->id) return;
+        self::configure($t, self::location($t));
+        self::$active = $t->id;
+    }
+
+    /**
+     * Point the 'tenant' connection at the database this client WOULD use
+     * at $location ('ea' | 'client'), whatever its current data_location —
+     * used to provision / copy / check before a switch-over. The next
+     * request-path lookup re-activates normally.
+     */
+    public static function target(Tenant $t, string $location): void
+    {
+        if (!in_array($location, ['ea', 'client'], true)) {
+            throw new \InvalidArgumentException("Not a dedicated location: '{$location}'.");
+        }
+        self::configure($t, $location);
+        self::$active = -1; // force a normal activate() on the next lookup
+    }
+
+    private static function configure(Tenant $t, string $location): void
+    {
         $default = (string) config('database.default');
-        config(['database.connections.' . self::CONN => self::configFor($t, (array) config("database.connections.{$default}"))]);
+        config(['database.connections.' . self::CONN => self::configFor($t, (array) config("database.connections.{$default}"), $location)]);
         config(['cache.stores.' . self::STORE => [
             'driver' => 'database', 'connection' => self::CONN, 'table' => 'cache',
             'lock_connection' => self::CONN, 'lock_table' => 'cache_locks',
         ]]);
         DB::purge(self::CONN);
         Cache::forgetDriver(self::STORE);
-        self::$active = $t->id;
     }
 
     public static function reset(): void
@@ -98,15 +118,21 @@ final class TenantDatabase
      * platform connection (driver, charset, options) and overrides only
      * the address and credentials.
      */
-    public static function configFor(Tenant $t, array $base): array
+    public static function configFor(Tenant $t, array $base, ?string $location = null): array
     {
         $c = (array) ($t->getAttribute('db_config') ?? []);
         $cfg = $base;
         $cfg['url'] = null;
+        $location ??= self::location($t);
 
-        if (self::location($t) === 'ea') {
+        if ($location === 'ea') {
             $db = (string) ($c['database'] ?? self::defaultDatabaseName($t));
-            $cfg['database'] = ($base['driver'] ?? '') === 'sqlite' ? database_path($db . '.sqlite') : $db;
+            if (($base['driver'] ?? '') === 'sqlite') {
+                // local / test only: a bare name lives next to the platform file
+                $db = preg_match('#[/\\\\]#', $db) ? $db : database_path($db);
+                $db .= str_ends_with($db, '.sqlite') ? '' : '.sqlite';
+            }
+            $cfg['database'] = $db;
             return $cfg;
         }
 
