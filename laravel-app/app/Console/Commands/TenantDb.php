@@ -41,6 +41,10 @@ class TenantDb extends Command
         $t = Tenant::where('slug', (string) $this->argument('tenant'))->first();
         if (!$t) { $this->error('No client with that slug.'); return self::FAILURE; }
         $action = (string) $this->argument('action');
+        // One long-running data move per client at a time (the admin page
+        // starts these in the background and reads this lock as "running").
+        $run = in_array($action, ['provision', 'copy', 'switch'], true) ? Cache::lock(self::runLock($t), 7200) : null;
+        if ($run && !$run->get()) { $this->error("Another data-hosting step is already running for {$t->slug}."); return self::FAILURE; }
         try {
             return match ($action) {
                 'configure' => $this->configureHosting($t),
@@ -62,7 +66,13 @@ class TenantDb extends Command
             return self::FAILURE;
         } finally {
             TenantDatabase::reset();
+            $run?->release();
         }
+    }
+
+    public static function runLock(Tenant $t): string
+    {
+        return 'bms:tenant-db:run:' . $t->id;
     }
 
     /** Location the target-side actions work on: --location, else the stored target, else the current one. */

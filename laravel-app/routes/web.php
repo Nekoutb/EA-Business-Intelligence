@@ -279,6 +279,14 @@ Route::prefix('admin')->group(function () {
         // force delete (purges all related data, irreversible).
         Route::post('/tenants/{tenant}/delete',      [AdminTenantController::class, 'destroy']);
 
+        // Data hosting (multi-server): where this client's data lives.
+        Route::get ('/tenants/{tenant}/data-hosting',             [\App\Http\Controllers\Admin\DataHostingController::class, 'show']);
+        Route::get ('/tenants/{tenant}/data-hosting/log',         [\App\Http\Controllers\Admin\DataHostingController::class, 'log']);
+        Route::post('/tenants/{tenant}/data-hosting',             [\App\Http\Controllers\Admin\DataHostingController::class, 'save']);
+        Route::post('/tenants/{tenant}/data-hosting/check',       [\App\Http\Controllers\Admin\DataHostingController::class, 'check']);
+        Route::post('/tenants/{tenant}/data-hosting/run/{step}',  [\App\Http\Controllers\Admin\DataHostingController::class, 'run'])
+            ->where('step', 'provision|copy|switch|switch-back');
+
         /*
          * ── DIAGNOSTIC: Odoo Logistics schema probe ───────────────────────
          *

@@ -57,6 +57,11 @@
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="3" width="15" height="13" rx="1"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
                 Vehicle scan analyzer
             </a>
+            <a href="/admin/tenants/{{ $tenant->id }}/data-hosting"
+               class="text-xs font-medium text-slate-700 hover:text-slate-900 px-3 py-2 rounded-lg border border-slate-300"
+               title="Where this client's data lives (EA shared, own database, or the client's server)">
+                Data hosting · {{ ['shared' => 'EA shared', 'ea' => 'own DB', 'client' => 'client server'][\App\Tenancy\TenantDatabase::location($tenant)] ?? 'EA shared' }}
+            </a>
             <a href="/admin/tenants/{{ $tenant->id }}/settings"
                class="text-xs font-medium text-indigo-600 hover:text-indigo-800 px-3 py-2 rounded-lg border border-indigo-200">
                 Settings →
