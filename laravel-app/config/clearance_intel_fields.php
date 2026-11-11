@@ -22,7 +22,7 @@ return [
         'recharge_amount', 'recharge_variance', 'recharge_state', 'reopen_count', 'last_reopen_reason_id',
         'waiver_state', 'advance_waiver_state', 'opening_state', 'missing_mandatory_count', 'documents_complete',
         'stage_owner', 'stage_detail', 'has_billable', 'invoice_balance_due',
-        'debours_incurred', 'debours_billed', 'debours_result', 'handling_billed', 'legacy_relief', 'create_date',
+        'debours_incurred', 'debours_billed', 'debours_result', 'handling_billed', 'legacy_relief', 'create_date', 'create_uid',
     ],
     'logistics.expense' => [
         'name', 'file_id', 'category_id', 'amount', 'is_reversal', 'vendor_id', 'employee_id', 'payment_mode',
@@ -40,7 +40,7 @@ return [
     'account.move' => [
         'name', 'move_type', 'state', 'partner_id', 'invoice_date', 'invoice_date_due', 'amount_untaxed',
         'amount_total', 'amount_residual', 'payment_state', 'logistics_file_id', 'is_legacy', 'clearance_voided',
-        'reversed_entry_id',
+        'reversed_entry_id', 'create_uid', 'create_date',
     ],
     'account.move.line' => [
         'move_id', 'account_id', 'price_subtotal', 'clearance_category', 'clearance_service_kind',
@@ -54,5 +54,9 @@ return [
     'account.account'        => ['code', 'name'],
     'res.company'            => ['clearance_oop_undercharge_account_id', 'clearance_oop_loss_account_id'],
     'res.groups'             => ['name', 'user_ids'],
-    'res.users'              => ['name', 'active'],
+    'res.users'              => ['name', 'active', 'partner_id'],
+    // Who did what, from the chatter: refusals with their reason, "File
+    // closed by", and the state-change notes (whose author closed the file
+    // for operations).
+    'mail.message'           => ['model', 'res_id', 'date', 'author_id', 'body', 'message_type'],
 ];

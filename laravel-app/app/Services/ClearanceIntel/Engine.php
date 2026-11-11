@@ -23,6 +23,8 @@ final class Engine
     private array $billedDate = [];
     /** @var array<string,?float> 'Y-m' → operating cost per file billed */
     private array $ohPerFile = [];
+    /** @var array<int,mixed> file id → who issued its first standing invoice (m2o) */
+    private array $billedBy = [];
 
     public function __construct(private Dataset $ds, private string $asOf)
     {
@@ -158,7 +160,7 @@ final class Engine
             $d = self::d($m['invoice_date'] ?? null);
             if (!$fid || !$d) continue;
             $invCount[$fid] = ($invCount[$fid] ?? 0) + 1;
-            if (!isset($firstInv[$fid]) || $d < $firstInv[$fid]) $firstInv[$fid] = $d;
+            if (!isset($firstInv[$fid]) || $d < $firstInv[$fid]) { $firstInv[$fid] = $d; $this->billedBy[$fid] = $m['create_uid'] ?? false; }
         }
         $this->billedDate = [];
         foreach ($this->ds->files as $id => $f) {
@@ -245,6 +247,7 @@ final class Engine
                 'regime' => $this->label('logistics.file', 'customs_regime', $f['customs_regime'] ?? ''),
                 'port' => CD::m2oName($f['port_id'] ?? false), 'owner' => CD::m2oName($f['user_id'] ?? false),
                 'owner_id' => CD::m2oId($f['user_id'] ?? false),
+                'creator_id' => CD::m2oId($f['create_uid'] ?? false), 'creator' => CD::m2oName($f['create_uid'] ?? false),
                 'state' => $state, 'state_label' => $this->label('logistics.file', 'state', $state),
                 'shipment' => $this->label('logistics.file', 'shipment_type', $f['shipment_type'] ?? ''),
                 'sitting_with' => (string) ($f['stage_owner'] ?: '—'), 'waiting_for' => (string) ($f['stage_detail'] ?: ''),
@@ -512,6 +515,8 @@ final class Engine
             'settle_approved' => 0, 'paid' => 0, 'cancel_requested' => 0, 'cancel_executed' => 0, 'keyed_errors' => 0,
             'reassignments' => 0, 'approve_days' => [], 'pay_days' => [], 'prep_days' => [], 'own_open_to_bill' => [],
             'own_steps' => 0, 'own_late' => 0, 'waiting' => 0, 'waiting_oldest' => null,
+            'ops_closed' => 0, 'closed' => 0, 'exp_rejected_by' => 0, 'exp_rejected_of' => 0, 'pay_rejected' => 0,
+            'inv_rejected' => 0, 'inv_pending' => 0, 'inv_pending_age' => [], 'inv_pending_oldest' => null,
         ];
         foreach ($this->ds->deptByUser as $uid => $_) $users[$uid] = $blank($uid, $this->ds->userNames[$uid] ?? ('User ' . $uid));
         $touch = function ($m2o, ?int $fid, ?string $what) use (&$users, &$deptFiles, $blank) {
@@ -526,11 +531,14 @@ final class Engine
             return $uid;
         };
         $ownerM2o = fn (array $f) => $f['owner_id'] ? [$f['owner_id'], $f['owner']] : false;
-        foreach ($opened as $f) $touch($ownerM2o($f), $f['id'], 'opened');
+        // Opened: the file's responsible, else whoever created it (most files carry no responsible).
+        foreach ($opened as $f) $touch($ownerM2o($f) ?: ($f['creator_id'] ? [$f['creator_id'], $f['creator']] : false), $f['id'], 'opened');
         foreach ($billed as $f) {
-            if ($uid = $touch($ownerM2o($f), $f['id'], 'billed')) {
-                if ($f['open_to_bill'] !== null) $users[$uid]['own_open_to_bill'][] = $f['open_to_bill'];
-            }
+            // Billed: the billing agent who issued the file's first invoice
+            // (the file's owner when no issuer is known); the opening-to-invoice
+            // delay stays with the owner.
+            $touch(($this->billedBy[$f['id']] ?? false) ?: $ownerM2o($f), $f['id'], 'billed');
+            if (($uid = CD::m2oId($ownerM2o($f))) && isset($users[$uid]) && $f['open_to_bill'] !== null) $users[$uid]['own_open_to_bill'][] = $f['open_to_bill'];
         }
         foreach ($this->ds->expenses as $e) {
             $fid = CD::m2oId($e['file_id'] ?? false);
@@ -557,6 +565,39 @@ final class Engine
                 }
             }
         }
+        // Closings, credited to whoever performed them (read from the chatter).
+        foreach ($this->facts as $fid => $f) {
+            if ($f['ops_closed'] && $f['ops_closed'] >= $from && $f['ops_closed'] <= $to && ($a = $this->ds->opsClosedBy[$fid] ?? null)) $touch($a, $fid, 'ops_closed');
+            if ($f['closed'] && $f['closed'] >= $from && $f['closed'] <= $to && ($a = $this->ds->closedBy[$fid] ?? null)) $touch($a, $fid, 'closed');
+        }
+        // Refusals: expenses by the person who refused / of the person who keyed
+        // them; payments by the person who sent them back to Finance.
+        foreach ($this->ds->rejections as $r) {
+            if (!self::in($r['date'], $from, $to)) continue;
+            $e = $this->ds->expenses[$r['expense']] ?? null;
+            $fid = $e ? CD::m2oId($e['file_id'] ?? false) : null;
+            if ($r['kind'] === 'payment') { if ($r['by']) $touch($r['by'], $fid, 'pay_rejected'); continue; }
+            if ($r['by']) $touch($r['by'], $fid, 'exp_rejected_by');
+            if ($e) $touch($e['create_uid'] ?? false, null, 'exp_rejected_of');
+        }
+        // Invoices, credited to the billing agent who issued them: issued and
+        // withdrawn (cancelled before confirmation, or voided by Billing) in the
+        // period, and issued but still waiting for confirmation now.
+        foreach ($this->ds->moves as $m) {
+            if (($m['move_type'] ?? '') !== 'out_invoice' || in_array((string) ($m['name'] ?? '/'), ['', '/'], true)) continue;
+            $fid = CD::m2oId($m['logistics_file_id'] ?? false);
+            $issued = self::d($m['invoice_date'] ?? null) ?? self::d($m['create_date'] ?? null);
+            $state = (string) ($m['state'] ?? '');
+            if ($state === 'draft') {
+                if ($uid = $touch($m['create_uid'] ?? false, null, 'inv_pending')) {
+                    $age = self::days($issued, $this->asOf);
+                    $users[$uid]['inv_pending_age'][] = $age;
+                    if ($age !== null) $users[$uid]['inv_pending_oldest'] = max($users[$uid]['inv_pending_oldest'] ?? 0, $age);
+                }
+            } elseif (($state === 'cancel' || !empty($m['clearance_voided'])) && self::in($issued, $from, $to)) {
+                $touch($m['create_uid'] ?? false, $fid, 'inv_rejected');
+            }
+        }
         // Steps on the files a person owns (the turnaround view records no actor).
         foreach ($this->ds->turnaround as $t) {
             if (empty($t['is_done']) || !self::in($t['completed'] ?? null, $from, $to)) continue;
@@ -576,7 +617,7 @@ final class Engine
         }
         foreach ($users as &$u) {
             $u['files'] = count($u['files']);
-            foreach (['approve_days', 'pay_days', 'prep_days', 'own_open_to_bill'] as $k) $u[$k] = self::avg($u[$k]);
+            foreach (['approve_days', 'pay_days', 'prep_days', 'own_open_to_bill', 'inv_pending_age'] as $k) $u[$k] = self::avg($u[$k]);
             $u['late_pct'] = Rules::pct($u['own_late'], $u['own_steps']);
             $u['error_pct'] = Rules::pct($u['keyed_errors'], $u['keyed']);
         }

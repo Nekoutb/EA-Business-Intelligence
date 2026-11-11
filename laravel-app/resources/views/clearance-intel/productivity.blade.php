@@ -77,23 +77,27 @@
 
     <div class="{{ $card }}">
         <h3 class="{{ $h3 }}">Productivity per staff member</h3>
-        <p class="{{ $note }}">Every user holding a clearance role (and anyone else who acted in the period). Volume: files intervened on, files opened and billed as the responsible, disbursements keyed, approved, settlements prepared and paid.
+        <p class="{{ $note }}">Every user holding a clearance role (and anyone else who acted in the period). Volume: files intervened on, files opened (as the responsible, else as the person who created the file), files billed (by the billing agent who issued the first invoice), files closed for operations and closed, disbursements keyed, approved, settlements prepared, approved and paid.
             Delays: average days the person took for the approvals and payments they made, and the opening-to-invoice time of the files they own.
-            Quality: disbursements they keyed that were later cancelled as an error or reassigned to another file, cancellations they requested or executed, and late workflow steps on the files they own. Waiting: actions sitting in their queue now.</p>
+            Quality: disbursements they keyed that were later cancelled as an error or reassigned to another file, cancellations they requested or executed, and late workflow steps on the files they own. Rejections: disbursements refused or returned to the requester, counted for whoever refused them and for whoever keyed them, and approved payments sent back to the Head of Service Finance.
+            Invoices: for the billing agent who issued them, invoices withdrawn before standing (cancelled before confirmation or voided) and invoices issued but not yet confirmed, with their age. Waiting: actions sitting in their queue now.</p>
         <div class="overflow-x-auto">
             <table class="w-full">
                 <thead class="bg-[#faf9f6]">
                     <tr>
                         <th class="{{ $th }}" colspan="2"></th>
-                        <th class="{{ $th }} text-center border-l border-[#e8e4de]" colspan="7">Volume</th>
+                        <th class="{{ $th }} text-center border-l border-[#e8e4de]" colspan="10">Volume</th>
                         <th class="{{ $th }} text-center border-l border-[#e8e4de]" colspan="4">Delays (days)</th>
                         <th class="{{ $th }} text-center border-l border-[#e8e4de]" colspan="5">Quality</th>
+                        <th class="{{ $th }} text-center border-l border-[#e8e4de]" colspan="2">Rejections</th>
+                        <th class="{{ $th }} text-center border-l border-[#e8e4de]" colspan="3">Invoices (billing agent)</th>
                         <th class="{{ $th }} text-center border-l border-[#e8e4de]" colspan="2">Waiting now</th>
                     </tr>
                     <tr>
                         <th class="{{ $th }} text-left">Staff</th><th class="{{ $th }} text-left">Department</th>
                         <th class="{{ $th }} text-right border-l border-[#e8e4de]">Files</th><th class="{{ $th }} text-right">Opened</th><th class="{{ $th }} text-right">Billed</th>
-                        <th class="{{ $th }} text-right">Keyed</th><th class="{{ $th }} text-right">Approved</th><th class="{{ $th }} text-right">Settl. prep.</th><th class="{{ $th }} text-right">Paid</th>
+                        <th class="{{ $th }} text-right" title="Files they closed for operations in the period">Closed ops.</th><th class="{{ $th }} text-right" title="Files they closed in the period">Closed</th>
+                        <th class="{{ $th }} text-right">Keyed</th><th class="{{ $th }} text-right">Approved</th><th class="{{ $th }} text-right">Settl. prep.</th><th class="{{ $th }} text-right" title="Settlements they approved (Head of Service Finance)">Settl. appr.</th><th class="{{ $th }} text-right">Paid</th>
                         <th class="{{ $th }} text-right border-l border-[#e8e4de]" title="Submitted → approved, for approvals they made">Approve</th>
                         <th class="{{ $th }} text-right" title="Approved → settlement prepared, for settlements they prepared">Prepare</th>
                         <th class="{{ $th }} text-right" title="Settlement approved → paid, for payments they made">Pay</th>
@@ -103,6 +107,11 @@
                         <th class="{{ $th }} text-right" title="Disbursements they keyed that had to be moved to another file">Reassigned</th>
                         <th class="{{ $th }} text-right" title="Cancellations they requested / executed">Cancels req./exec.</th>
                         <th class="{{ $th }} text-right" title="Late steps ÷ steps completed on files they own">Late steps</th>
+                        <th class="{{ $th }} text-right border-l border-[#e8e4de]" title="Disbursements refused or returned to the requester (approval, finance approval, justification): refused by them / of theirs refused">Expenses by / of</th>
+                        <th class="{{ $th }} text-right" title="Disbursements approved for payment that they returned to the Head of Service Finance instead of paying">Payments</th>
+                        <th class="{{ $th }} text-right border-l border-[#e8e4de]" title="Invoices they issued that were cancelled before confirmation or voided by Billing, issued in the period">Rejected</th>
+                        <th class="{{ $th }} text-right" title="Invoices they issued that are still waiting to be confirmed (now)">Not confirmed</th>
+                        <th class="{{ $th }} text-right" title="Days since issue of those invoices: average / oldest">Age avg / oldest (d)</th>
                         <th class="{{ $th }} text-right border-l border-[#e8e4de]">Actions</th><th class="{{ $th }} text-right">Oldest (d)</th>
                     </tr>
                 </thead>
@@ -114,8 +123,9 @@
                         <td class="{{ $td }} text-[#7c7466]">{{ $u['role'] ? $u['dept'] : 'no clearance role' }}</td>
                         <td class="{{ $td }} text-right tabular-nums font-semibold border-l border-[#f1ede5]">{{ $u['files'] }}</td>
                         <td class="{{ $td }} text-right tabular-nums">{{ $u['opened'] }}</td><td class="{{ $td }} text-right tabular-nums">{{ $u['billed'] }}</td>
+                        <td class="{{ $td }} text-right tabular-nums">{{ $u['ops_closed'] ?? 0 }}</td><td class="{{ $td }} text-right tabular-nums">{{ $u['closed'] ?? 0 }}</td>
                         <td class="{{ $td }} text-right tabular-nums">{{ $u['keyed'] }}</td><td class="{{ $td }} text-right tabular-nums">{{ $u['approved'] }}</td>
-                        <td class="{{ $td }} text-right tabular-nums">{{ $u['settle_prepared'] }}</td><td class="{{ $td }} text-right tabular-nums">{{ $u['paid'] }}</td>
+                        <td class="{{ $td }} text-right tabular-nums">{{ $u['settle_prepared'] }}</td><td class="{{ $td }} text-right tabular-nums">{{ $u['settle_approved'] ?? 0 }}</td><td class="{{ $td }} text-right tabular-nums">{{ $u['paid'] }}</td>
                         <td class="{{ $td }} text-right tabular-nums border-l border-[#f1ede5] {{ $hot($u['approve_days'], 1) }}">{{ $dd($u['approve_days']) }}</td>
                         <td class="{{ $td }} text-right tabular-nums {{ $hot($u['prep_days'], 1) }}">{{ $dd($u['prep_days']) }}</td>
                         <td class="{{ $td }} text-right tabular-nums {{ $hot($u['pay_days'], 1) }}">{{ $dd($u['pay_days']) }}</td>
@@ -125,16 +135,21 @@
                         <td class="{{ $td }} text-right tabular-nums {{ $u['reassignments'] ? 'text-amber-700' : '' }}">{{ $u['reassignments'] }}</td>
                         <td class="{{ $td }} text-right tabular-nums">{{ $u['cancel_requested'] }} / {{ $u['cancel_executed'] }}</td>
                         <td class="{{ $td }} text-right tabular-nums {{ $hot($u['late_pct'], 25) }}">{{ $u['late_pct'] === null ? '—' : $u['late_pct'] . ' %' }}</td>
+                        <td class="{{ $td }} text-right tabular-nums border-l border-[#f1ede5]">{{ $u['exp_rejected_by'] ?? 0 }} / <span class="{{ ($u['exp_rejected_of'] ?? 0) ? 'text-amber-700' : '' }}">{{ $u['exp_rejected_of'] ?? 0 }}</span></td>
+                        <td class="{{ $td }} text-right tabular-nums">{{ $u['pay_rejected'] ?? 0 }}</td>
+                        <td class="{{ $td }} text-right tabular-nums border-l border-[#f1ede5] {{ ($u['inv_rejected'] ?? 0) ? 'text-amber-700' : '' }}">{{ $u['inv_rejected'] ?? 0 }}</td>
+                        <td class="{{ $td }} text-right tabular-nums">{{ $u['inv_pending'] ?? 0 }}</td>
+                        <td class="{{ $td }} text-right tabular-nums {{ $hot($u['inv_pending_oldest'] ?? null, 3) }}">{{ ($u['inv_pending'] ?? 0) ? $dd($u['inv_pending_age'] ?? null) . ' / ' . ($u['inv_pending_oldest'] ?? '—') : '—' }}</td>
                         <td class="{{ $td }} text-right tabular-nums border-l border-[#f1ede5]">{{ $u['waiting'] }}</td>
                         <td class="{{ $td }} text-right tabular-nums {{ $hot($u['waiting_oldest'], 7) }}">{{ $u['waiting_oldest'] ?? '—' }}</td>
                     </tr>
                 @empty
-                    <tr><td colspan="20" class="{{ $td }} text-[#8a8578] py-4">No staff with a clearance role, and no activity in this period.</td></tr>
+                    <tr><td colspan="28" class="{{ $td }} text-[#8a8578] py-4">No staff with a clearance role, and no activity in this period.</td></tr>
                 @endforelse
                 </tbody>
             </table>
         </div>
-        <p class="text-[11px] text-[#7c7466] mt-2">Red: approvals, preparations or payments taking more than 1 day on average, own files taking more than 20 days from opening to invoice, error rate above 5 %, more than a quarter of steps late, or an action waiting more than 7 days.</p>
+        <p class="text-[11px] text-[#7c7466] mt-2">Red: approvals, preparations or payments taking more than 1 day on average, own files taking more than 20 days from opening to invoice, error rate above 5 %, more than a quarter of steps late, an action waiting more than 7 days, or an issued invoice unconfirmed for more than 3 days.</p>
     </div>
 @endif
 @endsection
