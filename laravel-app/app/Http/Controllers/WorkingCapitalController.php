@@ -37,7 +37,8 @@ class WorkingCapitalController extends Controller
 
         try {
             $client = OdooFactory::fromConfig();
-            $cacheKey = 'working_capital_' . $asOf->format('Y_m_d');
+            $cacheKey = 'working_capital_' . $asOf->format('Y_m_d')
+                . (\App\Services\CreditDaysService::enabled() ? '_c90' : '');
             $wc = ea_cached(
                 $cacheKey,
                 fn () => (new WorkingCapitalService($client))->analyze($asOf)

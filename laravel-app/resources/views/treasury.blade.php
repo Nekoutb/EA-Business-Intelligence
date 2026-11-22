@@ -279,7 +279,11 @@
     </div>
     <div class="v5-card__b" id="ec-ccc-trend" style="min-height: 220px;"></div>
     <div class="v5-card__f">
+      @if (\App\Services\CreditDaysService::enabled())
+      DSO = class 41 balance ÷ credit sales of the last 90 days × 90 · DPO = class 40 balance ÷ credit purchases of the last 90 days × 90 · DIO = inventory ÷ (TTM COGS ÷ 365). Service businesses (no inventory) drop DIO, so CCC simplifies to DSO − DPO.
+      @else
       DSO = AR ÷ (TTM revenue ÷ 365) · DIO = inventory ÷ (TTM COGS ÷ 365) · DPO = AP ÷ (TTM COGS ÷ 365). Service businesses (no inventory) drop DIO, so CCC simplifies to DSO − DPO.
+      @endif
     </div>
   </div>
 

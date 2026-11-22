@@ -229,7 +229,7 @@
                   <div class="flex-1 p-4">
                       <div class="text-[11px] uppercase tracking-wider text-[#8a8578] font-medium">DSO</div>
                       <div class="text-2xl font-bold text-[#2d3748] mt-1 tabular-nums">{{ $fmtDays($r['dso'] ?? null) }}</div>
-                      <div class="text-[11px] text-[#7c7466] mt-0.5">(AR ÷ Revenue<sub>TTM</sub>) × 365</div>
+                      <div class="text-[11px] text-[#7c7466] mt-0.5">{{ ($r['cycle_basis'] ?? '') === 'credit_90d' ? '(AR ÷ credit sales, last 90 d) × 90' : '(AR ÷ Revenue TTM) × 365' }}</div>
                       <div class="mt-2 inline-flex items-center text-[10px] font-semibold rounded {{ $p['bg'] }} {{ $p['bdr'] }} {{ $p['txt'] }} border px-1.5 py-0.5">
                           @if (($r['dso'] ?? null) === null) — no revenue
                           @elseif ($r['dso'] <= 45) Fast collection
@@ -261,7 +261,7 @@
                   <div class="flex-1 p-4">
                       <div class="text-[11px] uppercase tracking-wider text-[#8a8578] font-medium">DPO</div>
                       <div class="text-2xl font-bold text-[#2d3748] mt-1 tabular-nums">{{ $fmtDays($r['dpo'] ?? null) }}</div>
-                      <div class="text-[11px] text-[#7c7466] mt-0.5">(AP ÷ COGS<sub>TTM</sub>) × 365</div>
+                      <div class="text-[11px] text-[#7c7466] mt-0.5">{{ ($r['cycle_basis'] ?? '') === 'credit_90d' ? '(AP ÷ credit purchases, last 90 d) × 90' : '(AP ÷ COGS TTM) × 365' }}</div>
                       <div class="mt-2 inline-flex items-center text-[10px] font-semibold rounded {{ $p['bg'] }} {{ $p['bdr'] }} {{ $p['txt'] }} border px-1.5 py-0.5">
                           @if (($r['dpo'] ?? null) === null) — no COGS
                           @elseif ($r['dpo'] >= 30 && $r['dpo'] <= 60) Balanced

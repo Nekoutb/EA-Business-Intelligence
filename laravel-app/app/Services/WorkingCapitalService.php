@@ -161,6 +161,22 @@ final class WorkingCapitalService
         // ── Cycle ratios ────────────────────────────────────────────
         $dso = $revenue > 0 ? ($ar / $revenue) * 365.0 : null;
         $dpo = $cogs    > 0 ? ($ap / $cogs)    * 365.0 : null;
+        $cycleBasis = 'ttm_365';
+        // Clients on DSO_DPO_METHOD = credit90: the same DSO/DPO as the
+        // Receivables and Payables pages (balance ÷ credit sales or credit
+        // purchases of the last 90 days × 90).
+        if (CreditDaysService::enabled()) {
+            try {
+                $cd = new CreditDaysService($this->odoo);
+                $s = $cd->dso($asOf);
+                $p = $cd->dpo($asOf);
+                if ($s !== null && $p !== null) {
+                    $dso = $s['days'];
+                    $dpo = $p['days'];
+                    $cycleBasis = 'credit_90d';
+                }
+            } catch (\Throwable $e) { /* keep TTM basis */ }
+        }
 
         // DIO gated on inventory presence.
         $dio       = null;
@@ -219,6 +235,7 @@ final class WorkingCapitalService
                 'working_capital'    => $workingCap,
                 'dso'                => $dso,
                 'dpo'                => $dpo,
+                'cycle_basis'        => $cycleBasis,
                 'dio'                => $dio,
                 'dio_reason'         => $dioReason,
                 'ccc'                => $ccc,
@@ -532,6 +549,35 @@ final class WorkingCapitalService
      *     'as_of'     => '2026-05-07',
      *   ]
      */
+    /**
+     * Clients on DSO_DPO_METHOD = credit90: replace each trend point's
+     * DSO/DPO with the credit-sales / credit-purchases figures at that
+     * point's date, and recompute CCC = DSO + DIO − DPO. Points the ledger
+     * cannot answer keep their TTM figures.
+     */
+    private function applyCreditDays(array $series): array
+    {
+        if (!CreditDaysService::enabled() || !$series) return $series;
+        try {
+            $cd = new CreditDaysService($this->odoo);
+            foreach ($series as $i => $pt) {
+                $date = (string) ($pt['date'] ?? '');
+                if ($date === '') continue;
+                $at = new \DateTimeImmutable($date);
+                $s = $cd->dso($at);
+                $p = $cd->dpo($at);
+                if ($s === null || $p === null) continue;
+                $dso = $s['days'] !== null ? round($s['days'], 1) : null;
+                $dpo = $p['days'] !== null ? round($p['days'], 1) : null;
+                $series[$i]['dso'] = $dso;
+                $series[$i]['dpo'] = $dpo;
+                $series[$i]['ccc'] = ($dso !== null && $dpo !== null)
+                    ? round($dso - $dpo + (float) ($pt['dio'] ?? 0.0), 1) : null;
+            }
+        } catch (\Throwable $e) { /* keep TTM figures */ }
+        return $series;
+    }
+
     public function liquidityTrend(int $months = 12, ?\DateTimeImmutable $today = null): array
     {
         $today = ($today ?? new \DateTimeImmutable('today'))->setTime(0, 0, 0);
@@ -875,7 +921,7 @@ final class WorkingCapitalService
             }
 
             return [
-                'series'    => $series,
+                'series'    => $this->applyCreditDays($series),
                 'threshold' => 1.0,
                 'currency'  => $this->detectCurrency(),
                 'as_of'     => $today->format('Y-m-d'),
