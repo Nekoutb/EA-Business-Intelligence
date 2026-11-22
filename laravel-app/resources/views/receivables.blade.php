@@ -122,6 +122,7 @@
   if ($dsoBasis) {
       $methodHint = match ($dsoBasis['method'] ?? '') {
           'gl_class_41_70' => ' · GL-backed (OHADA class 41 ÷ 70)',
+          'gl_credit_90d'  => ' · GL-backed (class 41 ÷ credit sales, 70 against 41)',
           'gl_dormant'     => ' · GL reachable but no recent sales',
           'legacy_invoice' => ' · invoice-derived (GL fallback)',
           default          => '',
@@ -130,7 +131,7 @@
                   . ' ÷ ' . ($dsoBasis['denominator_label'] ?? '?')
                   . ' × ' . ($dsoBasis['window_days'] ?? 0) . ' days'
                   . $methodHint;
-      if (($dsoBasis['method'] ?? '') === 'gl_class_41_70') {
+      if (in_array($dsoBasis['method'] ?? '', ['gl_class_41_70', 'gl_credit_90d'], true)) {
           $dsoMethodSuffix = 'GL';
           $dsoTileMeta = 'rolling ' . ($dsoBasis['window_days'] ?? 90) . ' d · target ≤ 30';
       }

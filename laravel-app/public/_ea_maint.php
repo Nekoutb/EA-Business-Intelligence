@@ -2036,6 +2036,48 @@ try {
                 . ' — ' . ($worst < 0.005 && $rowsOff === 0 ? 'PASS ✅' : 'FAIL ❌'));
             break;
 
+        case 'creditdays':
+            // READ-ONLY. DSO/DPO on the credit-sales / credit-purchases method
+            // (CreditDaysService), whatever the tenant's DSO_DPO_METHOD says,
+            // with the figures behind each ratio and the month-end series.
+            $slug = (string) ($_GET['tenant'] ?? 'transatlanticd');
+            $tenant = App\Models\Tenant::where('slug', $slug)->first();
+            if (!$tenant) { ln("no tenant '{$slug}'"); break; }
+            app(App\Tenancy\TenantContext::class)->set($tenant);
+            $client = App\Odoo\OdooFactory::fromConfig();
+            $asOf = isset($_GET['asof']) ? new DateTimeImmutable((string) $_GET['asof']) : new DateTimeImmutable('today');
+            $gl = new App\Services\GLAccountService($client);
+            $cd = new App\Services\CreditDaysService($client);
+            $m = fn ($v) => $v === null ? 'null' : number_format((float) $v, 0, '.', ' ');
+            ln("== {$slug} · credit90 DSO/DPO as of " . $asOf->format('Y-m-d') . ' · setting DSO_DPO_METHOD=' . (string) config_env('DSO_DPO_METHOD', 'legacy') . ' ==');
+            $from = $asOf->modify('-89 days');
+            ln('window ' . $from->format('Y-m-d') . ' → ' . $asOf->format('Y-m-d'));
+            ln();
+            ln('DSO');
+            foreach (['41', '411', '4114', '419'] as $p) ln(sprintf('  balance %-5s %18s', $p, $m($gl->balanceByPrefix($p, null, $asOf))));
+            ln(sprintf('  credit sales 70 vs 41   %18s', $m($gl->counterpartMovement('70', '41', $from, $asOf, true))));
+            ln(sprintf('  all 70 credit (90 d)    %18s', $m($gl->creditByPrefix('70', $from, $asOf))));
+            $s = $cd->dso($asOf);
+            ln('  DSO credit90 = ' . ($s && $s['days'] !== null ? number_format($s['days'], 1) : 'null') . ' days');
+            ln();
+            ln('DPO');
+            foreach (['40', '401', '408', '409'] as $p) ln(sprintf('  credit balance %-5s %18s', $p, $m($gl->creditByPrefix($p, null, $asOf))));
+            ln(sprintf('  credit purchases 6 vs 401 %16s', $m($gl->counterpartMovement('6', '401', $from, $asOf, false))));
+            foreach (['60', '61', '62', '63', '64', '65', '66', '67', '68'] as $p) {
+                ln(sprintf('    of which %-3s          %18s', $p, $m($gl->counterpartMovement($p, '401', $from, $asOf, false))));
+            }
+            $p = $cd->dpo($asOf);
+            ln('  DPO credit90 = ' . ($p && $p['days'] !== null ? number_format($p['days'], 1) : 'null') . ' days');
+            if (!empty($_GET['series'])) {
+                ln();
+                ln('month-end series (DSO / DPO, days)');
+                $ser = $cd->monthlySeries((int) $asOf->format('Y'), $asOf);
+                foreach ($ser['dso'] as $i => $r) {
+                    ln(sprintf('  %-4s %8s %8s', $r['label'], $r['dso'] ?? '—', $ser['dpo'][$i]['dpo'] ?? '—'));
+                }
+            }
+            break;
+
         case 'archeck':
             // P1 GATE — receivables. The evolution rewrite is pure CPU (no
             // Odoo change), so this measures the page and prints the whole

@@ -608,6 +608,108 @@ final class GLAccountService
      * lines in the optional date window. Null when the chart returns
      * no matching accounts or Odoo is unreachable.
      */
+    /**
+     * Movement on the accounts under $prefix, counted ONLY on journal
+     * entries that also carry a line on an account under $counterPrefix,
+     * posted, dated in [from, to].
+     *
+     *   credit sales     = counterpartMovement('70', '41', …, creditSide: true)
+     *                      (70 credited in entries that debit a customer)
+     *   credit purchases = counterpartMovement('6', '401', …, creditSide: false)
+     *                      (6 debited in entries that credit a supplier)
+     *
+     * Credit notes in the window (70 debited against 41, 6 credited against
+     * 401) are netted, so the figure is the net movement. Returns null when
+     * the ledger cannot be read or either prefix has no account.
+     */
+    public function counterpartMovement(
+        string $prefix,
+        string $counterPrefix,
+        \DateTimeImmutable $from,
+        \DateTimeImmutable $to,
+        bool $creditSide
+    ): ?float {
+        $sign = $creditSide ? -1.0 : 1.0;   // result = sign × (debit − credit)
+        $f = $from->format('Y-m-d');
+        $t = $to->format('Y-m-d');
+
+        $tenantId = $this->whTenantId();
+        if ($tenantId !== null) {
+            try {
+                $acc = fn (string $p) => ea_tdb()->table('wh_dim_account')
+                    ->where('tenant_id', $tenantId)->where('code', 'like', $p . '%')
+                    ->pluck('odoo_id')->map(fn ($v) => (int) $v)->all();
+                $ids = $acc($prefix);
+                $cIds = $acc($counterPrefix);
+                if (!$ids || !$cIds) return null;
+                $moves = ea_tdb()->table('wh_fact_gl_line')
+                    ->select('move_odoo_id')
+                    ->where('tenant_id', $tenantId)
+                    ->whereIn('account_odoo_id', $cIds)
+                    ->where('parent_state', 'posted')
+                    ->whereBetween('gl_date', [$f, $t])
+                    ->whereNotNull('move_odoo_id');
+                $row = ea_tdb()->table('wh_fact_gl_line')
+                    ->where('tenant_id', $tenantId)
+                    ->whereIn('account_odoo_id', $ids)
+                    ->where('parent_state', 'posted')
+                    ->whereBetween('gl_date', [$f, $t])
+                    ->whereIn('move_odoo_id', $moves)
+                    ->selectRaw('COALESCE(SUM(debit),0) AS d, COALESCE(SUM(credit),0) AS c')
+                    ->first();
+                return $sign * ((float) ($row->d ?? 0) - (float) ($row->c ?? 0));
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning('warehouse counterpart read failed; using Odoo', ['error' => $e->getMessage()]);
+            }
+        }
+
+        try {
+            $acc = function (string $p): array {
+                $rows = $this->odoo->searchRead('account.account', [['code', '=like', $p . '%']], ['id'], []);
+                return array_map(fn ($a) => (int) $a['id'], $rows);
+            };
+            $ids = $acc($prefix);
+            $cIds = $acc($counterPrefix);
+            if (!$ids || !$cIds) return null;
+
+            // Entries in the window that touch the counterpart accounts.
+            $moveIds = [];
+            $offset = 0;
+            do {
+                $batch = $this->odoo->searchRead('account.move.line', [
+                    ['account_id', 'in', $cIds], ['parent_state', '=', 'posted'],
+                    ['date', '>=', $f], ['date', '<=', $t],
+                ], ['move_id'], ['offset' => $offset, 'limit' => 5000]);
+                foreach ($batch as $l) {
+                    $m = $l['move_id'] ?? null;
+                    $mid = is_array($m) ? (int) ($m[0] ?? 0) : (int) $m;
+                    if ($mid > 0) $moveIds[$mid] = true;
+                }
+                $offset += 5000;
+            } while (count($batch) === 5000);
+            if (!$moveIds) return 0.0;
+
+            $total = 0.0;
+            foreach (array_chunk(array_keys($moveIds), 2000) as $chunk) {
+                $rows = $this->odoo->callModel('account.move.line', 'read_group', [
+                    'domain'  => [
+                        ['account_id', 'in', $ids], ['parent_state', '=', 'posted'],
+                        ['date', '>=', $f], ['date', '<=', $t],
+                        ['move_id', 'in', $chunk],
+                    ],
+                    'fields'  => ['debit:sum', 'credit:sum'],
+                    'groupby' => [],
+                    'lazy'    => false,
+                ]);
+                $r = $rows[0] ?? [];
+                $total += (float) ($r['debit'] ?? 0) - (float) ($r['credit'] ?? 0);
+            }
+            return $sign * $total;
+        } catch (\Throwable $e) {
+            return null;
+        }
+    }
+
     private function fetchSums(
         string $prefix,
         ?\DateTimeImmutable $from,

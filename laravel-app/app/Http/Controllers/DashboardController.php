@@ -135,7 +135,10 @@ class DashboardController extends Controller
             try {
                 if (!empty($extraKpis) && $data && $pl && $receivables
                     && isset($extraKpis['dso'], $extraKpis['dpo'])) {
-                    $running = ea_cached("dash_kpi_running_v1_{$cacheTag}", function () use ($client, $year, $data, $pl, $receivables) {
+                    $credit90 = \App\Services\CreditDaysService::enabled();
+                    $running = $credit90
+                        ? ea_cached("dash_kpi_credit90_v1_{$cacheTag}", fn () => (new \App\Services\CreditDaysService($client))->monthlySeries((int) $year))
+                        : ea_cached("dash_kpi_running_v1_{$cacheTag}", function () use ($client, $year, $data, $pl, $receivables) {
                         $days = 365;   // mirror the Payables DPO convention (annualised)
                         $ccy  = (string) ($data['currency'] ?? 'XAF');
                         $totalRev = (float) ($data['current']['total'] ?? 0);

@@ -178,6 +178,16 @@ final class ProcurementDashboardService
             'cadence' => 'Weekly', 'source' => 'AP + system',
             'hint' => 'Days Payable Outstanding — roughly how many days of expenses are sitting unpaid with suppliers (open supplier bills relative to year-to-date expenses). Shows how quickly the company settles its suppliers; same basis as the Payables page.',
         ];
+        if (CreditDaysService::enabled()) {
+            try {
+                $cd = (new CreditDaysService($this->odoo))->dpo(new DateTimeImmutable($asAtD));
+                if ($cd !== null) {
+                    $k['dpo']['actual'] = $cd['days'] !== null ? round($cd['days'], 1) : null;
+                    $k['dpo']['sub'] = 'last 90 days, credit purchases';
+                    $k['dpo']['hint'] = 'Days Payable Outstanding: supplier balance (class 40) divided by purchases booked against suppliers (class 6 debited against 401) over the last 90 days, × 90. Same basis as the Payables page.';
+                }
+            } catch (\Throwable $e) { /* keep legacy */ }
+        }
 
         // ── Bills with / without a PO (count basis) ───────────────────────
         $bills = 0; $linked = 0;
@@ -355,7 +365,13 @@ final class ProcurementDashboardService
         } catch (\Throwable $e) { /* leave nulls */ }
 
         // DPO — anchored running series (same figures as the Payables page).
-        try {
+        if (CreditDaysService::enabled()) try {
+            $ser = (new CreditDaysService($this->odoo))->monthlySeries($year, $today)['dpo'];
+            foreach (array_values($ser) as $i => $p) {
+                if ($i < $M) $series['dpo'][$i] = $p['dpo'] ?? null;
+            }
+        } catch (\Throwable $e) { /* leave nulls */ }
+        else try {
             $g = $this->odoo->callModel('account.move', 'read_group', ['domain' => [['move_type', 'in', ['in_invoice', 'in_refund']], ['state', '=', 'posted']], 'fields' => ['amount_residual_signed:sum'], 'groupby' => [], 'lazy' => false]);
             $totalAp = max(0.0, -1.0 * (float) ($g[0]['amount_residual_signed'] ?? 0));
             $accounts = $this->odoo->searchRead('account.account', [['code', '=like', '6%']], ['id', 'code'], []);

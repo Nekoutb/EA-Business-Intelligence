@@ -158,6 +158,19 @@ final class PayablesService
         $avgAgeDays  = $totalAp > 0 ? ($weightedAgeNum / abs($totalAp)) : 0.0;
         // DPO = (AP / total expenses) × days
         $dpo = ($totalExpensesYtd > 0) ? ($totalAp / $totalExpensesYtd) * $daysInYtd : null;
+        $dpoBasis = ['method' => 'legacy_expenses'];
+        // Clients on the credit-purchases method (DSO_DPO_METHOD = credit90):
+        // class 40 balance ÷ class 6 debited against 401 over the last
+        // 90 days × 90. Keeps the legacy figure if the ledger can't be read.
+        if (CreditDaysService::enabled()) {
+            try {
+                $cd = (new CreditDaysService($this->odoo))->dpo($today);
+                if ($cd !== null) {
+                    $dpo = $cd['days'];
+                    $dpoBasis = ['method' => 'gl_credit_90d'] + $cd;
+                }
+            } catch (\Throwable $e) { /* keep legacy */ }
+        }
 
         $over60 = $buckets['61_90']['amount'] + $buckets['90_plus']['amount'];
         $over90 = $buckets['90_plus']['amount'];
@@ -187,6 +200,7 @@ final class PayablesService
                 'over60_amount'          => $over60,
                 'over90_amount'          => $over90,
             ],
+            'dpo_basis'     => $dpoBasis,
             'aging'         => $buckets,
             'top_creditors' => $topCreditors,
             'open_bill_count' => count($records),

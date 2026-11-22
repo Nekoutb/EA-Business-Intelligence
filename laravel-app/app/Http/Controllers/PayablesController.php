@@ -15,7 +15,8 @@ class PayablesController extends Controller
             // Cache key bumped to ap_v3: the DPO trend is now the RUNNING
             // cumulative DPO (reconciles to the headline dpo_days), not the
             // monthly point-in-time figure.
-            $data = ea_cached('ap_v4', function () {
+            // ap_v5: credit-purchases DPO for clients on DSO_DPO_METHOD = credit90.
+            $data = ea_cached('ap_v5', function () {
                 $c  = OdooFactory::fromConfig();
                 $pl = (new ProfitLossService($c))->analyze();
                 $exp = max(1.0,
@@ -27,7 +28,9 @@ class PayablesController extends Controller
                 $ap  = $svc->analyze($exp, 365, (string) ($pl['currency'] ?? 'XAF'));
 
                 // Running cumulative DPO by month — converges to kpis.dpo_days.
-                $ap['dpo_trend'] = $svc->dpoRunningSeries((float) ($ap['kpis']['total_ap'] ?? 0), $exp, 365);
+                $ap['dpo_trend'] = \App\Services\CreditDaysService::enabled()
+                    ? (new \App\Services\CreditDaysService($c))->monthlySeries()['dpo']
+                    : $svc->dpoRunningSeries((float) ($ap['kpis']['total_ap'] ?? 0), $exp, 365);
 
                 return $ap;
             });

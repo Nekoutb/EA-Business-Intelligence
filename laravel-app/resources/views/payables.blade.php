@@ -9,6 +9,18 @@
         @php
             $ccy = $data['currency'] ?? 'XAF';
             $k   = $data['kpis'];
+            $dpoB = $data['dpo_basis'] ?? [];
+            $dpoCredit = ($dpoB['method'] ?? '') === 'gl_credit_90d';
+            $dpoHint = 'Days Payable Outstanding — average days taken to pay suppliers. Higher = you hold cash longer.';
+            if ($dpoCredit) {
+                $dpoHint = 'Days Payable Outstanding: supplier balance (class 40, ' . ea_money_short((float) ($dpoB['numerator'] ?? 0), $ccy)
+                    . ') divided by credit purchases (class 6 debited against 401, ' . ea_money_short((float) ($dpoB['denominator'] ?? 0), $ccy)
+                    . ') over the last ' . (int) ($dpoB['window_days'] ?? 90) . ' days, multiplied by ' . (int) ($dpoB['window_days'] ?? 90) . '.';
+            }
+            $dpoTrendTitle = $dpoCredit ? 'DPO evolution · month-end, last 90 days' : 'DPO evolution · running (cumulative YTD)';
+            $dpoTrendNote = $dpoCredit
+                ? 'Each month: class 40 balance at month end divided by credit purchases of the 90 days to that date, multiplied by 90. The current month is as of today.'
+                : 'Each month is the year-to-date DPO computed cumulatively (AP ÷ cumulative expenses × 365); the latest month reconciles to the headline DPO above.';
         @endphp
 
         {{-- ── KPIs ──────────────────────────────────────────────── --}}
@@ -21,7 +33,7 @@
                    hint="Supplier bills already past their due date."/>
             <x-kpi title="DPO" :value="number_format((float)($k['dpo_days'] ?? 0), 0) . ' d'"
                    :sub="'avg age ' . number_format((float)($k['avg_age_days'] ?? 0), 0) . 'd'" color="amber"
-                   hint="Days Payable Outstanding — average days taken to pay suppliers. Higher = you hold cash longer."/>
+                   :hint="$dpoHint"/>
             <x-kpi title="Top-5 concentration" :value="number_format((float)($k['top5_concentration_pct'] ?? 0), 1) . '%'" color="slate"
                    hint="Share of total payables owed to your five largest suppliers — concentration risk."/>
         </div>
@@ -46,8 +58,8 @@
         {{-- ── Monthly DPO trend ─────────────────────────────────── --}}
         @if (!empty($data['dpo_trend']))
             <div class="bg-white rounded-xl border border-slate-200 p-5 shadow-sm mb-6">
-                <h2 class="text-sm font-semibold text-slate-900 mb-1">DPO evolution · running (cumulative YTD)</h2>
-                <p class="text-[11px] text-slate-500 mb-3">Each month is the year-to-date DPO computed cumulatively (AP ÷ cumulative expenses × 365); the latest month reconciles to the headline DPO above.</p>
+                <h2 class="text-sm font-semibold text-slate-900 mb-1">{{ $dpoTrendTitle }}</h2>
+                <p class="text-[11px] text-slate-500 mb-3">{{ $dpoTrendNote }}</p>
                 <div class="h-64"><canvas id="apDpoTrend"></canvas></div>
             </div>
         @endif

@@ -281,7 +281,30 @@ final class ReceivablesService
             'denominator_label' => 'Revenue (YTD invoiced)',
         ];
 
-        try {
+        // Clients on the credit-sales method (DSO_DPO_METHOD = credit90):
+        // class 41 balance ÷ class 70 credited against class 41 over the
+        // last 90 days × 90. Falls through to the method below if the
+        // ledger cannot be read.
+        if (CreditDaysService::enabled()) {
+            try {
+                $cd = (new CreditDaysService($this->odoo))->dso($today);
+                if ($cd !== null) {
+                    $dso = $cd['days'];
+                    $dsoBasis = [
+                        'method'        => $dso !== null ? 'gl_credit_90d' : 'gl_dormant',
+                        'window_days'   => $cd['window_days'],
+                        'window_from'   => $cd['window_from'],
+                        'window_to'     => $cd['window_to'],
+                        'numerator'     => $cd['numerator'],
+                        'denominator'   => $cd['denominator'],
+                        'numerator_label'   => 'Class 41 balance · today',
+                        'denominator_label' => 'Credit sales (70 against 41) · last ' . $cd['window_days'] . ' d',
+                    ];
+                }
+            } catch (\Throwable $e) { /* fall through */ }
+        }
+
+        if ($dsoBasis['method'] === 'legacy_invoice') try {
             $glSvc = new GLAccountService($this->odoo);
             $windowDays = (int) (function_exists('config') ? config('bi.dso_window_days', 90) : 90);
             $windowDays = $windowDays > 0 ? $windowDays : 90;
