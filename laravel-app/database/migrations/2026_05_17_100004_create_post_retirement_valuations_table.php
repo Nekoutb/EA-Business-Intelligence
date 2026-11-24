@@ -72,7 +72,9 @@ return new class extends Migration
 
             $table->timestamps();
 
-            $table->unique(['tenant_id', 'valuation_date', 'status']);
+            // Explicit name: Laravel's generated one is 66 characters and
+            // MySQL caps identifiers at 64, so a fresh database failed here.
+            $table->unique(['tenant_id', 'valuation_date', 'status'], 'prv_tenant_date_status_uq');
             $table->index(['tenant_id', 'valuation_date']);
         });
     }
