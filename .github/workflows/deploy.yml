@@ -1,11 +1,29 @@
 name: Deploy to Production
 
+# Production deploys only from the prod branch (ticket T6). The steps below
+# are unchanged from the master-era workflow; only the triggers changed:
+#   - a push to prod (the first one at the cutover, T8);
+#   - a call from "Promote staging -> prod" (T7), which passes the exact
+#     revision staging runs, because a push made by a workflow does not
+#     start another workflow;
+#   - the Run workflow button, on prod only.
+# Any other branch is refused by the job's `if`, so nothing reaches
+# production without going through prod.
 on:
   push:
     branches:
-      - master
-      - main
+      - prod
+  workflow_call:
+    inputs:
+      ref:
+        description: "Commit to deploy (the revision staging runs)"
+        required: true
+        type: string
   workflow_dispatch:
+
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
 
 env:
   DOMAIN: bms.cm-ea.com
@@ -15,7 +33,13 @@ env:
 
 jobs:
   deploy:
+    # Only ever from prod: a push to it, the button on it, or Promote
+    # (which runs on prod, the default branch).
+    if: github.ref == 'refs/heads/prod'
     runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://bms.cm-ea.com
 
     steps:
       # Check out the repo on the runner. Uses the built-in GITHUB_TOKEN, so
@@ -25,6 +49,8 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
         with:
+          # From Promote: the revision staging runs; otherwise the pushed one.
+          ref: ${{ inputs.ref || github.sha }}
           # Skip _archive/ via post-checkout cleanup; it's huge and unused.
           fetch-depth: 1
 
