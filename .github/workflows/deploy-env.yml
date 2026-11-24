@@ -1,0 +1,96 @@
+name: Deploy dev / staging
+
+# A push to any dev/* branch deploys https://dev-bms.cm-ea.com.
+# (Staging joins in ticket T4. Production is NOT deployed from here: it
+# only changes through Promote staging -> prod.)
+#
+# The bundle is built here on the runner (PHP packages + Vite assets), so
+# the shared server only unpacks, migrates and switches. The server side
+# is deploy/server/bms-env.sh: it refuses "prod" and ends by checking that
+# production's vhost, .env and crontab are unchanged.
+
+on:
+  push:
+    branches:
+      - "dev/**"
+
+concurrency:
+  group: deploy-dev
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to dev-bms.cm-ea.com
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment:
+      name: dev
+      url: https://dev-bms.cm-ea.com
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: PHP 8.4 (as on server 6)
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.4"
+          extensions: mbstring, dom, curl, intl, bcmath, gd, zip, pdo_mysql
+          coverage: none
+
+      - name: PHP packages (no dev)
+        working-directory: laravel-app
+        run: composer install --no-dev --optimize-autoloader --no-interaction --prefer-dist --no-progress
+
+      - name: Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Front-end assets
+        working-directory: laravel-app
+        run: |
+          npm install --no-audit --no-fund
+          npm run build
+
+      - name: Bundle
+        run: |
+          mkdir -p "$RUNNER_TEMP/bundle"
+          tar czf "$RUNNER_TEMP/bundle/bms.tgz" \
+            --exclude=./.git --exclude=./.github --exclude=./_archive \
+            --exclude=./composer.phar --exclude=./laravel-app/node_modules \
+            .
+          mkdir -p bundle && mv "$RUNNER_TEMP/bundle/bms.tgz" bundle/
+          ls -lh bundle/
+
+      - name: Upload bundle to server 6
+        uses: appleboy/scp-action@master
+        with:
+          host: ${{ secrets.SERVER_IP }}
+          username: ${{ secrets.SERVER_USER }}
+          password: ${{ secrets.SERVER_PASSWORD }}
+          port: 22
+          source: bundle/bms.tgz
+          target: /tmp/bms-deploy/${{ github.run_id }}
+          strip_components: 1
+
+      - name: Deploy on server 6
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.SERVER_IP }}
+          username: ${{ secrets.SERVER_USER }}
+          password: ${{ secrets.SERVER_PASSWORD }}
+          port: 22
+          command_timeout: 20m
+          script: |
+            D=/tmp/bms-deploy/${{ github.run_id }}
+            mkdir -p "$D/src" && tar xzf "$D/bms.tgz" -C "$D/src"
+            bash "$D/src/deploy/server/bms-env.sh" dev "${{ github.sha }}" "$D/src"
+            rc=$?
+            rm -rf "$D"
+            exit $rc
+
+      - name: Check from the internet
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 https://dev-bms.cm-ea.com/t/demo/login || echo 000)
+          echo "https://dev-bms.cm-ea.com/t/demo/login -> HTTP $code (through Cloudflare)"
+          test "$code" = "200"
