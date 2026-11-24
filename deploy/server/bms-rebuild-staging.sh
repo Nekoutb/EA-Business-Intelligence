@@ -128,7 +128,9 @@ check() {  # check <label> <actual> <expected>
 check "client secrets blank"      "$(q "SELECT COUNT(*) FROM tenant_settings WHERE (UPPER(\`key\`) REGEXP '$SECRET_RE' OR is_encrypted = 1) AND COALESCE(value,'') <> ''")" 0
 check "global secrets blank"      "$(q "SELECT COUNT(*) FROM global_settings WHERE (UPPER(\`key\`) REGEXP '$SECRET_RE' OR is_encrypted = 1) AND COALESCE(value,'') <> ''")" 0
 check "no client on its own DB"   "$(q "SELECT COUNT(*) FROM tenants WHERE data_location <> 'shared' OR db_config IS NOT NULL")" 0
-check "no copied sessions"        "$(q "SELECT COUNT(*) FROM sessions")" 0
+# Staging stays reachable during the rebuild, so visitors may open new
+# sessions; only sessions older than this rebuild would be copied ones.
+check "no copied sessions"        "$(q "SELECT COUNT(*) FROM sessions WHERE last_activity < $START")" 0
 check "no queued jobs"            "$(q "SELECT COUNT(*) FROM jobs")" 0
 check "mail goes to the log"      "$(val MAIL_MAILER "$ENV_FILE")" log
 check "no staging cron (root)"    "$(crontab -l 2>/dev/null | grep -c 'eams-staging' || true)" 0
