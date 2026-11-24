@@ -47,31 +47,8 @@ done
 php -r 'exit(PHP_VERSION_ID >= 80200 ? 0 : 1);' || { echo "PHP 8.2+ required." >&2; exit 1; }
 
 # What production looks like before we start; compared again at the end.
-prod_snapshot() {
-  local f
-  for f in /etc/apache2/sites-available/bms.cm-ea.com.conf \
-           /etc/apache2/sites-available/bms.cm-ea.com-le-ssl.conf \
-           /var/www/eams/laravel-app/.env; do
-    if [ -e "$f" ]; then sha256sum "$f"; else echo "absent  $f"; fi
-  done
-  echo "root-crontab $(crontab -l 2>/dev/null | sha256sum | cut -d' ' -f1)"
-  # Exact names only: dev-bms.cm-ea.com and staging-bms.cm-ea.com also
-  # contain "bms.cm-ea.com".
-  echo "enabled $(ls -l /etc/apache2/sites-enabled/ | awk '$9 ~ /^bms\.cm-ea\.com(-le-ssl)?\.conf$/ {print $9, $11}' | tr '\n' ' ')"
-}
-PROD_BEFORE="$(prod_snapshot)"
-
-check_prod_unchanged() {
-  local after; after="$(prod_snapshot)"
-  if [ "$after" != "$PROD_BEFORE" ]; then
-    echo "PRODUCTION CHANGED during this $ENV_NAME deploy:" >&2
-    diff <(echo "$PROD_BEFORE") <(echo "$after") >&2 || true
-    return 1
-  fi
-  echo "Production unchanged: vhost, .env and root crontab are as before."
-}
-# Even when a step fails, say whether production was touched.
-trap 'echo; echo "A step failed. Checking production anyway:"; check_prod_unchanged || true' ERR
+. "$(dirname "$0")/prod-guard.sh"
+prod_guard_start
 
 # ---------------------------------------------------------------- layout
 say "Release for $ENV_NAME at ${SHA:0:12}"
