@@ -1,8 +1,9 @@
 name: Deploy dev / staging
 
 # A push to any dev/* branch deploys https://dev-bms.cm-ea.com.
-# (Staging joins in ticket T4. Production is NOT deployed from here: it
-# only changes through Promote staging -> prod.)
+# A push to staging deploys https://staging-bms.cm-ea.com.
+# Production is NOT deployed from here: it only changes through
+# Promote staging -> prod.
 #
 # The bundle is built here on the runner (PHP packages + Vite assets), so
 # the shared server only unpacks, migrates and switches. The server side
@@ -13,19 +14,26 @@ on:
   push:
     branches:
       - "dev/**"
+      - staging
+
+# Which instance this push goes to: the staging branch -> staging,
+# any dev/* branch -> dev.
+env:
+  BMS_ENV: ${{ github.ref_name == 'staging' && 'staging' || 'dev' }}
+  BMS_DOMAIN: ${{ github.ref_name == 'staging' && 'staging-bms.cm-ea.com' || 'dev-bms.cm-ea.com' }}
 
 concurrency:
-  group: deploy-dev
+  group: deploy-${{ github.ref_name == 'staging' && 'staging' || 'dev' }}
   cancel-in-progress: false
 
 jobs:
   deploy:
-    name: Deploy to dev-bms.cm-ea.com
+    name: Deploy to ${{ github.ref_name == 'staging' && 'staging-bms.cm-ea.com' || 'dev-bms.cm-ea.com' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment:
-      name: dev
-      url: https://dev-bms.cm-ea.com
+      name: ${{ github.ref_name == 'staging' && 'staging' || 'dev' }}
+      url: https://${{ github.ref_name == 'staging' && 'staging-bms.cm-ea.com' || 'dev-bms.cm-ea.com' }}
     steps:
       - name: Check out
         uses: actions/checkout@v4
@@ -84,13 +92,13 @@ jobs:
           script: |
             D=/tmp/bms-deploy/${{ github.run_id }}
             mkdir -p "$D/src" && tar xzf "$D/bms.tgz" -C "$D/src"
-            bash "$D/src/deploy/server/bms-env.sh" dev "${{ github.sha }}" "$D/src"
+            bash "$D/src/deploy/server/bms-env.sh" "${{ env.BMS_ENV }}" "${{ github.sha }}" "$D/src"
             rc=$?
             rm -rf "$D"
             exit $rc
 
       - name: Check from the internet
         run: |
-          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 https://dev-bms.cm-ea.com/t/demo/login || echo 000)
-          echo "https://dev-bms.cm-ea.com/t/demo/login -> HTTP $code (through Cloudflare)"
+          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "https://$BMS_DOMAIN/t/demo/login" || echo 000)
+          echo "https://$BMS_DOMAIN/t/demo/login -> HTTP $code (through Cloudflare)"
           test "$code" = "200"
