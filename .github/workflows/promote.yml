@@ -1,0 +1,128 @@
+name: Promote staging -> prod
+
+# The only way production changes (ticket T7). Fast-forwards prod to the
+# exact revision staging is running; that push starts "Deploy to
+# Production" (deploy.yml, the unchanged production steps).
+#
+# Refused, with nothing changed, unless ALL of these hold:
+#   1. staging's last deploy succeeded and is on the head of the staging
+#      branch (no deploy in progress), and staging answers;
+#   2. the Tests workflow passed on that exact revision;
+#   3. prod can be fast-forwarded to it (nothing on prod that staging lacks).
+#
+# Two ways to start it:
+#   - the "Run workflow" button on prod (GitHub offers it once this file is
+#     on the default branch, after the cutover, T8). Tick "dry run" to see
+#     the checks without promoting;
+#   - pushing a tag named promote-dryrun-<anything>: runs the checks only,
+#     never promotes. Before the cutover, when prod does not exist yet, the
+#     fast-forward check is made against master instead.
+#
+# The push to prod uses the PROMOTE_DEPLOY_KEY secret: a deploy key the
+# owner added with write access and allowed past prod's protection.
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run: run the checks only, do not promote"
+        type: boolean
+        default: false
+  push:
+    tags:
+      - "promote-dryrun-*"
+
+concurrency:
+  group: deploy-prod           # never alongside a production deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  checks:
+    name: Checks${{ (github.event_name == 'push' || inputs.dry_run) && ' (dry run)' || '' }}
+    # Promote runs from prod only; a dry-run tag may run anywhere.
+    if: github.ref == 'refs/heads/prod' || startsWith(github.ref, 'refs/tags/promote-dryrun-')
+    runs-on: ubuntu-24.04
+    outputs:
+      sha: ${{ steps.guard.outputs.sha }}
+      promote: ${{ steps.guard.outputs.promote }}
+    steps:
+      - name: Check out (full history, for the fast-forward check)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Guards
+        id: guard
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          DRY_RUN: ${{ (github.event_name == 'push' || inputs.dry_run) && 'true' || 'false' }}
+        run: |
+          set -euo pipefail
+          refuse() { echo "::error::REFUSED: $*"; echo "Nothing was changed."; exit 1; }
+
+          git fetch --quiet origin '+refs/heads/*:refs/remotes/origin/*'
+          SHA=$(git rev-parse origin/staging)
+          echo "Staging branch head: $SHA"
+
+          # 1. Staging runs that exact revision, and answers.
+          read -r STATUS CONCLUSION RUN_SHA RUN_URL < <(gh api \
+            "repos/$REPO/actions/workflows/deploy-env.yml/runs?branch=staging&event=push&per_page=1" \
+            --jq '.workflow_runs[0] | "\(.status) \(.conclusion) \(.head_sha) \(.html_url)"')
+          echo "Last staging deploy: $STATUS / $CONCLUSION on $RUN_SHA ($RUN_URL)"
+          [ "$STATUS" = "completed" ] || refuse "a staging deploy is still running; wait for it and try again."
+          [ "$CONCLUSION" = "success" ] || refuse "the last staging deploy did not succeed."
+          [ "$RUN_SHA" = "$SHA" ] || refuse "staging is not running the head of the staging branch (it runs ${RUN_SHA:0:12}, the branch is at ${SHA:0:12})."
+          CODE=$(curl -s -L -o /dev/null -w '%{http_code}' --max-time 30 https://staging-bms.cm-ea.com/ || echo 000)
+          [ "$CODE" = "200" ] || refuse "staging-bms.cm-ea.com does not answer (HTTP $CODE)."
+          echo "ok  staging runs ${SHA:0:12} and answers"
+
+          # 2. Tests green on that revision.
+          GREEN=$(gh api "repos/$REPO/actions/workflows/tests.yml/runs?head_sha=$SHA&status=success&per_page=1" --jq '.total_count')
+          [ "$GREEN" -gt 0 ] || refuse "the Tests workflow has not passed on ${SHA:0:12}."
+          echo "ok  tests passed on ${SHA:0:12}"
+
+          # 3. Fast-forward only.
+          if git rev-parse --verify --quiet origin/prod >/dev/null; then
+            TARGET=prod
+          else
+            [ "$DRY_RUN" = "true" ] || refuse "there is no prod branch yet (the cutover, T8, creates it)."
+            TARGET=master
+            echo "(no prod branch yet: checking the fast-forward against master)"
+          fi
+          CURRENT=$(git rev-parse "origin/$TARGET")
+          [ "$CURRENT" != "$SHA" ] || refuse "$TARGET is already at ${SHA:0:12}; nothing to promote."
+          git merge-base --is-ancestor "$CURRENT" "$SHA" \
+            || refuse "$TARGET has commits that staging does not (not a fast-forward). Bring them into staging first."
+          echo "ok  $TARGET ${CURRENT:0:12} -> ${SHA:0:12} is a fast-forward ($(git rev-list --count "$CURRENT..$SHA") commits)"
+          git log --oneline "$CURRENT..$SHA" | head -30
+
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "promote=false" >> "$GITHUB_OUTPUT"
+            echo "Dry run: all checks pass. Nothing was changed."
+          else
+            echo "promote=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Move prod to the staging revision
+        if: steps.guard.outputs.promote == 'true'
+        env:
+          DEPLOY_KEY: ${{ secrets.PROMOTE_DEPLOY_KEY }}
+          SHA: ${{ steps.guard.outputs.sha }}
+        run: |
+          set -euo pipefail
+          [ -n "$DEPLOY_KEY" ] || { echo "::error::The PROMOTE_DEPLOY_KEY secret is missing (owner adds it, see T7)."; exit 1; }
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/promote_key && chmod 600 ~/.ssh/promote_key
+          ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
+          export GIT_SSH_COMMAND="ssh -i ~/.ssh/promote_key -o IdentitiesOnly=yes"
+          # No --force: GitHub itself rejects anything but a fast-forward.
+          git push "git@github.com:${{ github.repository }}.git" "$SHA:refs/heads/prod"
+          rm -f ~/.ssh/promote_key
+          echo "prod is now at ${SHA:0:12}."
+          echo "A push made with a deploy key starts workflows, so 'Deploy to Production' now runs on it."
