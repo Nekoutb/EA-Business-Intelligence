@@ -1,0 +1,63 @@
+name: Tests
+
+# Runs the Laravel test suite on every push, to any branch, and on pull
+# requests. It deploys nothing and never touches a server: it only says
+# whether the commit is green. Promote staging -> prod (ticket T7) will
+# refuse a revision whose run here is not green.
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  phpunit:
+    name: PHPUnit (PHP 8.4)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: laravel-app
+    env:
+      # Production runs PHP 8.4 on server 6. The suite gets its own
+      # throwaway SQLite database here; no real data is involved.
+      APP_ENV: testing
+      DB_CONNECTION: sqlite
+      DB_DATABASE: ${{ github.workspace }}/laravel-app/database/testing.sqlite
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: PHP 8.4
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.4"
+          extensions: mbstring, dom, curl, intl, bcmath, gd, zip, pdo_sqlite, sqlite3
+          coverage: none
+
+      - name: Cache Composer packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.composer/cache/files
+          key: composer-${{ hashFiles('laravel-app/composer.lock') }}
+          restore-keys: composer-
+
+      - name: Environment file
+        run: |
+          cp .env.example .env
+          touch "$DB_DATABASE"
+
+      - name: Install PHP dependencies
+        run: composer install --no-interaction --prefer-dist --no-progress
+
+      - name: App key and database
+        run: |
+          php artisan key:generate --force
+          php artisan migrate --force --no-interaction
+
+      - name: Run the suite
+        run: vendor/bin/phpunit --colors=always
