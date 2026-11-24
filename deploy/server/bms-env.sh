@@ -55,7 +55,9 @@ prod_snapshot() {
     if [ -e "$f" ]; then sha256sum "$f"; else echo "absent  $f"; fi
   done
   echo "root-crontab $(crontab -l 2>/dev/null | sha256sum | cut -d' ' -f1)"
-  echo "enabled $(ls -l /etc/apache2/sites-enabled/ | grep -F 'bms.cm-ea.com' | awk '{print $9, $11}' | tr '\n' ' ')"
+  # Exact names only: dev-bms.cm-ea.com and staging-bms.cm-ea.com also
+  # contain "bms.cm-ea.com".
+  echo "enabled $(ls -l /etc/apache2/sites-enabled/ | awk '$9 ~ /^bms\.cm-ea\.com(-le-ssl)?\.conf$/ {print $9, $11}' | tr '\n' ' ')"
 }
 PROD_BEFORE="$(prod_snapshot)"
 
