@@ -22,12 +22,31 @@ jobs:
     defaults:
       run:
         working-directory: laravel-app
+    # Production runs PHP 8.4 and MySQL on server 6, so the suite does too,
+    # on a throwaway MySQL that lives only for this run; no real data is
+    # involved. SQLite is not used: its index names are global, MySQL's are
+    # per table, and the migrations rely on MySQL's rule.
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: ci
+          MYSQL_DATABASE: bms_ci
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -pci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
     env:
-      # Production runs PHP 8.4 on server 6. The suite gets its own
-      # throwaway SQLite database here; no real data is involved.
       APP_ENV: testing
-      DB_CONNECTION: sqlite
-      DB_DATABASE: ${{ github.workspace }}/laravel-app/database/testing.sqlite
+      DB_CONNECTION: mysql
+      DB_HOST: 127.0.0.1
+      DB_PORT: 3306
+      DB_DATABASE: bms_ci
+      DB_USERNAME: root
+      DB_PASSWORD: ci
     steps:
       - name: Check out
         uses: actions/checkout@v4
@@ -36,7 +55,7 @@ jobs:
         uses: shivammathur/setup-php@v2
         with:
           php-version: "8.4"
-          extensions: mbstring, dom, curl, intl, bcmath, gd, zip, pdo_sqlite, sqlite3
+          extensions: mbstring, dom, curl, intl, bcmath, gd, zip, pdo_mysql
           coverage: none
 
       - name: Cache Composer packages
@@ -47,9 +66,7 @@ jobs:
           restore-keys: composer-
 
       - name: Environment file
-        run: |
-          cp .env.example .env
-          touch "$DB_DATABASE"
+        run: cp .env.example .env
 
       - name: Install PHP dependencies
         run: composer install --no-interaction --prefer-dist --no-progress
