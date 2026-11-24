@@ -11,12 +11,11 @@ name: Promote staging -> prod
 #   3. prod can be fast-forwarded to it (nothing on prod that staging lacks).
 #
 # Two ways to start it:
-#   - the "Run workflow" button on prod (GitHub offers it once this file is
-#     on the default branch, after the cutover, T8). Tick "dry run" to see
-#     the checks without promoting;
+#   - the "Run workflow" button (Actions -> Promote staging -> prod).
+#     Tick "dry run" to see the checks without promoting;
 #   - pushing a tag named promote-dryrun-<anything>: runs the checks only,
-#     never promotes. Before the cutover, when prod does not exist yet, the
-#     fast-forward check is made against master instead.
+#     never promotes. If prod does not exist, the fast-forward check is
+#     made against master instead.
 #
 # The push to prod uses the PROMOTE_DEPLOY_KEY secret: a deploy key the
 # owner added with write access and allowed past prod's protection.
@@ -43,8 +42,10 @@ permissions:
 jobs:
   checks:
     name: Checks${{ (github.event_name == 'push' || inputs.dry_run) && ' (dry run)' || '' }}
-    # Promote runs from prod only; a dry-run tag may run anywhere.
-    if: github.ref == 'refs/heads/prod' || startsWith(github.ref, 'refs/tags/promote-dryrun-')
+    # Promote runs from master (the default branch, where GitHub shows the
+    # button) or prod; a dry-run tag may run anywhere. Whichever it starts
+    # from, it always moves prod to what staging runs.
+    if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/prod' || startsWith(github.ref, 'refs/tags/promote-dryrun-')
     runs-on: ubuntu-24.04
     outputs:
       sha: ${{ steps.guard.outputs.sha }}
