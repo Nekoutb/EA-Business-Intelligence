@@ -49,7 +49,7 @@ sys.path.insert(0, "/opt/bms-console/app")
 import bms_console as c
 users, lines = {}, []
 for name in ("owner", "praise"):
-    pw = secrets.token_urlsafe(15)
+    pw = c.easy_password()
     users[name] = {"hash": c.hash_password(pw), "admin": True}
     lines.append(f"{name} {pw}")
 c.save_users(users)

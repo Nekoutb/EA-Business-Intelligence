@@ -71,6 +71,14 @@ def hash_password(password: str) -> str:
     return f"pbkdf2_sha256${PBKDF2_ROUNDS}${salt}${digest}"
 
 
+def easy_password() -> str:
+    """A password that survives being read off one screen and typed into
+    another: no look-alike characters (0/O, 1/l/I) and no symbols except
+    the separators, e.g. 'k7mp-x3qa-9fhw-t2nc' (about 98 bits)."""
+    alphabet = "abcdefghjkmnpqrstuvwxyz23456789"
+    return "-".join("".join(secrets.choice(alphabet) for _ in range(5)) for _ in range(4))
+
+
 def check_password(password: str, stored: str) -> bool:
     try:
         _, rounds, salt, digest = stored.split("$")
@@ -525,11 +533,14 @@ class Handler(BaseHTTPRequestHandler):
             if throttled(ip):
                 return self.send(429, login_page("Too many attempts. Wait 15 minutes."))
             users = load_users()
-            u = users.get(f.get("name", ""))
-            if not u or not check_password(f.get("password", ""), u.get("hash", "")):
+            # Logins are lower case; forgive "Praise" and stray spaces from
+            # copying. (Generated passwords never contain spaces.)
+            name = f.get("name", "").strip().lower()
+            u = users.get(name)
+            if not u or not check_password(f.get("password", "").strip(), u.get("hash", "")):
                 note_failure(ip)
                 return self.send(401, login_page("Wrong login or password."))
-            token = new_session(f["name"])
+            token = new_session(name)
             return self.redirect("/", [("Set-Cookie", f"{COOKIE}={token}; Max-Age={SESSION_SECONDS}; Path=/; Secure; HttpOnly; SameSite=Strict")])
         s, _ = self.session()
         if not s:

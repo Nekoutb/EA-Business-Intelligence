@@ -1,0 +1,50 @@
+name: Console reset login
+
+# Gives one BMS console login a new, easy-to-type password, written to
+# /root/bms-console-logins.txt on server 6 (never printed here).
+# Start it by pushing a tag named console-reset-<login>-<anything>,
+# e.g. console-reset-praise-1.
+
+on:
+  push:
+    tags:
+      - "console-reset-*"
+
+jobs:
+  reset:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Which login
+        id: who
+        run: |
+          rest="${GITHUB_REF_NAME#console-reset-}"
+          echo "login=${rest%%-*}" >> "$GITHUB_OUTPUT"
+          echo "Resetting login: ${rest%%-*}"
+
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Upload the script
+        uses: appleboy/scp-action@master
+        with:
+          host: ${{ secrets.SERVER_IP }}
+          username: ${{ secrets.SERVER_USER }}
+          password: ${{ secrets.SERVER_PASSWORD }}
+          port: 22
+          source: deploy/console/reset-login.sh
+          target: /tmp/bms-console-reset/${{ github.run_id }}
+          strip_components: 2
+
+      - name: Reset on server 6
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.SERVER_IP }}
+          username: ${{ secrets.SERVER_USER }}
+          password: ${{ secrets.SERVER_PASSWORD }}
+          port: 22
+          script: |
+            D=/tmp/bms-console-reset/${{ github.run_id }}
+            bash "$D/reset-login.sh" "${{ steps.who.outputs.login }}"
+            rc=$?
+            rm -rf "$D"
+            exit $rc
