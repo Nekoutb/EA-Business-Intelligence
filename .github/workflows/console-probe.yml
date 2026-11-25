@@ -1,0 +1,28 @@
+name: Console probe (server 6, read-only)
+
+# Read-only: what the BMS console can rely on before it is installed.
+# Changes nothing. Start it by pushing a tag named console-probe-<anything>.
+
+on:
+  push:
+    tags:
+      - "console-probe-*"
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Look (read-only)
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.SERVER_IP }}
+          username: ${{ secrets.SERVER_USER }}
+          password: ${{ secrets.SERVER_PASSWORD }}
+          port: 22
+          script: |
+            echo "== python"; python3 --version; which git curl
+            echo "== apache modules"; apache2ctl -M 2>/dev/null | grep -E 'proxy|headers|rewrite|ssl' | tr -d ' '
+            echo "== ports 8070-8079 in use"; ss -tlnH | awk '{print $4}' | grep -E ':807[0-9]$' || echo none
+            echo "== /opt"; ls /opt
+            echo "== systemd units named bms*"; systemctl list-units --all 'bms*' --no-legend || true
+            echo "== status.auditisa.com vhost"; grep -E 'ProxyPass|DocumentRoot|Auth' /etc/apache2/sites-available/status.auditisa.com.conf 2>/dev/null | head
