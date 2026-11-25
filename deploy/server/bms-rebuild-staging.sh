@@ -148,4 +148,6 @@ echo "https://$DOMAIN/ (following redirects) -> HTTP $CODE"
 say "Production unchanged?"
 check_prod_unchanged
 
-say "Done: staging is a neutralised copy of production as of $(date -u '+%Y-%m-%d %H:%M UTC')"
+STAMP="$(date -u '+%Y-%m-%d %H:%M UTC')"
+echo "$STAMP by ${BMS_ACTOR:-GitHub}" > "$BASE/shared/last-rebuild.txt"   # shown on the console
+say "Done: staging is a neutralised copy of production as of $STAMP"
