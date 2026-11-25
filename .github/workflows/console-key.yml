@@ -1,0 +1,43 @@
+name: Console deploy key (server 6)
+
+# Creates, once, the SSH key the BMS console on server 6 uses to move the
+# prod branch ("Promote staging -> prod"). The private half is generated on
+# the server and never leaves it; this run prints only the PUBLIC half,
+# which the repo owner adds under Settings -> Deploy keys with write access.
+# Running it again changes nothing and prints the same public key.
+#
+# Start it by pushing a tag named console-key-<anything>.
+
+on:
+  push:
+    tags:
+      - "console-key-*"
+
+jobs:
+  key:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Create or show the key on server 6
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.SERVER_IP }}
+          username: ${{ secrets.SERVER_USER }}
+          password: ${{ secrets.SERVER_PASSWORD }}
+          port: 22
+          script: |
+            set -e
+            K=/root/.ssh/bms_console_promote
+            mkdir -p /root/.ssh && chmod 700 /root/.ssh
+            if [ -f "$K" ]; then
+              echo "Key already exists; not changed."
+            else
+              ssh-keygen -q -t ed25519 -N "" -C "bms-console-promote@server6" -f "$K"
+              echo "Key created."
+            fi
+            chmod 600 "$K"
+            grep -q '^github.com ' /root/.ssh/known_hosts 2>/dev/null \
+              || ssh-keyscan -t ed25519 github.com >> /root/.ssh/known_hosts 2>/dev/null
+            echo
+            echo "PUBLIC KEY (safe to share; add it as a deploy key with write access):"
+            cat "$K.pub"
+            ssh-keygen -lf "$K.pub"
