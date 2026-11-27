@@ -1,0 +1,37 @@
+name: Console deploy key check (read-only)
+
+# Proves the console's key on server 6 is accepted by GitHub WITH write
+# access, without changing anything: a dry-run push of prod onto itself.
+# Start it by pushing a tag named console-keycheck-<anything>.
+
+on:
+  push:
+    tags:
+      - "console-keycheck-*"
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check on server 6
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.SERVER_IP }}
+          username: ${{ secrets.SERVER_USER }}
+          password: ${{ secrets.SERVER_PASSWORD }}
+          port: 22
+          script: |
+            set -e
+            K=/root/.ssh/bms_console_promote
+            R=git@github.com:Nekoutb/EA-Business-Intelligence.git
+            export GIT_SSH_COMMAND="ssh -i $K -o IdentitiesOnly=yes -o BatchMode=yes"
+            echo "== who GitHub thinks this key is"
+            ssh -i "$K" -o IdentitiesOnly=yes -o BatchMode=yes -T git@github.com 2>&1 | head -2 || true
+            echo "== write access (dry run: prod pushed onto itself, nothing sent)"
+            git -C /opt/bms-console/repo fetch --quiet origin
+            PROD=$(git -C /opt/bms-console/repo rev-parse origin/prod)
+            if git -C /opt/bms-console/repo push --dry-run "$R" "$PROD:refs/heads/prod" 2>&1; then
+              echo "RESULT: key accepted with write access; Promote can move prod."
+            else
+              echo "RESULT: key NOT accepted for writing."; exit 1
+            fi
