@@ -26,3 +26,6 @@ jobs:
             echo "== /opt"; ls /opt
             echo "== systemd units named bms*"; systemctl list-units --all 'bms*' --no-legend || true
             echo "== status.auditisa.com vhost"; grep -E 'ProxyPass|DocumentRoot|Auth' /etc/apache2/sites-available/status.auditisa.com.conf 2>/dev/null | head
+            echo "== console: last actions"; tail -n 12 /var/lib/bms-console/actions.log 2>/dev/null || echo none
+            echo "== console: output of the last two jobs"
+            for f in $(ls -1t /var/lib/bms-console/jobs/*.log 2>/dev/null | head -2); do echo "--- $(basename "$f")"; tail -n 40 "$f"; done
