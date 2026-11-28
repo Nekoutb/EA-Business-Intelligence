@@ -55,6 +55,14 @@ ENVIRONMENTS = [
     ("Production", "https://bms.cm-ea.com", "/var/www/eams", "prod"),
 ]
 
+# Super admin accounts per site (ticket T10): key -> (label, address, Laravel app dir)
+SITES = {
+    "prod": ("Production", "https://bms.cm-ea.com", "/var/www/eams/laravel-app"),
+    "staging": ("Staging", "https://staging-bms.cm-ea.com", "/var/www/eams-staging/current/laravel-app"),
+    "dev": ("Development", "https://dev-bms.cm-ea.com", "/var/www/eams-dev/current/laravel-app"),
+}
+SUPERADMIN_PHP = os.path.join(BIN, "superadmin.php")
+
 ACTIONS = {
     "rebuild": ("Rebuild staging from production", ["bash", os.path.join(BIN, "bms-rebuild-staging.sh")]),
     "promote-dry": ("Promote staging -> prod (dry run)", ["bash", os.path.join(BIN, "bms-promote.sh"), "--dry-run"]),
@@ -322,6 +330,36 @@ def collect() -> dict:
     return data
 
 
+# ------------------------------------------------------------------ super admins (T10)
+def superadmin_call(site: str, args: list, stdin: str = None) -> dict:
+    """Run superadmin.php inside one site's app as www-data. The password,
+    when there is one, goes on stdin: never in a command line or a log."""
+    app_dir = SITES[site][2]
+    if not os.path.isfile(os.path.join(app_dir, "artisan")):
+        return {"error": f"{SITES[site][0]} app not found on this server"}
+    try:
+        p = subprocess.run(["runuser", "-u", "www-data", "--", "php", SUPERADMIN_PHP, app_dir, *args],
+                           input=stdin, capture_output=True, text=True, timeout=90, cwd=app_dir)
+    except Exception as ex:
+        return {"error": f"could not run: {ex}"}
+    lines = [l for l in p.stdout.strip().splitlines() if l.startswith("{")]
+    try:
+        return json.loads(lines[-1])
+    except Exception:
+        return {"error": "unexpected answer: " + (p.stderr or p.stdout)[-300:]}
+
+
+def superadmins_all() -> dict:
+    results = {}
+    threads = [threading.Thread(target=lambda k=k: results.__setitem__(k, superadmin_call(k, ["list"])))
+               for k in SITES]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    return results
+
+
 # ------------------------------------------------------------------ HTML
 CSS = """
 *{box-sizing:border-box}body{margin:0;font:15px/1.5 system-ui,-apple-system,Segoe UI,sans-serif;color:#1d1d1f;background:#f6f6f3}
@@ -350,7 +388,7 @@ e = html.escape
 def page(title: str, body: str, user=None) -> bytes:
     nav = ""
     if user:
-        nav = (f"<div><a href='/'>Overview</a><a href='/people'>People</a>"
+        nav = (f"<div><a href='/'>Overview</a><a href='/superadmins'>Super admins</a><a href='/people'>People</a>"
                f"<a href='/logout'>Sign out ({e(user)})</a></div>")
     return (f"<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
             f"<title>{e(title)}</title><style>{CSS}</style></head><body>"
@@ -437,6 +475,63 @@ def people_page(s, msg="") -> bytes:
     return page("People", body, s["user"])
 
 
+def is_admin(s) -> bool:
+    return load_users().get(s["user"], {}).get("admin", False)
+
+
+def superadmins_page(s) -> bytes:
+    data = superadmins_all()
+    admin = is_admin(s)
+    out = ["<h2>Super admins</h2><p class='muted'>Accounts that sign in at <code>/admin/login</code> on each site. "
+           "Passwords are never shown; ⚠ marks an account still using the public default password.</p>"]
+    for key, (label, url, _) in SITES.items():
+        d = data.get(key, {})
+        out.append(f"<section><h2>{e(label)} <span class='muted'>· <a href='{e(url)}/admin/login' target='_blank' rel='noopener'>{e(url[8:])}/admin/login</a></span></h2><div class='card'>")
+        if "error" in d:
+            out.append(f"<p class='bad'>Could not read: {e(d['error'])}</p></div></section>")
+            continue
+        rows = ""
+        for a in d.get("accounts", []):
+            signin = "<span class='ok'>yes</span>" if a["can_sign_in"] else f"<span class='bad'>no ({e(str(a['status']))})</span>"
+            warn = "<span class='bad'>⚠ default</span>" if a["default_password"] else "<span class='ok'>changed</span>"
+            last = e(a["last_login_at"] or "never") + (f" <span class='muted'>from {e(a['last_login_ip'])}</span>" if a["last_login_ip"] else "")
+            btn = (f"<a href='/superadmins/{e(key)}/{int(a['id'])}'><button class='light'>Change password</button></a>"
+                   if admin else "")
+            rows += (f"<tr><td>{e(a['email'])}</td><td>{e(a['name'] or '')}</td><td>{signin}</td>"
+                     f"<td>{last}</td><td>{warn}</td><td>{btn}</td></tr>")
+        out.append("<table><tr><th>Email</th><th>Name</th><th>Can sign in</th><th>Last sign-in</th><th>Password</th><th></th></tr>"
+                   f"{rows or '<tr><td colspan=6 class=muted>No super admin accounts</td></tr>'}</table></div></section>")
+    if "staging" in data:
+        out.append("<p class='muted'>Staging note: “Rebuild staging from production” copies production’s accounts, "
+                   "so a password changed on staging lasts only until the next rebuild.</p>")
+    return page("Super admins", "".join(out), s["user"])
+
+
+def find_account(site: str, account_id: int):
+    d = superadmin_call(site, ["list"])
+    for a in d.get("accounts", []):
+        if a["id"] == account_id:
+            return a, None
+    return None, d.get("error", "no such super admin account")
+
+
+def password_form(s, site: str, a: dict, err="") -> bytes:
+    label = SITES[site][0]
+    confirm = ("<label>Type <code>production</code> to confirm this is the LIVE site"
+               "<input name='confirm' required autocomplete='off'></label>") if site == "prod" else ""
+    body = (f"<h2>Change password · {e(a['email'])} on {e(label)}</h2>"
+            f"{'<p class=err>' + e(err) + '</p>' if err else ''}"
+            f"<form method='post' class='card' style='max-width:520px'>{csrf_field(s)}"
+            "<label><input type='radio' name='mode' value='generate' checked style='width:auto'> "
+            "Generate an easy-to-type password (shown once)</label><br>"
+            "<label><input type='radio' name='mode' value='typed' style='width:auto'> Use this password (12 characters at least)"
+            "<input name='password' type='password' autocomplete='new-password'></label>"
+            f"{confirm}<button>Change password</button> <a href='/superadmins'>Cancel</a></form>"
+            + ("<p class='muted'>Staging’s accounts are replaced by production’s at the next rebuild.</p>" if site == "staging" else "")
+            + "<p class='muted'>People already signed in stay signed in; the new password applies to the next sign-in.</p>")
+    return page("Change password", body, s["user"])
+
+
 def login_page(err="") -> bytes:
     body = ("<div class='login card'><h2>Sign in</h2>"
             f"{'<p class=err>' + e(err) + '</p>' if err else ''}"
@@ -504,6 +599,16 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, overview(s))
         if path.path == "/people":
             return self.send(200, people_page(s))
+        if path.path == "/superadmins":
+            return self.send(200, superadmins_page(s))
+        m = re.fullmatch(r"/superadmins/(prod|staging|dev)/(\d+)", path.path)
+        if m:
+            if not is_admin(s):
+                return self.send(403, b"Administrators only.", "text/plain")
+            a, err = find_account(m.group(1), int(m.group(2)))
+            if not a:
+                return self.send(404, page("Not found", f"<p>{e(err)}</p><p><a href='/superadmins'>Back</a></p>", s["user"]))
+            return self.send(200, password_form(s, m.group(1), a))
         if path.path.startswith("/jobs/"):
             parts = path.path.split("/")
             job_id = parts[2] if len(parts) > 2 else ""
@@ -555,8 +660,11 @@ class Handler(BaseHTTPRequestHandler):
             if not job_id:
                 return self.send(409, page("Busy", "<p>Another action is running. <a href='/'>Back</a></p>", s["user"]))
             return self.redirect(f"/jobs/{job_id}")
+        m = re.fullmatch(r"/superadmins/(prod|staging|dev)/(\d+)", path)
+        if m:
+            return self.change_superadmin_password(s, m.group(1), int(m.group(2)), f)
         users = load_users()
-        is_admin = users.get(s["user"], {}).get("admin", False)
+        me_admin = users.get(s["user"], {}).get("admin", False)
         if path == "/people/password":
             pw = f.get("password", "")
             if len(pw) < 12:
@@ -565,7 +673,7 @@ class Handler(BaseHTTPRequestHandler):
             save_users(users)
             log_action(s["user"], "changed own password", "exit 0 -")
             return self.send(200, people_page(s, "Password changed."))
-        if not is_admin:
+        if not me_admin:
             return self.send(403, b"Administrators only.", "text/plain")
         if path == "/people/add":
             name, pw = f.get("name", "").strip().lower(), f.get("password", "")
@@ -586,6 +694,34 @@ class Handler(BaseHTTPRequestHandler):
             log_action(s["user"], f"removed {name}", "exit 0 -")
             return self.send(200, people_page(s, f"{name} removed."))
         return self.send(404, b"Not found.", "text/plain")
+
+    def change_superadmin_password(self, s, site: str, account_id: int, f: dict):
+        if not is_admin(s):
+            return self.send(403, b"Administrators only.", "text/plain")
+        a, err = find_account(site, account_id)
+        if not a:
+            return self.send(404, page("Not found", f"<p>{e(err)}</p>", s["user"]))
+        if site == "prod" and f.get("confirm", "").strip().lower() != "production":
+            return self.send(400, password_form(s, site, a, "Type “production” to confirm a change on the live site."))
+        if f.get("mode") == "typed":
+            password, shown = f.get("password", ""), False
+            if not 12 <= len(password) <= 128:
+                return self.send(400, password_form(s, site, a, "The password must be 12 to 128 characters."))
+        else:
+            password, shown = easy_password(), True
+        label = SITES[site][0]
+        result = superadmin_call(site, ["set-password", str(account_id)], stdin=password + "\n")
+        what = f"super admin password: {a['email']} on {label}"
+        if not result.get("ok"):
+            log_action(s["user"], what, "exit 1 -")
+            return self.send(500, password_form(s, site, a, "Not changed: " + str(result.get("error", "unknown error"))))
+        log_action(s["user"], what, "exit 0 -")
+        reveal = (f"<p>New password (shown once, copy it now):</p><pre style='font-size:18px'>{e(password)}</pre>" if shown
+                  else "<p>The password you typed is now in use.</p>")
+        body = (f"<h2>Password changed</h2><p class='ok'>{e(a['email'])} on {e(label)} has a new password.</p>{reveal}"
+                f"<p>Sign in at <a href='{e(SITES[site][1])}/admin/login' target='_blank' rel='noopener'>{e(SITES[site][1][8:])}/admin/login</a>.</p>"
+                "<p><a href='/superadmins'>Back to super admins</a></p>")
+        return self.send(200, page("Password changed", body, s["user"]))
 
 
 def main():

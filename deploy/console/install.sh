@@ -30,6 +30,7 @@ say "Files"
 mkdir -p "$HOME_DIR/app" "$HOME_DIR/bin" "$STATE/jobs"
 chmod 700 "$STATE"
 install -m 0644 "$SRC/console/bms_console.py" "$HOME_DIR/app/bms_console.py"
+install -m 0644 "$SRC/console/superadmin.php" "$HOME_DIR/bin/superadmin.php"   # run as www-data
 for f in bms-rebuild-staging.sh bms-promote.sh prod-guard.sh; do
   install -m 0755 "$SRC/server/$f" "$HOME_DIR/bin/$f"
 done

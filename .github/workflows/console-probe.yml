@@ -26,6 +26,13 @@ jobs:
             echo "== /opt"; ls /opt
             echo "== systemd units named bms*"; systemctl list-units --all 'bms*' --no-legend || true
             echo "== status.auditisa.com vhost"; grep -E 'ProxyPass|DocumentRoot|Auth' /etc/apache2/sites-available/status.auditisa.com.conf 2>/dev/null | head
+            echo "== super admin helper, read-only (counts only: this log is public)"
+            for d in /var/www/eams/laravel-app /var/www/eams-staging/current/laravel-app /var/www/eams-dev/current/laravel-app; do
+              printf '%-45s ' "$d"
+              runuser -u www-data -- php /opt/bms-console/bin/superadmin.php "$d" list 2>&1 | tail -n 1 \
+                | python3 -c "import json,sys; d=json.loads(sys.stdin.read()); a=d.get('accounts'); print(d['error'] if a is None else f'{len(a)} super admin(s), {sum(x[\"can_sign_in\"] for x in a)} can sign in, {sum(x[\"default_password\"] for x in a)} on the default password')" \
+                || echo "could not read"
+            done
             echo "== console: last actions"; tail -n 12 /var/lib/bms-console/actions.log 2>/dev/null || echo none
             echo "== console: output of the last two jobs"
             for f in $(ls -1t /var/lib/bms-console/jobs/*.log 2>/dev/null | head -2); do echo "--- $(basename "$f")"; tail -n 40 "$f"; done
